@@ -1,0 +1,29 @@
+# Copy to inferrail.yaml and adjust. inferrail.yaml is gitignored by default
+# since real deployments often add environment-specific detail here.
+#
+# Secrets are never stored in this file — only the *name* of the
+# environment variable that holds each secret.
+
+providers:
+  openai:
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    # base_url: https://api.openai.com/v1   # override to point at any
+                                             # OpenAI-compatible endpoint
+
+routes:
+  # A route is what clients select via the "model" field of a
+  # /v1/chat/completions request, e.g. {"model": "default", ...}.
+  default:
+    provider: openai
+    model: gpt-4o-mini
+    max_retries: 1
+    timeout_seconds: 30
+
+telemetry:
+  sink: console   # console | jsonl | none
+  # path: ./inferrail-telemetry.jsonl   # required when sink is "jsonl"
+
+server:
+  host: 127.0.0.1
+  port: 8000
