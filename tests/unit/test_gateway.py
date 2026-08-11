@@ -47,6 +47,13 @@ class InMemoryTelemetrySink:
         self.events.append(event)
 
 
+@pytest.fixture(autouse=True)
+def _no_gateway_token_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate tests from whatever the host shell happens to have set, so
+    # "no token configured" is a reliable baseline regardless of environment.
+    monkeypatch.delenv("INFERRAIL_GATEWAY_TOKEN", raising=False)
+
+
 def _make_client(
     monkeypatch: pytest.MonkeyPatch,
     config: InferrailConfig,
@@ -183,6 +190,69 @@ def test_telemetry_emitted_on_error(
     event = telemetry.events[0]
     assert event.status == "error"
     assert event.error_category == "authentication"
+
+
+def test_chat_completions_no_auth_required_by_default(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    client = _make_client(monkeypatch, base_config, FakeProvider())
+
+    response = client.post("/v1/chat/completions", json=_chat_body())
+
+    assert response.status_code == 200
+
+
+def test_chat_completions_rejects_missing_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("INFERRAIL_GATEWAY_TOKEN", "s3cret")
+    client = _make_client(monkeypatch, base_config, FakeProvider())
+
+    response = client.post("/v1/chat/completions", json=_chat_body())
+
+    assert response.status_code == 401
+    assert response.json()["error"]["type"] == "GatewayAuthenticationError"
+
+
+def test_chat_completions_rejects_wrong_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("INFERRAIL_GATEWAY_TOKEN", "s3cret")
+    client = _make_client(monkeypatch, base_config, FakeProvider())
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_body(),
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_chat_completions_accepts_matching_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("INFERRAIL_GATEWAY_TOKEN", "s3cret")
+    client = _make_client(monkeypatch, base_config, FakeProvider())
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_body(),
+        headers={"Authorization": "Bearer s3cret"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_health_does_not_require_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("INFERRAIL_GATEWAY_TOKEN", "s3cret")
+    client = _make_client(monkeypatch, base_config, FakeProvider())
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
 
 
 def test_telemetry_never_persists_prompt_content_by_default(

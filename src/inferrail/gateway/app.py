@@ -11,6 +11,7 @@ same process (e.g. in tests).
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,6 +23,7 @@ from inferrail.config.models import InferrailConfig
 from inferrail.errors import (
     AuthenticationError,
     ConfigurationError,
+    GatewayAuthenticationError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -44,6 +46,7 @@ _logger = logging.getLogger("inferrail.gateway")
 # generic "does the error have a status_code" duck-type, so adding a new
 # InferrailError subclass forces a conscious choice of HTTP status here.
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
+    (GatewayAuthenticationError, 401),
     (AuthenticationError, 401),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
@@ -79,6 +82,11 @@ def create_app(config: InferrailConfig) -> FastAPI:
     app = FastAPI(title="Inferrail", version=__version__, lifespan=lifespan)
     app.state.config = config
     app.state.engine = engine
+    # Optional shared-secret gateway auth: unset by default (localhost dev
+    # mode). If set, gateway/routes.py rejects requests to inference
+    # endpoints that don't present a matching bearer token. See
+    # docs/PRODUCT.md's security section for why this exists.
+    app.state.gateway_token = os.environ.get("INFERRAIL_GATEWAY_TOKEN") or None
     app.include_router(api_router)
 
     @app.exception_handler(InferrailError)

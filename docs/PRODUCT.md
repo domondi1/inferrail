@@ -56,6 +56,10 @@ inspectable config file and gives you a telemetry record for every request
 - YAML config (`inferrail.yaml`) + environment variables for secrets, with
   loud validation errors
 - A CLI: `inferrail serve`, `inferrail config check`
+- Optional shared-secret gateway auth: if `INFERRAIL_GATEWAY_TOKEN` is set,
+  `/v1/chat/completions` requires a matching `Authorization: Bearer`
+  header. Unset by default (localhost-dev mode) — see README's "Security"
+  section. Not a user/auth system; a single shared secret.
 
 ### Explicit non-goals / not yet supported
 

@@ -14,11 +14,19 @@ providers:
 routes:
   # A route is what clients select via the "model" field of a
   # /v1/chat/completions request, e.g. {"model": "default", ...}.
+  # Multiple routes can exist side by side, pointing at the same or
+  # different providers/models/retry policies.
   default:
     provider: openai
     model: gpt-4o-mini
     max_retries: 1
     timeout_seconds: 30
+
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+    max_retries: 0
+    timeout_seconds: 10
 
 telemetry:
   sink: console   # console | jsonl | none

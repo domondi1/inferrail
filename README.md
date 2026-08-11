@@ -123,6 +123,45 @@ ruff check .
 mypy src
 ```
 
+## Security
+
+Inferrail is a **local development gateway by default**: it binds to
+`127.0.0.1` and, unless you configure otherwise, accepts requests from
+anything that can reach that port with no authentication of its own.
+
+**This matters because Inferrail holds your upstream provider credentials.**
+If you expose the gateway beyond your own machine (bind it to `0.0.0.0`,
+port-forward it, put it behind a reverse proxy, run it in a shared
+container network, etc.) without an authentication layer, anyone who can
+reach it can make inference calls billed to your configured provider
+account.
+
+To require callers to authenticate, set `INFERRAIL_GATEWAY_TOKEN` (see
+`.env.example`) to a long random value before starting the gateway.
+Requests to `/v1/chat/completions` must then include
+`Authorization: Bearer <token>`, or Inferrail rejects them with 401 before
+touching any provider. `/health` never requires it. This is a single
+shared-secret check, not a user/auth system — sufficient for "don't let
+strangers spend my API budget," not for multi-tenant access control.
+
+Also see [privacy](#privacy) below for what does and doesn't leave the
+machine.
+
+## Privacy
+
+By default, and structurally (not just by configuration), Inferrail never
+sends anything to an Inferrail-operated service — there isn't one yet.
+Local telemetry (`InferenceEvent`) is schema-limited to operational
+metadata: request id, route, provider, model, status, latency, token
+counts, retry count. There is no field for prompt or response text, so
+enabling `jsonl` telemetry cannot leak message content even by accident.
+See [docs/adr/0003-no-payload-persistence-by-default.md](docs/adr/0003-no-payload-persistence-by-default.md).
+
+What Inferrail does send off-machine: your configured provider (e.g.
+OpenAI) still receives the actual prompt, exactly as it would if you
+called it directly — Inferrail is a pass-through gateway to that provider,
+not a privacy boundary against it.
+
 ## Why "Inferrail"
 
 The rails on which AI inference runs. See
@@ -133,6 +172,4 @@ plane and any future hosted control plane.
 
 ## License
 
-Not yet decided/applied. This repository is currently developed privately;
-Apache-2.0 is under consideration for when it's made public. Do not assume
-any license grant until this section is updated.
+Apache License 2.0 — see [LICENSE](LICENSE).

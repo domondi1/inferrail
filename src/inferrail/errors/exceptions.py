@@ -30,6 +30,16 @@ class RoutingError(InferrailError):
     """A request could not be mapped to a configured route."""
 
 
+class GatewayAuthenticationError(InferrailError):
+    """The caller did not present a valid Inferrail gateway bearer token.
+
+    Distinct from :class:`AuthenticationError`, which represents the
+    *provider* rejecting Inferrail's own credentials. This one represents
+    Inferrail rejecting the *client's* request, and is only raised when
+    ``INFERRAIL_GATEWAY_TOKEN`` is set (see docs/PRODUCT.md).
+    """
+
+
 class UnsupportedFeatureError(InferrailError):
     """The request asked for something Inferrail does not yet support."""
 

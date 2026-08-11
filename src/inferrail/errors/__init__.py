@@ -1,6 +1,7 @@
 from inferrail.errors.exceptions import (
     AuthenticationError,
     ConfigurationError,
+    GatewayAuthenticationError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -13,6 +14,7 @@ from inferrail.errors.exceptions import (
 __all__ = [
     "AuthenticationError",
     "ConfigurationError",
+    "GatewayAuthenticationError",
     "InferrailError",
     "InvalidRequestError",
     "ProviderError",
