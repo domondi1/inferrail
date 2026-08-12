@@ -1,5 +1,7 @@
 # Inferrail — Product
 
+> This file is the authoritative source for exact current scope.
+
 ## What it is
 
 Inferrail is an open inference control plane: infrastructure that sits

@@ -30,3 +30,6 @@ htmlcov/
 
 # Local AI-assistant tooling state (session-specific, not part of the project)
 .claude/
+
+# Private local agent pointer (points at the private strategy repo; never commit)
+CLAUDE.local.md
