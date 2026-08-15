@@ -220,7 +220,7 @@ class InferenceEngine:
                 model=model,
                 status="error",
                 error_category=_categorize(exc),
-                error_message=str(exc),
+                error_message=exc.safe_summary,
                 http_status=getattr(exc, "status_code", None),
                 total_latency_ms=self._elapsed_ms(started),
                 retry_count=retry_count,

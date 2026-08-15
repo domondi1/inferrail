@@ -162,6 +162,31 @@ OpenAI) still receives the actual prompt, exactly as it would if you
 called it directly — Inferrail is a pass-through gateway to that provider,
 not a privacy boundary against it.
 
+### Verify it yourself
+
+Don't take Inferrail's local no-payload-persistence claim on faith — check
+it in under a minute. This checks only what Inferrail itself writes to
+disk; your provider still receives the real prompt either way (see above).
+
+In `inferrail.yaml`, set:
+
+```yaml
+telemetry:
+  sink: jsonl
+  path: inferrail-telemetry.jsonl
+```
+
+Restart `inferrail serve`, then:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "default", "messages": [{"role": "user", "content": "MARKER-1234-do-not-persist-me"}]}'
+
+grep -c "MARKER-1234" inferrail-telemetry.jsonl   # 0, every time
+cat inferrail-telemetry.jsonl                     # latency, tokens, status — no message content
+```
+
 ## Why "Inferrail"
 
 The rails on which AI inference runs. See

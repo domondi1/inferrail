@@ -92,7 +92,13 @@ def create_app(config: InferrailConfig) -> FastAPI:
     @app.exception_handler(InferrailError)
     async def handle_inferrail_error(_: Request, exc: InferrailError) -> JSONResponse:
         status = _status_for(exc)
-        _logger.warning("request failed with %s: %s", type(exc).__name__, exc)
+        # Operator-facing log: must use the telemetry-safe summary, not
+        # str(exc) — for a ProviderError, str(exc) may embed upstream,
+        # provider-controlled free text (see ProviderError.safe_summary).
+        # The caller-facing response body below is a separate case: it goes
+        # back to the same caller whose content this is, so it may retain
+        # full detail.
+        _logger.warning("request failed with %s: %s", type(exc).__name__, exc.safe_summary)
         body = ErrorResponse(error=ErrorDetail(message=str(exc), type=type(exc).__name__))
         return JSONResponse(status_code=status, content=body.model_dump())
 

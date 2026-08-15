@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from inferrail.config.models import InferrailConfig
-from inferrail.errors import AuthenticationError, RateLimitError
+from inferrail.errors import AuthenticationError, InvalidRequestError, RateLimitError
 from inferrail.gateway import app as app_module
 from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse
 from inferrail.telemetry.events import InferenceEvent
@@ -282,3 +283,73 @@ def test_telemetry_never_persists_prompt_content_by_default(
     assert secret not in raw
     event = json.loads(raw.strip())
     assert event["route"] == "default"
+
+
+def test_telemetry_never_persists_provider_echoed_error_text(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    # Simulates a provider that echoes request content in its error body
+    # (e.g. a content-moderation rejection quoting the flagged text) —
+    # the raw text must never reach telemetry, only the sanitized summary.
+    telemetry = InMemoryTelemetrySink()
+    echoed_content = "TOP-SECRET-PROMPT-CONTENT-flagged-by-moderation"
+    provider = FakeProvider(
+        outcomes=[
+            InvalidRequestError(
+                f"provider 'openai' returned HTTP 400: content policy violation "
+                f"for input '{echoed_content}'",
+                provider="openai",
+                status_code=400,
+                safe_summary="provider 'openai' returned HTTP 400 (content_policy_violation)",
+            )
+        ]
+    )
+    client = _make_client(monkeypatch, base_config, provider, telemetry)
+
+    client.post("/v1/chat/completions", json=_chat_body())
+
+    assert len(telemetry.events) == 1
+    assert echoed_content not in telemetry.events[0].error_message
+    assert telemetry.events[0].error_message == (
+        "provider 'openai' returned HTTP 400 (content_policy_violation)"
+    )
+
+
+def test_operator_log_never_contains_provider_echoed_error_text(
+    monkeypatch: pytest.MonkeyPatch,
+    base_config: InferrailConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Adversarial: a provider whose error body echoes back caller-submitted
+    # content (e.g. a content-moderation rejection quoting the flagged
+    # text). That echoed text must never reach an Inferrail-owned log —
+    # only the fail-closed `safe_summary` may appear in the operator log
+    # line emitted by the InferrailError exception handler (gateway/app.py).
+    canary = "CANARY-9f3a1c-do-not-leak-into-operator-logs"
+    provider = FakeProvider(
+        outcomes=[
+            InvalidRequestError(
+                f"provider 'openai' returned HTTP 400: content policy violation "
+                f"for input '{canary}'",
+                provider="openai",
+                status_code=400,
+                safe_summary="provider 'openai' returned HTTP 400 (content_policy_violation)",
+            )
+        ]
+    )
+    client = _make_client(monkeypatch, base_config, provider)
+
+    with caplog.at_level(logging.WARNING, logger="inferrail.gateway"):
+        response = client.post("/v1/chat/completions", json=_chat_body())
+
+    # The caller-facing HTTP response is a deliberately separate case: it
+    # goes back to the same caller whose content this is, so it may retain
+    # full provider detail — this is not the leak under test.
+    assert canary in response.json()["error"]["message"]
+
+    # Nothing Inferrail logs on its own operator-facing channel may contain
+    # the canary, and the safe summary must still be present so the
+    # operator isn't left with no diagnostic information at all.
+    operator_log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert canary not in operator_log_text
+    assert "provider 'openai' returned HTTP 400 (content_policy_violation)" in operator_log_text

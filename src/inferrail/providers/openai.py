@@ -106,15 +106,18 @@ class OpenAIProvider:
     def _error_for_status(self, response: httpx.Response) -> ProviderError:
         status = response.status_code
         message = self._extract_error_message(response)
+        safe_summary = self._extract_safe_summary(response)
         if status in (401, 403):
             return AuthenticationError(
-                message, provider=self.name, status_code=status
+                message, provider=self.name, status_code=status, safe_summary=safe_summary
             )
         if status == 429:
-            return RateLimitError(message, provider=self.name, status_code=status)
+            return RateLimitError(
+                message, provider=self.name, status_code=status, safe_summary=safe_summary
+            )
         if status in (400, 404, 422):
             return InvalidRequestError(
-                message, provider=self.name, status_code=status
+                message, provider=self.name, status_code=status, safe_summary=safe_summary
             )
         # 5xx and anything else unrecognized: treat as a transient upstream
         # failure and let the execution engine's retry policy decide.
@@ -123,6 +126,7 @@ class OpenAIProvider:
             provider=self.name,
             status_code=status,
             retryable=status >= 500,
+            safe_summary=safe_summary,
         )
 
     def _extract_error_message(self, response: httpx.Response) -> str:
@@ -133,6 +137,34 @@ class OpenAIProvider:
             detail = None
         detail = detail or response.text[:200]
         return f"provider '{self.name}' returned HTTP {response.status_code}: {detail}"
+
+    def _extract_safe_summary(self, response: httpx.Response) -> str:
+        """Build the telemetry-safe counterpart of `_extract_error_message`.
+
+        Deliberately excludes any upstream free text — the provider's
+        `error.message` field and the raw response body both can (and, for
+        some providers, routinely do) echo fragments of the submitted
+        request back in error text: content-policy rejections quoting the
+        flagged input, validation errors quoting a bad field value. Only a
+        short, categorical `error.type`/`error.code` is included, if
+        present — these are enum-like values by API convention (e.g.
+        `"invalid_request_error"`, `"content_policy_violation"`), not free
+        text, and are truncated defensively in case a non-conforming
+        provider puts something unexpected there.
+        """
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        category = None
+        if isinstance(data, dict):
+            error_obj = data.get("error")
+            if isinstance(error_obj, dict):
+                category = error_obj.get("type") or error_obj.get("code")
+        summary = f"provider '{self.name}' returned HTTP {response.status_code}"
+        if isinstance(category, str) and category:
+            summary += f" ({category[:64]})"
+        return summary
 
     async def aclose(self) -> None:
         await self._client.aclose()
