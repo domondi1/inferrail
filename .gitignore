@@ -33,3 +33,6 @@ htmlcov/
 
 # Private local agent pointer (points at the private strategy repo; never commit)
 CLAUDE.local.md
+
+# Local-only scratch outputs (never commit — may contain private/strategy content)
+local/
