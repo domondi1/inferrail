@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -97,3 +98,55 @@ def test_build_providers_succeeds_when_api_key_present(
     providers = build_providers(base_config)
 
     assert set(providers) == {"openai"}
+
+
+def test_receipts_defaults_to_jsonl_when_omitted(base_config_dict: dict[str, Any]) -> None:
+    del base_config_dict["receipts"]
+
+    config = InferrailConfig.model_validate(base_config_dict)
+
+    assert config.receipts.sink == "jsonl"
+    assert config.receipts.path == "./inferrail-receipts.jsonl"
+
+
+def test_pricing_defaults_to_empty_when_omitted(base_config_dict: dict[str, Any]) -> None:
+    config = InferrailConfig.model_validate(base_config_dict)
+
+    assert config.pricing == {}
+
+
+def test_pricing_override_parses_from_yaml_shaped_dict(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["pricing"] = {
+        "openai": {
+            "gpt-4o-mini": {
+                "input_usd_per_million": "0.15",
+                "output_usd_per_million": "0.60",
+                "source": "https://developers.openai.com/api/docs/pricing",
+                "verified_date": "2026-08-16",
+            }
+        }
+    }
+
+    config = InferrailConfig.model_validate(base_config_dict)
+
+    price = config.pricing["openai"]["gpt-4o-mini"]
+    assert price.input_usd_per_million == Decimal("0.15")
+    assert price.output_usd_per_million == Decimal("0.60")
+
+
+def test_pricing_override_requires_source_and_verified_date(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["pricing"] = {
+        "openai": {
+            "gpt-4o-mini": {
+                "input_usd_per_million": "0.15",
+                "output_usd_per_million": "0.60",
+            }
+        }
+    }
+
+    with pytest.raises(ValidationError):
+        InferrailConfig.model_validate(base_config_dict)

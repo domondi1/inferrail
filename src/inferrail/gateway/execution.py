@@ -31,7 +31,10 @@ from inferrail.gateway.schemas import (
     ChatCompletionUsage,
     InferrailMetadata,
 )
+from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse, Provider
+from inferrail.receipts.builder import build_receipt, new_receipt_id
+from inferrail.receipts.sinks import ReceiptSink
 from inferrail.routing.router import Router, RoutingContext, RoutingDecision
 from inferrail.telemetry.events import ErrorCategory, InferenceEvent
 from inferrail.telemetry.sinks import TelemetrySink
@@ -66,21 +69,29 @@ class InferenceEngine:
         router: Router,
         providers: dict[str, Provider],
         telemetry: TelemetrySink,
+        pricing_resolver: PricingResolver,
+        receipts: ReceiptSink,
     ) -> None:
         self._router = router
         self._providers = providers
         self._telemetry = telemetry
+        self._pricing_resolver = pricing_resolver
+        self._receipts = receipts
 
-    async def execute(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    async def execute(
+        self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
+    ) -> ChatCompletionResponse:
         request_id = f"req_{uuid.uuid4().hex[:20]}"
         started = time.perf_counter()
+        attributes = attributes or {}
 
         if request.stream:
             unsupported_error = UnsupportedFeatureError(
                 "stream=true is not yet supported by Inferrail"
             )
             self._emit_failure(
-                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started, unsupported_error
+                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started,
+                unsupported_error, attributes,
             )
             raise unsupported_error
         if request.n is not None and request.n != 1:
@@ -88,14 +99,17 @@ class InferenceEngine:
                 "n != 1 is not yet supported by Inferrail"
             )
             self._emit_failure(
-                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started, unsupported_error
+                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started,
+                unsupported_error, attributes,
             )
             raise unsupported_error
 
         try:
             decision = self._router.resolve(RoutingContext(requested_route=request.model))
         except RoutingError as exc:
-            self._emit_failure(request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started, exc)
+            self._emit_failure(
+                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started, exc, attributes
+            )
             raise
 
         provider = self._providers.get(decision.provider_name)
@@ -106,7 +120,7 @@ class InferenceEngine:
             )
             self._emit_failure(
                 request_id, decision.route_name, decision.provider_name,
-                decision.model, 0, started, missing_provider_error,
+                decision.model, 0, started, missing_provider_error, attributes,
             )
             raise missing_provider_error
 
@@ -120,7 +134,7 @@ class InferenceEngine:
         )
 
         return await self._execute_with_retries(
-            request_id, decision, provider, normalized_request, started
+            request_id, decision, provider, normalized_request, started, attributes
         )
 
     async def _execute_with_retries(
@@ -130,6 +144,7 @@ class InferenceEngine:
         provider: Provider,
         normalized_request: NormalizedChatRequest,
         started: float,
+        attributes: dict[str, str],
     ) -> ChatCompletionResponse:
         for attempt in range(decision.max_retries + 1):
             try:
@@ -141,7 +156,7 @@ class InferenceEngine:
                 if not exc.retryable or is_last_attempt:
                     self._emit_failure(
                         request_id, decision.route_name, decision.provider_name,
-                        decision.model, attempt, started, exc,
+                        decision.model, attempt, started, exc, attributes,
                     )
                     raise
                 await asyncio.sleep(_RETRY_BACKOFF_BASE_SECONDS * (attempt + 1))
@@ -159,6 +174,22 @@ class InferenceEngine:
                     prompt_tokens=result.prompt_tokens,
                     completion_tokens=result.completion_tokens,
                     retry_count=attempt,
+                )
+            )
+            self._receipts.emit(
+                build_receipt(
+                    receipt_id=new_receipt_id(),
+                    request_id=request_id,
+                    route=decision.route_name,
+                    provider=decision.provider_name,
+                    model=decision.model,
+                    status="success",
+                    prompt_tokens=result.prompt_tokens,
+                    completion_tokens=result.completion_tokens,
+                    attributes=attributes,
+                    total_latency_ms=latency_ms,
+                    retry_count=attempt,
+                    pricing_resolver=self._pricing_resolver,
                 )
             )
             return self._build_response(request_id, decision, result, latency_ms, attempt)
@@ -211,7 +242,9 @@ class InferenceEngine:
         retry_count: int,
         started: float,
         exc: InferrailError,
+        attributes: dict[str, str],
     ) -> None:
+        latency_ms = self._elapsed_ms(started)
         self._telemetry.emit(
             InferenceEvent(
                 request_id=request_id,
@@ -222,8 +255,26 @@ class InferenceEngine:
                 error_category=_categorize(exc),
                 error_message=exc.safe_summary,
                 http_status=getattr(exc, "status_code", None),
-                total_latency_ms=self._elapsed_ms(started),
+                total_latency_ms=latency_ms,
                 retry_count=retry_count,
+            )
+        )
+        # A failed request never produced usage: cost is None, not 0 — see
+        # inferrail.receipts.builder.build_receipt.
+        self._receipts.emit(
+            build_receipt(
+                receipt_id=new_receipt_id(),
+                request_id=request_id,
+                route=route,
+                provider=provider,
+                model=model,
+                status="error",
+                prompt_tokens=None,
+                completion_tokens=None,
+                attributes=attributes,
+                total_latency_ms=latency_ms,
+                retry_count=retry_count,
+                pricing_resolver=self._pricing_resolver,
             )
         )
 

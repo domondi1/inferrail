@@ -35,8 +35,10 @@ from inferrail.errors import (
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.routes import router as api_router
 from inferrail.gateway.schemas import ErrorDetail, ErrorResponse
+from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.base import Provider
 from inferrail.providers.registry import build_providers
+from inferrail.receipts.sinks import build_receipt_sink
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import build_telemetry_sink
 
@@ -69,7 +71,9 @@ def create_app(config: InferrailConfig) -> FastAPI:
     providers: dict[str, Provider] = build_providers(config)
     router = Router(config.routes)
     telemetry = build_telemetry_sink(config.telemetry)
-    engine = InferenceEngine(router, providers, telemetry)
+    pricing_resolver = PricingResolver(config.providers, config.pricing)
+    receipts = build_receipt_sink(config.receipts)
+    engine = InferenceEngine(router, providers, telemetry, pricing_resolver, receipts)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

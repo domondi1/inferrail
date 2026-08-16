@@ -5,6 +5,7 @@ import secrets
 from fastapi import APIRouter, Depends, Header, Request
 
 from inferrail.errors import GatewayAuthenticationError
+from inferrail.gateway.attribution import extract_attributes
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 
@@ -45,4 +46,5 @@ async def chat_completions(
     payload: ChatCompletionRequest, request: Request
 ) -> ChatCompletionResponse:
     engine: InferenceEngine = request.app.state.engine
-    return await engine.execute(payload)
+    attributes = extract_attributes(request.headers)
+    return await engine.execute(payload, attributes=attributes)

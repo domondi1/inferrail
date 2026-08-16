@@ -3,7 +3,9 @@
 Inferrail is an open inference control plane: an OpenAI-compatible gateway
 that sits in front of your LLM provider(s), so routing, retries, and
 per-request telemetry live in configuration instead of scattered through
-application code.
+application code — and turns every execution into a payload-free economic
+receipt, so you can see what each customer or workflow is costing you
+without storing their prompts.
 
 **Status: early, pre-release (v0.1.0).** This is one narrow vertical slice,
 not a finished product — see [what works today](#what-works-today) below
@@ -25,10 +27,18 @@ and [docs/PRODUCT.md](docs/PRODUCT.md) for exact scope and non-goals.
   retry count, success/failure — logged locally (console or a JSONL file).
   **No prompts or responses are persisted by default, and nothing is ever
   sent to any Inferrail-operated service.**
+- A **payload-free economic receipt** for every request: provider, model,
+  measured token usage, a `Decimal` cost computed from verified pricing
+  (with its source and date recorded), and whatever business context you
+  attach — with no field capable of holding prompt or response text. See
+  [Cost and attribution](#cost-and-attribution) below.
+- `inferrail report --by <dimension>` — turns those receipts into an
+  immediate, local answer to "what is this customer/workflow costing me".
 
 **Not yet supported:** streaming, multi-provider intelligent routing, cost
-estimates, any provider that isn't OpenAI-compatible. Full list in
-[docs/PRODUCT.md](docs/PRODUCT.md).
+estimates for models outside the built-in catalog or an explicit
+`pricing:` override, budgets/spend limits, any provider that isn't
+OpenAI-compatible. Full list in [docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Install
 
@@ -106,6 +116,89 @@ Every request also produces a local `InferenceEvent` on the telemetry sink
 configured in `inferrail.yaml` (`console` by default) — this is where
 you'd look to see latency, retries, and failures across requests.
 
+## Cost and attribution
+
+Every request also produces a local **`InferenceReceipt`** — appended by
+default to `./inferrail-receipts.jsonl` (`receipts.path` in
+`inferrail.yaml`). Attach business context with
+`X-Inferrail-Attribute-<Name>` headers:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Inferrail-Attribute-Customer: acme" \
+  -H "X-Inferrail-Attribute-Workflow: contract-review" \
+  -d '{
+    "model": "default",
+    "messages": [{"role": "user", "content": "Say hello in five words."}]
+  }'
+```
+
+Any `X-Inferrail-Attribute-<Name>` header becomes a key in the receipt's
+`attributes` — there's no fixed set of dimensions (`customer` and
+`workflow` above are just examples). **Attribute values are persisted
+verbatim in the receipt** — don't put secrets or other sensitive data in
+them. They are never forwarded to the upstream provider.
+
+The resulting receipt (one JSON line in `inferrail-receipts.jsonl`):
+
+```json
+{
+  "receipt_id": "ir_1e6c916bac8940ca8a85",
+  "request_id": "req_62f023c643fd4f4285d1",
+  "timestamp": "2026-08-16T06:12:23.486756Z",
+  "route": "default",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "status": "success",
+  "prompt_tokens": 842,
+  "completion_tokens": 191,
+  "pricing": {
+    "input_usd_per_million": "0.15",
+    "output_usd_per_million": "0.60",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "verified_date": "2026-08-16"
+  },
+  "estimated_cost_usd": "0.000241",
+  "attributes": { "customer": "acme", "workflow": "contract-review" },
+  "total_latency_ms": 15.96,
+  "retry_count": 0
+}
+```
+
+After sending a few requests, turn receipts into a business-level answer:
+
+```bash
+inferrail report --by customer
+```
+
+```
+CUSTOMER        REQUESTS  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+acme            5         3368          764            $0.000964
+globex          2         1684          382            $0.000482
+(unattributed)  1         842           191            $0.000241
+--------------  --------  ------------  -------------  ----------  ------------
+TOTAL           8         5894          1337           $0.001687
+```
+
+`--by` also accepts `provider`, `model`, `route`, or any other attribute
+name you've sent. The `UNKNOWN COST` column counts successful requests
+whose pricing Inferrail couldn't resolve — it is never silently folded
+into the cost total as `$0`.
+
+**Where pricing comes from:** a small built-in catalog, independently
+verified against OpenAI's own published pricing (`gpt-4o-mini`, `gpt-4o`
+today — see `src/inferrail/pricing/builtin.py`), applied only when a
+provider is configured as `type: openai` with no custom `base_url` (i.e.
+verifiably OpenAI's real API — never guessed onto a same-shaped
+`openai_compatible` endpoint that could be running something else). For
+anything else, add a `pricing:` entry to `inferrail.yaml` — see
+`inferrail.example.yaml` for the shape. An unresolvable price leaves
+`pricing`/`estimated_cost_usd` as `null`, never a fabricated `$0`. All
+cost arithmetic uses `Decimal`, never `float`. See
+[docs/adr/0005-privacy-preserving-economic-receipts.md](docs/adr/0005-privacy-preserving-economic-receipts.md)
+for the full reasoning.
+
 ## Run the tests
 
 ```bash
@@ -157,6 +250,16 @@ counts, retry count. There is no field for prompt or response text, so
 enabling `jsonl` telemetry cannot leak message content even by accident.
 See [docs/adr/0003-no-payload-persistence-by-default.md](docs/adr/0003-no-payload-persistence-by-default.md).
 
+The same guarantee applies to economic receipts (`InferenceReceipt`,
+enabled by default — see [Cost and attribution](#cost-and-attribution)):
+provider, model, token counts, cost, pricing provenance, business
+attribution, latency, status. No field can hold prompt or response text.
+The one deliberate exception is `attributes` — caller-supplied business
+context you explicitly attached via `X-Inferrail-Attribute-*` headers is
+persisted verbatim, since it's metadata you declared, not content
+extracted from the conversation. See
+[docs/adr/0005-privacy-preserving-economic-receipts.md](docs/adr/0005-privacy-preserving-economic-receipts.md).
+
 What Inferrail does send off-machine: your configured provider (e.g.
 OpenAI) still receives the actual prompt, exactly as it would if you
 called it directly — Inferrail is a pass-through gateway to that provider,
@@ -185,6 +288,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 grep -c "MARKER-1234" inferrail-telemetry.jsonl   # 0, every time
 cat inferrail-telemetry.jsonl                     # latency, tokens, status — no message content
+
+grep -c "MARKER-1234" inferrail-receipts.jsonl    # 0, every time (receipts are on by default)
+cat inferrail-receipts.jsonl                      # tokens, cost, pricing — no message content
 ```
 
 ## Why "Inferrail"

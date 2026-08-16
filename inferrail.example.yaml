@@ -32,6 +32,27 @@ telemetry:
   sink: console   # console | jsonl | none
   # path: ./inferrail-telemetry.jsonl   # required when sink is "jsonl"
 
+# Economic receipts: one payload-free record per request (provider, model,
+# tokens, Decimal cost, pricing provenance, business attribution). See
+# README.md's "Cost and attribution" section and `inferrail report`.
+receipts:
+  sink: jsonl     # jsonl | none
+  path: ./inferrail-receipts.jsonl
+
+# Optional: add or override a per-model price. The built-in catalog
+# already covers a couple of real, independently-verified OpenAI models
+# (see src/inferrail/pricing/builtin.py) for providers with `type: openai`
+# and no custom base_url. Use this section for any other model, or to
+# correct a stale built-in price. `source` and `verified_date` are
+# required — Inferrail never persists a price it can't explain.
+# pricing:
+#   openai:
+#     gpt-4o-mini:
+#       input_usd_per_million: "0.15"
+#       output_usd_per_million: "0.60"
+#       source: "https://developers.openai.com/api/docs/pricing"
+#       verified_date: "2026-08-16"
+
 server:
   host: 127.0.0.1
   port: 8000

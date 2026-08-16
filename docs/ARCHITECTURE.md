@@ -9,15 +9,19 @@ src/inferrail/
 ├── providers/   Provider protocol + OpenAI-compatible adapter + registry
 ├── routing/     RoutingContext -> RoutingDecision (static v0.1)
 ├── telemetry/   InferenceEvent schema + pluggable sinks
-├── gateway/     FastAPI app: HTTP schemas, execution engine, routes
-└── cli/         `inferrail serve`, `inferrail config check`
+├── pricing/     Built-in + operator-override price catalog, PricingResolver
+├── receipts/    InferenceReceipt schema, Decimal cost calculator, sinks
+├── gateway/     FastAPI app: HTTP schemas, execution engine, routes,
+│                attribution header parsing
+└── cli/         `inferrail serve`, `inferrail config check`, `inferrail report`
 ```
 
 Each package has one job and depends only on the ones below it in this
-list (`gateway` depends on all of them; `errors` depends on nothing). No
-package reaches back into `gateway` — `providers`, `routing`, and
-`telemetry` are all usable and testable without FastAPI ever being
-imported.
+list (`gateway` depends on all of them; `errors` depends on nothing).
+`pricing` and `receipts` depend only on `config`/`errors`, the same
+dependency shape as `providers`/`routing`/`telemetry`. No package reaches
+back into `gateway` — everything below it is usable and testable without
+FastAPI ever being imported.
 
 ## Request lifecycle
 
@@ -51,11 +55,27 @@ InferenceEngine.execute (gateway/execution.py)
         +--> emit InferenceEvent to the configured TelemetrySink
         |     (always — on both success and failure)
         |
+        +--> build + emit InferenceReceipt to the configured ReceiptSink
+        |     (always — on both success and failure; see below)
+        |
         v
    HTTP response (200 on success; InferrailError subclasses are caught
    by a FastAPI exception handler in gateway/app.py and mapped to the
    appropriate status code + OpenAI-shaped error body)
 ```
+
+`gateway/attribution.py` extracts caller-supplied `X-Inferrail-Attribute-*`
+headers into a `dict[str, str]` before `InferenceEngine.execute` is
+called, and that dict is threaded through unchanged to wherever a receipt
+is built — it never enters `ChatCompletionRequest`/`NormalizedChatRequest`,
+so it cannot reach a provider.
+
+Receipt assembly (`receipts/builder.py`) is a small, separate step from
+both retry/telemetry and from `InferenceEngine` itself: given token usage
+(or `None`, on failure), it asks `PricingResolver.resolve(provider, model)`
+for a verified price, and if one exists, `receipts/calculator.py` computes
+a `Decimal` cost. Either lookup returning nothing leaves the receipt's
+`pricing`/`estimated_cost_usd` as `None` — never a fabricated cost.
 
 `InferenceEngine` is deliberately independent of FastAPI — it takes and
 returns plain pydantic models — so the full lifecycle above is tested in
@@ -107,6 +127,34 @@ The sink is a one-method `Protocol` (`emit(event) -> None`) specifically so
 a future sink — SQLite, an OpenTelemetry exporter, or an opt-in Inferrail
 Cloud sink — can be added without touching the execution engine. **No sink
 in this codebase transmits data off the local machine.**
+
+## The pricing and receipts boundary
+
+`pricing.resolver.PricingResolver.resolve(provider_name, model) ->
+PriceEntry | None` is a pure function of `inferrail.yaml` (its `providers:`
+and `pricing:` sections) — no runtime state, mirroring `Router.resolve`.
+It checks an operator override first, then a small built-in catalog
+(`pricing/builtin.py`) gated to providers verifiably running OpenAI's own
+API (`type: openai`, default `base_url`) — see
+`docs/adr/0005-privacy-preserving-economic-receipts.md` for why that gate
+exists. Anything it can't resolve is `None`.
+
+`InferenceReceipt` (`receipts/schema.py`) is deliberately a separate type
+from `InferenceEvent`, not an extension of it — see ADR 0005. Like
+`InferenceEvent`, it has no field capable of holding prompt or response
+content (`test_inference_receipt_has_no_payload_fields`), and one
+additional intentional exception: caller-supplied `attributes` **are**
+persisted, since they're business metadata the caller explicitly declared,
+not extracted from the prompt. `ReceiptSink` (`receipts/sinks.py`) is a
+one-method `Protocol`, same shape as `TelemetrySink`, with a JSONL and a
+null implementation in v0.1 — nothing here transmits data off the machine
+either.
+
+`inferrail report` (`cli/report.py`) reads that JSONL file back, tolerant
+of malformed or older-schema rows (skipped, not fatal), and aggregates by
+provider, model, route, or any attribution attribute name — pure functions
+independent of `argparse`, mirroring how `InferenceEngine` stays
+independent of FastAPI.
 
 ## OSS data plane vs. future hosted control plane
 

@@ -8,6 +8,8 @@ environment) happens separately in ``inferrail.providers.registry``.
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -74,6 +76,39 @@ class ServerConfig(BaseModel):
     port: int = Field(default=8000, gt=0, le=65535)
 
 
+class ReceiptsConfig(BaseModel):
+    """Where :class:`inferrail.receipts.schema.InferenceReceipt` records go.
+
+    Unlike telemetry (default: console), receipts default to a local JSONL
+    file: the whole point of a receipt is to be aggregated later by
+    ``inferrail report``, and console-only receipts can't be read back. See
+    docs/adr/0005-privacy-preserving-economic-receipts.md.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    sink: Literal["jsonl", "none"] = "jsonl"
+    path: str = "./inferrail-receipts.jsonl"
+
+
+class PriceEntry(BaseModel):
+    """A verified per-model price, with the provenance to audit it later.
+
+    Used both for the built-in catalog (`inferrail.pricing.builtin`) and
+    for operator overrides (`InferrailConfig.pricing`). `source` and
+    `verified_date` are mandatory in both cases — Inferrail never persists
+    a price it can't explain the origin of. Values are `Decimal`, not
+    `float`: money is never computed with binary floating point here.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    input_usd_per_million: Decimal = Field(gt=0)
+    output_usd_per_million: Decimal = Field(gt=0)
+    source: str
+    verified_date: date
+
+
 class InferrailConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -81,6 +116,10 @@ class InferrailConfig(BaseModel):
     routes: dict[str, RouteConfig]
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
+    # provider name -> model -> price override. Always wins over the
+    # built-in catalog; see inferrail.pricing.resolver.PricingResolver.
+    pricing: dict[str, dict[str, PriceEntry]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _routes_reference_known_providers(self) -> InferrailConfig:

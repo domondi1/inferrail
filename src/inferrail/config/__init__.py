@@ -1,7 +1,9 @@
 from inferrail.config.loader import load_config
 from inferrail.config.models import (
     InferrailConfig,
+    PriceEntry,
     ProviderConfig,
+    ReceiptsConfig,
     RouteConfig,
     ServerConfig,
     TelemetryConfig,
@@ -9,7 +11,9 @@ from inferrail.config.models import (
 
 __all__ = [
     "InferrailConfig",
+    "PriceEntry",
     "ProviderConfig",
+    "ReceiptsConfig",
     "RouteConfig",
     "ServerConfig",
     "TelemetryConfig",

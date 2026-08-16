@@ -17,6 +17,7 @@ def base_config_dict() -> dict[str, Any]:
             "default": {"provider": "openai", "model": "gpt-4o-mini"},
         },
         "telemetry": {"sink": "none"},
+        "receipts": {"sink": "none"},
     }
 
 
