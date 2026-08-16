@@ -11,6 +11,119 @@ without storing their prompts.
 not a finished product — see [what works today](#what-works-today) below
 and [docs/PRODUCT.md](docs/PRODUCT.md) for exact scope and non-goals.
 
+## Quickstart
+
+Requires Python 3.11+.
+
+```bash
+git clone <this-repo>
+cd inferrail
+pip install -e .
+```
+
+### Fastest — see the shape of it (no key, no network)
+
+```bash
+inferrail demo
+```
+
+Runs six canned requests through Inferrail's **real** `InferenceEngine` →
+`InferenceReceipt` → `inferrail report` pipeline, using a fake in-memory
+provider instead of a network call — no key, no signup, no cost, done in
+under a second. Every price and response it uses is clearly labeled
+**DEMO** data, not real provider billing.
+
+### Real — one request, a real cost
+
+```bash
+export OPENAI_API_KEY=sk-...
+inferrail try "Reply with one word: ready" --customer acme
+```
+
+No `inferrail.yaml`, no server, no curl, no HTTP headers. `inferrail try`
+sends one real request through the exact same `InferenceEngine`
+`inferrail serve` uses (OpenAI, `gpt-4o-mini` by default) and prints the
+response plus its economic receipt — measured token usage, a `Decimal`
+cost from verified pricing, your attribution, the receipt id, and an
+explicit statement of what was and wasn't persisted:
+
+```
+ready
+
+Receipt ir_670b20135cfe4bcb8f6f
+  Provider          openai
+  Model             gpt-4o-mini
+  Input tokens      12
+  Output tokens     1
+  Cost              $0.000002
+  Customer          acme
+  Prompt stored     no
+  Response stored   no
+
+Saved to ./inferrail-receipts.jsonl
+
+Next:
+  inferrail report --by customer
+```
+
+Attach more business context generically with repeatable `-a KEY=VALUE`
+(`--customer`/`--workflow` are just shorthand for `-a customer=...`/
+`-a workflow=...`):
+
+```bash
+inferrail try "Summarize this ticket" -a customer=acme -a environment=prod
+```
+
+No `OPENAI_API_KEY`? `inferrail try` tells you to run `inferrail demo`
+instead, rather than failing with a stack trace.
+
+### Application — run it as a gateway
+
+```bash
+inferrail serve --quickstart
+```
+
+Same defaults as `inferrail try` (OpenAI, `gpt-4o-mini`, receipts at
+`./inferrail-receipts.jsonl`), no `inferrail.yaml` required — every
+`/v1/chat/completions` request now produces the same kind of receipt
+`inferrail try` showed you above. `inferrail serve --quickstart` never
+writes a config file; it's in-memory defaults only.
+
+For a real deployment with explicit, checked-in configuration instead:
+
+```bash
+cp inferrail.example.yaml inferrail.yaml
+cp .env.example .env            # then edit .env with a real OPENAI_API_KEY
+inferrail config check          # validate without starting a server
+inferrail serve
+```
+
+See [Send requests through the gateway](#send-requests-through-the-gateway)
+for `curl`/attribution-header usage, and [Configure](#configure) for the
+full `inferrail.yaml` shape (multiple routes, retries, telemetry, pricing
+overrides).
+
+### Report — what is this costing me
+
+```bash
+inferrail report --by customer
+```
+
+```
+CUSTOMER        REQUESTS  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+acme            5         3368          764            $0.000964
+globex          2         1684          382            $0.000482
+(unattributed)  1         842           191            $0.000241
+--------------  --------  ------------  -------------  ----------  ------------
+TOTAL           8         5894          1337           $0.001687
+```
+
+`--by` also accepts `provider`, `model`, `route`, or any other attribute
+name you've sent. Works immediately after `inferrail try`/`inferrail serve
+--quickstart` (no `--config` needed — it reads the same default
+`./inferrail-receipts.jsonl`). See [Cost and attribution](#cost-and-attribution)
+for where pricing comes from and what `UNKNOWN COST` means.
+
 ## What works today
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
@@ -34,69 +147,18 @@ and [docs/PRODUCT.md](docs/PRODUCT.md) for exact scope and non-goals.
   [Cost and attribution](#cost-and-attribution) below.
 - `inferrail report --by <dimension>` — turns those receipts into an
   immediate, local answer to "what is this customer/workflow costing me".
+- A CLI: `inferrail demo` (offline walkthrough), `inferrail try` (one real
+  request, no config file), `inferrail serve` (the gateway, optionally
+  `--quickstart`), `inferrail config check`, `inferrail report`.
 
 **Not yet supported:** streaming, multi-provider intelligent routing, cost
 estimates for models outside the built-in catalog or an explicit
 `pricing:` override, budgets/spend limits, any provider that isn't
 OpenAI-compatible. Full list in [docs/PRODUCT.md](docs/PRODUCT.md).
 
-## Try it without an API key
+## Send requests through the gateway
 
-Want to see the shape of a receipt and `inferrail report` before you
-install a real provider key?
-
-```bash
-pip install -e .
-python examples/economic-receipts/run_demo.py
-```
-
-Runs six canned requests through the exact same `InferenceEngine` →
-`InferenceReceipt` → `inferrail report` pipeline as a real deployment,
-using a fake in-memory provider instead of a network call — no key, no
-signup, no cost, done in under a second. Every price and response it uses
-is clearly labeled demo data, not real provider billing. See
-[examples/economic-receipts](examples/economic-receipts) for exactly
-what's real and what's fake about it.
-
-The rest of this README is the real thing, against a real provider.
-
-## Install
-
-Requires Python 3.11+.
-
-```bash
-git clone <this-repo>
-cd inferrail
-pip install -e .
-```
-
-## Configure
-
-```bash
-cp inferrail.example.yaml inferrail.yaml
-cp .env.example .env
-```
-
-Edit `.env` and set a real `OPENAI_API_KEY`. `inferrail.yaml` only ever
-references the *name* of the environment variable holding a secret, never
-the secret itself — see that file for the full shape (providers, routes,
-telemetry, server).
-
-Validate your setup without starting a server:
-
-```bash
-inferrail config check
-```
-
-## Run
-
-```bash
-inferrail serve
-```
-
-By default this starts the gateway on `http://127.0.0.1:8000`.
-
-## Send your first request
+With `inferrail serve` (or `inferrail serve --quickstart`) running:
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
@@ -107,9 +169,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-`"model": "default"` refers to the `default` route in `inferrail.yaml`, not
-a provider's model id directly — Inferrail resolves it to whatever
-provider/model that route points at. See
+`"model": "default"` refers to the `default` route in `inferrail.yaml` (or
+the quickstart config), not a provider's model id directly — Inferrail
+resolves it to whatever provider/model that route points at. See
 [examples/basic_chat_request.py](examples/basic_chat_request.py) for a
 minimal Python client, and
 [docs/adr/0002-static-deterministic-routing.md](docs/adr/0002-static-deterministic-routing.md)
@@ -136,12 +198,9 @@ Every request also produces a local `InferenceEvent` on the telemetry sink
 configured in `inferrail.yaml` (`console` by default) — this is where
 you'd look to see latency, retries, and failures across requests.
 
-## Cost and attribution
-
-Every request also produces a local **`InferenceReceipt`** — appended by
-default to `./inferrail-receipts.jsonl` (`receipts.path` in
-`inferrail.yaml`). Attach business context with
-`X-Inferrail-Attribute-<Name>` headers:
+Attach business context with `X-Inferrail-Attribute-<Name>` headers — the
+HTTP-header equivalent of `inferrail try`'s `--customer`/`--workflow`/`-a`
+flags:
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
@@ -159,6 +218,41 @@ Any `X-Inferrail-Attribute-<Name>` header becomes a key in the receipt's
 `workflow` above are just examples). **Attribute values are persisted
 verbatim in the receipt** — don't put secrets or other sensitive data in
 them. They are never forwarded to the upstream provider.
+
+## Configure
+
+```bash
+cp inferrail.example.yaml inferrail.yaml
+cp .env.example .env
+```
+
+Edit `.env` and set a real `OPENAI_API_KEY`. `inferrail.yaml` only ever
+references the *name* of the environment variable holding a secret, never
+the secret itself — see that file for the full shape (providers, routes,
+telemetry, server).
+
+Validate your setup without starting a server:
+
+```bash
+inferrail config check
+```
+
+Then:
+
+```bash
+inferrail serve
+```
+
+By default this starts the gateway on `http://127.0.0.1:8000`. (No
+`inferrail.yaml` yet? `inferrail serve --quickstart` skips this whole
+section — see [Application](#application--run-it-as-a-gateway) above.)
+
+## Cost and attribution
+
+Every request also produces a local **`InferenceReceipt`** — appended by
+default to `./inferrail-receipts.jsonl` (`receipts.path` in
+`inferrail.yaml`, or the quickstart default of the same name for
+`inferrail try`/`inferrail serve --quickstart`).
 
 The resulting receipt (one JSON line in `inferrail-receipts.jsonl`):
 
@@ -186,26 +280,6 @@ The resulting receipt (one JSON line in `inferrail-receipts.jsonl`):
 }
 ```
 
-After sending a few requests, turn receipts into a business-level answer:
-
-```bash
-inferrail report --by customer
-```
-
-```
-CUSTOMER        REQUESTS  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
-acme            5         3368          764            $0.000964
-globex          2         1684          382            $0.000482
-(unattributed)  1         842           191            $0.000241
---------------  --------  ------------  -------------  ----------  ------------
-TOTAL           8         5894          1337           $0.001687
-```
-
-`--by` also accepts `provider`, `model`, `route`, or any other attribute
-name you've sent. The `UNKNOWN COST` column counts successful requests
-whose pricing Inferrail couldn't resolve — it is never silently folded
-into the cost total as `$0`.
-
 **Where pricing comes from:** a small built-in catalog, independently
 verified against OpenAI's own published pricing (`gpt-4o-mini`, `gpt-4o`
 today — see `src/inferrail/pricing/builtin.py`), applied only when a
@@ -214,8 +288,10 @@ verifiably OpenAI's real API — never guessed onto a same-shaped
 `openai_compatible` endpoint that could be running something else). For
 anything else, add a `pricing:` entry to `inferrail.yaml` — see
 `inferrail.example.yaml` for the shape. An unresolvable price leaves
-`pricing`/`estimated_cost_usd` as `null`, never a fabricated `$0`. All
-cost arithmetic uses `Decimal`, never `float`. See
+`pricing`/`estimated_cost_usd` as `null`, never a fabricated `$0` — `inferrail
+report`'s `UNKNOWN COST` column counts these separately rather than folding
+them into the cost total. All cost arithmetic uses `Decimal`, never
+`float`. See
 [docs/adr/0005-privacy-preserving-economic-receipts.md](docs/adr/0005-privacy-preserving-economic-receipts.md)
 for the full reasoning.
 
@@ -275,9 +351,9 @@ enabled by default — see [Cost and attribution](#cost-and-attribution)):
 provider, model, token counts, cost, pricing provenance, business
 attribution, latency, status. No field can hold prompt or response text.
 The one deliberate exception is `attributes` — caller-supplied business
-context you explicitly attached via `X-Inferrail-Attribute-*` headers is
-persisted verbatim, since it's metadata you declared, not content
-extracted from the conversation. See
+context you explicitly attached (via `inferrail try`'s flags or
+`X-Inferrail-Attribute-*` headers) is persisted verbatim, since it's
+metadata you declared, not content extracted from the conversation. See
 [docs/adr/0005-privacy-preserving-economic-receipts.md](docs/adr/0005-privacy-preserving-economic-receipts.md).
 
 What Inferrail does send off-machine: your configured provider (e.g.
@@ -312,6 +388,11 @@ cat inferrail-telemetry.jsonl                     # latency, tokens, status — 
 grep -c "MARKER-1234" inferrail-receipts.jsonl    # 0, every time (receipts are on by default)
 cat inferrail-receipts.jsonl                      # tokens, cost, pricing — no message content
 ```
+
+The same check works with `inferrail try "MARKER-1234-do-not-persist-me"` —
+no `inferrail.yaml` edit required, since `inferrail try` never persists
+telemetry by default (`telemetry.sink: none` in its quickstart config) and
+receipts are schema-limited the same way either path.
 
 ## Why "Inferrail"
 

@@ -79,7 +79,17 @@ inspectable config file and gives you a telemetry record for every request
   (never silently folded into the cost total as `$0`).
 - YAML config (`inferrail.yaml`) + environment variables for secrets, with
   loud validation errors
-- A CLI: `inferrail serve`, `inferrail config check`, `inferrail report`
+- A CLI: `inferrail serve` (`--quickstart` to skip `inferrail.yaml` and use
+  in-memory defaults), `inferrail config check`, `inferrail report`,
+  `inferrail demo` (offline, zero-key walkthrough of the receipt/report
+  pipeline using a fake provider), `inferrail try` (one real request
+  through the same `InferenceEngine` `inferrail serve` uses, no config
+  file required — needs `OPENAI_API_KEY`)
+- A configless quickstart path: `inferrail try` and `inferrail serve
+  --quickstart` both build the same `InferrailConfig` type `inferrail.yaml`
+  loads into, just from an in-memory default (OpenAI, `gpt-4o-mini`,
+  receipts at `./inferrail-receipts.jsonl`) instead of a file — not a
+  second config system, and it never silently writes a config file to disk
 - Optional shared-secret gateway auth: if `INFERRAIL_GATEWAY_TOKEN` is set,
   `/v1/chat/completions` requires a matching `Authorization: Bearer`
   header. Unset by default (localhost-dev mode) — see README's "Security"

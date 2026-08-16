@@ -85,7 +85,7 @@ def aggregate(receipts: list[InferenceReceipt], by: str) -> list[ReportGroup]:
     return sorted(groups.values(), key=lambda g: (-g.known_cost_usd, g.key))
 
 
-def _format_usd(value: Decimal) -> str:
+def format_usd(value: Decimal) -> str:
     """Format a cost keeping enough precision to be meaningful.
 
     Individual requests routinely cost a fraction of a cent — naively
@@ -114,7 +114,7 @@ def _cost_cell(group: ReportGroup) -> str:
     """
     if group.known_cost_usd == 0 and group.unknown_cost_requests > 0:
         return "unknown"
-    return _format_usd(group.known_cost_usd)
+    return format_usd(group.known_cost_usd)
 
 
 def format_table(groups: list[ReportGroup], by: str) -> str:

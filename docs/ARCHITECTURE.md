@@ -4,7 +4,8 @@
 
 ```
 src/inferrail/
-├── config/      YAML + env -> validated InferrailConfig (pydantic)
+├── config/      YAML + env -> validated InferrailConfig (pydantic), plus
+│                an in-memory quickstart config builder (same type/validation)
 ├── errors/      Small internal exception hierarchy
 ├── providers/   Provider protocol + OpenAI-compatible adapter + registry
 ├── routing/     RoutingContext -> RoutingDecision (static v0.1)
@@ -13,7 +14,8 @@ src/inferrail/
 ├── receipts/    InferenceReceipt schema, Decimal cost calculator, sinks
 ├── gateway/     FastAPI app: HTTP schemas, execution engine, routes,
 │                attribution header parsing
-└── cli/         `inferrail serve`, `inferrail config check`, `inferrail report`
+└── cli/         `inferrail serve` (+ `--quickstart`), `inferrail config
+                 check`, `inferrail report`, `inferrail demo`, `inferrail try`
 ```
 
 Each package has one job and depends only on the ones below it in this
@@ -82,6 +84,18 @@ returns plain pydantic models — so the full lifecycle above is tested in
 `tests/unit/test_gateway.py` via FastAPI's `TestClient`, and the pieces
 below it (`Router`, `OpenAIProvider`) are tested standalone with no HTTP
 server involved at all.
+
+That independence is also what makes `inferrail try` (`cli/try_cmd.py`)
+possible without a second inference stack: it builds the exact same
+`InferenceEngine`, from an in-memory quickstart `InferrailConfig`
+(`config/quickstart.py`), and calls `execute` directly — no FastAPI
+`TestClient`, no HTTP round-trip, no server process. The HTTP layer
+(`gateway/routes.py`, `gateway/app.py`) is one adapter in front of
+`InferenceEngine`; the CLI is another. `inferrail demo` (`cli/demo.py`)
+follows the same shape one level further out, swapping in a fake
+in-memory `Provider` instead of `OpenAIProvider` so it needs neither a key
+nor the network, while still going through the real `Router`,
+`PricingResolver`, receipt assembly, and `ReceiptSink`.
 
 ## The provider boundary
 
