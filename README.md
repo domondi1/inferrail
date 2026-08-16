@@ -16,7 +16,7 @@ and [docs/PRODUCT.md](docs/PRODUCT.md) for exact scope and non-goals.
 Requires Python 3.11+.
 
 ```bash
-git clone <this-repo>
+git clone [<this-repo>](https://github.com/domondi1/inferrail.git)
 cd inferrail
 pip install -e .
 ```
