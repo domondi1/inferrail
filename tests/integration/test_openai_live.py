@@ -4,7 +4,7 @@ Skipped unless OPENAI_API_KEY is present in the environment. Never run as
 part of the default automated test suite / CI — see docs/ARCHITECTURE.md
 and tests/README expectations in docs/PRODUCT.md. Run explicitly with:
 
-    OPENAI_API_KEY=sk-... pytest tests/integration -m integration
+    OPENAI_API_KEY=<your-openai-api-key> pytest tests/integration -m integration
 """
 
 from __future__ import annotations

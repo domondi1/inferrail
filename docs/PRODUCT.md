@@ -2,6 +2,11 @@
 
 > This file is the authoritative source for exact current scope.
 
+**Developer Preview · v0.1.0.** The scope below is fully implemented and
+tested, but nothing is stable yet — CLI flags, `inferrail.yaml`'s shape,
+and receipt/telemetry JSON fields may change without notice before v1.0.
+See README.md's status note.
+
 ## What it is
 
 Inferrail is an open inference control plane: infrastructure that sits
@@ -135,6 +140,38 @@ Not a hidden limitation — these are the honest edges of v0.1:
 - A web dashboard — `inferrail report` is a local CLI table, deliberately
 - Any hosted/cloud component — see "OSS vs. hosted" below
 
+## Verifying privacy claims yourself
+
+README.md's "Privacy" section shows a quick `inferrail try`-based check.
+The same claim — that Inferrail never persists prompt or response content
+— can be checked against a running gateway:
+
+In `inferrail.yaml`, set:
+
+```yaml
+telemetry:
+  sink: jsonl
+  path: inferrail-telemetry.jsonl
+```
+
+Restart `inferrail serve`, then:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "default", "messages": [{"role": "user", "content": "MARKER-1234-do-not-persist-me"}]}'
+
+grep -c "MARKER-1234" inferrail-telemetry.jsonl   # 0, every time
+cat inferrail-telemetry.jsonl                     # latency, tokens, status — no message content
+
+grep -c "MARKER-1234" inferrail-receipts.jsonl    # 0, every time (receipts are on by default)
+cat inferrail-receipts.jsonl                      # tokens, cost, pricing — no message content
+```
+
+This checks only what Inferrail itself writes to disk; your provider
+still receives the real prompt either way — Inferrail is a pass-through
+gateway to it, not a privacy boundary against it.
+
 ## Long-term direction
 
 The progression Inferrail is built to support, in order, is:
@@ -166,4 +203,4 @@ Inferrail is not attempting to become:
 - An evaluation platform (though evaluation could plausibly build on top of
   its telemetry later)
 - A hosted-only product — the data plane must remain genuinely useful with
-  zero cloud dependency
+  no Inferrail-hosted service required

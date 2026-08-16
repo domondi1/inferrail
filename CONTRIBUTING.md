@@ -10,7 +10,7 @@ boundaries (see `docs/adr/`).
 ## Development setup
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/domondi1/inferrail.git
 cd inferrail
 pip install -e ".[dev]"
 ```
@@ -36,7 +36,7 @@ that way; don't make the default test suite depend on real credentials.
   schema structurally has no field for it (see
   `docs/adr/0003-no-payload-persistence-by-default.md`). Don't add one
   without a deliberate, separately-reviewed decision.
-- **The OSS data plane has zero dependency on any hosted service** (see
+- **The OSS data plane requires no Inferrail-hosted service** (see
   `docs/adr/0004-data-plane-control-plane-boundary.md`). Don't add a code
   path that calls out to an Inferrail-operated backend.
 - **Unsupported request features fail loudly, never silently** (e.g.
