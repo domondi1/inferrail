@@ -14,7 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from inferrail.cli.report import run_report
 from inferrail.config.loader import load_config
@@ -118,7 +118,15 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    load_dotenv()
+    # find_dotenv(usecwd=True): without it, python-dotenv locates .env
+    # relative to this installed module's own file path, not the directory
+    # the user is actually running `inferrail` from — which only happens to
+    # work today for an editable install invoked from the repo root, and
+    # silently fails to find `.env` anywhere else (a different cwd, a
+    # non-editable install). The failure mode is a confusing "environment
+    # variable ... missing or empty" error even though `.env` is sitting
+    # right there.
+    load_dotenv(find_dotenv(usecwd=True))
 
     parser = _build_parser()
     args = parser.parse_args(argv)

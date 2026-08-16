@@ -40,6 +40,26 @@ estimates for models outside the built-in catalog or an explicit
 `pricing:` override, budgets/spend limits, any provider that isn't
 OpenAI-compatible. Full list in [docs/PRODUCT.md](docs/PRODUCT.md).
 
+## Try it without an API key
+
+Want to see the shape of a receipt and `inferrail report` before you
+install a real provider key?
+
+```bash
+pip install -e .
+python examples/economic-receipts/run_demo.py
+```
+
+Runs six canned requests through the exact same `InferenceEngine` →
+`InferenceReceipt` → `inferrail report` pipeline as a real deployment,
+using a fake in-memory provider instead of a network call — no key, no
+signup, no cost, done in under a second. Every price and response it uses
+is clearly labeled demo data, not real provider billing. See
+[examples/economic-receipts](examples/economic-receipts) for exactly
+what's real and what's fake about it.
+
+The rest of this README is the real thing, against a real provider.
+
 ## Install
 
 Requires Python 3.11+.
