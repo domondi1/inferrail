@@ -29,3 +29,8 @@ jobs:
 
       - name: Test (pytest, no external credentials required)
         run: pytest
+
+      - name: Check openapi.json is up to date
+        run: |
+          python scripts/generate_openapi.py
+          git diff --exit-code openapi.json

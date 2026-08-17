@@ -32,15 +32,45 @@ async def _require_gateway_token(
         )
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    operation_id="health",
+    summary="Liveness check",
+    description="Always returns 200 with {\"status\": \"ok\"} once the process is up. "
+    "Does not verify provider connectivity or configuration validity — see "
+    "`inferrail config check` for that.",
+    responses={200: {"content": {"application/json": {"example": {"status": "ok"}}}}},
+)
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.post(
     "/v1/chat/completions",
+    operation_id="createChatCompletion",
+    summary="Create a chat completion",
+    description="OpenAI-compatible `/v1/chat/completions`, for the subset of the request "
+    "shape Inferrail currently supports (see docs/PRODUCT.md): no `stream: true`, no "
+    "`n != 1`, no tool calls, single string message content. `model` selects a named "
+    "route from `inferrail.yaml`, not a provider model id directly (docs/adr/0002). "
+    "Optional `X-Inferrail-Attribute-<Name>` headers attach business attribution "
+    "(e.g. `X-Inferrail-Attribute-Customer: acme`), persisted on the resulting "
+    "payload-free receipt and never forwarded upstream. The response is OpenAI-shaped "
+    "plus a non-standard `inferrail` metadata block; standard OpenAI clients ignore it.",
     response_model=ChatCompletionResponse,
     dependencies=[Depends(_require_gateway_token)],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "model": "default",
+                        "messages": [{"role": "user", "content": "Say hello in five words."}],
+                    }
+                }
+            }
+        }
+    },
 )
 async def chat_completions(
     payload: ChatCompletionRequest, request: Request
