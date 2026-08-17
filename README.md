@@ -31,13 +31,37 @@ Longer compatibility guidance may remain in
 
 ## Quickstart
 
-Requires Python 3.11+.
+Requires Python 3.11+. Installs, starts a gateway with a freshly
+generated auth token (no placeholder to fill in, no `OPENAI_API_KEY`
+needed for this step), verifies it's up via `/health`, then stops it.
+Idempotent — safe to run twice.
 
 ```bash
-git clone https://github.com/domondi1/inferrail.git
-cd inferrail
+git clone https://github.com/domondi1/inferrail.git && cd inferrail
 pip install -e .
+
+export INFERRAIL_GATEWAY_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+inferrail serve --quickstart > /tmp/inferrail-quickstart.log 2>&1 &
+INFERRAIL_PID=$!
+for i in $(seq 1 20); do
+  curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1 && break
+  sleep 0.25
+done
+if curl -sf http://127.0.0.1:8000/health; then
+  echo "Inferrail is up."
+  kill "$INFERRAIL_PID"
+else
+  echo "Inferrail failed to start — see /tmp/inferrail-quickstart.log" >&2
+  kill "$INFERRAIL_PID" 2>/dev/null
+  exit 1
+fi
 ```
+
+That proves the install and the gateway process start correctly — it
+doesn't yet show Inferrail's actual point (cost attribution), since that
+needs either a real provider key or the offline demo immediately below.
+
+## Try it interactively
 
 ### See the magic moment (no key, no network)
 
