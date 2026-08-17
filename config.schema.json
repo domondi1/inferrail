@@ -1,0 +1,236 @@
+{
+  "$defs": {
+    "PriceEntry": {
+      "additionalProperties": false,
+      "description": "A verified per-model price, with the provenance to audit it later.\n\nUsed both for the built-in catalog (`inferrail.pricing.builtin`) and\nfor operator overrides (`InferrailConfig.pricing`). `source` and\n`verified_date` are mandatory in both cases \u2014 Inferrail never persists\na price it can't explain the origin of. Values are `Decimal`, not\n`float`: money is never computed with binary floating point here.",
+      "properties": {
+        "input_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Input Usd Per Million"
+        },
+        "output_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Output Usd Per Million"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "verified_date": {
+          "format": "date",
+          "title": "Verified Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_usd_per_million",
+        "output_usd_per_million",
+        "source",
+        "verified_date"
+      ],
+      "title": "PriceEntry",
+      "type": "object"
+    },
+    "ProviderConfig": {
+      "additionalProperties": false,
+      "description": "A named upstream inference provider.\n\n``type: openai`` and ``type: openai_compatible`` currently resolve to\nthe same adapter (:class:`inferrail.providers.openai.OpenAIProvider`);\nthe distinction exists so config reads clearly and so a future\nnon-OpenAI-shaped provider can be added as a new ``type`` without\ntouching this schema's shape.",
+      "properties": {
+        "api_key_env": {
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "type": {
+          "enum": [
+            "openai",
+            "openai_compatible"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "api_key_env"
+      ],
+      "title": "ProviderConfig",
+      "type": "object"
+    },
+    "ReceiptsConfig": {
+      "additionalProperties": false,
+      "description": "Where :class:`inferrail.receipts.schema.InferenceReceipt` records go.\n\nUnlike telemetry (default: console), receipts default to a local JSONL\nfile: the whole point of a receipt is to be aggregated later by\n``inferrail report``, and console-only receipts can't be read back. See\ndocs/adr/0005-privacy-preserving-economic-receipts.md.",
+      "properties": {
+        "path": {
+          "default": "./inferrail-receipts.jsonl",
+          "title": "Path",
+          "type": "string"
+        },
+        "sink": {
+          "default": "jsonl",
+          "enum": [
+            "jsonl",
+            "none"
+          ],
+          "title": "Sink",
+          "type": "string"
+        }
+      },
+      "title": "ReceiptsConfig",
+      "type": "object"
+    },
+    "RouteConfig": {
+      "additionalProperties": false,
+      "description": "A named route: what a client selects via the request's ``model`` field.",
+      "properties": {
+        "max_retries": {
+          "default": 0,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "RouteConfig",
+      "type": "object"
+    },
+    "ServerConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8000,
+          "exclusiveMinimum": 0,
+          "maximum": 65535,
+          "title": "Port",
+          "type": "integer"
+        }
+      },
+      "title": "ServerConfig",
+      "type": "object"
+    },
+    "TelemetryConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "sink": {
+          "default": "console",
+          "enum": [
+            "console",
+            "jsonl",
+            "none"
+          ],
+          "title": "Sink",
+          "type": "string"
+        }
+      },
+      "title": "TelemetryConfig",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pricing": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "$ref": "#/$defs/PriceEntry"
+        },
+        "type": "object"
+      },
+      "title": "Pricing",
+      "type": "object"
+    },
+    "providers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderConfig"
+      },
+      "title": "Providers",
+      "type": "object"
+    },
+    "receipts": {
+      "$ref": "#/$defs/ReceiptsConfig"
+    },
+    "routes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RouteConfig"
+      },
+      "title": "Routes",
+      "type": "object"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerConfig"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/TelemetryConfig"
+    }
+  },
+  "required": [
+    "providers",
+    "routes"
+  ],
+  "title": "Inferrail configuration (inferrail.yaml)",
+  "type": "object"
+}

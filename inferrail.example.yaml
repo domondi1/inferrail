@@ -1,8 +1,15 @@
+# yaml-language-server: $schema=./config.schema.json
+#
 # Copy to inferrail.yaml and adjust. inferrail.yaml is gitignored by default
 # since real deployments often add environment-specific detail here.
 #
 # Secrets are never stored in this file — only the *name* of the
 # environment variable that holds each secret.
+#
+# config.schema.json (generated from InferrailConfig, see
+# scripts/generate_config_schema.py) is a real JSON Schema an editor or
+# agent can validate against, or generate a config from directly, without
+# reading this comment.
 
 providers:
   openai:
