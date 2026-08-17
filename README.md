@@ -239,6 +239,40 @@ resolution order:
 [docs/PRODUCT.md](docs/PRODUCT.md#cost-and-receipts); full reasoning:
 [docs/adr/0005](docs/adr/0005-privacy-preserving-economic-receipts.md).
 
+## For agents
+
+This repo is structured for agent consumption as well as human use — see
+`llms.txt`, `openapi.json`, and `config.schema.json` at the repo root.
+
+An MCP server (`inferrail-mcp/`) exposes the local receipt ledger to any
+MCP-aware agent — Claude Code, Claude Desktop, Cursor — as two read-only
+tools: `get_spend` (query attributed cost by customer/model/route/time
+window) and `get_health` (gateway reachability + most recent receipt).
+Neither tool can execute inference or spend provider budget. See
+[inferrail-mcp/README.md](inferrail-mcp/README.md) for the exact
+contract.
+
+```bash
+pip install -e ".[mcp]"
+```
+
+```json
+{
+  "mcpServers": {
+    "inferrail": {
+      "command": "inferrail-mcp"
+    }
+  }
+}
+```
+
+- **Claude Code**: add the block above to `.mcp.json` in the project
+  root, or run `claude mcp add inferrail -- inferrail-mcp`.
+- **Claude Desktop**: add it to `claude_desktop_config.json` (Settings →
+  Developer → Edit Config).
+- **Cursor**: add it to `.cursor/mcp.json` in the project root, or via
+  Cursor Settings → MCP.
+
 ## Security
 
 Inferrail is a **local development gateway by default**: it binds to

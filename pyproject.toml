@@ -49,12 +49,16 @@ dev = [
     "mypy>=1.9",
     "types-PyYAML",
 ]
+mcp = [
+    "mcp>=1.0",
+]
 
 [project.scripts]
 inferrail = "inferrail.cli.main:main"
+inferrail-mcp = "inferrail_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/inferrail"]
+packages = ["src/inferrail", "inferrail-mcp/src/inferrail_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -72,8 +76,8 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["inferrail"]
-mypy_path = "src"
+packages = ["inferrail", "inferrail_mcp"]
+mypy_path = "src:inferrail-mcp/src"
 strict = true
 disallow_untyped_defs = true
 warn_unused_ignores = true
