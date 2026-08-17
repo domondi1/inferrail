@@ -1,0 +1,37 @@
+# Inferrail
+
+> Inferrail is an open-source, self-hosted, OpenAI-compatible gateway that
+> measures the cost of every LLM request and attributes it to the customer,
+> workflow, or feature that drove it — without ever storing the prompt or
+> response. Point your app's OpenAI client at Inferrail instead of directly
+> at your provider, and every call produces a payload-free economic receipt:
+> verified pricing, measured token usage, and whatever business attribution
+> you attach. Apache-2.0 licensed. Self-hosted with zero dependency on any
+> Inferrail-operated service.
+
+## Docs
+
+- [README](https://github.com/domondi1/inferrail/blob/main/README.md): quickstart, install, configuration, privacy verification
+- [Product scope](https://github.com/domondi1/inferrail/blob/main/docs/PRODUCT.md): exact current scope — what works, explicit non-goals
+- [Architecture](https://github.com/domondi1/inferrail/blob/main/docs/ARCHITECTURE.md): package layout, request lifecycle
+- [Engineering principles](https://github.com/domondi1/inferrail/blob/main/docs/PRINCIPLES.md): the durable rules behind the design
+- [Architecture decision records](https://github.com/domondi1/inferrail/tree/main/docs/adr): why specific structural choices were made
+
+## API
+
+- [OpenAPI 3.1 specification](https://github.com/domondi1/inferrail/blob/main/openapi.json): the full `/v1/chat/completions` and `/health` contract, generated from the live app
+- [Config JSON Schema](https://github.com/domondi1/inferrail/blob/main/config.schema.json): generate a valid `inferrail.yaml` without guessing
+- [Error codes](https://github.com/domondi1/inferrail/blob/main/ERRORS.md): every stable `INFERRAIL_E###` code with a remediation hint
+
+## Agent tools
+
+- [inferrail-mcp](https://github.com/domondi1/inferrail/tree/main/inferrail-mcp): MCP server (stdio) exposing `get_spend` (query attributed cost) and `get_health` (gateway reachability + last receipt) — read-only, cannot execute inference or spend provider budget
+
+## Examples
+
+- [Basic chat request](https://github.com/domondi1/inferrail/blob/main/examples/basic_chat_request.py)
+
+## Optional
+
+- [Security policy](https://github.com/domondi1/inferrail/blob/main/SECURITY.md)
+- [Contributing](https://github.com/domondi1/inferrail/blob/main/CONTRIBUTING.md)
