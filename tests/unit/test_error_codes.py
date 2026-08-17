@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from inferrail import errors as errors_module
@@ -56,12 +57,19 @@ def test_docs_url_anchors_match_generated_errors_md() -> None:
         assert url.endswith(f"#{code.code.lower()}")
 
 
-def test_routing_error_resolves_to_e007_end_to_end_over_http() -> None:
+def test_routing_error_resolves_to_e007_end_to_end_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # code_for() unit-level correctness is necessary but not sufficient —
     # this proves the code actually reaches the HTTP error body a real
-    # caller sees, through gateway/app.py's exception handler.
+    # caller sees, through gateway/app.py's exception handler. Both cases
+    # below fail before any provider network call, but building the app
+    # still eagerly constructs the OpenAI provider (checking for a
+    # present, non-empty key, not a valid one) — see
+    # inferrail.providers.registry.build_providers.
     from inferrail.config.quickstart import build_quickstart_config
 
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     app = create_app(build_quickstart_config(telemetry_sink="none"))
     client = TestClient(app)
 
@@ -77,9 +85,12 @@ def test_routing_error_resolves_to_e007_end_to_end_over_http() -> None:
     assert body["error"]["docs_url"].endswith("#inferrail_e007")
 
 
-def test_unsupported_stream_resolves_to_e006_end_to_end_over_http() -> None:
+def test_unsupported_stream_resolves_to_e006_end_to_end_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from inferrail.config.quickstart import build_quickstart_config
 
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     app = create_app(build_quickstart_config(telemetry_sink="none"))
     client = TestClient(app)
 
