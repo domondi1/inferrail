@@ -39,3 +39,8 @@ jobs:
         run: |
           python scripts/generate_config_schema.py
           git diff --exit-code config.schema.json
+
+      - name: Check ERRORS.md is up to date
+        run: |
+          python scripts/generate_errors_md.py
+          git diff --exit-code ERRORS.md

@@ -32,6 +32,7 @@ from inferrail.errors import (
     RoutingError,
     UnsupportedFeatureError,
 )
+from inferrail.errors.codes import code_for, docs_url_for
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.routes import router as api_router
 from inferrail.gateway.schemas import ErrorDetail, ErrorResponse
@@ -103,7 +104,16 @@ def create_app(config: InferrailConfig) -> FastAPI:
         # back to the same caller whose content this is, so it may retain
         # full detail.
         _logger.warning("request failed with %s: %s", type(exc).__name__, exc.safe_summary)
-        body = ErrorResponse(error=ErrorDetail(message=str(exc), type=type(exc).__name__))
+        error_code = code_for(exc)
+        body = ErrorResponse(
+            error=ErrorDetail(
+                message=str(exc),
+                type=type(exc).__name__,
+                code=error_code.code,
+                remediation=error_code.remediation,
+                docs_url=docs_url_for(error_code.code),
+            )
+        )
         return JSONResponse(status_code=status, content=body.model_dump())
 
     return app

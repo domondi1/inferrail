@@ -80,7 +80,13 @@ class ChatCompletionResponse(BaseModel):
 class ErrorDetail(BaseModel):
     message: str
     type: str
+    # Stable, machine-readable identifier (e.g. "INFERRAIL_E007") — see
+    # errors/codes.py. Never None in practice for a v0.1 InferrailError;
+    # optional only so a non-InferrailError failure (should not happen,
+    # but see gateway/app.py's fallback) doesn't need to fabricate one.
     code: str | None = None
+    remediation: str | None = None
+    docs_url: str | None = None
 
 
 class ErrorResponse(BaseModel):
