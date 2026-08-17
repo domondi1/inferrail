@@ -1,11 +1,16 @@
 # Inferrail
 
-Inferrail is an open inference control plane: an OpenAI-compatible gateway
-that sits in front of your LLM provider(s), so routing, retries, and
-per-request telemetry live in configuration instead of scattered through
-application code — and turns every execution into a payload-free economic
-receipt, so you can see what each customer or workflow is costing you
-without storing their prompts.
+[![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Status: Developer Preview](https://img.shields.io/badge/status-developer%20preview-orange.svg)](docs/PRODUCT.md)
+
+Inferrail is an open-source, self-hosted, OpenAI-compatible gateway that
+measures the cost of every LLM request and attributes it to the customer,
+workflow, or feature that drove it — without ever storing the prompt or
+response. Point your app's OpenAI client at Inferrail instead of directly
+at your provider, and every call produces a payload-free economic receipt:
+verified pricing, measured token usage, and whatever business attribution
+you attach.
 
 **The problem:** if your app calls an LLM provider on behalf of different
 customers, workflows, or features, you probably know your total bill —
@@ -278,10 +283,10 @@ the curl + `telemetry.sink: jsonl` walkthrough.
 
 ## Why "Inferrail"
 
-The rails on which AI inference runs. See
-[docs/PRODUCT.md](docs/PRODUCT.md) for the full product thesis and
-long-term direction, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
-how the pieces fit together.
+The rails on which AI inference runs. v0.1 is a self-hosted gateway; the
+long-term thesis — an inference control plane — is in
+[docs/PRODUCT.md](docs/PRODUCT.md), and how the pieces fit together in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Contributing and tests
 

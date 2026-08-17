@@ -5,11 +5,23 @@ build-backend = "hatchling.build"
 [project]
 name = "inferrail"
 version = "0.1.0"
-description = "Open inference control plane: an OpenAI-compatible gateway for routing, observing, and measuring AI inference."
+description = "Self-hosted, OpenAI-compatible LLM gateway with per-request cost attribution and payload-free receipts."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Inferrail contributors" }]
+keywords = [
+    "llm",
+    "openai",
+    "llm-gateway",
+    "openai-compatible",
+    "inference-gateway",
+    "cost-attribution",
+    "cost-tracking",
+    "llm-observability",
+    "self-hosted",
+    "developer-tools",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",

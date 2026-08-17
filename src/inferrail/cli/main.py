@@ -33,7 +33,8 @@ from inferrail.providers.registry import build_providers
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="inferrail", description="Inferrail: an open inference control plane."
+        prog="inferrail",
+        description="Inferrail: an OpenAI-compatible LLM gateway with cost attribution.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
