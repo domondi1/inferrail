@@ -43,20 +43,24 @@ def test_serve_quickstart_needs_no_inferrail_yaml(
     assert "quickstart defaults" in out
 
 
-def test_serve_quickstart_still_requires_the_api_key(
+def test_serve_quickstart_starts_without_the_api_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     _no_real_server: list[dict[str, Any]],
 ) -> None:
+    # The server (and /health) must come up even before OPENAI_API_KEY is
+    # configured — a missing key only matters once a request actually
+    # reaches that provider (providers/openai.py's OpenAIProvider.complete),
+    # not at startup. See providers/registry.py's require_keys parameter.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     result = main(["serve", "--quickstart"])
 
-    assert result == 1
-    assert _no_real_server == []
-    assert "OPENAI_API_KEY" in capsys.readouterr().err
+    assert result == 0
+    assert len(_no_real_server) == 1
+    assert capsys.readouterr().err == ""
 
 
 def test_serve_without_quickstart_flag_is_unchanged(

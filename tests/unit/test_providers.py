@@ -93,6 +93,25 @@ async def test_complete_server_error_is_retryable() -> None:
     assert exc_info.value.retryable is True
 
 
+async def test_complete_raises_authentication_error_when_no_api_key_configured() -> None:
+    # Constructed with an empty key — the state OpenAIProvider ends up in
+    # when registry.build_providers(require_keys=False) tolerates a missing
+    # secret at server startup (gateway/app.py). The check must happen here,
+    # locally, before any network call — a handler that gets invoked at all
+    # fails this test.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call should be made without an API key")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    provider = OpenAIProvider(
+        name="openai", api_key="", base_url="https://example.invalid/v1", client=client
+    )
+
+    with pytest.raises(AuthenticationError, match="no API key configured"):
+        await provider.complete(_request(), timeout=5)
+
+
 async def test_complete_timeout() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("timed out")

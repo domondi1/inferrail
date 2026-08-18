@@ -61,7 +61,7 @@ def _make_client(
     provider: FakeProvider,
     telemetry: InMemoryTelemetrySink | None = None,
 ) -> TestClient:
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": provider})
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
     if telemetry is not None:
         monkeypatch.setattr(app_module, "build_telemetry_sink", lambda cfg: telemetry)
     app = app_module.create_app(config)
@@ -270,7 +270,7 @@ def test_telemetry_never_persists_prompt_content_by_default(
             )
         ]
     )
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": provider})
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
     app = app_module.create_app(config)
     client = TestClient(app)
 

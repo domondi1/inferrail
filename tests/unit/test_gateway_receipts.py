@@ -61,7 +61,7 @@ def _make_client(
     provider: FakeProvider,
     receipts: InMemoryReceiptSink,
 ) -> TestClient:
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": provider})
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
     monkeypatch.setattr(app_module, "build_receipt_sink", lambda cfg: receipts)
     app = app_module.create_app(config)
     return TestClient(app)
@@ -191,7 +191,9 @@ def test_receipts_never_persist_prompt_content(
     config_dict["receipts"] = {"sink": "jsonl", "path": str(receipts_path)}
     config = InferrailConfig.model_validate(config_dict)
 
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": FakeProvider()})
+    monkeypatch.setattr(
+        app_module, "build_providers", lambda cfg, **_kw: {"openai": FakeProvider()}
+    )
     app = app_module.create_app(config)
     client = TestClient(app)
 
@@ -221,7 +223,7 @@ def test_receipts_never_persist_response_content(
             )
         ]
     )
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": provider})
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
     app = app_module.create_app(config)
     client = TestClient(app)
 
@@ -291,7 +293,9 @@ def test_response_still_succeeds_when_receipt_sink_write_fails(
         raise PermissionError("simulated permission denied")
 
     monkeypatch.setattr(Path, "open", _raise_open)
-    monkeypatch.setattr(app_module, "build_providers", lambda cfg: {"openai": FakeProvider()})
+    monkeypatch.setattr(
+        app_module, "build_providers", lambda cfg, **_kw: {"openai": FakeProvider()}
+    )
     app = app_module.create_app(config)
     client = TestClient(app)
 

@@ -8,24 +8,33 @@ from inferrail.providers.base import Provider
 from inferrail.providers.openai import OpenAIProvider
 
 
-def build_providers(config: InferrailConfig) -> dict[str, Provider]:
+def build_providers(config: InferrailConfig, *, require_keys: bool = True) -> dict[str, Provider]:
     """Construct a runnable :class:`Provider` for every configured provider.
 
     This is where secrets are resolved from the environment, which is why
-    it's separate from config *parsing*: `inferrail config check` can
-    validate the shape of ``inferrail.yaml`` and then call this to confirm
-    every referenced secret is actually present, with one clear error per
-    missing variable.
+    it's separate from config *parsing*. Two callers, two needs:
+
+    - `inferrail config check` uses the default ``require_keys=True`` to
+      validate the shape of ``inferrail.yaml`` and then confirm every
+      referenced secret is actually present, with one clear error per
+      missing variable — that command's entire job is to fail loudly here.
+    - The gateway (`gateway/app.py:create_app`) uses ``require_keys=False``
+      so the server (and ``/health``) can start even before a secret is
+      configured — a missing key only becomes an error when a request
+      actually reaches that provider, via
+      :meth:`inferrail.providers.openai.OpenAIProvider.complete`.
     """
     providers: dict[str, Provider] = {}
     for provider_name, provider_config in config.providers.items():
-        providers[provider_name] = _build_one(provider_name, provider_config)
+        providers[provider_name] = _build_one(
+            provider_name, provider_config, require_key=require_keys
+        )
     return providers
 
 
-def _build_one(name: str, provider_config: ProviderConfig) -> Provider:
-    api_key = os.environ.get(provider_config.api_key_env)
-    if not api_key:
+def _build_one(name: str, provider_config: ProviderConfig, *, require_key: bool) -> Provider:
+    api_key = os.environ.get(provider_config.api_key_env) or ""
+    if require_key and not api_key:
         raise ConfigurationError(
             f"provider '{name}' requires environment variable "
             f"'{provider_config.api_key_env}' to be set, but it is missing or empty"

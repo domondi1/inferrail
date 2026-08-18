@@ -35,6 +35,7 @@ class OpenAIProvider:
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
         # `client` is injectable so tests can pass an httpx.MockTransport
         # instead of hitting the network, while exercising the exact same
         # request-building and error-normalization code paths. The auth
@@ -46,6 +47,19 @@ class OpenAIProvider:
     async def complete(
         self, request: NormalizedChatRequest, *, timeout: float
     ) -> NormalizedChatResponse:
+        # `registry.build_providers(require_keys=False)` lets the gateway
+        # start with no key configured for this provider (so /health comes
+        # up regardless); the deferred check happens here, at the point an
+        # actual inference request reaches it — before any network call,
+        # so a missing key fails fast and locally rather than as an
+        # OpenAI-side 401 round trip.
+        if not self._api_key:
+            raise AuthenticationError(
+                f"provider '{self.name}' has no API key configured: set the "
+                "environment variable referenced by this provider's "
+                "api_key_env before sending a request through it",
+                provider=self.name,
+            )
         payload: dict[str, object] = {
             "model": request.model,
             "messages": [m.model_dump() for m in request.messages],

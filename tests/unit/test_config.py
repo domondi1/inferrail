@@ -100,6 +100,20 @@ def test_build_providers_succeeds_when_api_key_present(
     assert set(providers) == {"openai"}
 
 
+def test_build_providers_require_keys_false_tolerates_missing_key(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    # require_keys=False is what gateway/app.py:create_app uses, so the
+    # server can start (and serve /health) before a secret is configured —
+    # see providers/openai.py's OpenAIProvider.complete for where a
+    # still-missing key is caught instead, at actual request time.
+    monkeypatch.delenv("TEST_OPENAI_API_KEY", raising=False)
+
+    providers = build_providers(base_config, require_keys=False)
+
+    assert set(providers) == {"openai"}
+
+
 def test_receipts_defaults_to_jsonl_when_omitted(base_config_dict: dict[str, Any]) -> None:
     del base_config_dict["receipts"]
 

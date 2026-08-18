@@ -69,7 +69,12 @@ def _status_for(exc: InferrailError) -> int:
 
 
 def create_app(config: InferrailConfig) -> FastAPI:
-    providers: dict[str, Provider] = build_providers(config)
+    # require_keys=False: the server (and /health) must be able to start
+    # even before a provider's secret is configured. A missing key only
+    # becomes an error when a request actually reaches that provider — see
+    # OpenAIProvider.complete. `inferrail config check` still validates
+    # keys eagerly via build_providers' default.
+    providers: dict[str, Provider] = build_providers(config, require_keys=False)
     router = Router(config.routes)
     telemetry = build_telemetry_sink(config.telemetry)
     pricing_resolver = PricingResolver(config.providers, config.pricing)
