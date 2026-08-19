@@ -184,6 +184,49 @@ standard OpenAI clients can ignore. See
 [examples/basic_chat_request.py](examples/basic_chat_request.py) for a
 minimal Python client.
 
+### With an existing framework
+
+Any OpenAI-compatible client works unmodified against Inferrail — point
+its `base_url` at `http://127.0.0.1:8000/v1` (note the `/v1`) and use an
+Inferrail route name (e.g. `"default"`) as the model. No Inferrail SDK or
+adapter exists or is needed. Verified against a real client instance of
+each (not just read from the framework's docs):
+
+```python
+# LangChain
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="not-needed",  # or your INFERRAIL_GATEWAY_TOKEN if auth is enabled
+    model="default",       # an Inferrail route name, not a provider model id
+)
+```
+
+```python
+# LlamaIndex
+from llama_index.llms.openai_like import OpenAILike
+
+llm = OpenAILike(
+    model="default",
+    api_base="http://127.0.0.1:8000/v1",
+    api_key="not-needed",
+    is_chat_model=True,
+    context_window=8192,
+)
+```
+
+```python
+# CrewAI
+from crewai import LLM
+
+llm = LLM(
+    model="openai/default",  # the "openai/" prefix is required by CrewAI
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="not-needed",
+)
+```
+
 ## What works today
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape

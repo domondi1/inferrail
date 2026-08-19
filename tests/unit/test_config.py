@@ -31,6 +31,21 @@ def test_load_config_valid(tmp_path: Path, base_config_dict: dict[str, Any]) -> 
     assert config.server.port == 8000
 
 
+def test_example_yaml_loads() -> None:
+    """inferrail.example.yaml is the file README, docs/PRODUCT.md, and
+    llms.txt all tell every new user (and agent) to copy. CI regenerates
+    config.schema.json from InferrailConfig on every change, but nothing
+    else re-checks this hand-maintained file against that model — it could
+    silently drift out of sync with a real config change with no test
+    catching it until someone actually runs `inferrail config check`.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    config = load_config(repo_root / "inferrail.example.yaml")
+
+    assert config.routes["default"].provider == "openai"
+    assert config.providers["openai"].type == "openai"
+
+
 def test_load_config_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="not found"):
         load_config(tmp_path / "does-not-exist.yaml")
