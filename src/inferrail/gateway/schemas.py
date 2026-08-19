@@ -1,9 +1,10 @@
 """The wire format: an OpenAI-compatible ``/v1/chat/completions`` contract.
 
-Only what v0.1 actually implements is modeled here. Notably unsupported for
-now: ``stream=true``, ``n != 1``, multi-part/image content, tool calls. A
-request using any of those is rejected with a clear 400, not silently
-ignored — see docs/PRODUCT.md for the full supported-surface list.
+Only what Inferrail actually implements is modeled here. Notably still
+unsupported: ``n != 1``, multi-part/image content. A request using either
+is rejected with a clear 400, not silently ignored. Streaming and tool
+calling *are* supported as of Phase 3 — see docs/PRODUCT.md for the full
+supported-surface list.
 
 The non-standard top-level ``inferrail`` field carries routing/telemetry
 metadata (route, provider, latency, retries). Clients that only speak
@@ -16,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from inferrail.providers.base import ChatMessage
+from inferrail.providers.base import ChatMessage, ToolCall
 
 
 class ChatCompletionRequest(BaseModel):
@@ -31,6 +32,16 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     n: int | None = None
     user: str | None = None
+    # Passthrough — see providers.base.NormalizedChatRequest for why these
+    # stay loosely typed.
+    tools: list[dict[str, object]] | None = None
+    tool_choice: str | dict[str, object] | None = None
+    parallel_tool_calls: bool | None = None
+    # Passthrough only — Inferrail auto-injects {"include_usage": true}
+    # for a verified OpenAI provider when the caller didn't set this, so a
+    # streaming receipt can still be built (see providers/openai.py's
+    # `stream()`). A caller's own value always wins.
+    stream_options: dict[str, object] | None = None
 
     @field_validator("stop", mode="before")
     @classmethod
@@ -42,7 +53,10 @@ class ChatCompletionRequest(BaseModel):
 
 class ChatCompletionChoiceMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
-    content: str
+    # None when the message only carries tool_calls (finish_reason ==
+    # "tool_calls"), matching the upstream OpenAI shape.
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class ChatCompletionChoice(BaseModel):

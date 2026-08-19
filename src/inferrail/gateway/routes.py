@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, Header, Request
+from fastapi.responses import StreamingResponse
 
 from inferrail.errors import GatewayAuthenticationError
 from inferrail.gateway.attribution import extract_attributes
@@ -50,13 +51,16 @@ async def health() -> dict[str, str]:
     operation_id="createChatCompletion",
     summary="Create a chat completion",
     description="OpenAI-compatible `/v1/chat/completions`, for the subset of the request "
-    "shape Inferrail currently supports (see docs/PRODUCT.md): no `stream: true`, no "
-    "`n != 1`, no tool calls, single string message content. `model` selects a named "
-    "route from `inferrail.yaml`, not a provider model id directly (docs/adr/0002). "
-    "Optional `X-Inferrail-Attribute-<Name>` headers attach business attribution "
-    "(e.g. `X-Inferrail-Attribute-Customer: acme`), persisted on the resulting "
-    "payload-free receipt and never forwarded upstream. The response is OpenAI-shaped "
-    "plus a non-standard `inferrail` metadata block; standard OpenAI clients ignore it.",
+    "shape Inferrail currently supports (see docs/PRODUCT.md): `stream: true` (real SSE "
+    "passthrough, not buffered), tool calling (`tools`/`tool_choice`/`parallel_tool_calls`, "
+    "including parallel and streamed tool calls), but not `n != 1` or multi-part/image "
+    "message content. `model` selects a named route from `inferrail.yaml`, not a provider "
+    "model id directly (docs/adr/0002). Optional `X-Inferrail-Attribute-<Name>` headers "
+    "attach business attribution (e.g. `X-Inferrail-Attribute-Customer: acme`), persisted "
+    "on the resulting payload-free receipt and never forwarded upstream. The non-streaming "
+    "response is OpenAI-shaped plus a non-standard `inferrail` metadata block; standard "
+    "OpenAI clients ignore it. A streaming response is a plain upstream-shaped SSE stream "
+    "with no such metadata injected into it, to preserve exact protocol fidelity.",
     response_model=ChatCompletionResponse,
     dependencies=[Depends(_require_gateway_token)],
     openapi_extra={
@@ -74,7 +78,10 @@ async def health() -> dict[str, str]:
 )
 async def chat_completions(
     payload: ChatCompletionRequest, request: Request
-) -> ChatCompletionResponse:
+) -> ChatCompletionResponse | StreamingResponse:
     engine: InferenceEngine = request.app.state.engine
     attributes = extract_attributes(request.headers)
+    if payload.stream:
+        body = await engine.prepare_stream(payload, attributes=attributes)
+        return StreamingResponse(body, media_type="text/event-stream")
     return await engine.execute(payload, attributes=attributes)

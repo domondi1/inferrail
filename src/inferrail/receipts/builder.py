@@ -30,7 +30,7 @@ def build_receipt(
     route: str,
     provider: str,
     model: str,
-    status: Literal["success", "error"],
+    status: Literal["success", "error", "partial"],
     prompt_tokens: int | None,
     completion_tokens: int | None,
     attributes: dict[str, str],

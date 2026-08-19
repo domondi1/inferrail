@@ -45,6 +45,12 @@ def _build_one(name: str, provider_config: ProviderConfig, *, require_key: bool)
             name=name,
             api_key=api_key,
             base_url=provider_config.resolved_base_url(),
+            # Same "verifiably OpenAI's own API" test as
+            # pricing.resolver.PricingResolver.resolve — see its docstring
+            # for why an openai_compatible endpoint never gets this.
+            is_verified_openai=(
+                provider_config.type == "openai" and provider_config.base_url is None
+            ),
         )
 
     raise ConfigurationError(

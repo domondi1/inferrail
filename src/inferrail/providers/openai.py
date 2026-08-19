@@ -10,6 +10,9 @@ same :class:`~inferrail.providers.base.Provider` protocol.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import httpx
 
 from inferrail.errors import (
@@ -19,7 +22,12 @@ from inferrail.errors import (
     ProviderTimeoutError,
     RateLimitError,
 )
-from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse
+from inferrail.providers.base import (
+    FunctionCall,
+    NormalizedChatRequest,
+    NormalizedChatResponse,
+    ToolCall,
+)
 
 
 class OpenAIProvider:
@@ -32,10 +40,18 @@ class OpenAIProvider:
         api_key: str,
         base_url: str,
         client: httpx.AsyncClient | None = None,
+        is_verified_openai: bool = False,
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        # Mirrors the pricing catalog's own gate (ADR-0005): only a
+        # provider verifiably running OpenAI's own API gets an
+        # OpenAI-specific request augmentation auto-applied (here:
+        # stream_options.include_usage — see `stream()`). An
+        # `openai_compatible` endpoint that merely shares the wire shape
+        # is never assumed to support an extension it never advertised.
+        self._is_verified_openai = is_verified_openai
         # `client` is injectable so tests can pass an httpx.MockTransport
         # instead of hitting the network, while exercising the exact same
         # request-building and error-normalization code paths. The auth
@@ -44,9 +60,7 @@ class OpenAIProvider:
         self._client = client or httpx.AsyncClient()
         self._client.headers["Authorization"] = f"Bearer {api_key}"
 
-    async def complete(
-        self, request: NormalizedChatRequest, *, timeout: float
-    ) -> NormalizedChatResponse:
+    def _require_api_key(self) -> None:
         # `registry.build_providers(require_keys=False)` lets the gateway
         # start with no key configured for this provider (so /health comes
         # up regardless); the deferred check happens here, at the point an
@@ -60,9 +74,11 @@ class OpenAIProvider:
                 "api_key_env before sending a request through it",
                 provider=self.name,
             )
+
+    def _build_payload(self, request: NormalizedChatRequest) -> dict[str, object]:
         payload: dict[str, object] = {
             "model": request.model,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": [m.model_dump(exclude_none=True) for m in request.messages],
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -72,6 +88,21 @@ class OpenAIProvider:
             payload["top_p"] = request.top_p
         if request.stop is not None:
             payload["stop"] = request.stop
+        if request.tools is not None:
+            payload["tools"] = request.tools
+        if request.tool_choice is not None:
+            payload["tool_choice"] = request.tool_choice
+        if request.parallel_tool_calls is not None:
+            payload["parallel_tool_calls"] = request.parallel_tool_calls
+        if request.stream_options is not None:
+            payload["stream_options"] = request.stream_options
+        return payload
+
+    async def complete(
+        self, request: NormalizedChatRequest, *, timeout: float
+    ) -> NormalizedChatResponse:
+        self._require_api_key()
+        payload = self._build_payload(request)
 
         try:
             response = await self._client.post(
@@ -92,6 +123,47 @@ class OpenAIProvider:
 
         return self._parse_response(response)
 
+    async def stream(
+        self, request: NormalizedChatRequest, *, timeout: float
+    ) -> AsyncGenerator[bytes, None]:
+        """Yield raw upstream SSE bytes, unmodified, chunk by chunk.
+
+        Status/error classification happens before any chunk is yielded
+        (so the engine's retry loop can still act on a pre-first-byte
+        failure); once the first chunk is yielded, any further failure
+        propagates as a plain exception out of the generator — the engine
+        treats that as a terminal, non-retryable outcome, never retries
+        it, and records it as `partial`.
+        """
+        self._require_api_key()
+        payload = self._build_payload(request)
+        payload["stream"] = True
+        if self._is_verified_openai and "stream_options" not in payload:
+            payload["stream_options"] = {"include_usage": True}
+
+        try:
+            async with self._client.stream(
+                "POST",
+                f"{self._base_url}/chat/completions",
+                json=payload,
+                timeout=timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    raise self._error_for_status(response)
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+        except httpx.TimeoutException as exc:
+            raise ProviderTimeoutError(
+                f"request to provider '{self.name}' timed out after {timeout}s",
+                provider=self.name,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                f"request to provider '{self.name}' failed: {exc}",
+                provider=self.name,
+            ) from exc
+
     def _parse_response(self, response: httpx.Response) -> NormalizedChatResponse:
         if response.status_code >= 400:
             raise self._error_for_status(response)
@@ -101,6 +173,14 @@ class OpenAIProvider:
             choice = data["choices"][0]
             message = choice["message"]
             usage = data.get("usage") or {}
+            # Parsed inside this same try, not after it: a malformed
+            # tool_calls entry (missing "id"/"function"/"name"/"arguments")
+            # must normalize into a ProviderError like every other
+            # malformed-response shape, not escape as a raw, uncaught
+            # KeyError — which would bypass the engine's retry/telemetry
+            # entirely (it isn't an InferrailError) and silently produce
+            # zero InferenceEvent/InferenceReceipt for a failed request.
+            tool_calls = self._parse_tool_calls(message.get("tool_calls"))
         except (KeyError, IndexError, ValueError) as exc:
             raise ProviderError(
                 f"provider '{self.name}' returned a malformed response: {exc}",
@@ -109,13 +189,35 @@ class OpenAIProvider:
             ) from exc
 
         return NormalizedChatResponse(
-            content=message.get("content") or "",
+            content=message.get("content"),
             finish_reason=choice.get("finish_reason"),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
+            tool_calls=tool_calls,
             raw_model=data.get("model"),
             provider_request_id=data.get("id"),
         )
+
+    @staticmethod
+    def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[ToolCall] | None:
+        if not raw:
+            return None
+        tool_calls = []
+        for entry in raw:
+            function = entry["function"]
+            tool_calls.append(
+                ToolCall(
+                    id=entry["id"],
+                    type=entry.get("type", "function"),
+                    # `arguments` stays exactly the string the provider
+                    # sent — never json.loads'd/re-dumped. See
+                    # providers.base's module docstring.
+                    function=FunctionCall(
+                        name=function["name"], arguments=function["arguments"]
+                    ),
+                )
+            )
+        return tool_calls
 
     def _error_for_status(self, response: httpx.Response) -> ProviderError:
         status = response.status_code

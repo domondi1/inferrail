@@ -40,7 +40,11 @@ class InferenceReceipt(BaseModel):
     provider: str
     model: str
 
-    status: Literal["success", "error"]
+    # See telemetry.events.InferenceEvent.status for what "partial" means.
+    # A partial receipt never carries token counts (the provider's final
+    # usage block never arrived), so pricing/estimated_cost_usd stay None
+    # here for the same never-fabricate-cost reason as a failed request.
+    status: Literal["success", "error", "partial"]
 
     prompt_tokens: int | None = None
     completion_tokens: int | None = None

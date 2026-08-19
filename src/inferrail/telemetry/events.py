@@ -23,6 +23,9 @@ ErrorCategory = Literal[
     "invalid_request",
     "unsupported_feature",
     "provider",
+    # The client disconnected/cancelled a stream — not a provider or
+    # routing failure, so it doesn't fit any category above.
+    "cancelled",
 ]
 
 
@@ -34,7 +37,12 @@ class InferenceEvent(BaseModel):
     provider: str
     model: str
 
-    status: Literal["success", "error"]
+    # "partial": a stream was opened and at least one chunk was already
+    # forwarded to the client before it failed or the client disconnected
+    # — distinct from "error" (failed before any output reached the
+    # client) so downstream analysis can tell "never worked" from "worked
+    # partially then broke." See gateway/execution.py's streaming path.
+    status: Literal["success", "error", "partial"]
     error_category: ErrorCategory | None = None
     error_message: str | None = None
     http_status: int | None = None

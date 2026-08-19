@@ -36,7 +36,7 @@ ChatCompletionRequest validation (gateway/schemas.py, pydantic)
         v
 InferenceEngine.execute (gateway/execution.py)
         |
-        +--> reject unsupported features (stream, n != 1) early
+        +--> reject unsupported features (n != 1) early
         |
         +--> Router.resolve(RoutingContext) -> RoutingDecision
         |         (routing/router.py: static lookup of request.model
@@ -44,15 +44,17 @@ InferenceEngine.execute (gateway/execution.py)
         |
         +--> normalize into NormalizedChatRequest
         |         (provider-agnostic shape: model, messages, sampling
-        |          params — see providers/base.py)
+        |          params, tools/tool_choice/parallel_tool_calls — see
+        |          providers/base.py)
         |
         +--> Provider.complete(...), with retry/backoff for errors
         |     marked retryable (providers/openai.py raises normalized
         |     inferrail.errors.* on any failure)
         |
         +--> on success: build ChatCompletionResponse
-        |     (OpenAI-shaped, plus a non-standard `inferrail` metadata
-        |      block: request id, route, provider, latency, retries)
+        |     (OpenAI-shaped, incl. tool_calls when present, plus a
+        |      non-standard `inferrail` metadata block: request id,
+        |      route, provider, latency, retries)
         |
         +--> emit InferenceEvent to the configured TelemetrySink
         |     (always — on both success and failure)
@@ -65,6 +67,61 @@ InferenceEngine.execute (gateway/execution.py)
    by a FastAPI exception handler in gateway/app.py and mapped to the
    appropriate status code + OpenAI-shaped error body)
 ```
+
+### Streaming (`stream: true`)
+
+`chat_completions` branches on `payload.stream` and follows a different,
+two-phase path through `InferenceEngine` instead of `execute`:
+
+```
+InferenceEngine.prepare_stream (a plain coroutine, not a generator)
+        |
+        +--> reject unsupported features, resolve routing (same as above)
+        |
+        +--> open Provider.stream(...), retrying only a failure discovered
+        |     before the first chunk arrives — this is the retry boundary:
+        |     once this coroutine returns, no further retry can happen,
+        |     by construction. Still raises a normal InferrailError on
+        |     total failure, caught by the same exception handler as the
+        |     non-streaming path, since nothing has reached the HTTP
+        |     client yet.
+        |
+        v
+   gateway/routes.py wraps the result in StreamingResponse(...) — only
+   now does a 200 and any bytes reach the client
+        |
+        v
+InferenceEngine._iter_stream (the actual async generator StreamingResponse
+consumes)
+        |
+        +--> forwards every remaining upstream byte completely unmodified
+        |     (raw SSE passthrough — never reparses or reorders tool-call
+        |     argument fragments or any other content)
+        |
+        +--> a side-channel bookkeeper reads the same bytes only to
+        |     recover the final `usage` block for accounting — it never
+        |     gates or alters what's forwarded
+        |
+        +--> on clean completion: emit status="success", using whatever
+        |     usage was actually observed
+        |
+        +--> on a provider failure or client disconnect (GeneratorExit)
+        |     after at least one chunk was already yielded: emit
+        |     status="partial", explicitly closing the upstream
+        |     connection — never retried, since retrying here would
+        |     silently replay already-observed agent execution
+        |
+        +--> on a provider failure with zero chunks yielded: emit
+              status="error", same as a non-streaming failure
+```
+
+See `gateway/execution.py`'s module docstring for the full design
+rationale, including the one documented narrow limitation (a disconnect
+detected before the generator is ever driven at all is a no-op per
+Python's own generator semantics — see that docstring and
+`tests/unit/test_streaming.py`), and
+`docs/adr/0006-streaming-and-tool-calling-execution-fidelity.md` for why
+these specific boundaries were chosen.
 
 `gateway/attribution.py` extracts caller-supplied `X-Inferrail-Attribute-*`
 headers into a `dict[str, str]` before `InferenceEngine.execute` is
@@ -99,10 +156,19 @@ nor the network, while still going through the real `Router`,
 
 ## The provider boundary
 
-`providers.base.Provider` is a `Protocol` with one method:
-`async complete(NormalizedChatRequest, *, timeout) -> NormalizedChatResponse`,
-which must raise an `inferrail.errors.ProviderError` subclass (never a raw
-`httpx` or provider-SDK exception) on failure.
+`providers.base.Provider` is a `Protocol` with two methods:
+`async complete(NormalizedChatRequest, *, timeout) -> NormalizedChatResponse`
+for the non-streaming path, and
+`stream(NormalizedChatRequest, *, timeout) -> AsyncGenerator[bytes, None]`
+for the streaming path — an async generator, not `AsyncIterator`,
+specifically so the engine can rely on `.aclose()` to tear down an
+abandoned upstream connection immediately on cancellation (see
+`gateway/execution.py`). Both must raise an `inferrail.errors.ProviderError`
+subclass (never a raw `httpx` or provider-SDK exception) for any failure
+discovered before the first byte/chunk; a `stream()` failure discovered
+*after* it has already yielded something simply propagates as a plain
+exception out of the generator, which the engine treats as terminal
+(never retried).
 
 `OpenAIProvider` is the only implementation in v0.1, but it's generic over
 `base_url`: any endpoint that speaks the OpenAI `/chat/completions` shape
@@ -113,6 +179,15 @@ provider with a genuinely different wire protocol (e.g. a native
 Anthropic or Bedrock client) would get its own module implementing the
 same `Provider` protocol; `providers/registry.py` is the one place that
 would need a new branch to construct it from config.
+
+`OpenAIProvider.stream()` auto-injects `stream_options: {"include_usage":
+true}` when the caller didn't already set it, but only for a provider
+verifiably running OpenAI's own API (`type: openai`, default `base_url`)
+— the same gate `pricing.resolver.PricingResolver` uses (see ADR-0005) —
+since an `openai_compatible` endpoint is never assumed to support an
+OpenAI-specific extension it never advertised. Without that final usage
+chunk, a streaming receipt simply leaves cost `null`, exactly like any
+other unresolvable-usage case; it never blocks the stream itself.
 
 ## The routing boundary
 
@@ -131,11 +206,15 @@ or anything provider-related.
 
 ## The telemetry boundary
 
-Every execution — success or failure — produces exactly one
-`InferenceEvent` (see `telemetry/events.py`), sent to whatever
-`TelemetrySink` is configured (`telemetry/sinks.py`). v0.1 ships
+Every execution — success, failure, or a stream interrupted partway
+through (`status: "partial"` — see the streaming section above) —
+produces exactly one `InferenceEvent` (see `telemetry/events.py`), sent to
+whatever `TelemetrySink` is configured (`telemetry/sinks.py`). v0.1 ships
 `ConsoleTelemetrySink`, `JSONLTelemetrySink`, and `NullTelemetrySink`. Unknown
-values (cost, time-to-first-token) are `None`, never estimated.
+values (cost, time-to-first-token) are `None`, never estimated — a
+`partial` record carries only whatever usage was actually observed before
+the interruption, which is `None` unless the provider's final usage chunk
+happened to arrive right before the failure.
 
 The sink is a one-method `Protocol` (`emit(event) -> None`) specifically so
 a future sink — SQLite, an OpenTelemetry exporter, or an opt-in Inferrail

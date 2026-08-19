@@ -85,9 +85,13 @@ def test_routing_error_resolves_to_e007_end_to_end_over_http(
     assert body["error"]["docs_url"].endswith("#inferrail_e007")
 
 
-def test_unsupported_stream_resolves_to_e006_end_to_end_over_http(
+def test_unsupported_n_not_one_resolves_to_e006_end_to_end_over_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # `n != 1` remains unsupported (unlike `stream`, which Phase 3 added
+    # real support for — see test_gateway.py's streaming tests) and is
+    # still rejected before any provider network call, so it's the
+    # feature this end-to-end E006 check now exercises.
     from inferrail.config.quickstart import build_quickstart_config
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
@@ -99,7 +103,7 @@ def test_unsupported_stream_resolves_to_e006_end_to_end_over_http(
         json={
             "model": "default",
             "messages": [{"role": "user", "content": "hi"}],
-            "stream": True,
+            "n": 2,
         },
     )
 

@@ -229,8 +229,11 @@ llm = LLM(
 
 ## What works today
 
-- `POST /v1/chat/completions` — OpenAI-compatible request/response shape
-  (single string message content; no streaming, no tool calls, no `n != 1`)
+- `POST /v1/chat/completions` — OpenAI-compatible request/response shape,
+  including real SSE streaming (`stream: true`, byte-for-byte proxied, not
+  buffered) and tool/function calling (`tools`, `tool_choice`,
+  `parallel_tool_calls`, streamed tool-call deltas) — single string
+  message content, no `n != 1`
 - `GET /health`
 - One provider adapter, generic over any OpenAI-compatible HTTP endpoint
   (OpenAI itself, or a compatible self-hosted server)
@@ -246,10 +249,10 @@ llm = LLM(
 - A CLI: `inferrail demo`, `inferrail try`, `inferrail serve`
   (`--quickstart`), `inferrail config check`, `inferrail report`
 
-**Not yet supported:** streaming, multi-provider intelligent routing, cost
-estimates for models outside the built-in catalog or an explicit
-`pricing:` override, budgets/spend limits, any provider that isn't
-OpenAI-compatible. Full list in [docs/PRODUCT.md](docs/PRODUCT.md).
+**Not yet supported:** multi-provider intelligent routing, cost estimates
+for models outside the built-in catalog or an explicit `pricing:`
+override, budgets/spend limits, any provider that isn't OpenAI-compatible.
+Full list in [docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Configure
 

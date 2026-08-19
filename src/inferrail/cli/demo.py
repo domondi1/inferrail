@@ -22,6 +22,7 @@ To see the same flow against a real provider: `inferrail try`.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -83,6 +84,13 @@ class _DemoProvider:
             completion_tokens=canned.completion_tokens,
             raw_model=request.model,
         )
+
+    async def stream(
+        self, request: NormalizedChatRequest, *, timeout: float
+    ) -> AsyncGenerator[bytes, None]:
+        del request, timeout  # unused: the demo script never streams
+        raise NotImplementedError("_DemoProvider does not support streaming")
+        yield b""  # pragma: no cover - unreachable; makes this an async generator
 
 
 # Six scripted requests: two customers, two workflows, one model with no

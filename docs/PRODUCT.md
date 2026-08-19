@@ -52,6 +52,22 @@ inspectable config file and gives you a telemetry record for every request
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
   for single-turn or multi-turn text chat (see limits below)
+- Real SSE streaming (`stream: true`): upstream bytes are proxied
+  byte-for-byte as they arrive, never buffered and re-chunked. Retries
+  only ever happen before the first byte reaches the client — once a
+  stream has yielded anything, a later provider failure or client
+  disconnect ends that stream and is recorded as `status: "partial"` on
+  its `InferenceEvent`/`InferenceReceipt`, never silently retried (which
+  would replay already-observed output) and never given a fabricated
+  cost: a partial record only carries whatever usage was actually
+  measured before the interruption — `null` if none was.
+- Tool/function calling: `tools`, `tool_choice`, and `parallel_tool_calls`
+  are accepted and passed through to the provider unmodified, including
+  parallel tool calls and streamed tool-call deltas. `role: "tool"`
+  messages (tool results) are accepted. Inferrail transports tool-call
+  semantics — it never executes a tool itself, never parses or
+  re-serializes a tool call's `arguments` string (kept byte-exact end to
+  end), and never reorders or renames a call.
 - `GET /health`
 - One provider adapter (`OpenAIProvider`) that speaks the OpenAI
   `/chat/completions` wire format — usable against `api.openai.com` or any
@@ -77,7 +93,10 @@ inspectable config file and gives you a telemetry record for every request
   headers (e.g. `X-Inferrail-Attribute-Customer: acme`) are collected into
   a generic `dict[str, str]` and persisted on the receipt. Never forwarded
   to the upstream provider. Generic by design — no fixed vertical-specific
-  fields.
+  fields, which already covers correlating receipts across a multi-turn
+  agent loop's several inference calls: e.g.
+  `X-Inferrail-Attribute-Run: run_123` or `-Agent`/`-Trace`/`-Workflow`
+  work today with no new primitive needed.
 - `inferrail report --by <provider|model|route|attribute-name>` —
   aggregates local receipts into a simple table: requests, tokens, total
   known cost, and a separate count of requests with unresolvable pricing
@@ -123,15 +142,16 @@ inspectable config file and gives you a telemetry record for every request
 
 Not a hidden limitation — these are the honest edges of v0.1:
 
-- **Streaming** (`stream: true`) is rejected, not silently ignored
 - Multiple choices (`n != 1`) is rejected
 - Multi-part / image / audio message content — only plain string content
-- Tool calls / function calling
 - Cost estimates for anything outside the built-in catalog or an explicit
   operator `pricing:` override — an unrecognized (provider, model) always
   produces `null`, never a guessed cost (see "Cost and receipts" above)
-- Time-to-first-token — always `null`; only measurable once streaming
-  exists
+- Time-to-first-token — always `null`. Streaming now exists, so this is
+  measurable in principle (the first upstream chunk's arrival is already
+  observed internally), but Inferrail doesn't populate it yet — a
+  natural, low-risk follow-up once there's a reason to, not silently
+  guessed in the meantime
 - Any provider other than an OpenAI-compatible HTTP API
 - Intelligent/adaptive routing of any kind
 - Budgets, spend limits, or blocking a request based on cost

@@ -160,6 +160,20 @@ def test_aggregate_unknown_cost_counted_only_for_successful_requests() -> None:
     assert groups[0].successful_requests == 1
 
 
+def test_aggregate_partial_receipt_counts_as_neither_success_nor_unknown_cost() -> None:
+    # A stream interrupted partway through (status="partial", introduced
+    # alongside real streaming support) never fabricates a cost — same as
+    # "error" — and must not be double-counted as an unresolved pricing
+    # gap: it genuinely never reached a measured, priced completion.
+    receipts = [_receipt(status="partial", prompt_tokens=None, completion_tokens=None)]
+
+    groups = aggregate(receipts, "provider")
+
+    assert groups[0].requests == 1
+    assert groups[0].successful_requests == 0
+    assert groups[0].unknown_cost_requests == 0
+
+
 def test_format_table_includes_total_row() -> None:
     pricing = _pricing()
     receipts = [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import httpx
@@ -174,6 +175,326 @@ def test_provider_error_safe_summary_is_fail_closed_when_omitted() -> None:
     # The full message is untouched — still available for the exception /
     # HTTP response path, which is a separate, intentional concern.
     assert canary in str(exc)
+
+
+async def test_complete_passes_through_tool_fields_unmodified() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-1",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    provider = _provider(handler)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+            },
+        }
+    ]
+    request = NormalizedChatRequest(
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="weather?")],
+        tools=tools,
+        tool_choice="auto",
+        parallel_tool_calls=True,
+    )
+
+    await provider.complete(request, timeout=5)
+
+    assert captured["tools"] == tools
+    assert captured["tool_choice"] == "auto"
+    assert captured["parallel_tool_calls"] is True
+
+
+async def test_complete_parses_tool_calls_with_arguments_kept_as_raw_string() -> None:
+    # The arguments string below has unusual formatting (extra spaces,
+    # specific key order) that a naive json.loads()+json.dumps() round trip
+    # would normalize away. It must survive byte-for-byte.
+    raw_arguments = '{"city":   "San Francisco",  "unit": "celsius"}'
+    provider = _provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-2",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "get_weather", "arguments": raw_arguments},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        )
+    )
+
+    result = await provider.complete(_request(), timeout=5)
+
+    assert result.content is None
+    assert result.finish_reason == "tool_calls"
+    assert result.tool_calls is not None
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.id == "call_1"
+    assert call.function.name == "get_weather"
+    assert call.function.arguments == raw_arguments  # byte-exact, never reparsed
+
+
+async def test_complete_parses_multiple_parallel_tool_calls_preserving_order() -> None:
+    provider = _provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-4",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_a",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"city": "Austin"}',
+                                    },
+                                },
+                                {
+                                    "id": "call_b",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_time",
+                                        "arguments": '{"tz": "America/Chicago"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 15, "completion_tokens": 12},
+            },
+        )
+    )
+
+    result = await provider.complete(_request(), timeout=5)
+
+    assert result.tool_calls is not None
+    assert len(result.tool_calls) == 2
+    assert result.tool_calls[0].id == "call_a"
+    assert result.tool_calls[0].function.name == "get_weather"
+    assert result.tool_calls[0].function.arguments == '{"city": "Austin"}'
+    assert result.tool_calls[1].id == "call_b"
+    assert result.tool_calls[1].function.name == "get_time"
+    assert result.tool_calls[1].function.arguments == '{"tz": "America/Chicago"}'
+
+
+async def test_complete_malformed_tool_call_raises_provider_error_not_raw_keyerror() -> None:
+    # A malformed tool_calls entry (missing "function" here) must normalize
+    # into a ProviderError the engine's retry/telemetry machinery
+    # recognizes — not escape as an uncaught KeyError, which would bypass
+    # InferenceEvent/InferenceReceipt emission entirely for this failure.
+    provider = _provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-5",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{"id": "call_1", "type": "function"}],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+    )
+
+    with pytest.raises(ProviderError, match="malformed") as exc_info:
+        await provider.complete(_request(), timeout=5)
+
+    # Fail-closed regardless: the default safe_summary never derives from
+    # the message string at all (see errors/exceptions.py), so it can't
+    # carry anything from the malformed entry either.
+    assert exc_info.value.safe_summary == "provider 'openai' error (HTTP 200)"
+
+
+async def test_complete_no_tool_calls_yields_none() -> None:
+    provider = _provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-3",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+    )
+
+    result = await provider.complete(_request(), timeout=5)
+
+    assert result.tool_calls is None
+
+
+# ---------------------------------------------------------------------------
+# stream()
+# ---------------------------------------------------------------------------
+
+
+def _streaming_provider(
+    handler: Callable[[httpx.Request], httpx.Response], *, is_verified_openai: bool = False
+) -> OpenAIProvider:
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    return OpenAIProvider(
+        name="openai",
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        client=client,
+        is_verified_openai=is_verified_openai,
+    )
+
+
+async def test_stream_forwards_raw_bytes_unmodified() -> None:
+    raw_body = (
+        b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    provider = _streaming_provider(
+        lambda r: httpx.Response(
+            200, content=raw_body, headers={"content-type": "text/event-stream"}
+        )
+    )
+
+    chunks = [chunk async for chunk in provider.stream(_request(), timeout=5)]
+
+    assert b"".join(chunks) == raw_body
+
+
+async def test_stream_auto_injects_include_usage_only_for_verified_openai() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    verified = _streaming_provider(handler, is_verified_openai=True)
+    async for _ in verified.stream(_request(), timeout=5):
+        pass
+    assert captured["stream_options"] == {"include_usage": True}
+
+    captured.clear()
+    unverified = _streaming_provider(handler, is_verified_openai=False)
+    async for _ in unverified.stream(_request(), timeout=5):
+        pass
+    assert "stream_options" not in captured
+
+
+async def test_stream_never_overrides_caller_supplied_stream_options() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    provider = _streaming_provider(handler, is_verified_openai=True)
+    request = NormalizedChatRequest(
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        stream_options={"include_usage": False},
+    )
+
+    async for _ in provider.stream(request, timeout=5):
+        pass
+
+    assert captured["stream_options"] == {"include_usage": False}
+
+
+async def test_stream_pre_first_chunk_error_is_classified_like_non_streaming() -> None:
+    provider = _streaming_provider(
+        lambda r: httpx.Response(429, json={"error": {"message": "slow down"}})
+    )
+
+    with pytest.raises(RateLimitError) as exc_info:
+        async for _ in provider.stream(_request(), timeout=5):
+            pass
+    assert exc_info.value.retryable is True
+
+
+async def test_stream_pre_first_chunk_error_excludes_upstream_free_text() -> None:
+    # Mirrors test_error_safe_summary_excludes_upstream_free_text for the
+    # stream() code path specifically — it reuses _error_for_status, but
+    # confirm that directly rather than assuming it from the non-streaming
+    # test alone.
+    sentinel = "INFERRAIL_PHASE2_PRIVACY_SENTINEL_9f8e7d"
+    provider = _streaming_provider(
+        lambda r: httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": f"Invalid request: input '{sentinel}' was rejected",
+                    "type": "invalid_request_error",
+                }
+            },
+        )
+    )
+
+    with pytest.raises(InvalidRequestError) as exc_info:
+        async for _ in provider.stream(_request(), timeout=5):
+            pass
+
+    assert sentinel not in exc_info.value.safe_summary
+    assert "invalid_request_error" in exc_info.value.safe_summary
+    assert sentinel in str(exc_info.value)  # caller-facing detail, same caller
+
+
+async def test_stream_requires_api_key_before_any_network_call() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call should be made without an API key")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    provider = OpenAIProvider(
+        name="openai", api_key="", base_url="https://example.invalid/v1", client=client
+    )
+
+    with pytest.raises(AuthenticationError, match="no API key configured"):
+        async for _ in provider.stream(_request(), timeout=5):
+            pass
 
 
 async def test_error_safe_summary_falls_back_to_status_only() -> None:
