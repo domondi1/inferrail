@@ -35,6 +35,13 @@ routes:
     max_retries: 0
     timeout_seconds: 10
 
+# Optional: if set, a request whose "model" matches no route above is not
+# rejected — it's forwarded to this provider with "model" passed through
+# unchanged (e.g. {"model": "gpt-5.6-sol"} reaches OpenAI as gpt-5.6-sol,
+# with no routes: entry needed for it). Named routes still take priority.
+# See docs/adr/0007-model-passthrough-routing.md.
+# default_provider: openai
+
 telemetry:
   sink: console   # console | jsonl | none
   # path: ./inferrail-telemetry.jsonl   # required when sink is "jsonl"

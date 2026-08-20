@@ -75,7 +75,7 @@ def create_app(config: InferrailConfig) -> FastAPI:
     # OpenAIProvider.complete. `inferrail config check` still validates
     # keys eagerly via build_providers' default.
     providers: dict[str, Provider] = build_providers(config, require_keys=False)
-    router = Router(config.routes)
+    router = Router(config.routes, default_provider=config.default_provider)
     telemetry = build_telemetry_sink(config.telemetry)
     pricing_resolver = PricingResolver(config.providers, config.pricing)
     receipts = build_receipt_sink(config.receipts)

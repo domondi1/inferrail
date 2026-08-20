@@ -67,10 +67,29 @@ def test_routing_error_resolves_to_e007_end_to_end_over_http(
     # still eagerly constructs the OpenAI provider (checking for a
     # present, non-empty key, not a valid one) — see
     # inferrail.providers.registry.build_providers.
-    from inferrail.config.quickstart import build_quickstart_config
+    #
+    # Deliberately not `build_quickstart_config`: that config sets
+    # `default_provider`, so an unmatched `model` now passes through to a
+    # real provider call instead of raising `RoutingError` — see
+    # docs/adr/0007-model-passthrough-routing.md. This test wants the
+    # strict, no-passthrough config to keep this a pure routing-lookup
+    # failure, resolved fully offline.
+    from inferrail.config.models import (
+        InferrailConfig,
+        ProviderConfig,
+        ReceiptsConfig,
+        RouteConfig,
+        TelemetryConfig,
+    )
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
-    app = create_app(build_quickstart_config(telemetry_sink="none"))
+    config = InferrailConfig(
+        providers={"openai": ProviderConfig(type="openai", api_key_env="OPENAI_API_KEY")},
+        routes={"default": RouteConfig(provider="openai", model="gpt-4o-mini")},
+        telemetry=TelemetryConfig(sink="none"),
+        receipts=ReceiptsConfig(sink="none"),
+    )
+    app = create_app(config)
     client = TestClient(app)
 
     response = client.post(

@@ -91,6 +91,27 @@ def test_chat_completions_unknown_route(
     assert response.json()["error"]["type"] == "RoutingError"
 
 
+def test_chat_completions_passthrough_unmatched_model(
+    monkeypatch: pytest.MonkeyPatch, base_config_dict: dict[str, Any]
+) -> None:
+    """A model name that matches no configured route still succeeds, end to
+    end, when `default_provider` is set — see
+    docs/adr/0007-model-passthrough-routing.md."""
+    config = InferrailConfig.model_validate(
+        {**base_config_dict, "default_provider": "openai"}
+    )
+    client = _make_client(monkeypatch, config, FakeProvider())
+
+    response = client.post("/v1/chat/completions", json=_chat_body(model="gpt-5.6-sol"))
+
+    assert response.status_code == 200
+    body = response.json()
+    # The exact model requested — forwarded unchanged, not translated.
+    assert body["model"] == "gpt-5.6-sol"
+    assert body["inferrail"]["route"] == "passthrough"
+    assert body["inferrail"]["provider"] == "openai"
+
+
 def test_chat_completions_authentication_error_maps_to_401(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:

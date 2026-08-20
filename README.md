@@ -175,8 +175,14 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 `"model": "default"` selects the `default` route in `inferrail.yaml` (or
-the quickstart config) — not a provider's model id directly. The
-`X-Inferrail-Attribute-*` header is optional business attribution; drop it
+the quickstart config) — not a provider's model id directly. You aren't
+limited to route names, though: the quickstart config (and any
+`inferrail.yaml` with `default_provider` set) forwards any other `model`
+value straight to that provider unchanged — `"model": "gpt-5.6-sol"` works
+with no config change, including for a model that didn't exist when this
+version of Inferrail shipped. See
+[docs/adr/0007-model-passthrough-routing.md](docs/adr/0007-model-passthrough-routing.md).
+The `X-Inferrail-Attribute-*` header is optional business attribution; drop it
 if you don't need it — it's never forwarded to the upstream provider. The
 response includes the standard OpenAI `choices`/`usage` fields plus a
 non-standard `inferrail` block (route, provider, latency, retries) that

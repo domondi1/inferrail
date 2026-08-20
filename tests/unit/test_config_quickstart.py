@@ -36,6 +36,11 @@ def test_quickstart_config_defaults() -> None:
     assert config.receipts.path == QUICKSTART_RECEIPTS_PATH
     assert config.telemetry.sink == "console"
 
+    # The whole point of the zero-config path: any model name works, not
+    # just the "default" route above — see
+    # docs/adr/0007-model-passthrough-routing.md.
+    assert config.default_provider == QUICKSTART_PROVIDER
+
 
 def test_quickstart_config_model_override() -> None:
     config = build_quickstart_config(model="gpt-4o")

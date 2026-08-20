@@ -206,7 +206,7 @@ def run_try(
 
     capturing_sink = _CapturingReceiptSink(receipts_sink)
     engine = InferenceEngine(
-        router=Router(config.routes),
+        router=Router(config.routes, default_provider=config.default_provider),
         providers=providers,
         telemetry=build_telemetry_sink(config.telemetry),
         pricing_resolver=PricingResolver(config.providers, config.pricing),

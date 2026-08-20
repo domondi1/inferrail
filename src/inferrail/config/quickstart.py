@@ -52,6 +52,10 @@ def build_quickstart_config(
         routes={
             QUICKSTART_ROUTE: RouteConfig(provider=QUICKSTART_PROVIDER, model=model),
         },
+        # There's exactly one provider in the quickstart path, so any model
+        # name the caller sends — not just the "default" route above — can
+        # go straight to it. See docs/adr/0007-model-passthrough-routing.md.
+        default_provider=QUICKSTART_PROVIDER,
         telemetry=TelemetryConfig(sink=telemetry_sink),
         receipts=ReceiptsConfig(sink="jsonl", path=QUICKSTART_RECEIPTS_PATH),
     )

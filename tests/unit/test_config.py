@@ -91,6 +91,29 @@ def test_config_requires_at_least_one_provider_and_route() -> None:
         InferrailConfig.model_validate({"providers": {}, "routes": {}})
 
 
+def test_default_provider_referencing_unknown_provider_fails_validation(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["default_provider"] = "does-not-exist"
+
+    with pytest.raises(ValidationError, match="default_provider 'does-not-exist'"):
+        InferrailConfig.model_validate(base_config_dict)
+
+
+def test_default_provider_referencing_known_provider_is_valid(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["default_provider"] = "openai"
+
+    config = InferrailConfig.model_validate(base_config_dict)
+
+    assert config.default_provider == "openai"
+
+
+def test_default_provider_is_none_by_default(base_config: InferrailConfig) -> None:
+    assert base_config.default_provider is None
+
+
 def test_jsonl_telemetry_requires_path() -> None:
     with pytest.raises(ValidationError, match="telemetry.path is required"):
         TelemetryConfig(sink="jsonl")

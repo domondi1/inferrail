@@ -21,8 +21,10 @@ from inferrail.providers.base import ChatMessage, ToolCall
 
 
 class ChatCompletionRequest(BaseModel):
-    # Selects an Inferrail *route* (inferrail.yaml: routes.<name>), not a
-    # provider's model id directly — see docs/adr/0002.
+    # Selects an Inferrail *route* (inferrail.yaml: routes.<name>) if one by
+    # this name is configured — see docs/adr/0002. Otherwise, if
+    # `default_provider` is set, forwarded unchanged as a provider model id
+    # — see docs/adr/0007.
     model: str
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float | None = None

@@ -132,7 +132,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         if args.quickstart:
             print("No inferrail.yaml used — running with quickstart defaults:")
             print("  provider: OpenAI")
-            print(f"  model:    {QUICKSTART_MODEL}")
+            print(f"  models:   passthrough (any OpenAI model id works, e.g. {QUICKSTART_MODEL})")
             print(f"  receipts: {QUICKSTART_RECEIPTS_PATH}")
             print()
             print("To persist/customize configuration: cp inferrail.example.yaml inferrail.yaml")
@@ -160,11 +160,13 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
         return 1
 
     print(f"{args.config}: OK")
-    print(f"  providers: {', '.join(sorted(config.providers))}")
-    print(f"  routes:    {', '.join(sorted(config.routes))}")
-    print(f"  telemetry: {config.telemetry.sink}")
-    print(f"  receipts:  {config.receipts.sink}")
-    print(f"  server:    {config.server.host}:{config.server.port}")
+    print(f"  providers:        {', '.join(sorted(config.providers))}")
+    print(f"  routes:           {', '.join(sorted(config.routes))}")
+    if config.default_provider is not None:
+        print(f"  default_provider: {config.default_provider} (unmatched models pass through)")
+    print(f"  telemetry:        {config.telemetry.sink}")
+    print(f"  receipts:         {config.receipts.sink}")
+    print(f"  server:           {config.server.host}:{config.server.port}")
     return 0
 
 

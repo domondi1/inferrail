@@ -114,6 +114,11 @@ class InferrailConfig(BaseModel):
 
     providers: dict[str, ProviderConfig]
     routes: dict[str, RouteConfig]
+    # If set, a request whose `model` doesn't match any named route above is
+    # not rejected — it's forwarded to this provider with `model` passed
+    # through unchanged, instead of requiring every upstream model id to be
+    # pre-registered as a route. See docs/adr/0007-model-passthrough-routing.md.
+    default_provider: str | None = None
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
@@ -133,4 +138,9 @@ class InferrailConfig(BaseModel):
                     f"route '{route_name}' references unknown provider '{route.provider}'; "
                     f"known providers: {sorted(self.providers)}"
                 )
+        if self.default_provider is not None and self.default_provider not in self.providers:
+            raise ValueError(
+                f"default_provider '{self.default_provider}' is not a configured provider; "
+                f"known providers: {sorted(self.providers)}"
+            )
         return self

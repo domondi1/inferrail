@@ -75,6 +75,14 @@ inspectable config file and gives you a telemetry record for every request
 - Static routing: the request's `model` field selects a named route in
   `inferrail.yaml`, which maps to a provider + underlying model
   deterministically. No cost/latency/capability-aware selection.
+- Optional model passthrough: if `default_provider` is set in
+  `inferrail.yaml`, a `model` that matches no named route is forwarded to
+  that provider unchanged instead of being rejected — so an application
+  can use any upstream model id (including ones released after this
+  version of Inferrail) without a route being pre-registered for it. Named
+  routes still take priority. Off by default for an explicit config; on by
+  default for the zero-config quickstart path. See
+  `docs/adr/0007-model-passthrough-routing.md`.
 - Fixed-count retry with linear backoff for transient provider errors
   (timeouts, rate limits, 5xx), configurable per route
 - A structured `InferenceEvent` emitted for every request (success or

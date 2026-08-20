@@ -197,6 +197,14 @@ request's `model` field is a route name, looked up directly. Everything
 downstream of `RoutingDecision` (provider name, target model, retry count,
 timeout) doesn't know or care how the decision was made.
 
+If a route lookup misses and `default_provider` is configured,
+`resolve` falls back to forwarding `model` unchanged to that provider
+(`RoutingDecision.route_name` set to the fixed sentinel `"passthrough"`)
+instead of raising — see `docs/adr/0007-model-passthrough-routing.md`.
+This is still the same pure function of config; `InferenceEngine` still
+only ever consumes a `RoutingDecision` and has no branch for how it was
+produced.
+
 That split is intentional: adding real routing intelligence later (cost
 ceilings, latency budgets, allowed-provider lists, capability matching,
 historical-reliability-aware selection) means enriching `RoutingContext`
