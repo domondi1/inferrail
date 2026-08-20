@@ -1,5 +1,7 @@
 # Inferrail
 
+<!-- mcp-name: io.github.domondi1/inferrail -->
+
 [![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Status: Developer Preview](https://img.shields.io/badge/status-developer%20preview-orange.svg)](docs/PRODUCT.md)
