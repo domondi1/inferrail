@@ -148,6 +148,39 @@ llm = LLM(
 
 </details>
 
+### Task-level attribution (experimental)
+
+`inferrail transaction <task-id>` groups every receipt sharing one
+`X-Inferrail-Attribute-Task-Id` value — attaching that header by hand on
+every call, including through nested agent functions, gets tedious fast.
+`inferrail.track_task` does it ambiently instead:
+
+```python
+import inferrail
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="not-needed",
+    # also accepted by LangChain's ChatOpenAI, CrewAI's LLM, etc. via
+    # their own http_client= argument
+    http_client=inferrail.attributed_http_client(),
+)
+
+@inferrail.track_task(task_id="bug_9281")
+def fix_bug():
+    client.chat.completions.create(...)  # tagged automatically
+    run_subagent()  # nested calls too — no task_id parameter needed
+```
+
+`with inferrail.track_task(task_id="..."):` works the same way. Sync and
+async are both supported (`attributed_async_http_client()` for
+`AsyncOpenAI`/async frameworks); concurrent tasks never cross-contaminate.
+This is a small client-side convenience over the existing attribution
+header — no gateway or schema change, `task_id` only, no public API
+stability commitment yet. See
+[docs/adr/0009-ambient-task-tracking.md](docs/adr/0009-ambient-task-tracking.md).
+
 ## What Inferrail records
 
 Every request writes one payload-free JSON receipt — no field on it can

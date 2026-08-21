@@ -121,6 +121,17 @@ inspectable config file and gives you a telemetry record for every request
   `docs/adr/0008-task-transactions.md`. v0.1 of this primitive: one event
   type (`inference`) — non-LLM resource types are not yet supported (see
   "Explicit non-goals" below).
+- `import inferrail; inferrail.track_task(task_id="...")` — an
+  **experimental** Python helper that attaches `X-Inferrail-Attribute-Task-Id`
+  to every outgoing request ambiently for the duration of a `with` block or
+  decorated function, via a `contextvars.ContextVar` plus an `httpx` event
+  hook (`inferrail.attributed_http_client()`/`attributed_async_http_client()`,
+  handed to any httpx-based SDK client's `http_client=` argument — verified
+  against the real `openai` SDK and LangChain's `ChatOpenAI`). Removes the
+  need to thread `task_id` through nested function signatures by hand. No
+  gateway/schema change; purely a client-side convenience over the header
+  mechanism above. `task_id` only, no public API stability commitment yet.
+  See `docs/adr/0009-ambient-task-tracking.md`.
 - YAML config (`inferrail.yaml`) + environment variables for secrets, with
   loud validation errors
 - A CLI: `inferrail serve` (`--quickstart` to skip `inferrail.yaml` and use

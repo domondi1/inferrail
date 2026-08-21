@@ -14,8 +14,13 @@ src/inferrail/
 ├── receipts/    InferenceReceipt schema, Decimal cost calculator, sinks
 ├── gateway/     FastAPI app: HTTP schemas, execution engine, routes,
 │                attribution header parsing
+├── transactions/ TaskTransaction schema + read-side builder over receipts
+├── tracking.py  Client-side helper: ambient task_id propagation
+│                (contextvars + an httpx event hook) for callers of the
+│                gateway — experimental, see docs/adr/0009
 └── cli/         `inferrail serve` (+ `--quickstart`), `inferrail config
-                 check`, `inferrail report`, `inferrail demo`, `inferrail try`
+                 check`, `inferrail report`, `inferrail transaction`,
+                 `inferrail demo`, `inferrail try`
 ```
 
 Each package has one job and depends only on the ones below it in this
