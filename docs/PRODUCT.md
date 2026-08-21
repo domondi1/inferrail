@@ -106,9 +106,12 @@ inspectable config file and gives you a telemetry record for every request
   `X-Inferrail-Attribute-Run: run_123` or `-Agent`/`-Trace`/`-Workflow`
   work today with no new primitive needed.
 - `inferrail report --by <provider|model|route|attribute-name>` —
-  aggregates local receipts into a simple table: requests, tokens, total
-  known cost, and a separate count of requests with unresolvable pricing
-  (never silently folded into the cost total as `$0`).
+  aggregates local receipts into a simple table: requests, a separate count
+  of failed (non-`success`) requests within the group, tokens, total known
+  cost, and a separate count of requests with unresolvable pricing (never
+  silently folded into the cost total as `$0`). A group is never rendered
+  indistinguishably from an all-success group of the same size when one of
+  its requests actually failed.
 - `inferrail transaction <task-id> [--attribute-name NAME] [--json]` —
   groups every receipt sharing one attribution-attribute value (default
   attribute: `task_id`) into a single `TaskTransaction`: the list of

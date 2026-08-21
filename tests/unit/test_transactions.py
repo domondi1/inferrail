@@ -58,8 +58,47 @@ def test_task_transaction_json_serializes_cost_as_decimal_string_not_float() -> 
     assert isinstance(raw["events"][0]["cost_usd"], str)
 
 
-def test_new_transaction_id_is_unique() -> None:
-    assert new_transaction_id() != new_transaction_id()
+def test_new_transaction_id_is_deterministic_for_the_same_inputs() -> None:
+    assert new_transaction_id("t", ["ir_1", "ir_2"]) == new_transaction_id("t", ["ir_1", "ir_2"])
+
+
+def test_new_transaction_id_is_order_independent() -> None:
+    assert new_transaction_id("t", ["ir_1", "ir_2"]) == new_transaction_id("t", ["ir_2", "ir_1"])
+
+
+def test_new_transaction_id_differs_for_different_task_ids() -> None:
+    assert new_transaction_id("t1", ["ir_1"]) != new_transaction_id("t2", ["ir_1"])
+
+
+def test_new_transaction_id_differs_for_different_event_sets() -> None:
+    assert new_transaction_id("t", ["ir_1"]) != new_transaction_id("t", ["ir_1", "ir_2"])
+
+
+def test_build_transaction_id_is_stable_for_identical_receipt_set() -> None:
+    # Reproduces the dogfooding defect (EVIDENCE_LOG.md 2026-08-21, finding
+    # 5): querying the same, unchanged task twice in a row must return the
+    # same transaction_id — it's derived from the task's receipt set, not
+    # minted fresh on every read.
+    receipts = [_receipt(receipt_id="ir_1", attributes={"task_id": "t"})]
+
+    tx1 = build_transaction("t", receipts)
+    tx2 = build_transaction("t", receipts)
+
+    assert tx1 is not None
+    assert tx2 is not None
+    assert tx1.transaction_id == tx2.transaction_id
+
+
+def test_build_transaction_id_changes_when_a_new_receipt_joins_the_task() -> None:
+    receipts = [_receipt(receipt_id="ir_1", attributes={"task_id": "t"})]
+    tx1 = build_transaction("t", receipts)
+
+    receipts = [*receipts, _receipt(receipt_id="ir_2", attributes={"task_id": "t"})]
+    tx2 = build_transaction("t", receipts)
+
+    assert tx1 is not None
+    assert tx2 is not None
+    assert tx1.transaction_id != tx2.transaction_id
 
 
 # ---------------------------------------------------------------------------

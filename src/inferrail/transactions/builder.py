@@ -11,7 +11,8 @@ gateway.attribution) to every request that belongs to that task.
 
 from __future__ import annotations
 
-import uuid
+import hashlib
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import Literal
 
@@ -19,8 +20,21 @@ from inferrail.receipts.schema import InferenceReceipt
 from inferrail.transactions.schema import EconomicEventRef, TaskTransaction
 
 
-def new_transaction_id() -> str:
-    return f"tx_{uuid.uuid4().hex[:20]}"
+def new_transaction_id(task_id: str, event_ids: Iterable[str]) -> str:
+    """Derive a stable `transaction_id` from the task's own identity and the
+    ids of the events that make it up.
+
+    Deliberately not a random id: `inferrail transaction <task_id>` is a
+    read-side view recomputed from receipts on every invocation (ADR-0008),
+    so two reads of the same, unchanged task must return the same id — it
+    needs to be citable in a log line or ticket. `event_ids` is sorted so
+    the id doesn't depend on receipt read/iteration order; a *new* event
+    joining the task set intentionally changes the id, since that's a
+    different transaction than before.
+    """
+    digest_input = "\n".join([task_id, *sorted(event_ids)])
+    digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+    return f"tx_{digest[:20]}"
 
 
 def build_transaction(
@@ -75,7 +89,7 @@ def build_transaction(
         status = "partial"
 
     return TaskTransaction(
-        transaction_id=new_transaction_id(),
+        transaction_id=new_transaction_id(task_id, (e.event_id for e in events)),
         task_id=task_id,
         events=events,
         known_total_cost_usd=known_total,

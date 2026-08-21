@@ -247,6 +247,44 @@ def test_format_table_partial_known_cost_still_shows_the_known_sum() -> None:
     assert "unknown" not in table
 
 
+def _cell(table: str, row_prefix: str, header_col: str, next_header_col: str) -> str:
+    """Slice one fixed-width cell out of `format_table` output by column
+    header position, since a blank cell (ljust-padded to width) disappears
+    under a naive `.split()` and shifts every later token's index."""
+    header_line = table.splitlines()[0]
+    row_line = next(line for line in table.splitlines() if line.startswith(row_prefix))
+    start = header_line.index(header_col)
+    end = header_line.index(next_header_col)
+    return row_line[start:end].strip()
+
+
+def test_format_table_reveals_a_failed_request_within_a_group() -> None:
+    # Reproduces the dogfooding defect (EVIDENCE_LOG.md 2026-08-21, finding
+    # 4): a task with 3 successes and 1 real provider error must not render
+    # identically to an all-success group — `inferrail transaction` already
+    # surfaces the failure per-event; `report` must not conceal it when
+    # grouping by the same dimension (e.g. task_id).
+    receipts = [
+        _receipt(status="success", attributes={"task_id": "bugfix"}),
+        _receipt(status="success", attributes={"task_id": "bugfix"}),
+        _receipt(status="error", attributes={"task_id": "bugfix"}),
+        _receipt(status="success", attributes={"task_id": "bugfix"}),
+    ]
+
+    table = format_table(aggregate(receipts, "task_id"), "task_id")
+
+    assert "FAILED" in table
+    assert _cell(table, "bugfix", "FAILED", "INPUT TOKENS") == "1"
+
+
+def test_format_table_all_success_group_shows_no_failed_marker() -> None:
+    receipts = [_receipt(status="success", attributes={"task_id": "clean"}) for _ in range(3)]
+
+    table = format_table(aggregate(receipts, "task_id"), "task_id")
+
+    assert _cell(table, "clean", "FAILED", "INPUT TOKENS") == ""
+
+
 def test_run_report_missing_file_is_not_an_error(tmp_path: Path) -> None:
     result = run_report(tmp_path / "does-not-exist.jsonl", "customer")
 

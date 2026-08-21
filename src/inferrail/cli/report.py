@@ -101,6 +101,19 @@ def format_usd(value: Decimal) -> str:
     return f"${integer_part}.{frac_part}"
 
 
+def _failed_cell(group: ReportGroup) -> str:
+    """The FAILED cell for one row: requests that didn't reach `success`.
+
+    Grouping by a dimension (e.g. `task_id`) must never render a group
+    indistinguishably from an all-success group of the same size when one
+    of its requests actually failed — `inferrail transaction` already
+    surfaces per-event failure for a single task; `report`'s aggregate view
+    must not conceal that a group contains one when grouping the same way.
+    """
+    failed = group.requests - group.successful_requests
+    return str(failed) if failed else ""
+
+
 def _cost_cell(group: ReportGroup) -> str:
     """The COST (USD) cell for one row.
 
@@ -123,7 +136,8 @@ def format_table(groups: list[ReportGroup], by: str) -> str:
 
     header_label = by.upper()
     columns = [
-        header_label, "REQUESTS", "INPUT TOKENS", "OUTPUT TOKENS", "COST (USD)", "UNKNOWN COST",
+        header_label, "REQUESTS", "FAILED", "INPUT TOKENS", "OUTPUT TOKENS", "COST (USD)",
+        "UNKNOWN COST",
     ]
     rows: list[list[str]] = []
 
@@ -133,6 +147,7 @@ def format_table(groups: list[ReportGroup], by: str) -> str:
             [
                 g.key,
                 str(g.requests),
+                _failed_cell(g),
                 str(g.input_tokens),
                 str(g.output_tokens),
                 _cost_cell(g),
@@ -140,6 +155,7 @@ def format_table(groups: list[ReportGroup], by: str) -> str:
             ]
         )
         total.requests += g.requests
+        total.successful_requests += g.successful_requests
         total.input_tokens += g.input_tokens
         total.output_tokens += g.output_tokens
         total.known_cost_usd += g.known_cost_usd
@@ -149,6 +165,7 @@ def format_table(groups: list[ReportGroup], by: str) -> str:
         [
             "TOTAL",
             str(total.requests),
+            _failed_cell(total),
             str(total.input_tokens),
             str(total.output_tokens),
             _cost_cell(total),
