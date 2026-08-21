@@ -109,14 +109,26 @@ inspectable config file and gives you a telemetry record for every request
   aggregates local receipts into a simple table: requests, tokens, total
   known cost, and a separate count of requests with unresolvable pricing
   (never silently folded into the cost total as `$0`).
+- `inferrail transaction <task-id> [--attribute-name NAME] [--json]` —
+  groups every receipt sharing one attribution-attribute value (default
+  attribute: `task_id`) into a single `TaskTransaction`: the list of
+  contributing receipts, a known-cost total, a separate unknown-cost-event
+  count, and an aggregate status (`success` only if every event succeeded,
+  `error` only if every event failed, `partial` otherwise). A read-side
+  view over existing receipts — attach the same
+  `X-Inferrail-Attribute-Task-Id: <id>` header to every request belonging
+  to one task, no other setup required. See
+  `docs/adr/0008-task-transactions.md`. v0.1 of this primitive: one event
+  type (`inference`) — non-LLM resource types are not yet supported (see
+  "Explicit non-goals" below).
 - YAML config (`inferrail.yaml`) + environment variables for secrets, with
   loud validation errors
 - A CLI: `inferrail serve` (`--quickstart` to skip `inferrail.yaml` and use
   in-memory defaults), `inferrail config check`, `inferrail report`,
-  `inferrail demo` (offline, zero-key walkthrough of the receipt/report
-  pipeline using a fake provider), `inferrail try` (one real request
-  through the same `InferenceEngine` `inferrail serve` uses, no config
-  file required — needs `OPENAI_API_KEY`)
+  `inferrail transaction`, `inferrail demo` (offline, zero-key walkthrough
+  of the receipt/report pipeline using a fake provider), `inferrail try`
+  (one real request through the same `InferenceEngine` `inferrail serve`
+  uses, no config file required — needs `OPENAI_API_KEY`)
 - A configless quickstart path: `inferrail try` and `inferrail serve
   --quickstart` both build the same `InferrailConfig` type `inferrail.yaml`
   loads into, just from an in-memory default (OpenAI, `gpt-4o-mini`,
@@ -167,6 +179,13 @@ Not a hidden limitation — these are the honest edges of v0.1:
   the time, but there is no queryable price-history store)
 - A web dashboard — `inferrail report` is a local CLI table, deliberately
 - Any hosted/cloud component — see "OSS vs. hosted" below
+- Non-LLM economic events (browser, search, compute/sandbox, MCP tool
+  cost) in `TaskTransaction` — its only event type today is `inference`;
+  see `docs/adr/0008-task-transactions.md`
+- Outcome or business-value linkage (success/failure signal, revenue,
+  margin) on a `TaskTransaction` — it aggregates cost only
+- Budget enforcement or any policy decision at the transaction level —
+  `inferrail transaction` only reports, it never blocks a request
 
 ## Verifying privacy claims yourself
 

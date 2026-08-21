@@ -197,6 +197,41 @@ receipts:
     assert "initech" in capsys.readouterr().out
 
 
+def test_transaction_falls_back_to_quickstart_receipts_path_without_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    receipts_path = tmp_path / "inferrail-receipts.jsonl"
+    receipts_path.write_text(
+        '{"receipt_id":"ir_1","request_id":"req_1","route":"default","provider":"openai",'
+        '"model":"gpt-4o-mini","status":"success","attributes":{"task_id":"bug_9281"},'
+        '"total_latency_ms":1.0}\n'
+    )
+
+    result = main(["transaction", "bug_9281"])
+
+    assert result == 0
+    assert "bug_9281" in capsys.readouterr().out
+
+
+def test_transaction_explicit_missing_config_errors_and_never_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "inferrail-receipts.jsonl").write_text(
+        '{"receipt_id":"ir_1","request_id":"req_1","route":"default","provider":"openai",'
+        '"model":"gpt-4o-mini","status":"success","attributes":{"task_id":"should-not-appear"},'
+        '"total_latency_ms":1.0}\n'
+    )
+
+    result = main(["transaction", "should-not-appear", "--config", "typo-config.yaml"])
+
+    assert result == 1
+    captured = capsys.readouterr()
+    assert "config file not found" in captured.err
+    assert "should-not-appear" not in captured.out
+
+
 def test_report_explicit_missing_config_errors_and_never_falls_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

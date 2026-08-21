@@ -1,12 +1,14 @@
 """The Inferrail CLI.
 
-Five commands for v0.1: `serve` (run the gateway), `config check`
+Six commands for v0.1: `serve` (run the gateway), `config check`
 (validate inferrail.yaml plus referenced secrets without starting a
 server), `report` (aggregate local economic receipts by a dimension),
-`demo` (offline, zero-key walkthrough of the receipt/report pipeline), and
-`try` (one real request through the same InferenceEngine, no config file
-required). Additional commands (`routes`, `providers`, `doctor`, `stats`)
-are plausible follow-ups but aren't implemented yet — see docs/PRODUCT.md.
+`transaction` (show one task's aggregated economic transaction — see
+docs/adr/0008-task-transactions.md), `demo` (offline, zero-key walkthrough
+of the receipt/report pipeline), and `try` (one real request through the
+same InferenceEngine, no config file required). Additional commands
+(`routes`, `providers`, `doctor`, `stats`) are plausible follow-ups but
+aren't implemented yet — see docs/PRODUCT.md.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from inferrail.cli.demo import run_demo
 from inferrail.cli.report import run_report
+from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
 from inferrail.config.loader import load_config
 from inferrail.config.quickstart import (
@@ -120,7 +123,65 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    transaction = subparsers.add_parser(
+        "transaction",
+        help="Show one task's aggregated economic transaction (see docs/adr/0008).",
+    )
+    transaction.add_argument(
+        "task_id", help="The task id to look up (matched against an attribution attribute)."
+    )
+    transaction.add_argument(
+        "--attribute-name",
+        default="task_id",
+        help=(
+            "Attribution attribute name that identifies a task, e.g. set via "
+            "'X-Inferrail-Attribute-Task-Id: bug_9281' (default: %(default)s)."
+        ),
+    )
+    transaction.add_argument(
+        "--receipts",
+        default=None,
+        help="Path to the receipts JSONL file. Defaults to receipts.path from --config.",
+    )
+    transaction.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "Path to inferrail.yaml (default: inferrail.yaml). Same fallback "
+            "behavior as 'report --config'."
+        ),
+    )
+    transaction.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw TaskTransaction JSON instead of a formatted summary.",
+    )
+
     return parser
+
+
+def _resolve_receipts_path(args: argparse.Namespace) -> Path | None:
+    """Shared by `report` and `transaction`: resolve the receipts JSONL
+    path from `--receipts`, or `--config`'s `receipts.path`, or (if
+    neither was given and no `inferrail.yaml` exists) the quickstart
+    default. Returns `None`, having already printed the error, if an
+    explicitly-given `--config` fails to load.
+    """
+    if args.receipts is not None:
+        return Path(args.receipts)
+    if args.config is None and not Path("inferrail.yaml").exists():
+        # No explicit --config, and no default inferrail.yaml to read
+        # receipts.path from — fall back to the same default
+        # `inferrail try`/`inferrail serve --quickstart` write to, so
+        # `inferrail report --by customer` (or `inferrail transaction ...`)
+        # works immediately after the quickstart path with no extra flags.
+        return Path(QUICKSTART_RECEIPTS_PATH)
+    try:
+        config = load_config(args.config or "inferrail.yaml")
+    except ConfigurationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    return Path(config.receipts.path)
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -171,26 +232,17 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    if args.receipts is not None:
-        receipts_path = Path(args.receipts)
-    elif args.config is None and not Path("inferrail.yaml").exists():
-        # The user did not explicitly pass --config, and there's no default
-        # inferrail.yaml to read receipts.path from — fall back to the same
-        # default `inferrail try`/`inferrail serve --quickstart` write to,
-        # so `inferrail report --by customer` works immediately after the
-        # quickstart path with no extra flags. An *explicitly* given
-        # --config that's missing/invalid (below) always errors loudly
-        # instead — silently falling back there would mask a typo.
-        receipts_path = Path(QUICKSTART_RECEIPTS_PATH)
-    else:
-        try:
-            config = load_config(args.config or "inferrail.yaml")
-        except ConfigurationError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        receipts_path = Path(config.receipts.path)
-
+    receipts_path = _resolve_receipts_path(args)
+    if receipts_path is None:
+        return 1
     return run_report(receipts_path, args.by)
+
+
+def _cmd_transaction(args: argparse.Namespace) -> int:
+    receipts_path = _resolve_receipts_path(args)
+    if receipts_path is None:
+        return 1
+    return run_transaction(receipts_path, args.task_id, args.attribute_name, as_json=args.json)
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -229,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_config_check(args)
     if args.command == "report":
         return _cmd_report(args)
+    if args.command == "transaction":
+        return _cmd_transaction(args)
     if args.command == "demo":
         return _cmd_demo(args)
     if args.command == "try":
