@@ -2,12 +2,16 @@
 
 > Inferrail is an open-source, self-hosted, OpenAI-compatible gateway that
 > measures the cost of every LLM request and attributes it to the customer,
-> workflow, or feature that drove it — without ever storing the prompt or
-> response. Point your app's OpenAI client at Inferrail instead of directly
-> at your provider, and every call produces a payload-free economic receipt:
-> verified pricing, measured token usage, and whatever business attribution
-> you attach. Apache-2.0 licensed. Self-hosted with zero dependency on any
-> Inferrail-operated service.
+> workflow, or task that drove it — without persisting the prompt or
+> response in its local receipt/telemetry records. Point your app's OpenAI
+> client at Inferrail instead of directly at your provider, and every call
+> produces a payload-free economic receipt: verified pricing, measured
+> token usage, and whatever business attribution you attach. Receipts
+> sharing one attribution tag can be rolled up into a single task-level
+> transaction (`inferrail transaction <task-id>`), including via an
+> ambient `inferrail.track_task(...)` helper that tags nested agent calls
+> automatically. Apache-2.0 licensed. Self-hosted with zero dependency on
+> any Inferrail-operated service.
 
 ## Docs
 

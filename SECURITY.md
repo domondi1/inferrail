@@ -22,7 +22,7 @@ rather than reporting a specific bug:
   `127.0.0.1` and does not authenticate callers unless you set
   `INFERRAIL_GATEWAY_TOKEN`. If you expose it beyond your own machine
   without setting that, anyone who can reach it can consume your
-  configured provider credentials. See README.md's "Security" section.
+  configured provider credentials. See README.md's "Configuration" section.
 - **`INFERRAIL_GATEWAY_TOKEN` is a single shared secret**, not a user/auth
   system — sufficient to keep strangers off your gateway, not for
   multi-tenant access control.

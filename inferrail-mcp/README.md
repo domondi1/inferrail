@@ -33,7 +33,7 @@ inferrail-mcp
 ```
 
 Speaks MCP over stdio — not meant to be run interactively; see the client
-config snippets in the main [README](../README.md#for-agents).
+config snippets in the main [README](../README.md#mcp).
 
 ## Why not more tools
 

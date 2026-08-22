@@ -2,89 +2,119 @@
 
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-A self-hosted, OpenAI-compatible gateway that sits between your app and
-your LLM provider, so every request produces a payload-free economic
-receipt — measured cost and business attribution, with no prompt or
-response ever stored.
+A self-hosted, OpenAI-compatible gateway that turns every LLM call into
+an attributable economic receipt — without persisting prompts,
+responses, or tool payloads in its local receipt or telemetry records.
 
 [![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-
-Point your existing OpenAI client at Inferrail instead of directly at
-your provider. Nothing else changes — same request/response shape,
-same streaming, same tool calls — except now every call gets logged
-locally with its real token usage, its verified cost, and whatever
-customer/workflow/feature you attribute it to.
 
 **Developer preview (v0.1.1).** Works today; CLI flags, config shape, and
 receipt fields may still change before 1.0 — see
 [docs/PRODUCT.md](docs/PRODUCT.md).
 
-## Why Inferrail
+Point your existing OpenAI client at Inferrail instead of your provider.
+For the chat-completions surface Inferrail supports, streaming and tool
+calls preserve their expected behavior, while Inferrail records a local
+economic receipt for the execution: a verified cost when Inferrail has
+a price on file, measured token usage when available, and whatever
+customer, workflow, or task you attribute it to. Tag several calls with
+one task id, and Inferrail can tell you what that *task* cost, not just
+what one call cost.
 
-- **Know what each request cost, and who it was for** — without adding a
-  hosted observability vendor or logging prompts yourself.
-- **One place to point an OpenAI-compatible client** instead of
-  provider-specific SDK code sprinkled through your app.
-- **Runs entirely on your own machine.** No Inferrail-operated service
-  exists yet, and none of this depends on one.
-- **Structurally can't store your prompts.** The receipt and telemetry
-  schemas have no field capable of holding message content — not a
-  setting, a guarantee.
+## Why this, not just a proxy
 
-## Install
+- **Every call becomes an economic record, not just a log line.** Cost
+  is computed with `Decimal`, never `float`, from a verified price. If
+  Inferrail can't verify a price for a model, cost is `null` on that
+  receipt — never a guessed `$0` folded silently into a total.
+- **Cost rolls up to the task that caused it, not just the call that
+  carried it.** `inferrail transaction <task-id>` aggregates every
+  receipt sharing one attribution tag into a single known cost — useful
+  the moment one unit of work is more than one model call, which most
+  agent tasks are.
+- **Prompts, responses, and tool payloads are not persisted** in
+  Inferrail's local receipt or telemetry records. Not a setting that
+  could be misconfigured — neither schema has a field to put one in,
+  and a test enforces it.
+
+## Try it
 
 ```bash
 pip install inferrail
-```
-
-Requires Python 3.11+.
-
-## Quickstart
-
-See the whole pipeline — request → receipt → cost report — with no API
-key and no network call:
-
-```bash
 inferrail demo
 ```
 
-Runs canned requests through Inferrail's real engine using a fake
-in-memory provider. Every price and response is clearly labeled `DEMO`.
+No API key, no network call. Canned requests run through Inferrail's
+real engine (fake provider, every price labeled `DEMO`) and print one
+receipt per request, then an aggregated report:
 
-To try it for real, with your own key:
+```
+CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+globex          2                 1621          416            $0.007825
+acme            3                 1952          361            $0.000483   1
+TOTAL           6                 3873          827            $0.008408   1
+```
+
+That `1` in `UNKNOWN COST` is deliberate: one request used a model
+Inferrail has no verified price for, and its cost shows as unresolved —
+never silently counted as `$0`.
+
+## What you get
+
+One payload-free JSON receipt per request:
+
+```json
+{
+  "receipt_id": "ir_1e6c916bac8940ca8a85",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "prompt_tokens": 842,
+  "completion_tokens": 191,
+  "estimated_cost_usd": "0.000241",
+  "attributes": { "customer": "acme", "workflow": "contract-review" }
+}
+```
+
+(Trimmed — the full record also carries pricing provenance, status,
+route, timestamp, latency, and retry count. See
+[Privacy boundary](#privacy-boundary) below for the complete shape.)
+
+## Task economics
+
+One task is rarely one call. Tag every request belonging to one unit of
+work with the same attribution value, then ask Inferrail what the task
+cost:
 
 ```bash
 export OPENAI_API_KEY=<your-openai-api-key>
-inferrail try "Reply with one word: ready" --customer acme
+inferrail try "Reply with one word: ready" -a task_id=bug_9281
+inferrail try "Summarize: the retry patch is deployed" -a task_id=bug_9281
+inferrail transaction bug_9281
 ```
 
 ```
-ready
+Task:        bug_9281
+Transaction: tx_72fcfcca9ede9d2facc3
+Status:      success
 
-Receipt ir_670b20135cfe4bcb8f6f
-  Provider          openai
-  Model             gpt-4o-mini
-  Input tokens      12
-  Output tokens     1
-  Cost              $0.000002
-  Customer          acme
-  Prompt stored     no
-  Response stored   no
+EVENT TYPE  EVENT ID                 STATUS   COST
+inference   ir_f6fb6403d5324ea0acf9  success  $0.000003
+inference   ir_756cc072a27f42f4a2ea  success  $0.000007
 
-Saved to ./inferrail-receipts.jsonl
-
-Next:
-  inferrail report --by customer
+Known total cost: $0.00001
 ```
 
-`inferrail report --by customer` (or `provider`, `model`, `route`, or
-any attribute you've attached) aggregates every receipt written so far
-into a table of requests, tokens, and cost.
+This needs a real key — `inferrail demo`'s canned data doesn't include a
+task id to correlate offline. Over HTTP, an
+`X-Inferrail-Attribute-Task-Id: bug_9281` header does the same thing;
+`inferrail.track_task(task_id=...)` (see [Attribute spend](#attribute-spend)
+below) attaches it automatically to every nested call in an agent run, no
+header-threading required. See
+[docs/adr/0008](docs/adr/0008-task-transactions.md).
 
-## Send a request
-
-Run the gateway itself with the same zero-config defaults:
+## Use it as a gateway
 
 ```bash
 inferrail serve --quickstart
@@ -148,12 +178,28 @@ llm = LLM(
 
 </details>
 
-### Task-level attribution (experimental)
+`"model"` normally selects a named route from `inferrail.yaml` (e.g.
+`"default"`), which maps to a provider + underlying model. If
+`default_provider` is set in your config, a `model` that matches no route
+is instead forwarded to that provider unchanged — so `"model":
+"gpt-5.6-sol"` works with no route pre-registered for it. Named routes
+always take priority. This passthrough is on by default for the
+zero-config quickstart path, off by default otherwise. Full design:
+[docs/adr/0007](docs/adr/0007-model-passthrough-routing.md).
 
-`inferrail transaction <task-id>` groups every receipt sharing one
-`X-Inferrail-Attribute-Task-Id` value — attaching that header by hand on
-every call, including through nested agent functions, gets tedious fast.
-`inferrail.track_task` does it ambiently instead:
+## Attribute spend
+
+Three ways to attach business context to a request, all landing in the
+same `attributes: dict[str, str]` on its receipt:
+
+- **HTTP header** (gateway): `X-Inferrail-Attribute-<Name>: <value>`, e.g.
+  `X-Inferrail-Attribute-Task-Id: bug_9281`.
+- **CLI flag** (`inferrail try`): `--customer`/`--workflow` shorthand, or
+  generic `-a <name>=<value>` for anything else, including `task_id`.
+- **Ambient, for nested agent calls**: `inferrail.track_task` attaches
+  `X-Inferrail-Attribute-Task-Id` to every outgoing request for the
+  duration of a `with` block or decorated function — no threading a
+  `task_id` parameter through nested function signatures by hand.
 
 ```python
 import inferrail
@@ -164,7 +210,9 @@ client = OpenAI(
     api_key="not-needed",
     # also accepted by LangChain's ChatOpenAI, CrewAI's LLM, etc. via
     # their own http_client= argument
-    http_client=inferrail.attributed_http_client(),
+    # base_url must match the client's own base_url above — the header is
+    # only ever attached to requests going to that destination.
+    http_client=inferrail.attributed_http_client(base_url="http://127.0.0.1:8000/v1"),
 )
 
 @inferrail.track_task(task_id="bug_9281")
@@ -174,17 +222,48 @@ def fix_bug():
 ```
 
 `with inferrail.track_task(task_id="..."):` works the same way. Sync and
-async are both supported (`attributed_async_http_client()` for
+async are both supported (`attributed_async_http_client(base_url=...)` for
 `AsyncOpenAI`/async frameworks); concurrent tasks never cross-contaminate.
-This is a small client-side convenience over the existing attribution
-header — no gateway or schema change, `task_id` only, no public API
-stability commitment yet. See
-[docs/adr/0009-ambient-task-tracking.md](docs/adr/0009-ambient-task-tracking.md).
+This is a small client-side convenience over the HTTP header above — no
+gateway or schema change, `task_id` only, no public API stability
+commitment yet. See
+[docs/adr/0009](docs/adr/0009-ambient-task-tracking.md).
 
-## What Inferrail records
+Once tagged, `inferrail report --by <provider|model|route|attribute-name>`
+aggregates every receipt written so far by any of these dimensions —
+`customer`, `workflow`, `task_id`, or anything else you've attached.
 
-Every request writes one payload-free JSON receipt — no field on it can
-hold a prompt or response:
+## How it works
+
+`InferenceEngine` normalizes the request, resolves `model` to a route in
+`inferrail.yaml` (a pure config lookup — no cost/latency-aware
+selection in v0.1), calls the one provider adapter in this version
+(`OpenAIProvider`, generic over `base_url` — OpenAI itself, Azure
+OpenAI's compatible surface, vLLM, llama.cpp-server, or anything else
+speaking the same wire format), and emits a telemetry event and a
+receipt for every request, success or failure. Full lifecycle, package
+layout, and the streaming/retry boundaries:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Privacy boundary
+
+Inferrail does not persist prompts, responses, or tool payloads in its
+local receipt or telemetry records — structurally: neither schema has a
+field capable of holding message content, and
+`test_inference_receipt_has_no_payload_fields` enforces it. This is a
+claim about **Inferrail's own local records**, not about the request
+path as a whole — your configured provider still receives the real
+prompt either way; Inferrail is a pass-through gateway to it, not a
+privacy boundary against it.
+
+`inferrail try` says this in its own output too, not just in the schema:
+
+```
+  Prompt stored     no
+  Response stored   no
+```
+
+The full receipt shape, all fields:
 
 ```json
 {
@@ -208,21 +287,13 @@ hold a prompt or response:
 }
 ```
 
-If Inferrail can't verify a price for the (provider, model) pair, `pricing`
-and `estimated_cost_usd` are `null` — never a guessed or fabricated cost.
-All money math uses `Decimal`, never `float`. Details:
+If Inferrail can't verify a price for the (provider, model) pair,
+`pricing` and `estimated_cost_usd` are `null` — never a guessed or
+fabricated cost. You can check the no-payload claim yourself against a
+running gateway, not just take it on faith:
+[docs/PRODUCT.md's verification walkthrough](docs/PRODUCT.md#verifying-privacy-claims-yourself).
+Design rationale:
 [docs/adr/0005](docs/adr/0005-privacy-preserving-economic-receipts.md).
-
-## Model routing
-
-`"model"` normally selects a named route from `inferrail.yaml` (e.g.
-`"default"`), which maps to a provider + underlying model. If
-`default_provider` is set in your config, a `model` that matches no route
-is instead forwarded to that provider unchanged — so `"model":
-"gpt-5.6-sol"` works with no route pre-registered for it. Named routes
-always take priority. This passthrough is on by default for the
-zero-config quickstart path, off by default otherwise. Full design:
-[docs/adr/0007](docs/adr/0007-model-passthrough-routing.md).
 
 ## MCP
 
@@ -234,11 +305,11 @@ An MCP server (`inferrail-mcp`), published on the MCP registry as
 [`io.github.domondi1/inferrail`](https://registry.modelcontextprotocol.io),
 exposes Inferrail's local receipt ledger to any MCP-aware agent (Claude
 Code, Claude Desktop, Cursor, ...) as two **read-only** tools — neither
-executes inference or spends provider budget:
+executes inference nor spends provider budget:
 
 | Tool | What it does |
 |---|---|
-| `get_spend` | Aggregates local receipts by provider/model/route/attribute, optional time window |
+| `get_spend` | Aggregates local receipts by provider/model/route/attribute (including `task_id`), optional time window |
 | `get_health` | Checks gateway reachability + most recent local receipt |
 
 ```json
@@ -251,6 +322,41 @@ executes inference or spends provider budget:
 
 Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 [inferrail-mcp/README.md](inferrail-mcp/README.md).
+
+## Supported today
+
+- `POST /v1/chat/completions`: streaming (`stream: true`, real SSE
+  passthrough) and tool/function calling, single string message content,
+  no `n != 1`
+- `GET /health`
+- One provider adapter, generic over any OpenAI-compatible HTTP endpoint
+- Named-route + optional passthrough model routing (above)
+- Per-route retry with backoff on transient provider errors
+- Local structured telemetry and payload-free cost receipts for every
+  request, plus `inferrail report --by <dimension>` and
+  `inferrail transaction <task-id>`
+- CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
+  `report`, `transaction`
+
+## Not yet
+
+Honest edges, not silent gaps — full list in
+[docs/PRODUCT.md](docs/PRODUCT.md):
+
+- Cost- or latency-aware routing, or automatic failover to a different
+  provider/model on error — routing is a static config lookup
+- Budgets, spend limits, or blocking a request based on cost
+- Any provider whose wire protocol isn't OpenAI-compatible (native
+  Anthropic, Gemini, Bedrock, ...)
+- The full OpenAI API surface — only `/v1/chat/completions` and
+  `/health` exist; no embeddings, assistants, batch, images, or audio
+- Multi-user auth or role-based access control —
+  `INFERRAIL_GATEWAY_TOKEN` is one shared secret, not a user system
+- Any hosted or cloud-operated component
+- Non-LLM economic events (browser, search, compute/sandbox, MCP tool
+  cost) in a `TaskTransaction` — its only event type today is `inference`
+- Outcome or business-value linkage (success signal, revenue, margin) on
+  a `TaskTransaction` — it aggregates cost only
 
 ## Configuration
 
@@ -271,25 +377,6 @@ telemetry, receipts, pricing overrides):
 By default the gateway binds to `127.0.0.1:8000` with no auth. Set
 `INFERRAIL_GATEWAY_TOKEN` to require callers to send `Authorization:
 Bearer <token>` — see [SECURITY.md](SECURITY.md).
-
-## What works today
-
-- `POST /v1/chat/completions`: streaming (`stream: true`, real SSE
-  passthrough) and tool/function calling, single string message content,
-  no `n != 1`
-- `GET /health`
-- One provider adapter, generic over any OpenAI-compatible HTTP endpoint
-- Named-route + optional passthrough model routing (above)
-- Per-route retry with backoff on transient provider errors
-- Local structured telemetry and payload-free cost receipts for every
-  request, plus `inferrail report --by <dimension>`
-- CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
-  `report`
-
-**Not yet:** multi-provider intelligent routing, cost estimates for
-models outside the built-in catalog or an explicit `pricing:` override,
-budgets/spend limits, any non-OpenAI-compatible provider. Full scope:
-[docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Documentation
 
