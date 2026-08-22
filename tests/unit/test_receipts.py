@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -243,12 +245,40 @@ def test_jsonl_receipt_sink_write_failure_does_not_raise(
     def _raise_open(*args: object, **kwargs: object) -> None:
         raise PermissionError("simulated permission denied")
 
-    monkeypatch.setattr(Path, "open", _raise_open)
+    monkeypatch.setattr(os, "open", _raise_open)
 
     with caplog.at_level(logging.WARNING, logger="inferrail.receipts"):
         sink.emit(_receipt())  # must not raise
 
     assert "failed to write receipt" in caplog.text
+
+
+def test_jsonl_receipt_sink_survives_concurrent_large_receipts(tmp_path: Path) -> None:
+    # A receipt larger than the ~8 KiB text-IO buffer used to be split
+    # across several syscalls, so concurrent writers interleaved mid-line
+    # and *both* records were lost as unparseable rows. Ordinary
+    # attribution (many attributes, or long values) reaches that size, and
+    # this ledger is the product's accounting record — silently dropping
+    # rows under concurrency is not an acceptable failure mode.
+    path = tmp_path / "receipts.jsonl"
+    sink = JSONLReceiptSink(path)
+    big_attributes = {"customer": "acme", "pad": "z" * 20_000}
+    writers, per_writer = 8, 40
+
+    def _write() -> None:
+        for _ in range(per_writer):
+            sink.emit(_receipt(attributes=dict(big_attributes)))
+
+    threads = [threading.Thread(target=_write) for _ in range(writers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    lines = [line for line in path.read_text().splitlines() if line.strip()]
+    assert len(lines) == writers * per_writer
+    for line in lines:
+        assert json.loads(line)["attributes"]["pad"] == "z" * 20_000
 
 
 def test_null_receipt_sink_discards_silently() -> None:

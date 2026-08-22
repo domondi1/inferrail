@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.1.1"
+version = "0.1.2"
 description = "A self-hosted gateway that sits between your app and OpenAI, turning every request into an attributable cost receipt — without persisting prompts or responses in its own local records."
 readme = "README.md"
 requires-python = ">=3.11"

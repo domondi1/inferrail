@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from inferrail.config.models import PriceEntry, ProviderConfig
+from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
 from inferrail.pricing.resolver import PricingResolver
 
 
@@ -32,6 +33,26 @@ def test_builtin_pricing_applies_to_real_openai_provider() -> None:
     assert price.output_usd_per_million == Decimal("0.60")
     assert price.source
     assert price.verified_date is not None
+
+
+def test_context_tiered_models_are_deliberately_unpriced() -> None:
+    # A `PriceEntry` holds exactly one input/output rate, but these models
+    # are billed at a higher rate above a context threshold. Listing one
+    # would silently under-report long-context requests — an explicit
+    # `null` is the honest answer until the schema can express the tier.
+    providers = {"openai": ProviderConfig(type="openai", api_key_env="KEY")}
+    resolver = PricingResolver(providers, overrides={})
+
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+        assert model not in BUILTIN_OPENAI_PRICING
+        assert resolver.resolve("openai", model) is None
+
+
+def test_every_builtin_price_carries_verifiable_provenance() -> None:
+    for model, price in BUILTIN_OPENAI_PRICING.items():
+        assert price.source.startswith("https://"), model
+        assert price.input_usd_per_million > 0, model
+        assert price.output_usd_per_million > 0, model
 
 
 def test_builtin_pricing_does_not_apply_to_openai_compatible_provider() -> None:

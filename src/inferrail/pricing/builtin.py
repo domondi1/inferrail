@@ -28,19 +28,39 @@ from decimal import Decimal
 from inferrail.config.models import PriceEntry
 
 _OPENAI_PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
-_VERIFIED_DATE = date(2026, 8, 16)
+_VERIFIED_DATE = date(2026, 8, 22)
 
+
+def _price(input_usd: str, output_usd: str) -> PriceEntry:
+    return PriceEntry(
+        input_usd_per_million=Decimal(input_usd),
+        output_usd_per_million=Decimal(output_usd),
+        source=_OPENAI_PRICING_SOURCE,
+        verified_date=_VERIFIED_DATE,
+    )
+
+
+# Every entry is a model whose standard-tier price is a single
+# input/output pair. Deliberately excluded, even though they're current
+# flagships: `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are priced
+# per *context length* (a higher rate above 270K tokens), which a single
+# `PriceEntry` cannot represent — storing only the short-context rate
+# would silently under-report a long-context request's real cost, which is
+# precisely the fabricated-precision failure this catalog exists to avoid.
+# They resolve to `null` (an honest "unknown") until either the schema
+# models context-tiered pricing or an operator supplies a `pricing:`
+# override they've chosen themselves. Same reasoning excludes the `-pro`,
+# batch, flex, and fast tiers.
 BUILTIN_OPENAI_PRICING: dict[str, PriceEntry] = {
-    "gpt-4o-mini": PriceEntry(
-        input_usd_per_million=Decimal("0.15"),
-        output_usd_per_million=Decimal("0.60"),
-        source=_OPENAI_PRICING_SOURCE,
-        verified_date=_VERIFIED_DATE,
-    ),
-    "gpt-4o": PriceEntry(
-        input_usd_per_million=Decimal("2.50"),
-        output_usd_per_million=Decimal("10.00"),
-        source=_OPENAI_PRICING_SOURCE,
-        verified_date=_VERIFIED_DATE,
-    ),
+    "gpt-4o": _price("2.50", "10.00"),
+    "gpt-4o-mini": _price("0.15", "0.60"),
+    "gpt-4.1": _price("2.00", "8.00"),
+    "gpt-4.1-mini": _price("0.40", "1.60"),
+    "gpt-4.1-nano": _price("0.10", "0.40"),
+    "gpt-5": _price("1.25", "10.00"),
+    "gpt-5.1": _price("1.25", "10.00"),
+    "gpt-5-mini": _price("0.25", "2.00"),
+    "gpt-5-nano": _price("0.05", "0.40"),
+    "o3": _price("2.00", "8.00"),
+    "o4-mini": _price("1.10", "4.40"),
 }

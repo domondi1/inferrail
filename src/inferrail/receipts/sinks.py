@@ -11,6 +11,7 @@ here transmits data off the machine.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +30,17 @@ class JSONLReceiptSink:
 
     The file (and its parent directory) is created on first write if it
     doesn't already exist.
+
+    One receipt is one `os.write` to an `O_APPEND` descriptor, never a
+    buffered `write()` pair. Buffered text I/O splits a record larger than
+    the ~8 KiB buffer into several syscalls, so two concurrent writers
+    interleave *within* a line and both records are lost to a
+    `JSONDecodeError` on read back — a receipt large enough to hit this is
+    reachable with ordinary attribution (many attributes, or long values),
+    and losing accounting records is exactly what this ledger may not do.
+    `O_APPEND` makes each single write atomic against other appenders, so
+    this holds across processes (multiple workers on one receipts file)
+    as well as threads.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -44,13 +56,25 @@ class JSONLReceiptSink:
         # an accounting side-channel, not the response path. Losing one
         # receipt is logged loudly, not silently swallowed, but it cannot
         # be allowed to turn a completed inference into a 500.
+        line = (receipt.model_dump_json() + "\n").encode("utf-8")
         try:
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(receipt.model_dump_json())
-                f.write("\n")
+            fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                written = os.write(fd, line)
+            finally:
+                os.close(fd)
         except OSError as exc:
             _logger.warning(
                 "failed to write receipt %s to %s: %s", receipt.receipt_id, self._path, exc
+            )
+            return
+        if written != len(line):
+            # A short write leaves a truncated line that would fail to
+            # parse later; say so now rather than let it surface as an
+            # unexplained skipped row in `inferrail report`.
+            _logger.warning(
+                "receipt %s was partially written to %s (%d of %d bytes)",
+                receipt.receipt_id, self._path, written, len(line),
             )
 
 

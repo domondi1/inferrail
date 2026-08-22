@@ -10,9 +10,11 @@ responses, or tool payloads in its local receipt or telemetry records.
 [![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Developer preview (v0.1.1).** Works today; CLI flags, config shape, and
+**Developer preview (v0.1.2).** Works today; CLI flags, config shape, and
 receipt fields may still change before 1.0 — see
-[docs/PRODUCT.md](docs/PRODUCT.md).
+[docs/PRODUCT.md](docs/PRODUCT.md). Single-node only: run one Inferrail
+process per receipts file (see
+[Deployment boundary](#deployment-boundary)).
 
 Point your existing OpenAI client at Inferrail instead of your provider.
 For the chat-completions surface Inferrail supports, streaming and tool
@@ -357,6 +359,28 @@ Honest edges, not silent gaps — full list in
   cost) in a `TaskTransaction` — its only event type today is `inference`
 - Outcome or business-value linkage (success signal, revenue, margin) on
   a `TaskTransaction` — it aggregates cost only
+
+## Deployment boundary
+
+**Single node.** The receipt ledger is a local append-only JSONL file, so
+every process that should appear in one report must write to one file on
+one filesystem.
+
+- Concurrent writers to the same file are safe: each receipt is written
+  as a single atomic `O_APPEND` write, so threads *and* multiple
+  processes on the same host can share one ledger without interleaving or
+  losing records.
+- Not supported: several hosts writing to one ledger, aggregating ledgers
+  across machines, or anything resembling a shared/hosted control plane.
+  Running Inferrail on N hosts gives you N separate ledgers, and nothing
+  in the product merges them.
+- `inferrail report` and `inferrail transaction` read the whole file into
+  memory. That is fine for the millions-of-bytes range a developer
+  preview produces; it is not a query engine, and there is no retention,
+  rotation, or compaction. Rotate the file yourself if it grows.
+
+Anything beyond one host is out of scope for v0.x — see
+[docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Configuration
 
