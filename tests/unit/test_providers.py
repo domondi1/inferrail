@@ -219,6 +219,59 @@ async def test_complete_passes_through_tool_fields_unmodified() -> None:
     assert captured["parallel_tool_calls"] is True
 
 
+async def test_complete_forwards_user_field_to_upstream_payload() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-6",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    provider = _provider(handler)
+    request = NormalizedChatRequest(
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="hello")],
+        user="end-user-42",
+    )
+
+    await provider.complete(request, timeout=5)
+
+    assert captured["user"] == "end-user-42"
+
+
+async def test_complete_omits_user_field_when_not_set() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-7",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    provider = _provider(handler)
+
+    await provider.complete(_request(), timeout=5)
+
+    assert "user" not in captured
+
+
 async def test_complete_parses_tool_calls_with_arguments_kept_as_raw_string() -> None:
     # The arguments string below has unusual formatting (extra spaces,
     # specific key order) that a naive json.loads()+json.dumps() round trip

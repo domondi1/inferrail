@@ -16,6 +16,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from inferrail import __version__
@@ -120,5 +122,32 @@ def create_app(config: InferrailConfig) -> FastAPI:
             )
         )
         return JSONResponse(status_code=status, content=body.model_dump())
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        req: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # A field ChatCompletionRequest doesn't model at all (extra="forbid"
+        # — see gateway/schemas.py) is a meaningfully unsupported parameter
+        # (response_format, seed, ...), not a generic malformed request —
+        # promote it to Inferrail's normal ErrorResponse/error-code shape
+        # instead of FastAPI's default 422 body, so it's just as
+        # machine-readable as every other rejection. Any other validation
+        # failure (missing/mistyped field) keeps FastAPI's default handling
+        # unchanged.
+        unsupported_fields = sorted(
+            str(error["loc"][-1]) for error in exc.errors() if error["type"] == "extra_forbidden"
+        )
+        if not unsupported_fields:
+            return await request_validation_exception_handler(req, exc)
+        return await handle_inferrail_error(
+            req,
+            UnsupportedFeatureError(
+                "request included field(s) Inferrail does not forward or transform: "
+                f"{', '.join(unsupported_fields)} — see docs/PRODUCT.md for the exact "
+                "supported request surface; unsupported fields are rejected, never "
+                "silently ignored"
+            ),
+        )
 
     return app

@@ -284,6 +284,129 @@ def test_telemetry_emitted_on_error(
     assert event.error_category == "authentication"
 
 
+def test_response_still_succeeds_when_telemetry_sink_write_fails(
+    monkeypatch: pytest.MonkeyPatch, base_config_dict: dict[str, Any], tmp_path: Path
+) -> None:
+    # Mirrors test_gateway_receipts.test_response_still_succeeds_when_
+    # receipt_sink_write_fails: telemetry.sink defaults to "console", but
+    # jsonl is a documented opt-in (docs/PRODUCT.md's privacy-verification
+    # walkthrough), and an unwritable path there must never turn an
+    # otherwise-successful inference call into a 500 — telemetry is a
+    # side-channel operational record, not part of the response path.
+    # Uses the real JSONLTelemetrySink (not a fake), so this exercises the
+    # actual production code path.
+    config_dict = dict(base_config_dict)
+    config_dict["telemetry"] = {"sink": "jsonl", "path": str(tmp_path / "telemetry.jsonl")}
+    config = InferrailConfig.model_validate(config_dict)
+
+    def _raise_open(*args: object, **kwargs: object) -> None:
+        raise PermissionError("simulated permission denied")
+
+    monkeypatch.setattr(Path, "open", _raise_open)
+    monkeypatch.setattr(
+        app_module, "build_providers", lambda cfg, **_kw: {"openai": FakeProvider()}
+    )
+    app = app_module.create_app(config)
+    client = TestClient(app)
+
+    response = client.post("/v1/chat/completions", json=_chat_body())
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "ok"
+
+
+def test_streaming_still_delivers_full_body_when_telemetry_sink_write_fails(
+    monkeypatch: pytest.MonkeyPatch, base_config_dict: dict[str, Any], tmp_path: Path
+) -> None:
+    # Streaming counterpart: the telemetry write happens in _iter_stream's
+    # `finally` block, after every chunk has already been forwarded — a
+    # write failure there must not raise out of the generator and corrupt
+    # or truncate a response the client already started receiving.
+    config_dict = dict(base_config_dict)
+    config_dict["telemetry"] = {"sink": "jsonl", "path": str(tmp_path / "telemetry.jsonl")}
+    config = InferrailConfig.model_validate(config_dict)
+    provider = FakeProvider(
+        stream_outcomes=[StreamScript(chunks=[b"data: [DONE]\n\n"])]
+    )
+
+    def _raise_open(*args: object, **kwargs: object) -> None:
+        raise PermissionError("simulated permission denied")
+
+    monkeypatch.setattr(Path, "open", _raise_open)
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
+    app = app_module.create_app(config)
+    client = TestClient(app)
+
+    with client.stream("POST", "/v1/chat/completions", json=_chat_body(stream=True)) as response:
+        assert response.status_code == 200
+        body = b"".join(response.iter_bytes())
+
+    assert body == b"data: [DONE]\n\n"
+
+
+def test_chat_completions_forwards_user_field_to_provider(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    provider = FakeProvider()
+    client = _make_client(monkeypatch, base_config, provider)
+
+    response = client.post("/v1/chat/completions", json=_chat_body(user="end-user-42"))
+
+    assert response.status_code == 200
+    assert provider.calls[0].user == "end-user-42"
+
+
+def test_chat_completions_rejects_unmodeled_field_as_unsupported_feature(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    # response_format is a real OpenAI parameter Inferrail doesn't forward
+    # or transform — it must be explicitly rejected, never silently
+    # dropped while the request appears to succeed (see gateway/schemas.py
+    # and gateway/app.py's RequestValidationError handler).
+    provider = FakeProvider()
+    client = _make_client(monkeypatch, base_config, provider)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_body(response_format={"type": "json_object"}),
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["code"] == "INFERRAIL_E006"
+    assert "response_format" in body["error"]["message"]
+    assert len(provider.calls) == 0  # never reached the provider
+
+
+def test_chat_completions_response_exposes_provider_request_id_and_raw_model(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    # The provider's own response id / model string, additively surfaced
+    # rather than silently discarded — see gateway/schemas.py's
+    # InferrailMetadata docstring. Top-level `id`/`model` remain
+    # Inferrail's own request identity (unchanged by this test).
+    provider = FakeProvider(
+        outcomes=[
+            NormalizedChatResponse(
+                content="ok",
+                finish_reason="stop",
+                prompt_tokens=3,
+                completion_tokens=2,
+                raw_model="gpt-4o-mini-2024-07-18",
+                provider_request_id="chatcmpl-abc123",
+            )
+        ]
+    )
+    client = _make_client(monkeypatch, base_config, provider)
+
+    response = client.post("/v1/chat/completions", json=_chat_body())
+
+    body = response.json()
+    assert body["id"] != "chatcmpl-abc123"  # Inferrail's own request_id, not the provider's
+    assert body["inferrail"]["provider_request_id"] == "chatcmpl-abc123"
+    assert body["inferrail"]["raw_model"] == "gpt-4o-mini-2024-07-18"
+
+
 def test_chat_completions_no_auth_required_by_default(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:

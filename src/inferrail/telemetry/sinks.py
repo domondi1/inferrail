@@ -41,9 +41,24 @@ class JSONLTelemetrySink:
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit(self, event: InferenceEvent) -> None:
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(event.model_dump_json())
-            f.write("\n")
+        # Mirrors receipts.sinks.JSONLReceiptSink.emit: telemetry is an
+        # ancillary side-channel, not the response path. A write failure
+        # here (read-only filesystem, permissions, disk full, a directory
+        # removed after startup) must never turn an otherwise-successful —
+        # or independently-failed — inference into a 500. Losing one event
+        # is logged loudly, not silently swallowed, but it cannot be
+        # allowed to propagate past this method.
+        try:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(event.model_dump_json())
+                f.write("\n")
+        except OSError as exc:
+            _logger.warning(
+                "failed to write telemetry event %s to %s: %s",
+                event.request_id,
+                self._path,
+                exc,
+            )
 
 
 class NullTelemetrySink:

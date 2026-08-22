@@ -15,10 +15,11 @@ from inferrail.tracking import (
 )
 
 _HEADER = "X-Inferrail-Attribute-Task-Id"
+_BASE_URL = "http://example.invalid"
 
 
-def _request() -> httpx.Request:
-    return httpx.Request("POST", "http://example.invalid/v1/chat/completions")
+def _request(url: str = "http://example.invalid/v1/chat/completions") -> httpx.Request:
+    return httpx.Request("POST", url)
 
 
 # ---------------------------------------------------------------------------
@@ -116,21 +117,38 @@ def test_track_task_isolates_concurrent_asyncio_tasks() -> None:
 def test_inject_task_id_header_sets_header_when_tracking() -> None:
     request = _request()
     with track_task("bug_9281"):
-        inject_task_id_header(request)
+        inject_task_id_header(request, allowed_base_url=_BASE_URL)
     assert request.headers[_HEADER] == "bug_9281"
 
 
 def test_inject_task_id_header_no_op_outside_track_task() -> None:
     request = _request()
-    inject_task_id_header(request)
+    inject_task_id_header(request, allowed_base_url=_BASE_URL)
     assert _HEADER not in request.headers
 
 
 def test_inject_task_id_header_async_matches_sync_behavior() -> None:
     request = _request()
     with track_task("bug_9281"):
-        asyncio.run(inject_task_id_header_async(request))
+        asyncio.run(inject_task_id_header_async(request, allowed_base_url=_BASE_URL))
     assert request.headers[_HEADER] == "bug_9281"
+
+
+def test_inject_task_id_header_omitted_for_unrelated_destination() -> None:
+    # The core leak this guards against: the same tracked context, but the
+    # request is going somewhere other than allowed_base_url (a caller
+    # reusing the client against a real, non-Inferrail provider endpoint).
+    request = _request("https://api.some-other-provider.example/v1/chat/completions")
+    with track_task("bug_9281"):
+        inject_task_id_header(request, allowed_base_url=_BASE_URL)
+    assert _HEADER not in request.headers
+
+
+def test_inject_task_id_header_async_omitted_for_unrelated_destination() -> None:
+    request = _request("https://api.some-other-provider.example/v1/chat/completions")
+    with track_task("bug_9281"):
+        asyncio.run(inject_task_id_header_async(request, allowed_base_url=_BASE_URL))
+    assert _HEADER not in request.headers
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +164,7 @@ def test_attributed_http_client_tags_outgoing_requests() -> None:
         captured.append(request)
         return httpx.Response(200, json={"ok": True})
 
-    client = attributed_http_client()
+    client = attributed_http_client(base_url=_BASE_URL)
     client._transport = httpx.MockTransport(handler)
 
     with track_task("bug_9281"):
@@ -162,10 +180,30 @@ def test_attributed_http_client_omits_header_when_not_tracking() -> None:
         captured.append(request)
         return httpx.Response(200, json={"ok": True})
 
-    client = attributed_http_client()
+    client = attributed_http_client(base_url=_BASE_URL)
     client._transport = httpx.MockTransport(handler)
 
     client.get("http://example.invalid/v1/chat/completions")
+
+    assert _HEADER not in captured[0].headers
+
+
+def test_attributed_http_client_omits_header_for_unrelated_destination() -> None:
+    # The client is only ever configured with one base_url in practice
+    # (mirroring real SDK usage — see README's example), but a caller
+    # could still pass an absolute URL elsewhere through the same client
+    # instance; that must never carry the task id either.
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    client = attributed_http_client(base_url=_BASE_URL)
+    client._transport = httpx.MockTransport(handler)
+
+    with track_task("bug_9281"):
+        client.get("https://api.some-other-provider.example/v1/chat/completions")
 
     assert _HEADER not in captured[0].headers
 
@@ -178,7 +216,7 @@ def test_attributed_async_http_client_tags_outgoing_requests() -> None:
         return httpx.Response(200, json={"ok": True})
 
     async def run() -> None:
-        client = attributed_async_http_client()
+        client = attributed_async_http_client(base_url=_BASE_URL)
         client._transport = httpx.MockTransport(handler)
         with track_task("bug_9281"):
             await client.get("http://example.invalid/v1/chat/completions")
@@ -186,6 +224,24 @@ def test_attributed_async_http_client_tags_outgoing_requests() -> None:
     asyncio.run(run())
 
     assert captured[0].headers[_HEADER] == "bug_9281"
+
+
+def test_attributed_async_http_client_omits_header_for_unrelated_destination() -> None:
+    captured: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    async def run() -> None:
+        client = attributed_async_http_client(base_url=_BASE_URL)
+        client._transport = httpx.MockTransport(handler)
+        with track_task("bug_9281"):
+            await client.get("https://api.some-other-provider.example/v1/chat/completions")
+
+    asyncio.run(run())
+
+    assert _HEADER not in captured[0].headers
 
 
 def test_attributed_async_http_client_isolates_concurrent_tasks() -> None:
@@ -200,7 +256,7 @@ def test_attributed_async_http_client_isolates_concurrent_tasks() -> None:
             await client.get("http://example.invalid/v1/chat/completions")
 
     async def run() -> None:
-        client = attributed_async_http_client()
+        client = attributed_async_http_client(base_url=_BASE_URL)
         client._transport = httpx.MockTransport(handler)
         await asyncio.gather(
             call_tagged(client, "task_a"),

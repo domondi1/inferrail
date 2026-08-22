@@ -69,6 +69,10 @@ class NormalizedChatRequest(BaseModel):
     tool_choice: str | dict[str, object] | None = None
     parallel_tool_calls: bool | None = None
     stream_options: dict[str, object] | None = None
+    # OpenAI's end-user identifier, forwarded verbatim so the provider's own
+    # abuse-monitoring/rate-limiting can key off it. Never used by Inferrail
+    # itself for anything.
+    user: str | None = None
 
 
 class NormalizedChatResponse(BaseModel):

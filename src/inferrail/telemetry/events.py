@@ -4,8 +4,11 @@ This is deliberately operational metadata only — no prompt or response
 content. See docs/adr/0003-no-payload-persistence-by-default.md for why.
 
 Every field that we cannot currently measure trustworthily is left ``None``
-rather than estimated or fabricated (e.g. cost, since we have no verified
-pricing table yet; time-to-first-token, since v0.1 has no streaming path).
+rather than estimated or fabricated. ``time_to_first_token_ms`` is one such
+field: streaming exists (see docs/adr/0006), and the first upstream chunk's
+arrival is already observed internally (``gateway/execution.py``'s
+``prepare_stream``), but nothing populates this field from it yet -- see
+docs/PRODUCT.md's non-goals for why that's a deliberate gap, not a bug.
 """
 
 from __future__ import annotations

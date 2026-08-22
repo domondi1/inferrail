@@ -61,6 +61,27 @@ def test_jsonl_sink_writes_one_line_per_event(tmp_path: Path) -> None:
     assert json.loads(lines[1])["request_id"] == "req_2"
 
 
+def test_jsonl_sink_write_failure_does_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # telemetry.sink defaults to "console", but jsonl is a common opt-in
+    # (see docs/PRODUCT.md's privacy-verification walkthrough) — a write
+    # failure (read-only filesystem, permissions, disk full) must never
+    # crash an in-flight request. Mirrors
+    # test_receipts.test_jsonl_receipt_sink_write_failure_does_not_raise.
+    sink = JSONLTelemetrySink(tmp_path / "telemetry.jsonl")
+
+    def _raise_open(*args: object, **kwargs: object) -> None:
+        raise PermissionError("simulated permission denied")
+
+    monkeypatch.setattr(Path, "open", _raise_open)
+
+    with caplog.at_level(logging.WARNING, logger="inferrail.telemetry"):
+        sink.emit(_event())  # must not raise
+
+    assert "failed to write telemetry event" in caplog.text
+
+
 def test_null_sink_discards_silently() -> None:
     NullTelemetrySink().emit(_event())  # must not raise
 

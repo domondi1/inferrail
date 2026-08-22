@@ -41,9 +41,13 @@ class InferenceReceipt(BaseModel):
     model: str
 
     # See telemetry.events.InferenceEvent.status for what "partial" means.
-    # A partial receipt never carries token counts (the provider's final
-    # usage block never arrived), so pricing/estimated_cost_usd stay None
-    # here for the same never-fabricate-cost reason as a failed request.
+    # A partial receipt's token counts are whatever was actually measured
+    # before the interruption -- None if the provider's final usage block
+    # never arrived, but a real (prompt_tokens, completion_tokens) pair if
+    # it happened to arrive right before a late failure (see
+    # gateway/execution.py's `_emit_stream_outcome`). Either way,
+    # pricing/estimated_cost_usd are computed only when both counts are
+    # actually known -- never fabricated, never a guessed `0`.
     status: Literal["success", "error", "partial"]
 
     prompt_tokens: int | None = None

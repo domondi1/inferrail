@@ -67,6 +67,7 @@
         "type": "object"
       },
       "ChatCompletionRequest": {
+        "additionalProperties": false,
         "properties": {
           "max_tokens": {
             "anyOf": [
@@ -386,11 +387,33 @@
         "type": "object"
       },
       "InferrailMetadata": {
-        "description": "Inferrail-specific extension data, not part of the OpenAI schema.",
+        "description": "Inferrail-specific extension data, not part of the OpenAI schema.\n\n``request_id`` (also the top-level response ``id``) and ``model`` (the\ntop-level response ``model``) are deliberately Inferrail's own request\nidentity, not the upstream provider's \u2014 they're what correlates this\nresponse back to its ``InferenceEvent``/``InferenceReceipt``, which\nexist independent of whatever id/model string a particular provider\nhappened to echo back. ``provider_request_id``/``raw_model`` below are\nthe provider's own values, carried through additively so they're never\nsilently discarded \u2014 never conflate the two.",
         "properties": {
           "provider": {
             "title": "Provider",
             "type": "string"
+          },
+          "provider_request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Request Id"
+          },
+          "raw_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Model"
           },
           "request_id": {
             "title": "Request Id",
@@ -486,7 +509,7 @@
   },
   "info": {
     "title": "Inferrail",
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "openapi": "3.1.0",
   "paths": {

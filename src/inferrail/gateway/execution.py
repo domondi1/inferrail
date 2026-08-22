@@ -267,6 +267,7 @@ class InferenceEngine:
             tool_choice=request.tool_choice,
             parallel_tool_calls=request.parallel_tool_calls,
             stream_options=request.stream_options,
+            user=request.user,
         )
         return decision, provider, normalized_request
 
@@ -493,6 +494,8 @@ class InferenceEngine:
                 provider=decision.provider_name,
                 total_latency_ms=latency_ms,
                 retry_count=retry_count,
+                provider_request_id=result.provider_request_id,
+                raw_model=result.raw_model,
             ),
         )
 

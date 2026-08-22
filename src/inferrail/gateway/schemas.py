@@ -6,6 +6,15 @@ is rejected with a clear 400, not silently ignored. Streaming and tool
 calling *are* supported as of Phase 3 — see docs/PRODUCT.md for the full
 supported-surface list.
 
+``ChatCompletionRequest`` forbids unmodeled top-level fields
+(``model_config``'s ``extra: "forbid"``) rather than silently dropping
+them, the default Pydantic v2 behavior. A client sending, say,
+``response_format`` or ``seed`` — real OpenAI parameters this codebase
+doesn't yet forward — gets a clear ``INFERRAIL_E006`` error naming the
+field, never a response that silently ignored it. See
+``gateway/app.py``'s ``RequestValidationError`` handler, which promotes
+that failure into Inferrail's normal error shape.
+
 The non-standard top-level ``inferrail`` field carries routing/telemetry
 metadata (route, provider, latency, retries). Clients that only speak
 standard OpenAI response shapes can ignore it.
@@ -21,6 +30,13 @@ from inferrail.providers.base import ChatMessage, ToolCall
 
 
 class ChatCompletionRequest(BaseModel):
+    # Forbid, not the Pydantic default "ignore": a field this schema
+    # doesn't model (response_format, frequency_penalty, presence_penalty,
+    # seed, logprobs, top_logprobs, ...) must fail loudly, never vanish
+    # silently while the request still appears to succeed. See module
+    # docstring.
+    model_config = {"extra": "forbid"}
+
     # Selects an Inferrail *route* (inferrail.yaml: routes.<name>) if one by
     # this name is configured — see docs/adr/0002. Otherwise, if
     # `default_provider` is set, forwarded unchanged as a provider model id
@@ -74,13 +90,29 @@ class ChatCompletionUsage(BaseModel):
 
 
 class InferrailMetadata(BaseModel):
-    """Inferrail-specific extension data, not part of the OpenAI schema."""
+    """Inferrail-specific extension data, not part of the OpenAI schema.
+
+    ``request_id`` (also the top-level response ``id``) and ``model`` (the
+    top-level response ``model``) are deliberately Inferrail's own request
+    identity, not the upstream provider's — they're what correlates this
+    response back to its ``InferenceEvent``/``InferenceReceipt``, which
+    exist independent of whatever id/model string a particular provider
+    happened to echo back. ``provider_request_id``/``raw_model`` below are
+    the provider's own values, carried through additively so they're never
+    silently discarded — never conflate the two.
+    """
 
     request_id: str
     route: str
     provider: str
     total_latency_ms: float
     retry_count: int = 0
+    # The provider's own response id/model, when it returned one — e.g.
+    # OpenAI's "chatcmpl-..." and a dated model snapshot like
+    # "gpt-4o-mini-2024-07-18". None for a failed request, or a provider
+    # that didn't echo one back.
+    provider_request_id: str | None = None
+    raw_model: str | None = None
 
 
 class ChatCompletionResponse(BaseModel):

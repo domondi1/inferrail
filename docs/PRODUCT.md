@@ -2,10 +2,11 @@
 
 > This file is the authoritative source for exact current scope.
 
-**Developer Preview · v0.1.0.** The scope below is fully implemented and
-tested, but nothing is stable yet — CLI flags, `inferrail.yaml`'s shape,
-and receipt/telemetry JSON fields may change without notice before v1.0.
-See README.md's status note.
+**Developer Preview.** The scope below is fully implemented and tested,
+but nothing is stable yet — CLI flags, `inferrail.yaml`'s shape, and
+receipt/telemetry JSON fields may change without notice before v1.0. See
+README.md's status note for the current version number — deliberately
+not restated here as a second hardcoded copy that could drift from it.
 
 ## What it is
 
@@ -51,7 +52,18 @@ inspectable config file and gives you a telemetry record for every request
 ## Current scope (v0.1) — what works today
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
-  for single-turn or multi-turn text chat (see limits below)
+  for single-turn or multi-turn text chat (see limits below). Every
+  top-level request field is explicitly categorized, never silently
+  dropped: `model`, `messages`, `temperature`, `max_tokens`, `top_p`,
+  `stop`, `stream`, `stream_options`, `tools`, `tool_choice`,
+  `parallel_tool_calls`, and `user` are accepted and forwarded (`user`
+  reaches the upstream provider verbatim, for its own abuse
+  monitoring/rate limiting — Inferrail itself never reads it); `n != 1`
+  is explicitly rejected (see below); any other field the request body
+  contains — `response_format`, `frequency_penalty`, `presence_penalty`,
+  `seed`, `logprobs`, `top_logprobs`, or anything else this schema
+  doesn't model — is rejected with `INFERRAIL_E006` naming the field,
+  never accepted and quietly ignored.
 - Real SSE streaming (`stream: true`): upstream bytes are proxied
   byte-for-byte as they arrive, never buffered and re-chunked. Retries
   only ever happen before the first byte reaches the client — once a
@@ -68,6 +80,19 @@ inspectable config file and gives you a telemetry record for every request
   semantics — it never executes a tool itself, never parses or
   re-serializes a tool call's `arguments` string (kept byte-exact end to
   end), and never reorders or renames a call.
+- Response identity: the non-streaming response's top-level `id`,
+  `created`, and `model` are Inferrail's own values — `id` is the same
+  `request_id` used to correlate this response with its
+  `InferenceEvent`/`InferenceReceipt`/`inferrail report` row, `created` is
+  when Inferrail's execution completed, and `model` is the resolved route
+  target (or the passed-through model id — docs/adr/0007), not whatever
+  the provider itself echoed back. This is deliberate: it's what lets a
+  caller correlate a response with its own receipt without a second
+  lookup. The provider's own values, when it returned any, are not
+  discarded — they're on `inferrail.provider_request_id`/`inferrail.raw_model`
+  instead (e.g. OpenAI's `"chatcmpl-..."` id and a dated model snapshot
+  like `"gpt-4o-mini-2024-07-18"`), `null` if the provider didn't return
+  one or the request failed.
 - `GET /health`
 - One provider adapter (`OpenAIProvider`) that speaks the OpenAI
   `/chat/completions` wire format — usable against `api.openai.com` or any
@@ -126,15 +151,20 @@ inspectable config file and gives you a telemetry record for every request
   "Explicit non-goals" below).
 - `import inferrail; inferrail.track_task(task_id="...")` — an
   **experimental** Python helper that attaches `X-Inferrail-Attribute-Task-Id`
-  to every outgoing request ambiently for the duration of a `with` block or
+  to outgoing requests ambiently for the duration of a `with` block or
   decorated function, via a `contextvars.ContextVar` plus an `httpx` event
-  hook (`inferrail.attributed_http_client()`/`attributed_async_http_client()`,
-  handed to any httpx-based SDK client's `http_client=` argument — verified
-  against the real `openai` SDK and LangChain's `ChatOpenAI`). Removes the
-  need to thread `task_id` through nested function signatures by hand. No
-  gateway/schema change; purely a client-side convenience over the header
-  mechanism above. `task_id` only, no public API stability commitment yet.
-  See `docs/adr/0009-ambient-task-tracking.md`.
+  hook (`inferrail.attributed_http_client(base_url=...)`/
+  `attributed_async_http_client(base_url=...)`, handed to any httpx-based
+  SDK client's `http_client=` argument — verified against the real
+  `openai` SDK and LangChain's `ChatOpenAI`). `base_url` is required and
+  must be the same URL you give your SDK client — the header is attached
+  only to requests whose destination matches it, so a client accidentally
+  reused against an unrelated, non-Inferrail endpoint never discloses the
+  task id to it. Removes the need to thread `task_id` through nested
+  function signatures by hand. No gateway/schema change; purely a
+  client-side convenience over the header mechanism above. `task_id`
+  only, no public API stability commitment yet. See
+  `docs/adr/0009-ambient-task-tracking.md`.
 - YAML config (`inferrail.yaml`) + environment variables for secrets, with
   loud validation errors
 - A CLI: `inferrail serve` (`--quickstart` to skip `inferrail.yaml` and use
@@ -150,8 +180,8 @@ inspectable config file and gives you a telemetry record for every request
   second config system, and it never silently writes a config file to disk
 - Optional shared-secret gateway auth: if `INFERRAIL_GATEWAY_TOKEN` is set,
   `/v1/chat/completions` requires a matching `Authorization: Bearer`
-  header. Unset by default (localhost-dev mode) — see README's "Security"
-  section. Not a user/auth system; a single shared secret.
+  header. Unset by default (localhost-dev mode) — see README's
+  "Configuration" section. Not a user/auth system; a single shared secret.
 
 ### Cost and receipts
 

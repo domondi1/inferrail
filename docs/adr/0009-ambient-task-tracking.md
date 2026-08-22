@@ -86,3 +86,21 @@ is a client-side convenience over a mechanism that already exists.
 - Does not touch non-LLM resource types, outcome/value linkage, or any
   policy/budget enforcement — all remain exactly as scoped (not
   authorized) in ADR-0008.
+
+## Amendment: destination-scoped header injection
+
+The initial implementation attached `X-Inferrail-Attribute-Task-Id` to
+*every* request made through an `attributed_http_client`/
+`attributed_async_http_client` instance, regardless of destination. That's
+a real disclosure risk for a header carrying an internal task identifier:
+a caller who reuses the same client instance against a different,
+non-Inferrail endpoint (a realistic mistake, not a contrived one — nothing
+in either SDK usage pattern this ADR verified against prevents it) would
+leak that identifier to it.
+
+Both constructors now require `base_url`, the same URL already passed to
+the SDK client's own `base_url=`; the `request` event hook attaches the
+header only when a request's scheme+host+port match. No other behavior
+described above changes — nesting, restoration, asyncio isolation, and the
+zero-gateway-change property are all unaffected, and this remains
+explicitly experimental.

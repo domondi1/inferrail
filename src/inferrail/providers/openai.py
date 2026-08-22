@@ -96,6 +96,8 @@ class OpenAIProvider:
             payload["parallel_tool_calls"] = request.parallel_tool_calls
         if request.stream_options is not None:
             payload["stream_options"] = request.stream_options
+        if request.user is not None:
+            payload["user"] = request.user
         return payload
 
     async def complete(

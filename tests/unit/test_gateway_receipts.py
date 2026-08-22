@@ -257,6 +257,27 @@ def test_receipts_never_persist_provider_echoed_error_text(
     assert canary not in receipts.receipts[0].model_dump_json()
 
 
+def test_user_field_never_becomes_receipt_attribution(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    # `user` is OpenAI's end-user identifier (forwarded to the provider —
+    # see test_gateway.test_chat_completions_forwards_user_field_to_provider)
+    # and is a completely separate mechanism from business attribution
+    # (X-Inferrail-Attribute-<Name> headers -> receipt.attributes). Sending
+    # `user` must never populate, key, or otherwise appear in
+    # receipt.attributes — the two are not the same concept and must not be
+    # conflated.
+    marker = "end-user-do-not-attribute-me"
+    receipts = InMemoryReceiptSink()
+    client = _make_client(monkeypatch, base_config, FakeProvider(), receipts)
+
+    client.post("/v1/chat/completions", json=_chat_body(user=marker))
+
+    receipt = receipts.receipts[0]
+    assert receipt.attributes == {}
+    assert marker not in receipt.model_dump_json()
+
+
 def test_attribution_values_do_persist_in_receipts_by_design(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:
