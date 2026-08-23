@@ -101,7 +101,7 @@
   <script>
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
-      const install = '$ pip install inferrail'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
+      const install = 'pip install inferrail'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
       const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied. See you on the other side →'; hint.textContent='Paste it in your terminal, then run: inferrail demo'; } catch { hint.textContent='Copy failed. Run: pip install inferrail'; } };
       button.addEventListener('click', () => copyInstall(button)); copyButton.addEventListener('click', () => copyInstall(copyButton));
       const referralButton = document.querySelector('#referral-button'); referralButton.addEventListener('click', () => { referralButton.textContent='Coming soon'; document.querySelector('#network-status').textContent='There is no referral route in v0.1.2.'; });
