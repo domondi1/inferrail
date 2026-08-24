@@ -2,45 +2,23 @@
 
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-A local, single-node OpenAI-compatible gateway for supported chat-completions
-requests. Inferrail records measured usage and known pricing as attributable
-economic receipts — without persisting prompts, responses, or tool payloads in
-its local receipt or telemetry records.
+Know what your AI work costs.
+
+Inferrail turns supported OpenAI chat-completion traffic into local,
+attributable economic receipts, so you can see which customer, workflow, or
+task caused the spend without storing prompts, responses, or tool payloads in
+Inferrail's own records.
 
 [![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Developer preview (v0.1.2).** Works today; CLI flags, config shape, and
-receipt fields may still change before 1.0 — see
-[docs/PRODUCT.md](docs/PRODUCT.md). Single-node only: run one Inferrail
-process per receipts file (see
-[Deployment boundary](#deployment-boundary)).
+For the supported chat-completions surface, Inferrail records known cost when
+measured usage and a verified price are available. Otherwise it reports
+`unknown`, never a fabricated `$0`. Attach customer, workflow, or task context
+when you need attributed economics.
 
-Point your existing OpenAI client at Inferrail instead of your provider.
-For the supported chat-completions surface, streaming and tool calls preserve
-their expected behavior. Inferrail records a local economic receipt for each
-supported request: a known cost when measured usage and a verified price are
-available, otherwise `unknown` rather than a fabricated `$0`. Attach customer,
-workflow, or task context when you need attributed economics.
-
-## Why this, not just a proxy
-
-- **Every call becomes an economic record, not just a log line.** Cost
-  is computed with `Decimal`, never `float`, from a verified price. If
-  Inferrail can't verify a price for a model, cost is `null` on that
-  receipt — never a guessed `$0` folded silently into a total.
-- **Cost rolls up to the task that caused it, not just the call that
-  carried it.** `inferrail transaction <task-id>` aggregates every
-  receipt sharing one attribution tag into a single known cost — useful
-  the moment one unit of work is more than one model call, which most
-  agent tasks are.
-- **Prompts, responses, and tool payloads are not persisted** in
-  Inferrail's local receipt or telemetry records. Not a setting that
-  could be misconfigured — neither schema has a field to put one in,
-  and a test enforces it.
-
-## Try it
+## See your first cost
 
 ```bash
 pip install inferrail
@@ -54,8 +32,35 @@ provider billing. It runs canned requests through Inferrail's real engine
 with made-up prices labeled `DEMO` and prints one receipt per request plus
 an aggregate report. The `try` command is the shortest path to one real
 cost. It uses your existing `OPENAI_API_KEY`; if it is not set, Inferrail
-prints what is required. It prints the response, receipt, measured tokens, known cost or
-`unknown`, local receipt path, and the next report command.
+prints what is required. It prints the response, receipt, measured tokens,
+known cost or `unknown`, local receipt path, and the next report command:
+
+```text
+Receipt ...
+Provider ...
+Model ...
+Input tokens ...
+Output tokens ...
+Cost ...
+Prompt stored     no
+Response stored   no
+
+Saved locally:
+  /absolute/path/to/inferrail-receipts.jsonl
+
+Next:
+  inferrail report
+```
+
+`inferrail report` shows the all-up economics first: requests, failed
+requests, input tokens, output tokens, known cost, and unknown-cost requests.
+Explore existing dimensions afterward:
+
+```bash
+inferrail report --by customer
+inferrail report --by workflow
+inferrail report --by provider
+```
 
 ```
 CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
@@ -72,9 +77,9 @@ Known cost requires measured usage and a verified price. Unknown stays
 unknown. Inferrail measures and attributes supported inference spend; it does
 not set budgets, send alerts, cap usage, or stop provider requests.
 
-## What you get
+## What a receipt contains
 
-One payload-free JSON receipt per request:
+One payload-free JSON receipt per supported request:
 
 ```json
 {
@@ -117,8 +122,8 @@ inference   ir_756cc072a27f42f4a2ea  success  $0.000007
 Known total cost: $0.00001
 ```
 
-This needs a real key — `inferrail demo`'s canned data doesn't include a
-task id to correlate offline. Over HTTP, an
+This needs a real provider request — `inferrail demo`'s canned data doesn't
+include a task id to correlate offline. Over HTTP, an
 `X-Inferrail-Attribute-Task-Id: bug_9281` header does the same thing;
 `inferrail.track_task(task_id=...)` (see [Attribute spend](#attribute-spend)
 below) attaches it automatically to every nested call in an agent run, no
@@ -256,6 +261,34 @@ Once tagged, `inferrail report` shows the all-up aggregate, while
 aggregates receipts by any of these dimensions —
 `customer`, `workflow`, `task_id`, or anything else you've attached.
 
+## Referral early access
+
+Referral access is opening soon. Planned early-access rewards are based on
+verified routed usage, not signup:
+
+```text
+1 verified referral
+→ +90 days of cost history for both sides
+
+3 verified referrals
+→ Pro for one year + unlimited seats
+
+10 verified referrals
+→ Founding Operator
+→ permanent Pro
+→ logo on the site
+→ roadmap vote
+→ private channel
+
+25 verified referrals
+→ Inferrail free for life
+→ 20% recurring on additional teams referred
+```
+
+Program terms will be published when referral access opens.
+
+See the current program presentation at [tryinferrail.com](https://tryinferrail.com).
+
 ## How it works
 
 `InferenceEngine` normalizes the request, resolves `model` to a route in
@@ -264,7 +297,7 @@ selection in v0.1), calls the one provider adapter in this version
 (`OpenAIProvider`, generic over `base_url` — OpenAI itself, Azure
 OpenAI's compatible surface, vLLM, llama.cpp-server, or anything else
 speaking the same wire format), and emits a telemetry event and a
-receipt for every request, success or failure. Full lifecycle, package
+receipt for every supported request, success or failure. Full lifecycle, package
 layout, and the streaming/retry boundaries:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -360,8 +393,8 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - One provider adapter, generic over any OpenAI-compatible HTTP endpoint
 - Named-route + optional passthrough model routing (above)
 - Per-route retry with backoff on transient provider errors
-- Local structured telemetry and payload-free cost receipts for every
-  request, plus `inferrail report --by <dimension>` and
+- Local structured telemetry and payload-free cost receipts for supported
+  requests, plus `inferrail report`, grouped reports, and
   `inferrail transaction <task-id>`
 - CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
   `report`, `transaction`
