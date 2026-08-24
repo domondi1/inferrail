@@ -90,7 +90,9 @@ def test_successful_try_shows_response_and_receipt(
     assert "Cost              $0.000007" in out
     assert "Prompt stored     no" in out
     assert "Response stored   no" in out
-    assert "inferrail report --by provider" in out
+    assert f"Saved locally:\n  {(Path.cwd() / 'inferrail-receipts.jsonl').resolve()}" in out
+    assert "Next:" in out
+    assert "inferrail report\n" in out
 
 
 def test_receipt_is_actually_persisted_to_jsonl(

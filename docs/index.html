@@ -77,24 +77,24 @@
   <header class="masthead wrap"><a class="wordmark" href=".">Inferrail</a><nav class="nav" aria-label="Primary navigation"><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a></nav></header>
   <main>
     <section class="hero wrap" aria-labelledby="hero-title">
-      <h1 id="hero-title">Know what every AI task costs.<span>Without storing the prompt.</span></h1>
-      <p class="lede">An OpenAI-compatible gateway you run yourself. Change one <code>base_url</code>, and every request comes back with a receipt.</p>
+      <h1 id="hero-title">Know what your AI work costs.<span>Without storing your prompt.</span></h1>
+      <p class="lede">See the cost behind your customers, workflows, and tasks. Inferrail turns supported OpenAI chat-completion traffic into local, attributable economic receipts.</p>
       <article class="receipt" aria-label="Example attribution receipt">
         <div class="receipt-header"><span class="receipt-label">Attribution receipt</span><span class="receipt-id">req_0a52973573d04acc874d</span></div>
         <div class="dash"></div>
         <div class="receipt-row"><span>customer</span><span>acme</span></div><div class="receipt-row"><span>workflow</span><span>contract-review</span></div><div class="receipt-row"><span>tokens in / out</span><span>842 / 191</span></div><div class="receipt-row"><span>latency</span><span>15.96 ms</span></div><div class="receipt-row muted"><span>payload stored</span><span>none</span></div>
-        <div class="solid"></div><div class="receipt-total"><span>Cost of this task</span><span>$0.000241</span></div><div class="stamp receipt-stamp">Payload-free</div>
-        <p class="receipt-note">The prompt and the response were never written to disk. Only the economics were.</p><div class="dash"></div>
+        <div class="solid"></div><div class="receipt-total"><span>Known cost</span><span>$0.000241</span></div><div class="stamp receipt-stamp">Payload-free</div>
+        <p class="receipt-note">Inferrail's local records contain economics, not prompts or responses. Your configured provider still receives the request.</p><div class="dash"></div>
         <div class="install-wrap"><div class="install"><code>$ pip install inferrail</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">runs locally · no account required · Apache-2.0</p></div>
       </article>
-      <div class="primary-action"><button class="button button-dark" id="try-button" type="button">Try Inferrail</button><p class="action-hint" id="action-hint">Copy the install command to your terminal.</p></div>
+      <div class="primary-action"><button class="button button-dark" id="try-button" type="button">Try Inferrail</button><p class="action-hint" id="action-hint">Then run: inferrail demo (optional) or inferrail try "Reply with one word: ready" --customer acme</p></div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="network wrap" aria-labelledby="network-title">
       <h2 id="network-title">We attribute every dollar.<span>Including yours.</span></h2>
-      <p class="sub">Inferrail's referral network is not part of v0.1.2 yet. The product today is the receipt: a team can route traffic, attach customer or task context, and retrieve the cost.</p>
+      <p class="sub">Early access to the Inferrail referral program is opening soon. The product today is the receipt: a team can route traffic, attach customer or task context, and retrieve the cost.</p>
       <div class="ladder" aria-label="Referral program coming soon"><div class="tier"><div><span class="tier-number">01</span><span class="tier-label">network</span></div><p class="tier-reward">Referral rewards are not shipped in the current release.</p></div><div class="tier"><div><span class="tier-number">--</span><span class="tier-label">status</span></div><p class="tier-reward">No sign-up credit, Pro plan, or operator status is currently promised.</p></div><div class="tier"><div><span class="tier-number">--</span><span class="tier-label">status</span></div><p class="tier-reward">The public product remains self-hosted and single-node.</p></div><div class="tier"><div><span class="tier-number">--</span><span class="tier-label">status</span></div><p class="tier-reward">Come back when the network exists; today, share the repository.</p></div></div>
-      <p class="qualification">This page does not collect referrals or claim rewards. v0.1.2 has no referral route, hosted account system, or traffic-based qualification mechanism.</p><div class="network-action"><button class="button button-ghost" id="referral-button" type="button">Get my referral link</button><p class="network-status" id="network-status">Coming soon.</p></div>
+      <p class="qualification">Early access referral links will open soon. The program is separate from the local product and does not require an account today.</p><div class="network-action"><button class="button button-ghost" id="referral-button" type="button">Get my referral link</button><p class="network-status" id="network-status">Coming soon.</p></div>
     </section>
   </main>
   <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
@@ -102,9 +102,9 @@
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
       const install = 'pip install inferrail'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
-      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied. See you on the other side →'; hint.textContent='Paste it in your terminal, then run: inferrail demo'; } catch { hint.textContent='Copy failed. Run: pip install inferrail'; } };
+      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied. Next: run inferrail demo'; hint.textContent='Optional demo, then: inferrail try "Reply with one word: ready" --customer acme (uses OPENAI_API_KEY)'; } catch { hint.textContent='Copy failed. Run: pip install inferrail'; } };
       button.addEventListener('click', () => copyInstall(button)); copyButton.addEventListener('click', () => copyInstall(copyButton));
-      const referralButton = document.querySelector('#referral-button'); referralButton.addEventListener('click', () => { referralButton.textContent='Coming soon'; document.querySelector('#network-status').textContent='There is no referral route in v0.1.2.'; });
+      const referralButton = document.querySelector('#referral-button'); referralButton.addEventListener('click', () => { referralButton.textContent='Coming soon'; document.querySelector('#network-status').textContent='Referral links open soon.'; });
     })();
   </script>
 </body>

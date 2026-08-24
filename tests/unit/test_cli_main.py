@@ -126,6 +126,42 @@ def test_report_falls_back_to_quickstart_receipts_path_without_config(
     assert "acme" in capsys.readouterr().out
 
 
+def test_report_without_by_prints_all_up_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "inferrail-receipts.jsonl").write_text(
+        '{"receipt_id":"ir_1","request_id":"req_1","route":"default",'
+        '"provider":"openai","model":"gpt-4o-mini","status":"success",'
+        '"prompt_tokens":10,"completion_tokens":5,"attributes":{},"total_latency_ms":1.0}\n'
+    )
+
+    result = main(["report"])
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "INFERRAIL SPEND SUMMARY" in output
+    assert "Requests:        1" in output
+
+
+def test_report_by_customer_keeps_grouped_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "inferrail-receipts.jsonl").write_text(
+        '{"receipt_id":"ir_1","request_id":"req_1","route":"default",'
+        '"provider":"openai","model":"gpt-4o-mini","status":"success",'
+        '"attributes":{"customer":"acme"},"total_latency_ms":1.0}\n'
+    )
+
+    result = main(["report", "--by", "customer"])
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "CUSTOMER" in output
+    assert "acme" in output
+
+
 def test_report_uses_configured_receipts_path_when_config_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

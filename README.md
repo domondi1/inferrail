@@ -2,9 +2,10 @@
 
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-A self-hosted, OpenAI-compatible gateway that turns every LLM call into
-an attributable economic receipt — without persisting prompts,
-responses, or tool payloads in its local receipt or telemetry records.
+A local, single-node OpenAI-compatible gateway for supported chat-completions
+requests. Inferrail records measured usage and known pricing as attributable
+economic receipts — without persisting prompts, responses, or tool payloads in
+its local receipt or telemetry records.
 
 [![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
@@ -17,13 +18,11 @@ process per receipts file (see
 [Deployment boundary](#deployment-boundary)).
 
 Point your existing OpenAI client at Inferrail instead of your provider.
-For the chat-completions surface Inferrail supports, streaming and tool
-calls preserve their expected behavior, while Inferrail records a local
-economic receipt for the execution: a verified cost when Inferrail has
-a price on file, measured token usage when available, and whatever
-customer, workflow, or task you attribute it to. Tag several calls with
-one task id, and Inferrail can tell you what that *task* cost, not just
-what one call cost.
+For the supported chat-completions surface, streaming and tool calls preserve
+their expected behavior. Inferrail records a local economic receipt for each
+supported request: a known cost when measured usage and a verified price are
+available, otherwise `unknown` rather than a fabricated `$0`. Attach customer,
+workflow, or task context when you need attributed economics.
 
 ## Why this, not just a proxy
 
@@ -45,12 +44,18 @@ what one call cost.
 
 ```bash
 pip install inferrail
-inferrail demo
+inferrail demo                 # optional: canned data, no billing
+inferrail try "Reply with one word: ready" --customer acme
+inferrail report
 ```
 
-No API key, no network call. Canned requests run through Inferrail's
-real engine (fake provider, every price labeled `DEMO`) and print one
-receipt per request, then an aggregated report:
+`inferrail demo` is optional proof: no API key, no network call, and no
+provider billing. It runs canned requests through Inferrail's real engine
+with made-up prices labeled `DEMO` and prints one receipt per request plus
+an aggregate report. The `try` command is the shortest path to one real
+cost. It uses your existing `OPENAI_API_KEY`; if it is not set, Inferrail
+prints what is required. It prints the response, receipt, measured tokens, known cost or
+`unknown`, local receipt path, and the next report command.
 
 ```
 CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
@@ -62,6 +67,10 @@ TOTAL           6                 3873          827            $0.008408   1
 That `1` in `UNKNOWN COST` is deliberate: one request used a model
 Inferrail has no verified price for, and its cost shows as unresolved —
 never silently counted as `$0`.
+
+Known cost requires measured usage and a verified price. Unknown stays
+unknown. Inferrail measures and attributes supported inference spend; it does
+not set budgets, send alerts, cap usage, or stop provider requests.
 
 ## What you get
 
@@ -118,6 +127,11 @@ header-threading required. See
 
 ## Use it as a gateway
 
+For a long-running application, start the separate gateway process. The
+gateway process must have access to the provider credential through the
+configured environment variable; a key held only inside application memory is
+not automatically transferred to the gateway.
+
 ```bash
 inferrail serve --quickstart
 ```
@@ -137,8 +151,14 @@ The response is standard OpenAI `choices`/`usage` plus a non-standard
 already ignores. `X-Inferrail-Attribute-*` headers are optional
 attribution — never forwarded upstream. See
 [examples/basic_chat_request.py](examples/basic_chat_request.py) for a
-minimal Python client, or point any existing OpenAI-compatible SDK
-(LangChain, LlamaIndex, CrewAI, ...) at `http://127.0.0.1:8000/v1`.
+minimal Python client, or point a supported OpenAI-compatible chat client at
+`http://127.0.0.1:8000/v1`. An OpenAI SDK client that does not set `base_url`
+can use its existing `OPENAI_BASE_URL` environment mechanism instead.
+
+The default receipt is one JSONL line per supported request in
+`./inferrail-receipts.jsonl`, relative to the gateway's working directory.
+Treat that file as machine/audit evidence; use `inferrail report` for the
+human aggregate and `inferrail transaction <task-id>` for a task total.
 
 <details>
 <summary>Framework examples (LangChain, LlamaIndex, CrewAI)</summary>
@@ -231,8 +251,9 @@ gateway or schema change, `task_id` only, no public API stability
 commitment yet. See
 [docs/adr/0009](docs/adr/0009-ambient-task-tracking.md).
 
-Once tagged, `inferrail report --by <provider|model|route|attribute-name>`
-aggregates every receipt written so far by any of these dimensions —
+Once tagged, `inferrail report` shows the all-up aggregate, while
+`inferrail report --by <provider|model|route|attribute-name>`
+aggregates receipts by any of these dimensions —
 `customer`, `workflow`, `task_id`, or anything else you've attached.
 
 ## How it works
@@ -257,6 +278,11 @@ claim about **Inferrail's own local records**, not about the request
 path as a whole — your configured provider still receives the real
 prompt either way; Inferrail is a pass-through gateway to it, not a
 privacy boundary against it.
+
+Inferrail currently measures supported OpenAI chat-completions traffic. It is
+not a background monitor: it records while requests pass through the running
+process and serves nothing when that process is stopped. It does not enforce
+budgets or control provider spend.
 
 `inferrail try` says this in its own output too, not just in the schema:
 

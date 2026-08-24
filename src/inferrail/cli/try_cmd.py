@@ -139,11 +139,14 @@ def _print_success(
     print(_row("Prompt stored", "no"))
     print(_row("Response stored", "no"))
     print()
-    print(f"Saved to {receipts_path}")
+    print(f"Saved locally:\n  {os.path.abspath(receipts_path)}")
     print()
-    next_dimension = next(iter(attributes), "provider")
     print("Next:")
-    print(f"  inferrail report --by {next_dimension}")
+    print("  inferrail report")
+    if attributes:
+        print("\nExplore a dimension:")
+        print("  inferrail report --by customer")
+        print("  inferrail report --by workflow")
 
 
 async def _execute(

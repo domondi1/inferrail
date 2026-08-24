@@ -101,10 +101,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument(
         "--by",
-        required=True,
+        required=False,
         help=(
             "Dimension to group by: 'provider', 'model', 'route', or any "
-            "attribution attribute name (e.g. 'customer', 'workflow')."
+            "attribution attribute name (e.g. 'customer', 'workflow'). "
+            "Omit for an all-up spend summary."
         ),
     )
     report.add_argument(

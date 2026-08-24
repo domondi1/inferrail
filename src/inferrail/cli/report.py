@@ -188,7 +188,40 @@ def format_table(groups: list[ReportGroup], by: str) -> str:
     return "\n".join(lines)
 
 
-def run_report(path: Path, by: str) -> int:
+def _summary_group(receipts: list[InferenceReceipt]) -> ReportGroup:
+    groups = aggregate(receipts, "provider")
+    summary = ReportGroup(key="TOTAL")
+    for group in groups:
+        summary.requests += group.requests
+        summary.successful_requests += group.successful_requests
+        summary.input_tokens += group.input_tokens
+        summary.output_tokens += group.output_tokens
+        summary.known_cost_usd += group.known_cost_usd
+        summary.unknown_cost_requests += group.unknown_cost_requests
+    return summary
+
+
+def format_summary(receipts: list[InferenceReceipt]) -> str:
+    """Format the all-up economic summary using the existing report fields."""
+    summary = _summary_group(receipts)
+    if summary.requests == 0:
+        return "No receipts to report on."
+    failed = summary.requests - summary.successful_requests
+    cost = _cost_cell(summary)
+    return "\n".join(
+        [
+            "INFERRAIL SPEND SUMMARY",
+            f"Requests:        {summary.requests}",
+            f"Failed requests: {failed}",
+            f"Input tokens:    {summary.input_tokens}",
+            f"Output tokens:   {summary.output_tokens}",
+            f"Known cost (USD): {cost}",
+            f"Unknown cost:    {summary.unknown_cost_requests}",
+        ]
+    )
+
+
+def run_report(path: Path, by: str | None = None) -> int:
     if not path.exists():
         print(
             f"No receipts found at {path}. Run some requests through the "
@@ -198,8 +231,10 @@ def run_report(path: Path, by: str) -> int:
         return 0
 
     receipts, skipped = load_receipts(path)
-    groups = aggregate(receipts, by)
-    print(format_table(groups, by))
+    if by is None:
+        print(format_summary(receipts))
+    else:
+        print(format_table(aggregate(receipts, by), by))
     if skipped:
         print(f"\nSkipped {skipped} malformed/unrecognized receipt row(s).", file=sys.stderr)
     return 0

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from inferrail.cli.report import aggregate, format_table, load_receipts, run_report
+from inferrail.cli.report import aggregate, format_summary, format_table, load_receipts, run_report
 from inferrail.receipts.schema import InferenceReceipt, PricingSnapshot
 
 
@@ -208,6 +208,37 @@ def test_format_table_small_costs_are_not_rounded_to_zero() -> None:
 
 def test_format_table_empty_receipts() -> None:
     assert format_table([], "customer") == "No receipts to report on."
+
+
+def test_format_summary_includes_all_up_economic_fields() -> None:
+    receipts = [
+        _receipt(
+            prompt_tokens=100,
+            completion_tokens=10,
+            pricing=_pricing(),
+            estimated_cost_usd=Decimal("0.000120"),
+        ),
+        _receipt(
+            receipt_id="ir_error",
+            status="error",
+        ),
+        _receipt(
+            receipt_id="ir_unknown",
+            prompt_tokens=50,
+            completion_tokens=5,
+        ),
+    ]
+
+    summary = format_summary(receipts)
+
+    assert "Requests:        3" in summary
+    assert "Failed requests: 1" in summary
+    assert "Input tokens:    150" in summary
+    assert "Output tokens:   15" in summary
+    assert "Known cost (USD): $0.00012" in summary
+    assert "Unknown cost:    1" in summary
+    assert "INFRERRAIL" not in summary
+    assert "INFERRAIL SPEND SUMMARY" in summary
 
 
 def test_format_table_all_unknown_pricing_never_shows_fabricated_zero() -> None:
