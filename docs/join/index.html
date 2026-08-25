@@ -98,13 +98,9 @@
     </nav>
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    const SUPABASE_URL = 'https://qsxhkoowcakjumyoabaz.supabase.co';
+    const SUPABASE_URL = 'https://qsxhkoowcakjumyoabaz.supabase.co/rest/v1';
     const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_eQVbU9eR-mxcl612mRGS7w_G-RZTQq_';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false }
-    });
 
     const form = document.getElementById('lead-form');
     const statusEl = document.getElementById('form-status');
@@ -117,6 +113,29 @@
     };
 
     const normalizeEmail = (value) => value.trim().toLowerCase();
+
+    const submitLead = async (payload) => {
+      const response = await fetch(`${SUPABASE_URL}/early_access`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_PUBLISHABLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = null;
+      }
+
+      return { ok: response.ok, status: response.status, body };
+    };
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -159,12 +178,11 @@
       setStatus('', '');
 
       try {
-        const { error } = await supabase
-          .from('early_access')
-          .insert(payload);
+        const result = await submitLead(payload);
 
-        if (error) {
-          if (error.code === '23505' || error.message && /duplicate|already exists|unique/i.test(error.message)) {
+        if (!result.ok) {
+          const message = result.body && (result.body.message || '');
+          if (result.status === 409 || /duplicate|already exists|unique/i.test(message)) {
             setStatus("You're already on the list.", 'success');
           } else {
             setStatus('Something went wrong. Please try again in a moment.', 'error');
