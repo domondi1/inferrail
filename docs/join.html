@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Get Early Access — Inferrail</title>
+  <meta name="description" content="Request early access to Inferrail and join the list for updates.">
+  <link rel="canonical" href="https://tryinferrail.com/join/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; }
+    * { box-sizing:border-box; }
+    html { background:var(--paper); color:var(--ink); }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:clamp(15px,1.05vw,19px); line-height:1.55; }
+    a { color:inherit; }
+    .wrap { width:min(100%, 860px); margin:0 auto; padding:0 clamp(20px, 4vw, 48px); }
+    .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); }
+    .wordmark,.eyebrow,.button,.label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
+    .wordmark { font-size:clamp(16px,1.4vw,22px); text-decoration:none; }
+    .nav { display:flex; gap:clamp(16px,2vw,32px); font-size:clamp(12px,1vw,15px); }
+    .nav a { text-decoration:none; }
+    .page { padding:clamp(42px,6vw,88px) 0 64px; }
+    h1 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(32px,6vw,82px); line-height:.96; letter-spacing:-.03em; text-transform:uppercase; }
+    .lede { max-width:52ch; margin:clamp(20px,2vw,30px) 0 0; color:var(--ink-2); font-size:clamp(15px,1.2vw,20px); }
+    .panel { margin-top:clamp(28px,4vw,48px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); padding:clamp(18px,2.4vw,28px); }
+    form { display:grid; gap:20px; }
+    .field { display:grid; gap:8px; }
+    .label { display:block; font-size:clamp(11px,.75vw,13px); color:var(--ink-2); }
+    input,textarea { width:100%; padding:14px 12px; border:1px solid var(--rule); background:var(--paper); color:var(--ink); font:inherit; }
+    input:focus,textarea:focus { outline:2px solid var(--stamp); outline-offset:2px; }
+    .small { color:var(--ink-3); font-size:clamp(11px,.75vw,13px); }
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:48px; padding:0 26px; border:1px solid var(--ink); text-decoration:none; cursor:pointer; font-size:clamp(13px,1vw,16px); }
+    .button-dark { color:var(--paper); background:var(--ink); }
+    .button-ghost { color:var(--ink); background:transparent; }
+    .status { min-height:1.5em; margin-top:10px; font-size:clamp(12px,.8vw,14px); }
+    .status.error { color:var(--stamp); }
+    .status.success { color:var(--ink); }
+    .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    .footer-links { display:flex; justify-content:space-between; gap:18px; padding:20px 0 28px; border-top:1px solid var(--ink); margin-top:44px; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
+    .footer-links nav { display:flex; gap:16px; }
+    @media (max-width:640px) { .actions { display:grid; width:100%; } .button { width:100%; } }
+  </style>
+</head>
+<body>
+  <header class="masthead wrap">
+    <a class="wordmark" href="/">Inferrail</a>
+    <nav class="nav" aria-label="Primary navigation">
+      <a href="https://github.com/domondi1/inferrail">GitHub</a>
+      <a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a>
+    </nav>
+  </header>
+
+  <main class="page wrap">
+    <h1>Get Early Access</h1>
+    <p class="lede">Join the Inferrail list for early access and updates. We’ll keep it simple: your name, work email, and optional company.</p>
+
+    <div class="panel">
+      <form id="lead-form" novalidate>
+        <div class="field">
+          <label class="label" for="name">Name</label>
+          <input id="name" name="name" type="text" maxlength="120" autocomplete="name" required>
+        </div>
+
+        <div class="field">
+          <label class="label" for="email">Work email</label>
+          <input id="email" name="email" type="email" maxlength="255" autocomplete="email" required>
+        </div>
+
+        <div class="field">
+          <label class="label" for="company">Company</label>
+          <input id="company" name="company" type="text" maxlength="120" autocomplete="organization">
+        </div>
+
+        <div class="visually-hidden">
+          <label for="website">Leave this empty</label>
+          <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+        </div>
+
+        <div class="actions">
+          <button class="button button-dark" type="submit">Join the list</button>
+          <a class="button button-ghost" href="/">Back to Inferrail</a>
+        </div>
+
+        <div id="form-status" class="status" aria-live="polite"></div>
+      </form>
+    </div>
+    <p class="small">No customer account required. Just a simple early-access request.</p>
+  </main>
+
+  <footer class="footer-links wrap">
+    <span>Inferrail — payload-free cost attribution</span>
+    <nav aria-label="Footer navigation">
+      <a href="https://github.com/domondi1/inferrail">GitHub</a>
+      <a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a>
+    </nav>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://qsxhkoowcakjumyoabaz.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_eQVbU9eR-mxcl612mRGS7w_G-RZTQq_';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    });
+
+    const form = document.getElementById('lead-form');
+    const statusEl = document.getElementById('form-status');
+    const honeypot = document.getElementById('website');
+
+    const setStatus = (message, kind) => {
+      statusEl.textContent = message;
+      statusEl.className = 'status';
+      if (kind) statusEl.classList.add(kind);
+    };
+
+    const normalizeEmail = (value) => value.trim().toLowerCase();
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      if (honeypot.value) {
+        setStatus('Submission rejected.', 'error');
+        return;
+      }
+
+      const name = document.getElementById('name').value.trim();
+      const email = normalizeEmail(document.getElementById('email').value);
+      const company = document.getElementById('company').value.trim();
+
+      if (name.length < 2 || name.length > 120) {
+        setStatus('Please enter a valid name.', 'error');
+        return;
+      }
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setStatus('Please enter a valid work email.', 'error');
+        return;
+      }
+
+      if (company.length > 120) {
+        setStatus('Company name is too long.', 'error');
+        return;
+      }
+
+      const payload = {
+        name,
+        email,
+        company: company || null,
+        source: 'site'
+      };
+
+      const submitButton = form.querySelector('button[type="submit"]');
+      const originalText = submitButton.textContent;
+      submitButton.disabled = true;
+      submitButton.textContent = 'Submitting...';
+      setStatus('', '');
+
+      try {
+        const { error } = await supabase
+          .from('early_access')
+          .insert(payload);
+
+        if (error) {
+          if (error.code === '23505' || error.message && /duplicate|already exists|unique/i.test(error.message)) {
+            setStatus("You're already on the list.", 'success');
+          } else {
+            setStatus('Something went wrong. Please try again in a moment.', 'error');
+          }
+          return;
+        }
+
+        form.reset();
+        setStatus("You're in. We'll be in touch.", 'success');
+      } catch (err) {
+        setStatus('Something went wrong. Please try again in a moment.', 'error');
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = originalText;
+      }
+    });
+  </script>
+</body>
+</html>
