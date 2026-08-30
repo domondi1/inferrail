@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from decimal import Decimal
 from typing import Literal
 
+from inferrail.receipts.aggregation import summarize_receipts
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.transactions.schema import EconomicEventRef, TaskTransaction
 
@@ -57,11 +57,8 @@ def build_transaction(
     matching = [r for r in receipts if r.attributes.get(attribute_name) == task_id]
     if not matching:
         return None
-    matching.sort(key=lambda r: r.timestamp)
-
+    matching.sort(key=lambda receipt: receipt.timestamp)
     events: list[EconomicEventRef] = []
-    known_total = Decimal("0")
-    unknown_cost_event_count = 0
     for receipt in matching:
         events.append(
             EconomicEventRef(
@@ -71,30 +68,19 @@ def build_transaction(
                 status=receipt.status,
             )
         )
-        if receipt.estimated_cost_usd is not None:
-            known_total += receipt.estimated_cost_usd
-        elif receipt.status == "success":
-            # Only a successful receipt with unresolvable pricing is a
-            # genuine pricing gap — an error/partial receipt legitimately
-            # has no cost to know, mirroring cli.report.aggregate.
-            unknown_cost_event_count += 1
-
-    statuses = {e.status for e in events}
-    status: Literal["success", "partial", "error"]
-    if statuses == {"success"}:
-        status = "success"
-    elif statuses == {"error"}:
-        status = "error"
-    else:
-        status = "partial"
+    economics = summarize_receipts(matching)
+    assert economics.status != "unknown"
+    assert economics.started_at is not None
+    assert economics.ended_at is not None
+    status: Literal["success", "partial", "error"] = economics.status
 
     return TaskTransaction(
         transaction_id=new_transaction_id(task_id, (e.event_id for e in events)),
         task_id=task_id,
         events=events,
-        known_total_cost_usd=known_total,
-        unknown_cost_event_count=unknown_cost_event_count,
+        known_total_cost_usd=economics.known_cost_usd,
+        unknown_cost_event_count=economics.unknown_cost_count,
         status=status,
-        started_at=matching[0].timestamp,
-        ended_at=matching[-1].timestamp,
+        started_at=economics.started_at,
+        ended_at=economics.ended_at,
     )

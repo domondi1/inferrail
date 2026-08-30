@@ -149,6 +149,13 @@ inspectable config file and gives you a telemetry record for every request
   `docs/adr/0008-task-transactions.md`. v0.1 of this primitive: one event
   type (`inference`) — non-LLM resource types are not yet supported (see
   "Explicit non-goals" below).
+- `inferrail work outcome <work-id> --status <status>` appends a minimal,
+  customer-declared outcome record to local JSONL. `inferrail work <work-id>`
+  joins outcome evidence with receipts that share the generic `work_id`
+  attribution attribute, and `inferrail work --all` provides a local bulk
+  view. Work summaries are derived read-side views: receipt-only and
+  outcome-only work remains visible, unknown-priced successful inference is
+  counted separately, and no receipt is never displayed as `$0` cost.
 - `import inferrail; inferrail.track_task(task_id="...")` — an
   **experimental** Python helper that attaches `X-Inferrail-Attribute-Task-Id`
   to outgoing requests ambiently for the duration of a `with` block or
@@ -169,7 +176,7 @@ inspectable config file and gives you a telemetry record for every request
   loud validation errors
 - A CLI: `inferrail serve` (`--quickstart` to skip `inferrail.yaml` and use
   in-memory defaults), `inferrail config check`, `inferrail report`,
-  `inferrail transaction`, `inferrail demo` (offline, zero-key walkthrough
+  `inferrail transaction`, `inferrail work`, `inferrail demo` (offline, zero-key walkthrough
   of the receipt/report pipeline using a fake provider), `inferrail try`
   (one real request through the same `InferenceEngine` `inferrail serve`
   uses, no config file required — needs `OPENAI_API_KEY`)
@@ -240,7 +247,9 @@ Not a hidden limitation — these are the honest edges of v0.1:
   cost) in `TaskTransaction` — its only event type today is `inference`;
   see `docs/adr/0008-task-transactions.md`
 - Outcome or business-value linkage (success/failure signal, revenue,
-  margin) on a `TaskTransaction` — it aggregates cost only
+  margin) on a `TaskTransaction` — it aggregates cost only. The separate
+  `work` command accepts only a minimal caller-declared status; it does not
+  model revenue, margin, business payloads, or a work lifecycle.
 - Budget enforcement or any policy decision at the transaction level —
   `inferrail transaction` only reports, it never blocks a request
 

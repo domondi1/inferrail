@@ -1,11 +1,12 @@
 """The Inferrail CLI.
 
-Six commands for v0.1: `serve` (run the gateway), `config check`
+Seven commands for v0.1: `serve` (run the gateway), `config check`
 (validate inferrail.yaml plus referenced secrets without starting a
 server), `report` (aggregate local economic receipts by a dimension),
 `transaction` (show one task's aggregated economic transaction — see
 docs/adr/0008-task-transactions.md), `demo` (offline, zero-key walkthrough
-of the receipt/report pipeline), and `try` (one real request through the
+of the receipt/report pipeline), `work` (record outcomes and derive work
+economics), and `try` (one real request through the
 same InferenceEngine, no config file required). Additional commands
 (`routes`, `providers`, `doctor`, `stats`) are plausible follow-ups but
 aren't implemented yet — see docs/PRODUCT.md.
@@ -24,6 +25,7 @@ from inferrail.cli.demo import run_demo
 from inferrail.cli.report import run_report
 from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
+from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work, run_work_outcome
 from inferrail.config.loader import load_config
 from inferrail.config.quickstart import (
     QUICKSTART_MODEL,
@@ -66,12 +68,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Send one real request through Inferrail's InferenceEngine (needs OPENAI_API_KEY).",
     )
     try_parser.add_argument("prompt", help="The user message to send.")
-    try_parser.add_argument(
-        "--customer", default=None, help="Shorthand for -a customer=<value>."
-    )
-    try_parser.add_argument(
-        "--workflow", default=None, help="Shorthand for -a workflow=<value>."
-    )
+    try_parser.add_argument("--customer", default=None, help="Shorthand for -a customer=<value>.")
+    try_parser.add_argument("--workflow", default=None, help="Shorthand for -a workflow=<value>.")
     try_parser.add_argument(
         "-a",
         "--attribute",
@@ -157,6 +155,34 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the raw TaskTransaction JSON instead of a formatted summary.",
     )
+
+    work = subparsers.add_parser(
+        "work", help="Record customer outcomes and inspect derived work-level inference economics."
+    )
+    work.add_argument(
+        "work_or_action",
+        nargs="?",
+        help="Work id to inspect, or 'outcome' followed by a work id to record an outcome.",
+    )
+    work.add_argument("outcome_work_id", nargs="?", help=argparse.SUPPRESS)
+    work.add_argument(
+        "--status", help="Customer-declared outcome status (used with 'work outcome')."
+    )
+    work.add_argument(
+        "--all", action="store_true", help="Show all work found in receipt or outcome evidence."
+    )
+    work.add_argument(
+        "--receipts",
+        default=None,
+        help="Path to receipts JSONL (defaults to --config / quickstart path).",
+    )
+    work.add_argument(
+        "--outcomes", default=str(DEFAULT_OUTCOMES_PATH), help="Path to append-only outcome JSONL."
+    )
+    work.add_argument(
+        "--config", default=None, help="Path to inferrail.yaml for the receipts path."
+    )
+    work.add_argument("--json", action="store_true", help="Print derived work data as JSON.")
 
     return parser
 
@@ -246,6 +272,32 @@ def _cmd_transaction(args: argparse.Namespace) -> int:
     return run_transaction(receipts_path, args.task_id, args.attribute_name, as_json=args.json)
 
 
+def _cmd_work(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    outcomes_path = Path(args.outcomes)
+    if args.work_or_action == "outcome":
+        if args.outcome_work_id is None or args.status is None:
+            parser.error("'inferrail work outcome' requires WORK_ID and --status STATUS")
+        return run_work_outcome(outcomes_path, args.outcome_work_id, args.status)
+    if args.all:
+        if args.work_or_action is not None or args.outcome_work_id is not None:
+            parser.error("--all does not take a work id")
+        receipts_path = _resolve_receipts_path(args)
+        if receipts_path is None:
+            return 1
+        return run_work(receipts_path, outcomes_path, None, all_work=True, as_json=args.json)
+    if args.work_or_action is None or args.outcome_work_id is not None:
+        parser.error(
+            "use 'inferrail work WORK_ID', 'inferrail work outcome WORK_ID --status STATUS', "
+            "or 'inferrail work --all'"
+        )
+    receipts_path = _resolve_receipts_path(args)
+    if receipts_path is None:
+        return 1
+    return run_work(
+        receipts_path, outcomes_path, args.work_or_action, all_work=False, as_json=args.json
+    )
+
+
 def _cmd_demo(args: argparse.Namespace) -> int:
     del args  # no arguments
     return run_demo()
@@ -284,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_report(args)
     if args.command == "transaction":
         return _cmd_transaction(args)
+    if args.command == "work":
+        return _cmd_work(args, parser)
     if args.command == "demo":
         return _cmd_demo(args)
     if args.command == "try":

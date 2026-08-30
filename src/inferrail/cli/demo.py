@@ -24,11 +24,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from inferrail.cli.report import run_report
+from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work
 from inferrail.config.models import PriceEntry, RouteConfig
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest
@@ -37,6 +38,8 @@ from inferrail.providers.base import ChatMessage, NormalizedChatRequest, Normali
 from inferrail.receipts.sinks import JSONLReceiptSink
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import NullTelemetrySink
+from inferrail.work.builder import append_outcome
+from inferrail.work.schema import WorkOutcomeRecord
 
 RECEIPTS_PATH = Path("./inferrail-demo-receipts.jsonl")
 
@@ -93,28 +96,28 @@ class _DemoProvider:
         yield b""  # pragma: no cover - unreachable; makes this an async generator
 
 
-# Six scripted requests: two customers, two workflows, one model with no
-# price on file (demo-preview) to show honest "unknown cost" handling —
-# exactly the same behavior a real unrecognized model gets in production.
+# Six scripted requests, each attributed to a generic customer-defined work
+# id. The preview model has no price on file, demonstrating the same honest
+# unknown-cost behavior a real unrecognized model gets in production.
 _SCENARIOS: list[tuple[str, dict[str, str], _CannedResponse]] = [
     (
         "default",
-        {"customer": "acme", "workflow": "contract-review"},
+        {"customer": "acme", "workflow": "contract-review", "work_id": "work-contract-1"},
         _CannedResponse("Clause 4.2 caps liability at 12 months' fees.", 812, 143),
     ),
     (
         "default",
-        {"customer": "acme", "workflow": "contract-review"},
+        {"customer": "acme", "workflow": "contract-review", "work_id": "work-contract-1"},
         _CannedResponse("The termination notice period is 30 days.", 640, 98),
     ),
     (
         "default",
-        {"customer": "globex", "workflow": "support-ticket"},
+        {"customer": "globex", "workflow": "support-ticket", "work_id": "work-support-1"},
         _CannedResponse("Reset the device, then reapply the config profile.", 421, 76),
     ),
     (
         "large",
-        {"customer": "globex", "workflow": "support-ticket"},
+        {"customer": "globex", "workflow": "support-ticket", "work_id": "work-support-1"},
         _CannedResponse(
             "Root cause: a race condition in the retry path under load; "
             "patch attached, rollout plan below.",
@@ -124,15 +127,13 @@ _SCENARIOS: list[tuple[str, dict[str, str], _CannedResponse]] = [
     ),
     (
         "default",
-        {},  # no attribution -> shows up as (unattributed)
+        {"work_id": "work-pending-1"},  # receipt evidence, no declared outcome
         _CannedResponse("Hello! How can I help today?", 300, 50),
     ),
     (
         "preview",
-        {"customer": "acme", "workflow": "contract-review"},
-        _CannedResponse(
-            "This is a preview model Inferrail has no price on file for.", 500, 120
-        ),
+        {"customer": "acme", "workflow": "contract-review", "work_id": "work-unknown-1"},
+        _CannedResponse("This is a preview model Inferrail has no price on file for.", 500, 120),
     ),
 ]
 
@@ -178,6 +179,8 @@ def _build_engine() -> InferenceEngine:
 async def _run() -> None:
     if RECEIPTS_PATH.exists():
         RECEIPTS_PATH.unlink()  # fresh, reproducible output on every run
+    if DEFAULT_OUTCOMES_PATH.exists():
+        DEFAULT_OUTCOMES_PATH.unlink()
 
     print("=" * 72)
     print("INFERRAIL DEMO — canned responses, not real provider billing")
@@ -212,6 +215,28 @@ async def _run() -> None:
     print(f"\nOpen {RECEIPTS_PATH.name} directly to see one full receipt, including")
     print("the 'unknown' pricing on the demo-preview request and the DEMO source")
     print("label on every price used above.")
+
+    # Outcome records are independent evidence. The Work command below
+    # reloads them from JSONL instead of receiving them in-memory.
+    for work_id, status in [
+        ("work-contract-1", "resolved"),
+        ("work-support-1", "failed"),
+        ("work-unknown-1", "resolved"),
+        ("work-outcome-only-1", "escalated"),
+    ]:
+        append_outcome(
+            DEFAULT_OUTCOMES_PATH,
+            WorkOutcomeRecord(
+                work_id=work_id, outcome_status=status, recorded_at=datetime.now(UTC)
+            ),
+        )
+
+    print("\n" + "-" * 72)
+    print("WORK ECONOMICS — receipts + shared work_id + declared outcome")
+    print("-" * 72)
+    run_work(RECEIPTS_PATH, DEFAULT_OUTCOMES_PATH, None, all_work=True, as_json=False)
+    print("\nSYNTHETIC SUPPORT EXAMPLE")
+    print("In this synthetic support example, the application defines 'resolved' as success.")
     print("\nReady to see a real cost number instead of a demo one?")
     print('  inferrail try "Reply with one word: ready" --customer acme')
 

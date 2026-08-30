@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from inferrail.cli.demo import RECEIPTS_PATH, run_demo
+from inferrail.cli.work import DEFAULT_OUTCOMES_PATH
+from inferrail.work.builder import load_outcomes
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +55,8 @@ def test_demo_writes_real_receipts_and_prints_a_report(
     assert "CUSTOMER" in out  # inferrail report --by customer ran for real
     assert "UNKNOWN COST" in out  # the unpriced demo-preview model, honestly labeled
     assert RECEIPTS_PATH.exists()
+    assert "WORK ECONOMICS BY CUSTOMER-DECLARED OUTCOME" in out
+    assert "SYNTHETIC SUPPORT EXAMPLE" in out
 
 
 def test_demo_receipts_use_real_receipt_schema_and_demo_labeled_pricing(
@@ -84,6 +88,23 @@ def test_demo_is_reproducible_across_runs(capsys: pytest.CaptureFixture[str]) ->
     out = capsys.readouterr().out
 
     assert "CUSTOMER" in out
+
+
+def test_demo_persists_outcomes_then_reads_them_into_work_summaries(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_demo()
+
+    outcomes, skipped = load_outcomes(DEFAULT_OUTCOMES_PATH)
+
+    assert skipped == 0
+    assert {outcome.work_id for outcome in outcomes} == {
+        "work-contract-1",
+        "work-support-1",
+        "work-unknown-1",
+        "work-outcome-only-1",
+    }
+    assert "work-outcome-only-1" in capsys.readouterr().out
 
 
 def test_inferrail_demo_entry_point_does_not_silently_rot() -> None:
