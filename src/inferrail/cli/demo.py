@@ -232,6 +232,8 @@ async def _run() -> None:
         )
 
     print("\n" + "-" * 72)
+    print("The receipt evidence above is grouped by the application's work_id;")
+    print("the outcomes below are customer-declared.")
     print("WORK ECONOMICS — receipts + shared work_id + declared outcome")
     print("-" * 72)
     run_work(RECEIPTS_PATH, DEFAULT_OUTCOMES_PATH, None, all_work=True, as_json=False)

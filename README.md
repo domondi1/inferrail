@@ -5,9 +5,10 @@
 Know what your AI work costs.
 
 Inferrail turns supported OpenAI chat-completion traffic into local,
-attributable economic receipts, so you can see which customer, workflow, or
-task caused the spend without storing prompts, responses, or tool payloads in
-Inferrail's own records.
+attributable economic receipts. Give related requests a customer-defined
+`work_id`, declare an outcome when your application knows one, and inspect the
+known inference economics associated with that work without storing prompts,
+responses, or tool payloads in Inferrail's own records.
 
 [![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
@@ -15,67 +16,118 @@ Inferrail's own records.
 
 For the supported chat-completions surface, Inferrail records known cost when
 measured usage and a verified price are available. Otherwise it reports
-`unknown`, never a fabricated `$0`. Attach customer, workflow, or task context
-when you need attributed economics.
+`unknown`, never a fabricated `$0`.
 
-## See your first cost
+## 30-second demo
+
+**Current main / upcoming Work Economics release.** Work Economics was added
+after the current PyPI release. To try the current product before the next
+release, install from `main`:
 
 ```bash
-pip install inferrail
-inferrail demo                 # optional: canned data, no billing
-inferrail try "Reply with one word: ready" --customer acme
-inferrail report
+pip install "inferrail @ git+https://github.com/domondi1/inferrail.git@main"
+inferrail demo
 ```
 
-`inferrail demo` is optional proof: no API key, no network call, and no
-provider billing. It runs canned requests through Inferrail's real engine
-with made-up prices labeled `DEMO` and prints one receipt per request plus
-an aggregate report. The `try` command is the shortest path to one real
-cost. It uses your existing `OPENAI_API_KEY`; if it is not set, Inferrail
-prints what is required. It prints the response, receipt, measured tokens,
-known cost or `unknown`, local receipt path, and the next report command:
+The demo needs no API key, no network call, and no provider billing. It runs
+canned requests through Inferrail's real engine with made-up prices labeled
+`DEMO`, then shows receipts, attribution, work-level economics, and explicit
+unknown evidence.
+
+**Stable PyPI release.** `pip install inferrail` currently installs `0.1.2`.
+It includes the gateway, receipts, reports, and `TaskTransaction`, but not the
+new `work` commands. It remains the stable released install until the next
+package publication.
+
+## What just happened?
 
 ```text
-Receipt ...
-Provider ...
-Model ...
-Input tokens ...
-Output tokens ...
-Cost ...
-Prompt stored     no
-Response stored   no
-
-Saved locally:
-  /absolute/path/to/inferrail-receipts.jsonl
-
-Next:
-  inferrail report
+AI request
+  -> InferenceReceipt
+  -> caller-supplied attribution
+  -> related requests share work_id
+  -> customer-declared outcome
+  -> Work Economics
 ```
 
-`inferrail report` shows the all-up economics first: requests, failed
-requests, input tokens, output tokens, known cost, and unknown-cost requests.
-Explore existing dimensions afterward:
+- **Receipt:** one inference request produced payload-free economic evidence.
+- **Attribution:** the caller can attach identifiers such as customer,
+  workflow, or project.
+- **Work:** several requests can share a `work_id` that your application
+  defines.
+- **Outcome:** your application can append a declaration of what happened to
+  that work.
+- **Work Economics:** Inferrail joins that declaration with matching receipts
+  and reports known attributed inference economics for the work.
+
+You decide what a unit of work means: a contract review, support resolution,
+coding task, research run, or document-processing job. Inferrail associates
+economic evidence with the identifier your application supplies; it does not
+interpret the business meaning of that identifier or its outcome.
+
+### Request economics vs. Work Economics
+
+**Request economics:** what known inference economics belong to one request?
+
+**Work Economics:** what known inference economics belonged to the
+customer-defined unit of work those requests were performing?
+
+This is not a full cost of work, COGS, margin, or business-value calculation.
+
+## Track a unit of work
+
+The following uses real provider requests and requires `OPENAI_API_KEY`:
 
 ```bash
+export OPENAI_API_KEY=<your-openai-api-key>
+
+inferrail try "Review this contract clause" \
+  -a work_id=contract_review_42
+
+inferrail try "Identify remaining risks" \
+  -a work_id=contract_review_42
+
+inferrail work outcome contract_review_42 --status completed
+inferrail work contract_review_42
+inferrail work --all
+```
+
+For a gateway client, the equivalent generic attribution header is:
+
+```text
+X-Inferrail-Attribute-Work-Id: contract_review_42
+```
+
+The deterministic offline demo includes this synthetic example:
+
+```text
+work-contract-1
+  2 inference receipts
+  customer-declared outcome: resolved
+  known attributed inference cost: $0.000483
+```
+
+`resolved` is only the demo application's own outcome meaning. Inferrail does
+not treat any outcome status as universally successful.
+
+If Inferrail cannot verify the price for an observed inference event, its cost
+remains `unknown` rather than being treated as zero. No receipt evidence is
+also not the same thing as known zero cost.
+
+## First real request and reports
+
+`inferrail try` is the shortest route to one real receipt. It uses your
+existing `OPENAI_API_KEY`; if it is not set, Inferrail prints what is required.
+It prints the response, receipt, measured tokens, known cost or `unknown`, the
+local receipt path, and the next report command.
+
+```bash
+inferrail try "Reply with one word: ready" --customer acme
+inferrail report
 inferrail report --by customer
 inferrail report --by workflow
 inferrail report --by provider
 ```
-
-```
-CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
-globex          2                 1621          416            $0.007825
-acme            3                 1952          361            $0.000483   1
-TOTAL           6                 3873          827            $0.008408   1
-```
-
-That `1` in `UNKNOWN COST` is deliberate: one request used a model
-Inferrail has no verified price for, and its cost shows as unresolved —
-never silently counted as `$0`.
-
-Known cost requires measured usage and a verified price. Unknown stays
-unknown. Inferrail measures and attributes supported inference spend; it does
-not set budgets, send alerts, cap usage, or stop provider requests.
 
 ## What a receipt contains
 
@@ -97,7 +149,7 @@ One payload-free JSON receipt per supported request:
 route, timestamp, latency, and retry count. See
 [Privacy boundary](#privacy-boundary) below for the complete shape.)
 
-## Task economics
+## TaskTransaction: receipt-only task grouping
 
 One task is rarely one call. Tag every request belonging to one unit of
 work with the same attribution value, then ask Inferrail what the task
@@ -122,8 +174,9 @@ inference   ir_756cc072a27f42f4a2ea  success  $0.000007
 Known total cost: $0.00001
 ```
 
-This needs a real provider request — `inferrail demo`'s canned data doesn't
-include a task id to correlate offline. Over HTTP, an
+This TaskTransaction example uses real provider requests and a `task_id`.
+The offline demo instead correlates requests with `work_id` and shows Work
+Economics. Over HTTP, an
 `X-Inferrail-Attribute-Task-Id: bug_9281` header does the same thing;
 `inferrail.track_task(task_id=...)` (see [Attribute spend](#attribute-spend)
 below) attaches it automatically to every nested call in an agent run, no
@@ -163,7 +216,9 @@ can use its existing `OPENAI_BASE_URL` environment mechanism instead.
 The default receipt is one JSONL line per supported request in
 `./inferrail-receipts.jsonl`, relative to the gateway's working directory.
 Treat that file as machine/audit evidence; use `inferrail report` for the
-human aggregate and `inferrail transaction <task-id>` for a task total.
+human aggregate, `inferrail transaction <task-id>` for receipt-only task
+grouping, and `inferrail work <work-id>` for work-attributed inference
+economics plus a customer-declared outcome.
 
 <details>
 <summary>Framework examples (LangChain, LlamaIndex, CrewAI)</summary>
@@ -303,14 +358,16 @@ layout, and the streaming/retry boundaries:
 
 ## Privacy boundary
 
-Inferrail does not persist prompts, responses, or tool payloads in its
-local receipt or telemetry records — structurally: neither schema has a
-field capable of holding message content, and
+Inferrail's own local receipt, telemetry, and outcome records contain
+economic metadata and caller-supplied identifiers, not persisted prompts,
+responses, tool payloads, or free-form business outcome payloads.
+Structurally, the receipt and telemetry schemas have no field capable of
+holding message content, and
 `test_inference_receipt_has_no_payload_fields` enforces it. This is a
-claim about **Inferrail's own local records**, not about the request
-path as a whole — your configured provider still receives the real
-prompt either way; Inferrail is a pass-through gateway to it, not a
-privacy boundary against it.
+claim about **Inferrail's own local records**, not about the request path as
+a whole — your configured provider still receives the real prompt either
+way; Inferrail is a pass-through gateway to it, not a privacy boundary
+against the provider.
 
 Inferrail currently measures supported OpenAI chat-completions traffic. It is
 not a background monitor: it records while requests pass through the running
@@ -396,8 +453,11 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - Local structured telemetry and payload-free cost receipts for supported
   requests, plus `inferrail report`, grouped reports, and
   `inferrail transaction <task-id>`
+- Customer-defined `work_id` attribution, append-only outcome declarations,
+  and derived Work Economics via `inferrail work outcome`, `inferrail work
+  <work-id>`, and `inferrail work --all`
 - CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
-  `report`, `transaction`
+  `report`, `transaction`, `work`
 
 ## Not yet
 
