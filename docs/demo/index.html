@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A 30-second interactive explanation of how Inferrail connects AI inference economics to customer-defined work.">
+  <link rel="canonical" href="https://tryinferrail.com/demo/">
+  <title>See AI Work Economics — Inferrail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --white:#FFF; }
+    * { box-sizing:border-box; }
+    html { background:var(--paper); scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.5 "IBM Plex Mono",monospace; }
+    a { color:inherit; }
+    button:focus-visible, a:focus-visible { outline:3px solid var(--stamp); outline-offset:4px; }
+    .wrap { width:min(100%, 1160px); margin:auto; padding:0 20px; }
+    .masthead { display:flex; min-height:62px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--ink); }
+    .wordmark, .eyebrow, .button, .step-label, .metric-label, .status-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .wordmark { font-size:19px; text-decoration:none; }
+    .nav { display:flex; gap:18px; font-size:12px; }
+    .nav a { text-underline-offset:4px; }
+    main { padding:42px 0 58px; }
+    .eyebrow { margin:0 0 12px; color:var(--stamp); font-size:12px; }
+    h1, h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0; line-height:.95; }
+    h1 { font-size:clamp(44px,13vw,88px); max-width:9ch; }
+    h1 span { color:var(--ink-2); }
+    .lede { max-width:39ch; margin:22px 0 0; color:var(--ink-2); font-size:18px; }
+    .pill { display:inline-flex; margin-top:22px; padding:7px 10px; border:1px solid var(--rule); color:var(--ink-2); font-size:11px; }
+    .button { min-height:52px; padding:0 22px; border:1px solid var(--ink); cursor:pointer; font-size:15px; text-decoration:none; }
+    .button-dark { color:var(--paper); background:var(--ink); }
+    .button-ghost { color:var(--ink); background:transparent; }
+    .hero-action { display:inline-flex; align-items:center; margin-top:26px; }
+    .story { margin-top:42px; border-top:1px solid var(--ink); }
+    .progress { display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; padding:18px 0; }
+    .progress span { height:5px; background:var(--rule); }
+    .progress span.active { background:var(--stamp); }
+    .stage { min-height:530px; padding:26px 0 18px; border-top:1px solid var(--rule); border-bottom:1px solid var(--ink); }
+    .step { display:none; animation:enter .3s ease-out; }
+    .step.active { display:block; }
+    @keyframes enter { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+    .step-label { display:block; margin-bottom:14px; color:var(--ink-3); font-size:12px; }
+    h2 { max-width:14ch; font-size:clamp(32px,9vw,64px); }
+    .step-copy { max-width:42ch; margin:18px 0 26px; color:var(--ink-2); }
+    .work-card { overflow:hidden; border:1px solid var(--ink); background:var(--white); box-shadow:6px 6px 0 rgba(20,32,27,.07); }
+    .step-grid { display:grid; gap:20px; }
+    .work-head { padding:16px; border-bottom:1px solid var(--rule); }
+    .work-name { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:28px; font-weight:700; line-height:1; text-transform:uppercase; }
+    .work-id { margin:7px 0 0; color:var(--ink-3); font-size:12px; overflow-wrap:anywhere; }
+    .metrics { display:grid; grid-template-columns:1fr 1fr; }
+    .metric { min-height:94px; padding:14px 16px; border-right:1px solid var(--rule); border-bottom:1px solid var(--rule); }
+    .metric:nth-child(2n) { border-right:0; }
+    .metric:nth-last-child(-n+2) { border-bottom:0; }
+    .metric-label { display:block; color:var(--ink-3); font-size:10px; }
+    .metric-value { display:block; margin-top:8px; font-size:16px; font-weight:600; line-height:1.15; }
+    .metric-value.stamp { color:var(--stamp); }
+    .call-list { padding:16px; background:var(--bar); }
+    .call-row { display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px dashed var(--rule); font-size:13px; }
+    .call-row:last-child { border-bottom:0; }
+    .call-row strong { font-weight:600; }
+    .note { margin:16px 0 0; padding-left:13px; border-left:3px solid var(--stamp); font-size:14px; }
+    .note strong { display:block; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:19px; text-transform:uppercase; }
+    .controls { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:24px; }
+    .step-count { color:var(--ink-3); font-size:12px; }
+    .comparison { display:grid; gap:14px; }
+    .comparison-block { padding:17px; border:1px solid var(--rule); }
+    .comparison-block:first-child { background:var(--white); }
+    .comparison-block:last-child { background:var(--bar); border-color:var(--ink); }
+    .comparison-block h3 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:21px; letter-spacing:.06em; text-transform:uppercase; }
+    .comparison-block p { margin:13px 0 0; font-size:14px; }
+    .request-stack { display:grid; gap:8px; }
+    .request { padding:12px; border:1px solid var(--rule); background:var(--white); font-size:13px; }
+    .request strong { display:block; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:18px; text-transform:uppercase; }
+    .contrast { margin:20px 0 0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(28px,7vw,44px); font-weight:700; line-height:1; text-transform:uppercase; }
+    .flow { display:grid; gap:8px; margin-top:22px; }
+    .flow-item { padding:13px; border:1px solid var(--rule); background:var(--white); }
+    .flow-item.work { border-color:var(--ink); background:var(--bar); }
+    .arrow { text-align:center; color:var(--stamp); font-size:18px; line-height:1; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
+    .chip { padding:6px 9px; border:1px solid var(--rule); font-size:12px; }
+    .evidence { display:grid; gap:10px; }
+    .evidence-row { display:grid; grid-template-columns:112px 1fr; gap:12px; padding:13px; border-left:4px solid var(--ink); background:var(--white); }
+    .evidence-row.unknown { border-left-color:var(--stamp); }
+    .evidence-row.absent { border-left-color:var(--rule); background:transparent; }
+    .evidence-row strong { font-family:"IBM Plex Sans Condensed",sans-serif; font-size:18px; text-transform:uppercase; }
+    .evidence-row p { margin:0; color:var(--ink-2); font-size:13px; }
+    .ending { padding:34px 0 0; }
+    .ending h2 { max-width:16ch; }
+    .ending p { max-width:43ch; color:var(--ink-2); }
+    .cta-row { display:grid; gap:12px; margin-top:22px; }
+    footer { padding:24px 0; border-top:1px solid var(--ink); color:var(--ink-3); font-size:12px; }
+    @media (min-width:700px) { body { font-size:17px; } main { padding-top:66px; } .stage { min-height:470px; padding:38px 0 26px; } .step-grid { grid-template-columns:minmax(260px,.8fr) minmax(420px,1.2fr); align-items:start; } .comparison { grid-template-columns:1fr 1fr; } .flow { grid-template-columns:1fr 28px 1fr 28px 1fr; align-items:stretch; } .arrow { align-self:center; } .evidence { grid-template-columns:repeat(3, 1fr); } .evidence-row { display:block; min-height:145px; } .evidence-row p { margin-top:9px; } .cta-row { display:flex; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } .step { animation:none; } }
+  </style>
+</head>
+<body>
+  <header class="masthead wrap">
+    <a class="wordmark" href="/">Inferrail</a>
+    <nav class="nav" aria-label="Primary navigation"><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a></nav>
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">Interactive product walkthrough</p>
+    <h1>See the inference cost <span>behind the work.</span></h1>
+    <p class="lede">See how the cost of multiple AI calls connects to the work your application actually cares about.</p>
+    <p class="pill">Synthetic workload · No API key required</p>
+    <a class="button button-dark hero-action" href="#story">Run the 30-second demo</a>
+
+    <section class="story" id="story" aria-label="Inferrail Work Economics story">
+      <div class="progress" aria-label="Demo progress"><span class="active"></span><span></span><span></span><span></span></div>
+      <div class="stage" aria-live="polite">
+        <article class="step active" data-step="0">
+          <span class="step-label">1 / 4 · The aha</span>
+          <div class="step-grid"><div><h2>The calls succeeded. The work didn't.</h2><p class="step-copy">This is one support resolution. The application knows the outcome; Inferrail keeps it separate from inference execution.</p><p class="note"><strong>Inferrail keeps those facts separate.</strong></p></div><div class="work-card"><div class="work-head"><p class="work-name">Support Resolution #91</p><p class="work-id">One customer-defined piece of work</p></div><div class="metrics"><div class="metric"><span class="metric-label">AI calls</span><span class="metric-value">2 completed</span></div><div class="metric"><span class="metric-label">Inference execution</span><span class="metric-value">Success</span></div><div class="metric"><span class="metric-label">Customer outcome</span><span class="metric-value stamp">Failed</span></div><div class="metric"><span class="metric-label">Known attributed inference cost</span><span class="metric-value">$0.007825</span></div></div></div></div>
+        </article>
+        <article class="step" data-step="1">
+          <span class="step-label">2 / 4 · The connection</span>
+          <div class="step-grid"><div><h2>Several AI calls belong to one unit of work.</h2><p class="step-copy">First, your application decides what counts as one piece of work. Then it gives related calls the same identifier.</p><p class="note"><strong>You define the work.</strong></p><div class="chips" aria-label="Examples of customer-defined work"><span class="chip">Contract review</span><span class="chip">Support resolution</span><span class="chip">Coding task</span><span class="chip">Research run</span><span class="chip">Document processing</span></div></div><div><div class="request-stack"><div class="request"><strong>AI call 1</strong>Inference receipt</div><div class="request"><strong>AI call 2</strong>Inference receipt</div></div><div class="arrow" aria-hidden="true">↓</div><div class="flow-item work"><strong>work_id</strong><br>support_resolution_91</div><div class="arrow" aria-hidden="true">↓</div><div class="flow-item">Customer-declared outcome<br><small>then known inference economics</small></div></div></div>
+        </article>
+        <article class="step" data-step="2">
+          <span class="step-label">3 / 4 · The economics</span>
+          <div class="step-grid"><div><h2>Calls show consumption. Work shows what it belonged to.</h2><p class="step-copy">Individual calls tell you model, usage, and verified price. Work Economics connects that observed inference to the customer-defined work.</p></div><div class="comparison"><section class="comparison-block"><h3>Request view</h3><p>AI call</p><p>Model · usage · price</p><p>One inference receipt</p></section><section class="comparison-block"><h3>Work view</h3><p><strong>Contract Review #42</strong></p><p>2 AI calls · execution: success</p><p>Outcome: resolved</p><p>Known attributed inference cost: <strong>$0.000483</strong></p></section></div></div>
+        </article>
+        <article class="step" data-step="3">
+          <span class="step-label">4 / 4 · Honest evidence</span>
+          <h2>Known, unknown, and absent stay distinct.</h2>
+          <p class="step-copy">Work Economics reports the inference evidence Inferrail has. It never turns missing information into a confident dollar figure.</p>
+          <div class="evidence"><section class="evidence-row"><strong>Known</strong><p><code>work-contract-1</code><br>2 receipts<br><b>$0.000483</b> known attributed inference cost</p></section><section class="evidence-row unknown"><strong>Unknown</strong><p><code>work-unknown-1</code><br>Inference observed<br>Verified price unavailable.<br><b>Unknown is not zero.</b></p></section><section class="evidence-row absent"><strong>No receipt</strong><p><code>work-outcome-only-1</code><br>Outcome declared<br>No matching inference receipt observed.<br><b>Cost unavailable.</b></p></section></div>
+        </article>
+      </div>
+      <div class="controls"><button class="button button-ghost" id="back" type="button" disabled>Back</button><span class="step-count" id="step-count">Step 1 of 4</span><button class="button button-dark" id="next" type="button">Next</button></div>
+    </section>
+    <section class="ending" aria-labelledby="ending-title">
+      <h2 id="ending-title">You define the work. Inferrail tracks its known inference economics.</h2>
+      <p>Inferrail records local inference evidence and caller-supplied identifiers without persisting prompts, responses, tool payloads, or free-form outcome payloads in its own records.</p>
+      <div class="cta-row"><a class="button button-dark" href="https://github.com/domondi1/inferrail#30-second-demo">Try Inferrail</a><a class="button button-ghost" href="https://github.com/domondi1/inferrail">View on GitHub</a></div>
+    </section>
+  </main>
+  <footer class="wrap">Inferrail · Synthetic product walkthrough · <a href="/">Home</a></footer>
+  <script>
+    (() => {
+      const steps = [...document.querySelectorAll('.step')];
+      const progress = [...document.querySelectorAll('.progress span')];
+      const next = document.querySelector('#next');
+      const back = document.querySelector('#back');
+      const count = document.querySelector('#step-count');
+      let index = 0;
+      const render = () => {
+        steps.forEach((step, position) => step.classList.toggle('active', position === index));
+        progress.forEach((item, position) => item.classList.toggle('active', position <= index));
+        back.disabled = index === 0;
+        next.textContent = index === steps.length - 1 ? 'Start again' : 'Next';
+        count.textContent = `Step ${index + 1} of ${steps.length}`;
+      };
+      next.addEventListener('click', () => { index = index === steps.length - 1 ? 0 : index + 1; render(); });
+      back.addEventListener('click', () => { index = Math.max(0, index - 1); render(); });
+    })();
+  </script>
+</body>
+</html>
