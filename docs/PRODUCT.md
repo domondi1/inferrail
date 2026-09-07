@@ -285,6 +285,19 @@ This checks only what Inferrail itself writes to disk; your provider
 still receives the real prompt either way — Inferrail is a pass-through
 gateway to it, not a privacy boundary against it.
 
+## Hosted capabilities (beyond v0.1's data plane)
+
+Everything above is the self-hosted gateway: zero dependency on any
+Inferrail-operated service (see "Who it's for" and `docs/adr/0004`).
+Separately, Inferrail also operates its first hosted, paid capability:
+
+- **Inferrail Work Economics** (`hosted/work_economics/`) — given
+  caller-declared economic events for a unit of AI work, returns a
+  normalized cost summary and a commercial receipt, paid for over x402.
+  Base Sepolia testnet only right now. Full contract:
+  `docs/capabilities/work-economics.md`. Why this lives outside the
+  package installed by `pip install inferrail`: `docs/adr/0010`.
+
 ## Long-term direction
 
 The progression Inferrail is built to support, in order, is:

@@ -34,6 +34,11 @@
 ## Examples
 
 - [Basic chat request](https://github.com/domondi1/inferrail/blob/main/examples/basic_chat_request.py)
+- [Work Economics purchase](https://github.com/domondi1/inferrail/blob/main/examples/work_economics_purchase.py): a complete, standalone x402 buyer — no Inferrail account required
+
+## Paid capabilities
+
+- [Inferrail Work Economics](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/work-economics.md): given caller-declared economic events for a unit of AI work, returns a normalized cost summary and a commercial receipt. Paid via the [x402](https://www.x402.org/) protocol — any x402-capable agent can buy it with its own wallet. **Base Sepolia testnet only right now, not mainnet.** Machine-readable manifest (price, schema, `pay_to` address) is served unauthenticated at `<base_url>/manifest`; the base URL is published in the contract doc above and in the x402 Bazaar discovery listing.
 
 ## Optional
 
