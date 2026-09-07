@@ -56,10 +56,12 @@ NETWORK_CLASS = "TESTNET"
 SELLER_PAY_TO_ADDRESS = os.environ["X402_SELLER_PAY_TO_ADDRESS"]
 
 DISCOVERY_DESCRIPTION = (
-    "Inferrail computes payload-free Work-level economic summaries from declared "
-    "economic events, returning known total cost, breakdowns by resource class and "
-    "supplier, unknown-cost count, and price provenance without requiring prompt or "
-    "response content."
+    "Inferrail turns payload-free, already-incurred economic events — "
+    "inference/token cost, tool calls, search — into a normalized cost "
+    "receipt for one unit of agent work: known total cost, a breakdown by "
+    "resource class and supplier, unknown-cost count, and price provenance, "
+    "without requiring prompt or response content. Used for AI job cost "
+    "analysis, LLM spend tracking, and unit economics."
 )
 
 INPUT_EXAMPLE: dict = {
@@ -216,10 +218,12 @@ def build_manifest(base_url: str) -> dict:
         "manifest_type": "INFERRAIL_CAPABILITY_MANIFEST_V1",
         "capability": CAPABILITY_NAME,
         "capability_version": CAPABILITY_VERSION,
-        "description": "Given payload-free, resource-class-tagged economic events for one unit "
-        "of AI work, returns known total cost, a breakdown by resource class and supplier, an "
-        "unknown-cost event count, and price provenance. Never fabricates a total across "
-        "unknown-cost events.",
+        "description": "Given payload-free, resource-class-tagged economic events already "
+        "incurred for one unit of AI/agent work — inference/token cost, tool calls, search — "
+        "returns a normalized cost receipt: known total cost, a breakdown by resource class and "
+        "supplier, an unknown-cost event count, and price provenance. Never fabricates a total "
+        "across unknown-cost events. Useful for AI job cost analysis, LLM spend tracking, and "
+        "unit economics — without needing the prompt or response itself.",
         "invoke_endpoint": f"{base_url}/invoke",
         "price": {
             "amount": str(PRICE_USD),
@@ -264,7 +268,10 @@ def create_app(db_path: Path) -> FastAPI:
             resource=resource_url,
             description=DISCOVERY_DESCRIPTION,
             service_name="Inferrail Work Economics",
-            tags=["work-economics", "ai-cost", "cost-summary", "economic-summary", "resource-cost"],
+            tags=[
+                "work-economics", "ai-cost", "cost-summary", "economic-summary", "resource-cost",
+                "unit-economics", "cost-receipt", "ai-job-cost", "llm-spend", "agent-payments",
+            ],
             extensions=DISCOVERY_EXTENSION,
         )
     }
