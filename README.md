@@ -505,16 +505,19 @@ Anything beyond one host is out of scope for v0.x — see
 
 **Inferrail Work Economics** is Inferrail's first hosted, paid capability:
 given caller-declared economic events for a unit of AI work, it returns a
-normalized cost summary and a commercial receipt, paid for over the
+normalized cost receipt — known cost, a breakdown by resource class and
+supplier, and unit economics for the work — paid for over the
 [x402](https://www.x402.org/) protocol by any agent with its own wallet —
 no Inferrail account required. **Base Sepolia testnet only right now**, not
 mainnet, not real money.
 
 This is unrelated code, in `hosted/`, not part of the `inferrail` package —
-running the gateway above never requires it and never talks to it. See
-[docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
-for the full contract and [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
-for a complete standalone buyer.
+running the gateway above never requires it and never talks to it.
+
+- Canonical endpoint: `https://work.tryinferrail.com` ([manifest](https://work.tryinferrail.com/manifest))
+- Human-readable overview: [tryinferrail.com/work-economics](https://tryinferrail.com/work-economics/)
+- Full contract: [docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
+- Standalone buyer example: [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
 
 ## Configuration
 
