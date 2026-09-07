@@ -251,7 +251,7 @@ def create_app(db_path: Path) -> FastAPI:
     register_exact_evm_server(server, networks=NETWORK)
 
     resource_url = os.environ.get(
-        "X402_RESOURCE_URL", "https://inferrail-work-economics.onrender.com/invoke"
+        "X402_RESOURCE_URL", "https://inferrail-x402-seller-testnet.onrender.com/invoke"
     )
     routes: dict[str, RouteConfig] = {
         "POST /invoke": RouteConfig(
