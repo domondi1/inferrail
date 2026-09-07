@@ -1,0 +1,8 @@
+# Minimal runtime dependencies for service.py's hosted deployment.
+# Pinned to versions verified working end-to-end against the real CDP
+# facilitator on Base Sepolia. Does not include the `svm` (Solana) extra --
+# this seller only registers the EVM `exact` scheme.
+fastapi==0.141.1
+uvicorn==0.52.4
+cdp-sdk==1.48.1
+x402[evm,fastapi,httpx,extensions]==2.22.0

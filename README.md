@@ -501,6 +501,21 @@ one filesystem.
 Anything beyond one host is out of scope for v0.x — see
 [docs/PRODUCT.md](docs/PRODUCT.md).
 
+## Paid capabilities (hosted, separate from the gateway)
+
+**Inferrail Work Economics** is Inferrail's first hosted, paid capability:
+given caller-declared economic events for a unit of AI work, it returns a
+normalized cost summary and a commercial receipt, paid for over the
+[x402](https://www.x402.org/) protocol by any agent with its own wallet —
+no Inferrail account required. **Base Sepolia testnet only right now**, not
+mainnet, not real money.
+
+This is unrelated code, in `hosted/`, not part of the `inferrail` package —
+running the gateway above never requires it and never talks to it. See
+[docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
+for the full contract and [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
+for a complete standalone buyer.
+
 ## Configuration
 
 For a real deployment instead of quickstart defaults:
