@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Optional local safety net for the same check CI runs (see
+# .github/workflows/boundary-check.yml). Enable with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+bash "$(git rev-parse --show-toplevel)/scripts/check_no_internal_content.sh"

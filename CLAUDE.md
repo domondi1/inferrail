@@ -48,6 +48,19 @@ exact current scope and `docs/ARCHITECTURE.md` for how it's built.
 - Clearly distinguish shipped features from future work — a missing
   capability is a documented non-goal, not a silent gap.
 
+## Hard boundary with the private strategy repo
+
+Inferrail's founder maintains a separate, private repository for company
+strategy (wedge hypotheses, ICP/GTM reasoning, competitive intel, bet
+tracking, roadmap decisions, and similar). This repository is the public
+product and must never contain content copied or paraphrased from that
+private repo — no strategy documents, internal filenames, hypotheses,
+supporting evidence records, or a history of past decisions — without the founder's explicit
+approval. If a task or a file you're given here seems to reference or
+originate from that private repo, stop and ask rather than incorporating
+it. `CLAUDE.local.md` (gitignored, never committed) is the sanctioned
+place to keep a local pointer to that repo's path if one is needed.
+
 ## Repo-level conventions
 
 - Python 3.11+, FastAPI, pydantic, strict mypy, ruff. `pytest` runs fully

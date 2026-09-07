@@ -1,0 +1,19 @@
+name: Boundary Check
+
+# Guards against accidental inclusion of Inferrail's private-strategy-repo
+# content in this public repo. See CLAUDE.md's "Hard boundary with the
+# private strategy repo".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  boundary-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for private-repo content
+        run: bash scripts/check_no_internal_content.sh
