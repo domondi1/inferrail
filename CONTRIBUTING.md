@@ -15,6 +15,13 @@ cd inferrail
 pip install -e ".[dev]"
 ```
 
+Optionally enable the local pre-push safety net that mirrors CI's
+boundary check (see below):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Before opening a PR
 
 Run the same checks CI runs:
@@ -46,6 +53,13 @@ that way; don't make the default test suite depend on real credentials.
 - Keep routing static and explicit for now — see
   `docs/adr/0002-static-deterministic-routing.md` for why, and don't build
   cost/latency-aware routing without a separate design discussion.
+
+## Private-content boundary
+
+CI runs `scripts/check_no_internal_content.sh` on every push and PR to
+block content from Inferrail's private strategy repo (see CLAUDE.md's
+"Hard boundary with the private strategy repo"). If this check fires
+on your PR, don't work around it — remove the flagged content instead.
 
 ## Reporting bugs vs. security issues
 

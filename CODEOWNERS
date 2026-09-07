@@ -1,0 +1,5 @@
+# Requires review from the founder on all changes once branch protection
+# on `main` is configured to require code owner review (see repo Settings
+# -> Branches). Without that setting enabled, this file is documentation
+# only and does not block merges.
+* @domondi1
