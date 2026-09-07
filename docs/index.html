@@ -68,6 +68,12 @@
     .qualification { max-width:70ch; margin:clamp(26px,3vw,42px) 0 0; padding-left:16px; color:var(--ink-3); border-left:2px solid var(--stamp); font-size:clamp(12px,.9vw,14px); }
     .network-action { margin-top:clamp(30px,4vw,54px); }
     .network-status { margin:14px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
+    .agents { padding:0 0 clamp(56px,6vw,96px); }
+    .agents-card { max-width:66ch; padding:clamp(22px,2.2vw,32px) clamp(24px,2.4vw,36px); margin-top:clamp(8px,1vw,16px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); }
+    .agents-eyebrow { margin:0 0 10px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
+    .agents-card h3 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(22px,2.6vw,32px); font-weight:700; text-transform:uppercase; line-height:1.1; }
+    .agents-copy { max-width:56ch; margin:clamp(12px,1.4vw,18px) 0 0; color:var(--ink-2); font-size:clamp(14px,1.05vw,17px); line-height:1.5; }
+    .agents-card .button { margin-top:clamp(18px,2vw,26px); padding:clamp(11px,1vw,15px) clamp(22px,2vw,30px); font-size:clamp(13px,1vw,15px); }
     footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     footer nav { display:flex; gap:18px; }
     @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}.tier{grid-template-columns:88px 1fr}footer{display:block}footer nav{margin-top:10px} }
@@ -97,8 +103,17 @@
       <div class="ladder" aria-label="Inferrail referral program"><div class="tier"><div><span class="tier-number">01</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>+90 DAYS</strong><br>Both you and the team you introduce get 90 extra days of cost history.</p></div><div class="tier"><div><span class="tier-number">03</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PRO · 1 YEAR</strong><br>Pro for a year. Unlimited seats.</p></div><div class="tier"><div><span class="tier-number">10</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>FOUNDING OPERATOR</strong><br>Permanent Pro · logo on the site · roadmap vote · private channel.</p></div><div class="tier"><div><span class="tier-number">25</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PARTNER</strong><br>Inferrail free for life + 20% recurring on every additional team you bring.</p></div></div>
       <p class="qualification">A referral qualifies after real routed usage, not signup.</p><div class="network-action"><button class="button button-ghost" id="referral-button" type="button">Get my referral link</button><p class="network-status" id="network-status">Referral access is opening soon.</p></div>
     </section>
+    <div class="section-break wrap" aria-hidden="true"></div>
+    <section class="agents wrap" aria-labelledby="agents-title">
+      <div class="agents-card">
+        <p class="agents-eyebrow">For autonomous agents</p>
+        <h3 id="agents-title">Buy Work Economics per call</h3>
+        <p class="agents-copy">Submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 — no subscription, no Inferrail account.</p>
+        <a class="button button-ghost" href="/work-economics/">See the Work Economics capability</a>
+      </div>
+    </section>
   </main>
-  <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
+  <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="/work-economics/">Work Economics</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
   <script>
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };

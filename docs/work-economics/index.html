@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work Economics — Inferrail</title>
+  <meta name="description" content="Inferrail Work Economics: agents submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 on Base Sepolia testnet.">
+  <link rel="canonical" href="https://tryinferrail.com/work-economics/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --white:#FFF; }
+    * { box-sizing:border-box; }
+    html { background:var(--paper); scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.55 "IBM Plex Mono",monospace; }
+    a { color:inherit; }
+    a:focus-visible, button:focus-visible { outline:3px solid var(--stamp); outline-offset:4px; }
+    .wrap { width:min(100%, 900px); margin:auto; padding:0 20px; }
+    .masthead { display:flex; min-height:62px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--ink); }
+    .wordmark, .eyebrow, .button, .fact-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .wordmark { font-size:19px; text-decoration:none; }
+    .nav { display:flex; gap:18px; font-size:12px; }
+    .nav a { text-underline-offset:4px; }
+    main { padding:clamp(36px,5vw,58px) 0 clamp(48px,6vw,80px); }
+    .eyebrow { margin:0 0 12px; color:var(--stamp); font-size:12px; }
+    h1, h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0; line-height:.98; }
+    h1 { font-size:clamp(36px,8vw,60px); max-width:14ch; }
+    h1 span { display:block; color:var(--ink-2); }
+    .lede { max-width:56ch; margin:20px 0 0; color:var(--ink-2); font-size:clamp(15px,1.3vw,19px); line-height:1.5; }
+    .pill { display:inline-flex; margin-top:20px; padding:7px 10px; border:1px solid var(--rule); color:var(--ink-2); font-size:11px; }
+    section.block { margin-top:clamp(40px,5vw,64px); padding-top:clamp(28px,3.5vw,42px); border-top:1px solid var(--ink); }
+    h2 { font-size:clamp(22px,3.4vw,32px); }
+    .block p { max-width:64ch; margin:16px 0 0; color:var(--ink-2); font-size:15px; line-height:1.6; }
+    .block p code, .block li code { font-size:.94em; background:var(--bar); padding:1px 5px; }
+    .block ul { max-width:64ch; margin:16px 0 0; padding-left:20px; color:var(--ink-2); font-size:15px; line-height:1.6; }
+    .facts { display:grid; gap:0; margin-top:22px; border-top:1px solid var(--rule); }
+    .fact-row { display:grid; grid-template-columns:minmax(150px,1fr) 2fr; gap:12px; padding:13px 0; border-bottom:1px solid var(--rule); }
+    .fact-label { color:var(--ink-3); font-size:11px; align-self:start; padding-top:2px; }
+    .fact-row p { margin:0; font-size:15px; }
+    .endpoint-card { margin-top:22px; padding:18px 20px; background:var(--white); border:1px solid var(--rule); box-shadow:6px 6px 0 rgba(20,32,27,.06); }
+    .endpoint-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:10px; padding:10px 0; border-bottom:1px dashed var(--rule); font-size:14px; }
+    .endpoint-row:last-child { border-bottom:0; }
+    .endpoint-row strong { font-family:"IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; font-size:12px; letter-spacing:.08em; color:var(--ink-3); }
+    .endpoint-row code { font-size:14px; overflow-wrap:anywhere; text-align:right; }
+    .links { display:flex; flex-wrap:wrap; gap:12px; margin-top:22px; }
+    .button { min-height:48px; padding:0 20px; display:inline-flex; align-items:center; border:1px solid var(--ink); cursor:pointer; font-size:14px; text-decoration:none; }
+    .button-dark { color:var(--paper); background:var(--ink); }
+    .button-ghost { color:var(--ink); background:transparent; }
+    .testnet-note { margin-top:24px; padding-left:13px; border-left:3px solid var(--stamp); font-size:13px; color:var(--ink-2); max-width:60ch; }
+    .testnet-note strong { display:block; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:15px; text-transform:uppercase; color:var(--ink); }
+    footer { padding:24px 0; border-top:1px solid var(--ink); color:var(--ink-3); font-size:12px; }
+    @media (min-width:700px) { body { font-size:17px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <header class="masthead wrap">
+    <a class="wordmark" href="/">Inferrail</a>
+    <nav class="nav" aria-label="Primary navigation"><a href="/">Home</a><a href="https://github.com/domondi1/inferrail">GitHub</a></nav>
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">For autonomous agents</p>
+    <h1>Work Economics<span>Buy AI work cost, per call.</span></h1>
+    <p class="lede">Submit payload-free economic metadata for one unit of AI work — inference, tool calls, search — and get back a normalized cost analysis plus a commercial receipt. Paid per call over the x402 protocol: no subscription, no Inferrail account, no prompt or response content required.</p>
+    <p class="pill">Base Sepolia testnet · $0.05 per invocation</p>
+
+    <section class="block" aria-labelledby="who-title">
+      <h2 id="who-title">Who it's for</h2>
+      <p>Any x402-capable buyer — an autonomous agent, a cost-tracking service, or an AI job orchestrator — that needs a normalized cost figure and a reconcilable receipt for a unit of AI work, without handing over what that work actually said. A plain EVM wallet is sufficient; there is no Inferrail account or prior relationship required.</p>
+    </section>
+
+    <section class="block" aria-labelledby="how-title">
+      <h2 id="how-title">What you send, what you get back</h2>
+      <ul>
+        <li><strong>Input:</strong> a <code>work_id</code> and one or more caller-declared <code>events</code> (resource class, supplier, known cost, price basis) — payload-free: no prompt, response, or tool-call content, only cost metadata.</li>
+        <li><strong>Output:</strong> a normalized cost analysis — known total cost, a breakdown by resource class and supplier, an unknown-cost event count, and price provenance — plus a <strong>commercial receipt</strong> (<code>purchase_id</code>, <code>invocation_id</code>, network, amount, status) that lets you independently reconcile the purchase on-chain.</li>
+      </ul>
+    </section>
+
+    <section class="block" aria-labelledby="price-title">
+      <h2 id="price-title">Price &amp; network</h2>
+      <div class="facts">
+        <div class="fact-row"><span class="fact-label">Price</span><p>$0.05 USD per invocation — fixed, not metered by event count.</p></div>
+        <div class="fact-row"><span class="fact-label">Network</span><p>Base Sepolia testnet only (<code>eip155:84532</code>) — not mainnet, not real money.</p></div>
+        <div class="fact-row"><span class="fact-label">Payment</span><p>The real <a href="https://www.x402.org/">x402</a> protocol. An unpaid call returns HTTP 402 with <code>PaymentRequirements</code>; a signed <code>X-PAYMENT</code> retry is verified and settled by the CDP-hosted facilitator.</p></div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="endpoint-title">
+      <h2 id="endpoint-title">Endpoint</h2>
+      <div class="endpoint-card">
+        <div class="endpoint-row"><strong>Host</strong><code>https://work.tryinferrail.com</code></div>
+        <div class="endpoint-row"><strong>Manifest</strong><code>GET https://work.tryinferrail.com/manifest</code></div>
+        <div class="endpoint-row"><strong>Invoke</strong><code>POST https://work.tryinferrail.com/invoke</code></div>
+      </div>
+      <div class="links">
+        <a class="button button-dark" href="https://work.tryinferrail.com/manifest">View the live manifest</a>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/work-economics.md">Full contract (docs)</a>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/examples/work_economics_purchase.py">Standalone buyer example</a>
+      </div>
+      <p class="testnet-note"><strong>Testnet only.</strong> Every receipt is stamped <code>network_class: TESTNET</code> so a testnet purchase is never mistaken for real revenue.</p>
+    </section>
+  </main>
+  <footer class="wrap">Inferrail Work Economics · <a href="/">Home</a></footer>
+</body>
+</html>
