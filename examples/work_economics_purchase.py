@@ -32,7 +32,7 @@ from x402.mechanisms.evm.exact import register_exact_evm_client
 from x402.mechanisms.evm.signers import EthAccountSigner
 
 NETWORK = "eip155:84532"  # Base Sepolia (CAIP-2)
-DEFAULT_ENDPOINT = "https://inferrail-x402-seller-testnet.onrender.com/invoke"
+DEFAULT_ENDPOINT = "https://work.tryinferrail.com/invoke"
 
 # A valid example request body matching the schema published at
 # docs/capabilities/work-economics.md and GET <base_url>/manifest.
