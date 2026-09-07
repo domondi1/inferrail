@@ -47,6 +47,10 @@ price, network, `pay_to` address, and the request/response JSON Schemas —
 so an agent that has only discovered the base URL (via the x402 Bazaar
 listing, `llms.txt`, or otherwise) never needs private knowledge to use it.
 
+Inferrail's own hosted instance: `https://work.tryinferrail.com` —
+[manifest](https://work.tryinferrail.com/manifest),
+[human-readable overview](https://tryinferrail.com/work-economics/).
+
 ## Request
 
 `POST /invoke`, header `X-Purchase-Id: <buyer-chosen idempotency key>`:
