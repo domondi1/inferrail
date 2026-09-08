@@ -73,15 +73,8 @@ jobs:
         run: mypy hosted/a2a_economic_authority --strict --ignore-missing-imports
 
       - name: Test -- Economic Authority core, capabilities, and real A2A transport
-        run: |
-          pytest tests/unit/hosted/test_a2a_economic_authority_core.py \
-                 tests/unit/hosted/test_a2a_economic_authority_capabilities.py \
-                 tests/unit/hosted/test_a2a_economic_authority_transport.py \
-                 -v -rs | tee /tmp/hosted-a2a-pytest.log
-          if grep -q "^SKIPPED" /tmp/hosted-a2a-pytest.log; then
-            echo "::error::a2a-sdk is installed in this job -- no Economic Authority test should skip."
-            exit 1
-          fi
+        shell: bash
+        run: bash scripts/run_hosted_a2a_tests.sh
 
       - name: Boundary check (belt-and-suspenders alongside the dedicated job)
         run: bash scripts/check_no_internal_content.sh
