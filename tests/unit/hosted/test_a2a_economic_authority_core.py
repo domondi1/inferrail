@@ -304,6 +304,12 @@ def test_hosted_a2a_economic_authority_is_not_in_the_wheel_build():
 
 def test_no_private_strategy_language_in_core_module():
     source = (HOSTED_DIR / "core.py").read_text()
-    forbidden_terms = ("inferrail-internal", "Phase 3", "Phase 1", "research module", "D29", "D30")
+    # Note: the private-strategy-repo name itself is intentionally not
+    # listed here as a literal -- doing so would make this file itself
+    # match `scripts/check_no_internal_content.sh`'s repo-wide denylist
+    # scan for that exact name. That scanner is the authority for
+    # excluding the private repo's name; this test only needs to cover
+    # phase/decision-record language that wouldn't otherwise be caught.
+    forbidden_terms = ("Phase 3", "Phase 1", "research module", "D29", "D30")
     for forbidden_term in forbidden_terms:
         assert forbidden_term not in source
