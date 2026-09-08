@@ -25,7 +25,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -70,6 +70,12 @@ class InsufficientScope(CapabilityError):
 
 class WrongDelegation(CapabilityError):
     pass
+
+
+class WrongAuthorizer(CapabilityError):
+    """The presented credential is itself valid (right delegation, right
+    scope, not expired or revoked) but is not the exact credential that
+    originally authorized the reservation this claim belongs to."""
 
 
 @dataclass(frozen=True)
@@ -237,6 +243,37 @@ class CapabilityStore:
             ).fetchone()
             return row
 
+    def token_id_for(self, token: str | None) -> str | None:
+        """Returns the (non-secret) `token_id` for a presented plaintext
+        token, regardless of whether it is revoked or expired -- unlike
+        `authorize()`, this never raises. Used only to answer "is this the
+        SAME credential as some other, already-known token_id", never to
+        authorize anything by itself: an expired or revoked token still
+        has a token_id, and a caller comparing token_ids must separately
+        decide what an expired/revoked match means for their use case
+        (see `InMemoryCredentialHandoff.redeem`)."""
+        if not token:
+            return None
+        row = self._lookup(token)
+        return None if row is None else str(row["token_id"])
+
+    def scopes_issued_for(self, delegation_id: str) -> frozenset[str] | None:
+        """Returns the scope set of the FIRST-ever capability issued for
+        `delegation_id` (by issuance order), or None if none was ever
+        issued. Used only to detect a reservation retry naming
+        different `child_scopes` than what was originally minted -- an
+        explicit conflict (see `executor.py`'s reserve-retry handling) --
+        never to authorize anything by itself. Returns the historical
+        record regardless of whether that original token has since been
+        revoked or expired."""
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT scopes FROM capability_tokens WHERE delegation_id = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (delegation_id,),
+            ).fetchone()
+        return None if row is None else frozenset(row["scopes"].split(","))
+
     def revoke_for_delegations(self, delegation_ids: list[str]) -> int:
         """Revokes every live token scoped to any of the given delegation_ids.
 
@@ -262,6 +299,8 @@ class _PendingClaim:
     plaintext_token: str
     issuer_delegation_id: str
     issuer_required_scope: str
+    authorizing_token_id: str
+    child_delegation_id: str
     expires_at_monotonic: float
 
 
@@ -276,20 +315,38 @@ class InMemoryCredentialHandoff:
     process's memory: it is never written to disk, and is consumed exactly
     once.
 
-    Redemption is bound to a *scope requirement on a delegation*
-    (`issuer_delegation_id`, `issuer_required_scope`) rather than to one
-    specific token. At redemption time (`redeem`), the presented bearer
-    token is revalidated in full against the live `CapabilityStore` --
-    existence, expiry, revocation, delegation binding, and scope -- via
-    the same `authorize()` every other operation uses. This means: (1) a
-    credential that has since expired or been revoked cannot redeem a
-    claim even if it is the exact one that triggered the reservation; and
-    (2) a *different* token that currently holds the required scope on the
-    same delegation can redeem it too -- which is what prevents a
-    grant-only credential from redeeming a reservation only a
-    reserve-scoped credential authorized (see `executor.py`'s
-    `_finish_reserve`, which always sets `issuer_required_scope="reserve"`
-    regardless of which credential completed the call).
+    Redemption is bound to the EXACT credential that originally authorized
+    the reservation (`authorizing_token_id`, the non-secret `token_id` of
+    that credential -- never the plaintext token itself). At redemption
+    time (`redeem`), the presented bearer token is revalidated in full
+    against the live `CapabilityStore` (existence, expiry, revocation,
+    delegation binding, scope) via the same `authorize()` every other
+    operation uses, AND its resolved `token_id` must equal
+    `authorizing_token_id` exactly. This means: (1) a credential that has
+    since expired or been revoked cannot redeem a claim, including the
+    original authorizer itself; (2) a grant-only credential can supply the
+    missing authority for a parked reservation but can never redeem it,
+    since it never becomes the authorizer; and (3) a DIFFERENT credential
+    that happens to also hold `reserve` scope on the same parent -- even a
+    perfectly legitimate one for other purposes -- cannot redeem a
+    reservation it did not itself authorize, closing the "guess an
+    existing child_id, present any reserve-scoped token for the parent"
+    vector.
+
+    Purging is scoped precisely to protect the rightful claimant:
+    `redeem` determines whether the PRESENTED credential's token_id is
+    actually the authorizer BEFORE deciding what an expired/revoked
+    failure means. An unrelated token (wrong delegation, wrong scope, or
+    simply a different credential entirely) that happens to be expired or
+    revoked proves nothing about the rightful authorizer's credential, so
+    presenting one never destroys someone else's still-redeemable claim --
+    only the true authorizer's own expiry/revocation is treated as
+    terminal and purges the claim. Tree revocation reaching the specific
+    child delegation this claim is for is also terminal and purges it
+    (via the optional `is_target_revoked` callback in `redeem`, checked
+    against `core.EconomicAuthorityStore.is_revocation_in_progress` in
+    practice -- kept as a callback rather than a hard import so this
+    module stays transport/core-independent).
 
     Not durable across a process restart by design: an unclaimed handoff is
     lost on restart, same as an unclaimed one-time code from any other
@@ -315,7 +372,17 @@ class InMemoryCredentialHandoff:
         plaintext_token: str,
         issuer_delegation_id: str,
         issuer_required_scope: str,
+        *,
+        authorizing_token_id: str,
+        child_delegation_id: str,
     ) -> str:
+        """`authorizing_token_id` is the non-secret `token_id` of the
+        credential that authorized the reserve this claim belongs to
+        (from the `CapabilityInfo` that call's own `authorize()` returned)
+        -- never a plaintext token. `child_delegation_id` is the
+        delegation the newly-minted credential is scoped to, used only to
+        check whether that specific delegation's tree has since begun
+        revocation."""
         claim_id = secrets.token_urlsafe(24)
         expires_at = time.monotonic() + self._ttl_seconds
         with self._lock:
@@ -324,29 +391,36 @@ class InMemoryCredentialHandoff:
                 plaintext_token=plaintext_token,
                 issuer_delegation_id=issuer_delegation_id,
                 issuer_required_scope=issuer_required_scope,
+                authorizing_token_id=authorizing_token_id,
+                child_delegation_id=child_delegation_id,
                 expires_at_monotonic=expires_at,
             )
         return claim_id
 
     def redeem(
-        self, capability_store: CapabilityStore, claim_id: str, presented_token: str | None
+        self,
+        capability_store: CapabilityStore,
+        claim_id: str,
+        presented_token: str | None,
+        *,
+        is_target_revoked: Callable[[str], bool] | None = None,
     ) -> str:
         """Returns the plaintext token for `claim_id`, consuming it only on
         success.
 
-        Fully revalidates the presented credential against
-        `capability_store` (existence, expiry, revocation, delegation
-        binding, scope) before releasing anything -- matching hash bytes
-        alone is never sufficient. A wrong-but-currently-valid credential
-        (e.g. right shape, wrong scope) leaves the claim intact so a
-        legitimate holder's retry still works; an expired or revoked
-        *issuer* credential is terminal (it can never become valid again),
-        so the claim is purged immediately rather than left dangling.
-        Successful redemption always removes the entry.
+        `is_target_revoked`, if given, is called with the claim's
+        `child_delegation_id`; if it returns True the claim is treated as
+        terminally dead (purged) even though the presented credential
+        itself might still be perfectly valid -- the delegation tree it
+        would grant access to no longer has usable authority. Kept
+        optional and duck-typed so this module never has to import
+        `core.py` directly.
 
         Raises the specific `CapabilityError` subclass `authorize()`
-        raised for the presented credential, or `InvalidCredential`/
-        `ExpiredCredential` for a claim_id problem itself.
+        raised for the presented credential, `WrongAuthorizer` if the
+        credential is valid but is not the one that authorized this
+        reservation, or `InvalidCredential`/`ExpiredCredential` for a
+        claim_id problem itself.
         """
         with self._lock:
             entry = self._pending.get(claim_id)
@@ -355,22 +429,53 @@ class InMemoryCredentialHandoff:
             if time.monotonic() > entry.expires_at_monotonic:
                 del self._pending[claim_id]
                 raise ExpiredCredential("claim has expired")
+
+            # Resolve the presented credential's own token_id BEFORE
+            # calling authorize() (which may raise for a revoked/expired
+            # token) so we can tell whether a subsequent revoked/expired
+            # failure is actually about the rightful authorizer, or about
+            # some unrelated credential that proves nothing about it.
+            presented_token_id = capability_store.token_id_for(presented_token)
+            is_the_authorizer = (
+                presented_token_id is not None and presented_token_id == entry.authorizing_token_id
+            )
+
             try:
-                capability_store.authorize(
+                info = capability_store.authorize(
                     presented_token, entry.issuer_delegation_id, entry.issuer_required_scope
                 )
             except (RevokedCredential, ExpiredCredential):
-                # The issuing authority is permanently gone -- this claim
-                # can never be redeemed by anyone now, so purge it rather
-                # than leave a dead entry (and a live plaintext token)
-                # sitting in memory.
-                del self._pending[claim_id]
+                if is_the_authorizer:
+                    # The rightful authorizer is now permanently gone --
+                    # this claim can never be redeemed by anyone, so purge
+                    # it rather than leave a dead entry (and a live
+                    # plaintext token) sitting in memory.
+                    del self._pending[claim_id]
+                # An unrelated credential's own expiry/revocation proves
+                # nothing about the rightful authorizer -- the claim
+                # survives for them to redeem later.
                 raise
             except CapabilityError:
                 # Wrong/missing/insufficiently-scoped credential: the
                 # claim itself may still be legitimately redeemable by its
                 # rightful holder, so it survives this failed attempt.
                 raise
+
+            if info.token_id != entry.authorizing_token_id:
+                # A currently-valid credential, but not the one that
+                # authorized this reservation -- e.g. a different
+                # reserve-scoped credential for the same parent. The
+                # claim survives; only the true authorizer can redeem it.
+                raise WrongAuthorizer(
+                    "credential is valid but did not authorize this reservation"
+                )
+
+            if is_target_revoked is not None and is_target_revoked(entry.child_delegation_id):
+                del self._pending[claim_id]
+                raise RevokedCredential(
+                    "the delegation this credential would grant access to is undergoing revocation"
+                )
+
             del self._pending[claim_id]
             return entry.plaintext_token
 

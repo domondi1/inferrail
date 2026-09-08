@@ -25,6 +25,7 @@ from capabilities import (  # noqa: E402
     InvalidCredential,
     MissingCredential,
     RevokedCredential,
+    WrongAuthorizer,
     WrongDelegation,
 )
 
@@ -167,16 +168,45 @@ def test_capability_state_survives_new_store_instance_against_same_file(tmp_path
 
 # -- in-memory credential handoff: the reserve claim-ticket mechanism -----
 #
-# Redemption now fully revalidates the presented credential against a real
+# Redemption fully revalidates the presented credential against a real
 # CapabilityStore (existence/expiry/revocation/delegation/scope) instead of
-# comparing token hashes -- these tests exercise that directly (repair
-# item 3), plus the delegation/purge behavior it enables (repair item 6).
+# comparing token hashes, AND requires it to be the EXACT credential that
+# authorized the reservation (repair item 5) -- these tests exercise that
+# directly, plus the purge-only-when-rightful behavior (repair item 6) and
+# the target-delegation-revocation hook (repair item 3).
 
 
-def test_handoff_redeems_exactly_once_and_revalidates_the_issuer(store: CapabilityStore):
+def _create_claim(
+    handoff: InMemoryCredentialHandoff,
+    *,
+    token_id: str,
+    plaintext: str,
+    issuer_delegation_id: str,
+    issuer_required_scope: str,
+    authorizing_token_id: str,
+    child_delegation_id: str = "child-x",
+) -> str:
+    return handoff.create(
+        token_id,
+        plaintext,
+        issuer_delegation_id,
+        issuer_required_scope,
+        authorizing_token_id=authorizing_token_id,
+        child_delegation_id=child_delegation_id,
+    )
+
+
+def test_handoff_redeems_exactly_once_for_the_exact_authorizer(store: CapabilityStore):
     token_id, token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=token_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_id,
+    )
 
     assert handoff.redeem(store, claim_id, token) == "plaintext-child-token"
 
@@ -184,20 +214,32 @@ def test_handoff_redeems_exactly_once_and_revalidates_the_issuer(store: Capabili
         handoff.redeem(store, claim_id, token)  # already consumed
 
 
-def test_handoff_allows_redemption_by_a_different_token_with_the_required_scope(
-    store: CapabilityStore,
-):
-    """The claim is bound to a (delegation, scope) requirement, not to one
-    specific token -- any currently-valid token holding that scope on that
-    delegation can redeem it. This is what lets a *different* reserve-scoped
-    credential (not necessarily the exact one that made the original call)
-    complete a redemption after an AUTH_REQUIRED park/retry."""
-    issuing_token_id, _issuing_token = store.issue("root", {"reserve"})
-    _other_token_id, other_token = store.issue("root", {"reserve"})
+def test_handoff_rejects_a_different_token_with_the_same_required_scope(store: CapabilityStore):
+    """Repair item 5: the claim is bound to the EXACT credential that
+    authorized the reservation, not merely to "any token currently holding
+    the required scope on the same delegation". A different, equally
+    legitimate reserve-scoped credential for the same parent must not be
+    able to redeem a reservation it did not itself authorize -- this is
+    what closes the "guess an existing child_id, present any reserve-scoped
+    token for the parent" vector."""
+    authorizing_token_id, authorizing_token = store.issue("root", {"reserve"})
+    _other_id, other_token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(issuing_token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_token_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_token_id,
+    )
 
-    assert handoff.redeem(store, claim_id, other_token) == "plaintext-child-token"
+    with pytest.raises(WrongAuthorizer):
+        handoff.redeem(store, claim_id, other_token)
+
+    # The claim survives the wrong-authorizer attempt -- the true
+    # authorizer can still redeem it.
+    assert handoff.redeem(store, claim_id, authorizing_token) == "plaintext-child-token"
 
 
 def test_handoff_rejects_wrong_scope_but_claim_survives_for_a_legitimate_retry(
@@ -206,9 +248,16 @@ def test_handoff_rejects_wrong_scope_but_claim_survives_for_a_legitimate_retry(
     """A grant-only token must not redeem a claim that requires 'reserve'
     -- this is the core of the grant/reserve separation (repair item 6)."""
     token_id, grant_only_token = store.issue("root", {"grant"})
-    _reserve_id, reserve_token = store.issue("root", {"reserve"})
+    reserve_id, reserve_token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=reserve_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=reserve_id,
+    )
 
     with pytest.raises(InsufficientScope):
         handoff.redeem(store, claim_id, grant_only_token)
@@ -216,35 +265,57 @@ def test_handoff_rejects_wrong_scope_but_claim_survives_for_a_legitimate_retry(
     # The claim is untouched by the wrong-scope attempt -- the rightful
     # reserve-scoped holder can still redeem it.
     assert handoff.redeem(store, claim_id, reserve_token) == "plaintext-child-token"
+    assert token_id  # sanity: the grant-only token really was minted
 
 
 def test_handoff_rejects_wrong_delegation(store: CapabilityStore):
-    token_id, _token = store.issue("root", {"reserve"})
+    authorizing_id, _token = store.issue("root", {"reserve"})
     _other_id, other_delegation_token = store.issue("child-x", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+    )
 
     with pytest.raises(WrongDelegation):
         handoff.redeem(store, claim_id, other_delegation_token)
 
 
 def test_handoff_rejects_missing_credential(store: CapabilityStore):
-    token_id, _token = store.issue("root", {"reserve"})
+    authorizing_id, _token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+    )
     with pytest.raises(MissingCredential):
         handoff.redeem(store, claim_id, None)
 
 
-def test_handoff_purges_claim_when_issuer_credential_is_revoked(store: CapabilityStore):
-    """Repair item 3: an outstanding claim must not survive its issuing
-    authority being revoked. A revoked issuer fails redemption AND the
+def test_handoff_purges_claim_when_the_true_authorizer_is_revoked(store: CapabilityStore):
+    """Repair item 3: an outstanding claim must not survive its true
+    authorizer being revoked. A revoked authorizer fails redemption AND the
     claim itself is purged (not just left to expire on its own TTL) --
     even a fresh, still-valid-looking token for the same delegation/scope
     cannot redeem it afterward, because the claim_id no longer exists."""
     token_id, token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=token_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_id,
+    )
 
     store.revoke_for_delegations(["root"])
 
@@ -256,10 +327,17 @@ def test_handoff_purges_claim_when_issuer_credential_is_revoked(store: Capabilit
         handoff.redeem(store, claim_id, fresh_token)  # claim_id is gone, not just this token
 
 
-def test_handoff_purges_claim_when_issuer_credential_has_expired(store: CapabilityStore):
+def test_handoff_purges_claim_when_the_true_authorizer_has_expired(store: CapabilityStore):
     token_id, token = store.issue("root", {"reserve"}, ttl_seconds=0)
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=token_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_id,
+    )
     time.sleep(0.01)
 
     with pytest.raises(ExpiredCredential):
@@ -270,10 +348,65 @@ def test_handoff_purges_claim_when_issuer_credential_has_expired(store: Capabili
         handoff.redeem(store, claim_id, fresh_token)
 
 
+def test_handoff_unrelated_expired_token_does_not_destroy_the_claim(store: CapabilityStore):
+    """Repair item 6's central regression: authorize() checks a presented
+    token's OWN expiry/revocation before delegation/scope binding, so an
+    UNRELATED expired token (nothing to do with this claim) must not be
+    able to purge someone else's still-good claim just by being presented
+    against it."""
+    authorizing_id, authorizing_token = store.issue("root", {"reserve"})
+    _unrelated_id, unrelated_expired_token = store.issue(
+        "some-other-delegation-entirely", {"read"}, ttl_seconds=0
+    )
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+    )
+    time.sleep(0.01)
+
+    with pytest.raises(ExpiredCredential):
+        handoff.redeem(store, claim_id, unrelated_expired_token)
+
+    # The claim survives -- the true authorizer can still redeem it.
+    assert handoff.redeem(store, claim_id, authorizing_token) == "plaintext-child-token"
+
+
+def test_handoff_unrelated_revoked_token_does_not_destroy_the_claim(store: CapabilityStore):
+    authorizing_id, authorizing_token = store.issue("root", {"reserve"})
+    _unrelated_id, unrelated_revoked_token = store.issue("some-other-delegation-entirely", {"read"})
+    store.revoke_for_delegations(["some-other-delegation-entirely"])
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+    )
+
+    with pytest.raises(RevokedCredential):
+        handoff.redeem(store, claim_id, unrelated_revoked_token)
+
+    assert handoff.redeem(store, claim_id, authorizing_token) == "plaintext-child-token"
+
+
 def test_handoff_rejects_expired_claim_itself(store: CapabilityStore):
     token_id, token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff(ttl_seconds=0)
-    claim_id = handoff.create(token_id, "plaintext-child-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=token_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_id,
+    )
     time.sleep(0.01)
     with pytest.raises(ExpiredCredential):
         handoff.redeem(store, claim_id, token)
@@ -285,12 +418,74 @@ def test_handoff_rejects_unknown_claim_id(store: CapabilityStore):
         handoff.redeem(store, "no-such-claim", "any-token")
 
 
-def test_purge_for_delegations_removes_only_matching_claims(store: CapabilityStore):
-    token_a, _ = store.issue("root", {"reserve"})
-    token_b, _ = store.issue("child-x", {"reserve"})
+def test_handoff_is_target_revoked_callback_purges_claim(store: CapabilityStore):
+    """Repair item 3: even a fully valid, correctly-scoped, exact-authorizer
+    credential must not redeem a claim whose TARGET delegation is
+    undergoing tree revocation -- the `is_target_revoked` callback closes
+    this window, which exists between `mark_revocation_started` and the
+    rest of a tree teardown finishing."""
+    authorizing_id, authorizing_token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_a = handoff.create(token_a, "plaintext-a", "root", "reserve")
-    claim_b = handoff.create(token_b, "plaintext-b", "child-x", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+        child_delegation_id="child-under-revocation",
+    )
+
+    with pytest.raises(RevokedCredential):
+        handoff.redeem(
+            store, claim_id, authorizing_token, is_target_revoked=lambda _did: True
+        )
+
+    # Purged -- gone even to a request that would no longer say "revoked".
+    with pytest.raises(InvalidCredential):
+        handoff.redeem(store, claim_id, authorizing_token, is_target_revoked=lambda _did: False)
+
+
+def test_handoff_is_target_revoked_callback_allows_redemption_when_false(store: CapabilityStore):
+    authorizing_id, authorizing_token = store.issue("root", {"reserve"})
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id=authorizing_id,
+        plaintext="plaintext-child-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=authorizing_id,
+        child_delegation_id="child-not-revoked",
+    )
+    assert (
+        handoff.redeem(store, claim_id, authorizing_token, is_target_revoked=lambda _did: False)
+        == "plaintext-child-token"
+    )
+
+
+def test_purge_for_delegations_removes_only_matching_claims(store: CapabilityStore):
+    token_a, _plaintext_a = store.issue("root", {"reserve"})
+    token_b, plaintext_b = store.issue("child-x", {"reserve"})
+    handoff = InMemoryCredentialHandoff()
+    claim_a = _create_claim(
+        handoff,
+        token_id=token_a,
+        plaintext="plaintext-a",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_a,
+        child_delegation_id="grandchild-a",
+    )
+    claim_b = _create_claim(
+        handoff,
+        token_id=token_b,
+        plaintext="plaintext-b",
+        issuer_delegation_id="child-x",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_b,
+        child_delegation_id="grandchild-b",
+    )
 
     purged = handoff.purge_for_delegations(["root"])
     assert purged == 1
@@ -298,8 +493,7 @@ def test_purge_for_delegations_removes_only_matching_claims(store: CapabilitySto
     with pytest.raises(InvalidCredential):
         handoff.redeem(store, claim_a, "irrelevant")
 
-    _id, token_b_live = store.issue("child-x", {"reserve"})
-    assert handoff.redeem(store, claim_b, token_b_live) == "plaintext-b"
+    assert handoff.redeem(store, claim_b, plaintext_b) == "plaintext-b"
 
 
 def test_purge_for_delegations_empty_list_is_a_safe_no_op():
@@ -316,7 +510,14 @@ def test_concurrent_redemption_of_the_same_claim_succeeds_exactly_once(store: Ca
 
     token_id, token = store.issue("root", {"reserve"})
     handoff = InMemoryCredentialHandoff()
-    claim_id = handoff.create(token_id, "the-only-plaintext-token", "root", "reserve")
+    claim_id = _create_claim(
+        handoff,
+        token_id=token_id,
+        plaintext="the-only-plaintext-token",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=token_id,
+    )
 
     def try_redeem(_i: int) -> str | None:
         try:
@@ -332,6 +533,30 @@ def test_concurrent_redemption_of_the_same_claim_succeeds_exactly_once(store: Ca
         "exactly one concurrent redemption must succeed"
     )
     assert results.count(None) == 15
+
+
+# -- token_id_for and scopes_issued_for: plain lookups used above ---------
+
+
+def test_token_id_for_works_regardless_of_revoked_or_expired(store: CapabilityStore):
+    token_id, token = store.issue("root", {"read"})
+    assert store.token_id_for(token) == token_id
+    store.revoke_for_delegations(["root"])
+    assert store.token_id_for(token) == token_id  # still resolvable after revocation
+
+
+def test_token_id_for_returns_none_for_unknown_or_missing_token(store: CapabilityStore):
+    assert store.token_id_for(None) is None
+    assert store.token_id_for("not-a-real-token") is None
+
+
+def test_scopes_issued_for_returns_first_issued_scopes(store: CapabilityStore):
+    _id1, _t1 = store.issue("root", {"reserve"})
+    assert store.scopes_issued_for("root") == frozenset({"reserve"})
+
+
+def test_scopes_issued_for_returns_none_when_nothing_issued(store: CapabilityStore):
+    assert store.scopes_issued_for("never-issued") is None
 
 
 # -- exclusions: no outbound network calls in this module ------------------
