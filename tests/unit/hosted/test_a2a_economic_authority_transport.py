@@ -974,24 +974,30 @@ async def test_reserve_retry_with_mismatched_amount_fails_explicitly(paths, root
     )
 
 
-# -- reservation retries are idempotent for credentials too (repair item 4) --
+# -- reservation retries recover a fresh credential (finding 1) -----------
 
 
-async def test_matching_reserve_retry_does_not_mint_additional_credentials(paths, root):
-    """A matching duplicate delivery of a successful reserve must not mint
-    another capability token/claim each time -- only the original
-    `reserve` that actually created the delegation ever mints one."""
+async def test_matching_reserve_retry_by_the_original_authorizer_recovers_a_fresh_credential(
+    paths, root
+):
+    """A matching duplicate delivery of a successful reserve, sent by the
+    EXACT credential that authorized the original reservation, must
+    recover a fresh, usable claim/credential each time -- this is the
+    crash-safe recovery path (finding 1): a crash or lost response
+    between committing the reservation and the caller obtaining a usable
+    credential must never strand the child authority. Economic authority
+    is never reserved twice, and at most one capability token for this
+    delegation is ever live: each recovery revokes whatever came before."""
     _root_id, root_token = root
-    cap_store = CapabilityStore(paths["cap_db"])
-    delegation_id = "child-no-remint"
+    delegation_id = "child-recovers"
 
-    def live_token_count() -> int:
+    def live_token_ids() -> list[str]:
         with sqlite3.connect(paths["cap_db"]) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM capability_tokens WHERE delegation_id = ?",
+            rows = conn.execute(
+                "SELECT token_id FROM capability_tokens WHERE delegation_id = ? AND revoked = 0",
                 (delegation_id,),
-            ).fetchone()
-            return int(row[0])
+            ).fetchall()
+            return [row[0] for row in rows]
 
     port = free_port()
     with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
@@ -999,7 +1005,7 @@ async def test_matching_reserve_retry_does_not_mint_additional_credentials(paths
         ctx = call_context()
         payload = {
             "op": "reserve",
-            "event_id": "evt:no-remint",
+            "event_id": "evt:recovers",
             "parent_id": "root",
             "delegation_id": delegation_id,
             "agent_id": "worker",
@@ -1008,17 +1014,74 @@ async def test_matching_reserve_retry_does_not_mint_additional_credentials(paths
 
         first = await send(client, ctx, payload)
         assert first.status.state == TaskState.TASK_STATE_COMPLETED
-        assert _artifact_dict(first)["credential_claim_id"] is not None
-        assert cap_store is not None  # sanity: same db as the running server
+        claim_ids = [_artifact_dict(first)["credential_claim_id"]]
+        assert claim_ids[0] is not None
 
         for _ in range(5):
             retry = await send(client, ctx, payload)
             assert retry.status.state == TaskState.TASK_STATE_COMPLETED
-            assert _artifact_dict(retry)["credential_claim_id"] is None, (
-                "a matching retry must never mint another credential"
+            retry_claim_id = _artifact_dict(retry)["credential_claim_id"]
+            assert retry_claim_id is not None, (
+                "the exact original authorizer must recover a fresh, usable claim on retry"
             )
+            assert retry_claim_id not in claim_ids, "each recovery must be a genuinely new claim"
+            claim_ids.append(retry_claim_id)
 
-    assert live_token_count() == 1, "exactly one capability token must exist for this delegation"
+        assert len(live_token_ids()) == 1, (
+            "exactly one live capability token must exist after repeated recovery -- every "
+            "previous one must have been revoked"
+        )
+
+        final_claim = claim_ids[-1]
+        claimed = claim_credential(base_url, final_claim, root_token)
+        assert claimed.status_code == 200
+        plaintext = claimed.json()["token"]
+
+        cap_store = CapabilityStore(paths["cap_db"])
+        info = cap_store.authorize(plaintext, delegation_id, "read")
+        assert info.token_id == live_token_ids()[0], "the redeemed credential must be the live one"
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    root_state = core_store.get("root")
+    assert root_state is not None
+    assert root_state.child_reserved_usd == Decimal("0.10"), (
+        "economic authority must never be reserved twice across repeated recovery retries"
+    )
+
+
+async def test_reserve_retry_without_a_durable_authorization_record_falls_back_safely(paths, root):
+    """A delegation created without ever going through
+    `record_reservation_authorization` (e.g. one seeded directly against
+    core.py/capabilities.py, predating this recovery mechanism) has no
+    durable binding to recover against. A matching retry against it must
+    fall back to the old, safe no-mint behavior rather than erroring or
+    guessing an authorizer -- honest degradation, not a new attack
+    surface."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        core_store = EconomicAuthorityStore(paths["db"])
+        core_store.reserve("evt:seed-legacy", "root", "child-legacy", "worker", Decimal("0.10"))
+        cap_store = CapabilityStore(paths["cap_db"])
+        assert cap_store.get_reservation_authorization("child-legacy") is None
+
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        retry = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:legacy-retry",
+                "parent_id": "root",
+                "delegation_id": "child-legacy",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        assert retry.status.state == TaskState.TASK_STATE_COMPLETED
+        assert _artifact_dict(retry)["credential_claim_id"] is None
+        assert _artifact_dict(retry)["note"] == "reservation_already_exists"
 
 
 async def test_reserve_retry_with_changed_child_scopes_is_an_explicit_conflict(paths, root):
@@ -1066,10 +1129,13 @@ async def test_reserve_retry_with_changed_child_scopes_is_an_explicit_conflict(p
 
 async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_child_id(paths, root):
     """A different caller who also holds 'reserve' scope on the SAME
-    parent, but did not create this delegation, must not be able to mint
-    themselves a working credential for it just by naming the same
-    delegation_id/agent_id/amount -- no mint ever happens on a matching
-    'already exists' retry, regardless of who sends it."""
+    parent, but did not create this delegation, must not be able to
+    recover, rotate, claim, or mint themselves a working credential for it
+    just by naming the same delegation_id/agent_id/amount -- crash-safe
+    recovery (finding 1) is only ever available to the exact original
+    authorizer, identified by non-secret token_id, never merely by
+    matching parent/agent/amount or by holding a generically valid
+    `reserve`-scoped credential on the same parent."""
     _root_id, root_token = root
     cap_store = CapabilityStore(paths["cap_db"])
     port = free_port()
@@ -1104,15 +1170,20 @@ async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_chi
                 "maximum_usd": "0.10",
             },
         )
-        # Either outcome is safe -- a matching no-op with no re-mint, or an
-        # explicit failure (e.g. because the guesser's own scopes compute a
-        # different default child_scopes than the original) -- but the
-        # guesser must never walk away with a working credential either way.
-        assert guess.status.state in (TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED)
-        if guess.artifacts:
-            assert _artifact_dict(guess).get("credential_claim_id") is None, (
-                "the guesser must never receive a credential for a delegation it did not create"
-            )
+        assert guess.status.state == TaskState.TASK_STATE_REJECTED
+        assert get_data_parts(guess.status.message.parts)[0]["error"] == "WrongAuthorizer"
+        assert not guess.artifacts, (
+            "the guesser must never receive a credential for a delegation it did not create"
+        )
+
+    with sqlite3.connect(paths["cap_db"]) as conn:
+        live_count = conn.execute(
+            "SELECT COUNT(*) FROM capability_tokens WHERE delegation_id = 'child-guessable' "
+            "AND revoked = 0"
+        ).fetchone()[0]
+    assert live_count == 1, (
+        "a rejected guess must never revoke or replace the legitimate authorizer's credential"
+    )
 
 
 # -- concurrency: competing reservations cannot exceed authority -----------

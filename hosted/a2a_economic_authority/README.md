@@ -92,15 +92,44 @@ no-store` (plus `Pragma: no-cache`) so no intermediary caches it.
 At claim time, the presented bearer credential is **fully revalidated**
 against the live `CapabilityStore` -- existence, expiry, revocation,
 delegation binding, and scope -- not merely hash-matched against whichever
-credential happened to trigger the reservation. This is also what
-separates `grant` authority from `reserve` authority: a claim is bound to
-"currently holds `reserve` scope on this `parent_id`", so a credential
-that holds only `grant` can unblock a parked reservation (by supplying the
-missing authority) but can never itself redeem, resume, or hijack that
-reservation's resulting child credential. An outstanding, unclaimed claim
-is purged immediately when its issuing delegation's tree is revoked, and
-concurrent redemption attempts for the same claim are serialized so
-exactly one can ever succeed.
+credential happened to trigger the reservation. Redemption is bound to the
+**exact credential that originally authorized the reservation**, by its
+non-secret `token_id` (`authorizing_token_id`), not merely to "any
+credential that currently holds `reserve` scope on this `parent_id`". A
+different, otherwise-valid `reserve`-scoped credential presented at claim
+time is rejected (`WrongAuthorizer`), even if it is live and correctly
+scoped -- it simply is not the credential that made this particular
+reservation. This is also what separates `grant` authority from `reserve`
+authority: a credential that holds only `grant` can unblock a parked
+reservation (by supplying the missing authority) but can never itself
+redeem, resume, or hijack that reservation's resulting child credential.
+An outstanding, unclaimed claim is purged immediately when either its
+issuing delegation's tree **or the child delegation it targets** is
+revoked, and concurrent redemption attempts for the same claim are
+serialized so exactly one can ever succeed.
+
+**Crash-safe recovery.** Committing the economic reservation, minting the
+child capability, and creating its claim happen as separate steps across
+two SQLite databases and one in-memory buffer -- a crash or a lost
+response between any of them must not strand a real reservation with no
+way to ever obtain its credential. Before the economic reservation is
+even committed, `capabilities.record_reservation_authorization` durably
+binds the child's `delegation_id` to the exact authorizing credential's
+`token_id` and the requested `child_scopes`, in `capabilities.sqlite3`.
+If the process (or its response to the caller) is lost at any point after
+that, the same original authorizer can safely retry the identical
+`reserve` request -- including after a full restart -- and
+`rotate_reservation_credential` mints a fresh child credential, revoking
+whatever one may already exist for that delegation in the same atomic
+step, and hands back a brand-new claim. A different credential, even one
+that legitimately holds `reserve` scope on the same parent, cannot
+recover, rotate, claim, or mint access this way merely by knowing or
+guessing the child's `delegation_id` -- recovery checks the exact
+`token_id`, not scope or delegation match. The underlying economic
+reservation is never re-created (`core.reserve` is idempotent on
+`delegation_id` regardless of how many times this recovery path runs),
+and only its non-secret `token_id` is ever persisted -- never a plaintext
+credential.
 
 **Idempotency boundary.** Economic event IDs are scoped to
 `(delegation_id, event_id)`, never to `event_id` alone -- two unrelated

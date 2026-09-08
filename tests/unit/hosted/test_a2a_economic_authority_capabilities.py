@@ -24,6 +24,7 @@ from capabilities import (  # noqa: E402
     InsufficientScope,
     InvalidCredential,
     MissingCredential,
+    ReservationAuthorizationConflict,
     RevokedCredential,
     WrongAuthorizer,
     WrongDelegation,
@@ -633,6 +634,90 @@ def test_scopes_issued_for_returns_first_issued_scopes(store: CapabilityStore):
 
 def test_scopes_issued_for_returns_none_when_nothing_issued(store: CapabilityStore):
     assert store.scopes_issued_for("never-issued") is None
+
+
+# -- finding 1: durable reservation-authorization binding + rotation ------
+
+
+def test_record_reservation_authorization_is_idempotent_for_a_matching_retry(
+    store: CapabilityStore,
+):
+    root_token_id, _plaintext = store.issue("root", {"reserve"})
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read", "consume"}))
+    # A matching retry (same authorizer, same scopes) is a safe no-op.
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read", "consume"}))
+
+    authorization = store.get_reservation_authorization("child-1")
+    assert authorization is not None
+    assert authorization.authorizing_token_id == root_token_id
+    assert authorization.child_scopes == frozenset({"read", "consume"})
+    assert authorization.current_token_id is None
+
+
+def test_record_reservation_authorization_conflicts_on_a_different_authorizer(
+    store: CapabilityStore,
+):
+    root_token_id, _p1 = store.issue("root", {"reserve"})
+    other_token_id, _p2 = store.issue("root", {"reserve"})
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read"}))
+
+    with pytest.raises(ReservationAuthorizationConflict):
+        store.record_reservation_authorization("child-1", other_token_id, frozenset({"read"}))
+
+
+def test_record_reservation_authorization_conflicts_on_different_child_scopes(
+    store: CapabilityStore,
+):
+    root_token_id, _plaintext = store.issue("root", {"reserve"})
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read"}))
+
+    with pytest.raises(ReservationAuthorizationConflict):
+        store.record_reservation_authorization(
+            "child-1", root_token_id, frozenset({"read", "grant"})
+        )
+
+
+def test_get_reservation_authorization_returns_none_when_unset(store: CapabilityStore):
+    assert store.get_reservation_authorization("never-recorded") is None
+
+
+def test_rotate_reservation_credential_requires_a_prior_authorization_record(
+    store: CapabilityStore,
+):
+    with pytest.raises(ValueError):
+        store.rotate_reservation_credential("never-recorded", frozenset({"read"}))
+
+
+def test_rotate_reservation_credential_first_mint_has_nothing_to_revoke(store: CapabilityStore):
+    root_token_id, _plaintext = store.issue("root", {"reserve"})
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read"}))
+
+    token_id, plaintext = store.rotate_reservation_credential("child-1", frozenset({"read"}))
+    info = store.authorize(plaintext, "child-1", "read")
+    assert info.token_id == token_id
+
+    authorization = store.get_reservation_authorization("child-1")
+    assert authorization is not None
+    assert authorization.current_token_id == token_id
+
+
+def test_rotate_reservation_credential_revokes_the_previous_live_token(store: CapabilityStore):
+    root_token_id, _plaintext = store.issue("root", {"reserve"})
+    store.record_reservation_authorization("child-1", root_token_id, frozenset({"read"}))
+
+    scopes = frozenset({"read"})
+    _first_id, first_plaintext = store.rotate_reservation_credential("child-1", scopes)
+    second_id, second_plaintext = store.rotate_reservation_credential("child-1", scopes)
+
+    assert second_id != _first_id
+    with pytest.raises(RevokedCredential):
+        store.authorize(first_plaintext, "child-1", "read")
+    info = store.authorize(second_plaintext, "child-1", "read")
+    assert info.token_id == second_id
+
+    authorization = store.get_reservation_authorization("child-1")
+    assert authorization is not None
+    assert authorization.current_token_id == second_id
 
 
 # -- exclusions: no outbound network calls in this module ------------------

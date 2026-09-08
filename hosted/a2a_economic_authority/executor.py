@@ -43,6 +43,7 @@ from capabilities import (  # noqa: E402
     CapabilityError,
     CapabilityStore,
     InMemoryCredentialHandoff,
+    WrongAuthorizer,
 )
 from core import (  # noqa: E402
     DelegationState,
@@ -395,14 +396,42 @@ class EconomicAuthorityExecutor(AgentExecutor):
             if outcome == "rejected":
                 await self._fail(updater, "reserve rejected")
                 return
-            # Repair item 4: a matching retry never mints another
-            # credential -- minting happens exactly once, only when
-            # core.reserve() actually just created the delegation. This
-            # also closes the "another reserve-scoped token on the parent
-            # guesses an existing child_id to mint itself access" vector,
-            # since no mint ever happens here regardless of who is asking.
-            original_scopes = self.capabilities.scopes_issued_for(delegation_id)
-            if original_scopes is not None and child_scopes != original_scopes:
+            # Crash-safe recovery (finding 1): a matching retry does NOT
+            # blindly re-mint -- it only recovers a fresh credential for
+            # the EXACT credential that durably authorized this
+            # reservation's original mint (`reservation_authorizations`,
+            # written before core.reserve() ever committed -- see
+            # `record_reservation_authorization`). Without a durable
+            # binding at all (a delegation that predates this mechanism),
+            # recovery is not safely offered and the old no-mint behavior
+            # is preserved.
+            authorization = self.capabilities.get_reservation_authorization(delegation_id)
+            if authorization is None:
+                original_scopes = self.capabilities.scopes_issued_for(delegation_id)
+                if original_scopes is not None and child_scopes != original_scopes:
+                    await self._fail(
+                        updater,
+                        "child_scopes does not match this reservation's originally issued "
+                        "credential -- changing scopes on a retry is an explicit conflict, "
+                        "not a silent re-mint",
+                    )
+                    return
+                await self._complete_reservation_without_minting(
+                    delegation_id, parent_id, agent_id, updater
+                )
+                return
+            # Identity is checked before anything else: a DIFFERENT
+            # credential -- even one that legitimately holds `reserve`
+            # scope on the same parent -- must not learn anything about
+            # this reservation's child_scopes, and must never recover,
+            # rotate, claim, or mint access to it merely by knowing or
+            # guessing its delegation_id.
+            if authorizer_token_id != authorization.authorizing_token_id:
+                raise WrongAuthorizer(
+                    "credential did not originally authorize this reservation -- recovery "
+                    "is only available to the exact original authorizer"
+                )
+            if child_scopes != authorization.child_scopes:
                 await self._fail(
                     updater,
                     "child_scopes does not match this reservation's originally issued "
@@ -410,10 +439,45 @@ class EconomicAuthorityExecutor(AgentExecutor):
                     "not a silent re-mint",
                 )
                 return
-            await self._complete_reservation_without_minting(
-                delegation_id, parent_id, agent_id, updater
+            # core.reserve()'s own idempotency check above matches on
+            # parent/agent/amount alone and does not consider whether the
+            # delegation has since been settled or revoked -- by design,
+            # since that check must stay capability-agnostic. Recovery
+            # must not resurrect access to a delegation whose economic
+            # authority has already been closed out or is being torn
+            # down, so that is checked here instead, right before ever
+            # minting anything.
+            current_state = self.core.get(delegation_id)
+            if (
+                current_state is None
+                or not current_state.active
+                or self.core.is_revocation_in_progress(delegation_id)
+            ):
+                await self._fail(
+                    updater, "this delegation is no longer available to recover a credential for"
+                )
+                return
+            # The exact original authorizer, retrying after a crash or a
+            # lost response: mint a fresh credential -- revoking whatever
+            # may already exist for this delegation -- and hand back a
+            # brand-new claim. Economic authority is not re-reserved
+            # (`core.reserve()` above was already a safe no-op).
+            await self._mint_reservation_credential(
+                delegation_id, parent_id, agent_id, child_scopes, authorizer_token_id, updater
             )
             return
+
+        # First step, BEFORE any economic mutation: durably bind this
+        # child_delegation_id to the exact authorizing credential and the
+        # requested child_scopes. This is what survives a crash at any
+        # point from here on -- including immediately after this line, or
+        # anywhere inside `core.reserve()` below -- and is what makes the
+        # recovery branch above possible. Idempotent: a retry of this same
+        # original request before core.reserve() ever committed is a safe
+        # no-op here.
+        self.capabilities.record_reservation_authorization(
+            delegation_id, authorizer_token_id, child_scopes
+        )
 
         shortfall = maximum_usd - parent.active_reservation_usd
         if shortfall > 0:
@@ -458,10 +522,13 @@ class EconomicAuthorityExecutor(AgentExecutor):
         self, delegation_id: str, parent_id: str, agent_id: str, updater: TaskUpdater
     ) -> None:
         """Reports a matching reservation retry without minting a new
-        credential -- see `_finish_reserve`'s "already exists" branch
-        (repair item 4). Credential loss/recovery, if ever supported, must
-        be its own explicit rotation operation, not a side effect of this
-        path."""
+        credential -- reached only when `delegation_id` has no durable
+        `reservation_authorizations` record to recover against (see
+        `_finish_reserve`'s "already exists" branch). When such a record
+        exists, `_mint_reservation_credential`'s
+        `rotate_reservation_credential` path is used instead (finding 1),
+        so the exact original authorizer can recover a fresh credential
+        after a crash or lost response."""
         await updater.add_artifact(
             [
                 new_data_part(
@@ -492,7 +559,17 @@ class EconomicAuthorityExecutor(AgentExecutor):
         authorizer_token_id: str,
         updater: TaskUpdater,
     ) -> None:
-        token_id, plaintext = self.capabilities.issue(delegation_id, child_scopes)
+        # `rotate_reservation_credential` revokes whatever child token may
+        # already exist for this delegation (e.g. from an earlier mint
+        # attempt the caller never received or redeemed) and mints a fresh
+        # one in the same atomic step, so at most one is ever live -- see
+        # finding 1. Any stale in-memory claim from a previous attempt is
+        # purged so it cannot be redeemed into a plaintext for a token that
+        # is now revoked.
+        self.handoff.purge_for_delegations([delegation_id])
+        token_id, plaintext = self.capabilities.rotate_reservation_credential(
+            delegation_id, child_scopes
+        )
         # Repair item 5: bound to the EXACT credential that authorized
         # this reservation (authorizer_token_id), not merely to "some
         # currently-valid reserve-scoped credential for parent_id".

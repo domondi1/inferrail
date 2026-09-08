@@ -41,11 +41,19 @@ task history, or an economic receipt. At claim time, the presented bearer
 token is fully revalidated against the live `CapabilityStore` (existence,
 expiry, revocation, delegation binding, and scope) -- not merely matched
 by hash against whichever token happened to trigger the reservation; see
-`capabilities.InMemoryCredentialHandoff.redeem`. This is also what
-separates `grant` authority from `reserve` authority (repair item 6): a
-claim is bound to "currently holds `reserve` scope on this parent_id", so
-a grant-only credential can unblock a parked reservation but can never
-itself redeem the resulting child credential.
+`capabilities.InMemoryCredentialHandoff.redeem`. Redemption is bound to
+the exact credential that originally authorized the reservation, by its
+non-secret `token_id` -- not to "any credential that currently holds
+`reserve` scope on this parent_id". A different, otherwise-valid
+`reserve`-scoped credential is rejected (`WrongAuthorizer`) even if it is
+live and correctly scoped. This is also what separates `grant` authority
+from `reserve` authority: a grant-only credential can unblock a parked
+reservation but can never itself redeem the resulting child credential.
+If the process or the caller's response is lost between committing the
+reservation and the caller ever obtaining this claim, the exact same
+authorizer can safely retry the reservation and recover a fresh claim --
+see `README.md`'s "Crash-safe recovery" and
+`capabilities.rotate_reservation_credential`.
 
 The claim response is marked `Cache-Control: no-store` (plus the other
 headers below) so it is never cached by an intermediary -- and, when this

@@ -78,6 +78,14 @@ class WrongAuthorizer(CapabilityError):
     originally authorized the reservation this claim belongs to."""
 
 
+class ReservationAuthorizationConflict(CapabilityError):
+    """A `child_delegation_id` was already durably bound (via
+    `record_reservation_authorization`) to a different authorizing
+    credential or different `child_scopes` than what is being requested
+    now. Mirrors `core.EventConflict`: this is a caller bug or a
+    conflicting reuse, never a safe retry."""
+
+
 @dataclass(frozen=True)
 class CapabilityInfo:
     token_id: str
@@ -85,6 +93,18 @@ class CapabilityInfo:
     scopes: frozenset[str]
     expires_at: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class ReservationAuthorization:
+    """Durable record of exactly who is allowed to (re)mint the child
+    credential for one reservation, and with what scopes -- see
+    `CapabilityStore.record_reservation_authorization`."""
+
+    child_delegation_id: str
+    authorizing_token_id: str
+    child_scopes: frozenset[str]
+    current_token_id: str | None
 
 
 def _now() -> datetime:
@@ -108,6 +128,15 @@ CREATE TABLE IF NOT EXISTS capability_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_capability_tokens_delegation
     ON capability_tokens(delegation_id);
+
+CREATE TABLE IF NOT EXISTS reservation_authorizations (
+    child_delegation_id TEXT PRIMARY KEY,
+    authorizing_token_id TEXT NOT NULL,
+    child_scopes TEXT NOT NULL,
+    current_token_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -186,6 +215,145 @@ class CapabilityStore:
                     now.isoformat(),
                 ),
             )
+        return token_id, plaintext
+
+    def record_reservation_authorization(
+        self,
+        child_delegation_id: str,
+        authorizing_token_id: str,
+        child_scopes: frozenset[str] | set[str],
+    ) -> None:
+        """Durably binds `child_delegation_id` to the exact credential
+        (`authorizing_token_id`, non-secret) that authorized it and the
+        `child_scopes` that were requested -- called BEFORE the economic
+        reservation itself is committed in `core.py`.
+
+        This is what makes crash-safe recovery possible (crash-safety
+        finding 1): even if the process dies immediately after this
+        commits and before anything else happens -- including before
+        `core.reserve()` itself -- the durable record here is enough for
+        the SAME original authorizer to retry later and recover a fresh
+        credential (see `rotate_reservation_credential` and
+        `executor._finish_reserve`), while a different credential that
+        merely knows or guesses the child_delegation_id cannot: it will
+        never match `authorizing_token_id`.
+
+        Idempotent on `child_delegation_id`: calling this again with the
+        same `authorizing_token_id` and `child_scopes` is a safe no-op (a
+        retry of the same original request, at any point before or after
+        the economic reservation itself commits). Calling it again with a
+        DIFFERENT authorizer or child_scopes for the same
+        child_delegation_id raises `ReservationAuthorizationConflict` --
+        this is a caller bug or a conflicting reuse, never a safe retry,
+        exactly like `core.EventConflict`.
+        """
+        normalized_scopes = ",".join(sorted(child_scopes))
+        now = _now().isoformat()
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT authorizing_token_id, child_scopes FROM reservation_authorizations "
+                "WHERE child_delegation_id = ?",
+                (child_delegation_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO reservation_authorizations "
+                    "(child_delegation_id, authorizing_token_id, child_scopes, "
+                    "current_token_id, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+                    (child_delegation_id, authorizing_token_id, normalized_scopes, now, now),
+                )
+                return
+            if (
+                row["authorizing_token_id"] != authorizing_token_id
+                or row["child_scopes"] != normalized_scopes
+            ):
+                raise ReservationAuthorizationConflict(
+                    f"child_delegation_id {child_delegation_id!r} is already bound to a "
+                    "different authorizing credential or child_scopes"
+                )
+
+    def get_reservation_authorization(
+        self, child_delegation_id: str
+    ) -> ReservationAuthorization | None:
+        """Reads back the durable binding recorded by
+        `record_reservation_authorization`, or None if none exists (e.g.
+        a delegation created before this recovery mechanism existed)."""
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM reservation_authorizations WHERE child_delegation_id = ?",
+                (child_delegation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReservationAuthorization(
+            child_delegation_id=row["child_delegation_id"],
+            authorizing_token_id=row["authorizing_token_id"],
+            child_scopes=frozenset(row["child_scopes"].split(",")),
+            current_token_id=row["current_token_id"],
+        )
+
+    def rotate_reservation_credential(
+        self,
+        child_delegation_id: str,
+        scopes: frozenset[str] | set[str],
+        ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+    ) -> tuple[str, str]:
+        """Atomically supersedes whatever capability token currently exists
+        for `child_delegation_id` (if any) with a freshly minted one, and
+        durably records the new token_id on that delegation's
+        `reservation_authorizations` row. Returns `(token_id, plaintext)`.
+
+        Used for both the very first mint of a reservation's child
+        credential (no live token yet, so "revoke whatever's live" is a
+        no-op) and for crash/lost-response recovery (finding 1): a
+        previous mint may have completed without the caller ever
+        receiving or redeeming it, so the previous credential -- if one
+        exists -- is revoked in the SAME transaction as the new one is
+        issued and bound. This guarantees at most one child credential for
+        this delegation is ever live at a time, and requires
+        `record_reservation_authorization` to have already been called for
+        `child_delegation_id` (raises `ValueError` otherwise -- a
+        programmer error, since the executor always calls it first).
+        """
+        bad_scopes = set(scopes) - SCOPES
+        if bad_scopes:
+            raise ValueError(f"unknown scopes: {sorted(bad_scopes)}")
+        if not scopes:
+            raise ValueError("a capability must carry at least one scope")
+        token_id = secrets.token_hex(16)
+        plaintext = secrets.token_urlsafe(_TOKEN_ENTROPY_BYTES)
+        token_hash = _hash_token(plaintext)
+        now = _now()
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE capability_tokens SET revoked = 1 "
+                "WHERE delegation_id = ? AND revoked = 0",
+                (child_delegation_id,),
+            )
+            conn.execute(
+                "INSERT INTO capability_tokens "
+                "(token_id, token_hash, delegation_id, scopes, expires_at, revoked, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                (
+                    token_id,
+                    token_hash,
+                    child_delegation_id,
+                    ",".join(sorted(scopes)),
+                    expires_at,
+                    now.isoformat(),
+                ),
+            )
+            cur = conn.execute(
+                "UPDATE reservation_authorizations SET current_token_id = ?, updated_at = ? "
+                "WHERE child_delegation_id = ?",
+                (token_id, now.isoformat(), child_delegation_id),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(
+                    f"no reservation_authorizations row for {child_delegation_id!r} -- "
+                    "record_reservation_authorization must be called first"
+                )
         return token_id, plaintext
 
     def authorize(
