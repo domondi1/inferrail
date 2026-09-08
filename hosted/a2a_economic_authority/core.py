@@ -9,7 +9,9 @@ This module is transport-independent: it knows nothing about A2A, HTTP,
 or payment. A transport adapter (added separately) is responsible for
 authenticating a caller, extracting a `delegation_id` from whatever
 protocol it speaks, and calling this store. This module is the sole
-authority for economic state.
+authority for economic state. The delegated `authority_usd` ceiling is
+caller-declared accounting/policy metadata -- Inferrail never holds,
+transfers, or escrows the underlying money.
 
 Core distinction this module exists to enforce:
 
@@ -40,7 +42,10 @@ deduplicated entirely independently. `reserve`'s natural idempotency key
 is the *child* `delegation_id` itself (a duplicate reserve for a
 delegation_id that already exists is a no-op, provided its recorded
 parent/agent/amount match what's being requested again -- otherwise the
-reuse is a conflict, not a retry).
+reuse is a conflict, not a retry). Canonical payloads compare Decimal
+amounts by normalized value (`_canonical_decimal_str`), not by the
+caller's original string form, so "1.0" and "1.00" are recognized as the
+same amount and never produce a false conflict.
 
 Concurrency and crash safety come from SQLite: every mutating operation
 runs inside a single `BEGIN IMMEDIATE` transaction, which takes SQLite's
@@ -53,22 +58,41 @@ to reconcile.
 
 Revocation race safety: `mark_revocation_started` durably records, on the
 delegation being revoked, that it (and therefore every current and future
-descendant) is being torn down. `reserve` checks this flag across the
-*entire* ancestor chain of the requested parent, inside its own atomic
-transaction, before creating anything. Because SQLite's `BEGIN IMMEDIATE`
-serializes all writers against one database file, there is no
-interleaving in which a `reserve` call can commit a new descendant after
-the flag has been set on any ancestor, and no interleaving in which a
-`reserve` that committed *before* the flag was set can be invisible to a
-subtree scan performed *after* it -- one happens strictly before the
-other. This closes the snapshot-then-settle race a caller (e.g. an A2A
-executor) would otherwise have when tearing down a whole tree: mark first,
-then snapshot and settle, and nothing can escape.
+descendant) is being torn down. `reserve`, `grant`, and `consume` each
+check this flag across the *entire* ancestor chain of the delegation they
+would mutate, inside their own atomic transaction, before doing anything.
+Because SQLite's `BEGIN IMMEDIATE` serializes all writers against one
+database file, there is no interleaving in which any of these calls can
+commit a new effect after the flag has been set on any ancestor, and no
+interleaving in which one that committed *before* the flag was set can be
+invisible to a subtree scan performed *after* it -- one happens strictly
+before the other. This closes the snapshot-then-settle race a caller
+(e.g. an A2A executor) would otherwise have when tearing down a whole
+tree: mark first, then snapshot and settle, and nothing can escape. Every
+step of that teardown (settle each descendant, revoke each capability,
+purge each outstanding claim) is independently idempotent, so a caller
+that crashes mid-teardown can simply retry the same revoke and it safely
+resumes and finishes.
+
+Grant conservation: a grant against a delegation with a parent is treated
+exactly like an additional reservation carved out of that parent -- it
+increases the parent's `child_reserved_usd` by the same amount it
+increases the child's `authority_usd`, atomically, and is rejected if the
+parent lacks that much certain (non-unknown) headroom. This is what keeps
+`settle`'s existing parent-reconciliation formula correct in the presence
+of grants; without it, a child could hold more authority than its parent
+ever actually set aside, and settling that child could drive the parent's
+own accounting negative. A grant against a *root* delegation (no parent)
+remains a pure top-up -- root authority is external policy/administrative
+top-up, not backed by anything in this store, and is never confused with
+payment (Phase B adds no payment of any kind).
 
 Money is stored as canonical Decimal strings and never as float. Unknown
 cost is tracked explicitly (a count, never folded into a fabricated
 total) -- the same "unknown stays unknown" discipline already shipped for
-`inferrail.receipts.InferenceReceipt` and `hosted/work_economics`.
+`inferrail.receipts.InferenceReceipt` and `hosted/work_economics`. NaN,
+Infinity, and non-finite Decimal inputs are rejected before they can ever
+reach a stored balance.
 """
 
 from __future__ import annotations
@@ -83,7 +107,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
-Kind = Literal["root", "reservation", "authority_grant", "consumption", "settlement"]
+Kind = Literal[
+    "root", "reservation", "authority_grant", "consumption", "settlement", "revocation_mark"
+]
+ReserveOutcome = Literal["created", "already_exists", "rejected"]
+
+# Schema version this module's code expects. Bumped whenever SCHEMA or the
+# shape of a stored row changes in a way that requires migrating an
+# on-disk database created by an earlier version -- see `_migrate`.
+CURRENT_SCHEMA_VERSION = 2
+
+MAX_IDENTIFIER_LENGTH = 256
+# 1 trillion -- a sanity ceiling, not a real cap.
+MAX_REASONABLE_AMOUNT_USD = Decimal("1000000000000")
 
 
 class EventConflict(ValueError):
@@ -97,6 +133,30 @@ class EventConflict(ValueError):
     being able to catch `EventConflict` specifically when they want a more
     precise error message.
     """
+
+
+def validate_identifier(name: str, value: str) -> None:
+    """Rejects an empty, oversized, or non-string identifier. Used for
+    delegation_id/parent_id/agent_id/event_id before they ever reach a
+    query. Not a character-set allowlist -- these values are always used
+    in parameterized queries, so there is no injection risk -- just a
+    sanity bound against pathological input."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    if len(value) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError(f"{name} must be at most {MAX_IDENTIFIER_LENGTH} characters")
+
+
+def validate_amount(value: Decimal, *, name: str = "amount") -> None:
+    """Rejects NaN, Infinity, negative-beyond-repair, or absurdly large
+    amounts before they can reach stored state or arithmetic. Callers
+    still separately decide whether negative is meaningful for their
+    specific operation; this only rules out non-finite and pathological
+    magnitudes."""
+    if not value.is_finite():
+        raise ValueError(f"{name} must be a finite number (no NaN/Infinity)")
+    if abs(value) > MAX_REASONABLE_AMOUNT_USD:
+        raise ValueError(f"{name} exceeds the maximum reasonable amount")
 
 
 @dataclass(frozen=True)
@@ -133,8 +193,25 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _canonical_decimal_str(value: Decimal) -> str:
+    """Canonical string form of a Decimal amount for idempotency-key
+    comparison: "1.0" and "1.00" (and "100" and "100.00") normalize to
+    the same string, so they are never mistaken for a conflicting reuse
+    of the same event_id. Always plain-point notation -- `Decimal.
+    normalize()` alone can produce scientific notation (e.g. "100" ->
+    "1E+2"), which `format(value, 'f')` avoids."""
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def _canonical_json(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, default=str)
+    normalized = {
+        key: (_canonical_decimal_str(value) if isinstance(value, Decimal) else value)
+        for key, value in payload.items()
+    }
+    return json.dumps(normalized, sort_keys=True, default=str)
 
 
 def _row_to_state(row: sqlite3.Row) -> DelegationState:
@@ -156,6 +233,11 @@ def _row_to_state(row: sqlite3.Row) -> DelegationState:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS delegations (
     delegation_id TEXT PRIMARY KEY,
     parent_delegation_id TEXT,
@@ -191,6 +273,10 @@ class EconomicAuthorityStore:
     One store instance may be opened by many processes against the same
     `db_path`; each mutating call opens its own short-lived connection so
     no connection is held open across a crash-injection boundary.
+
+    Opening a database created by an earlier schema version runs
+    `_migrate` automatically and atomically -- see that method's
+    docstring for the exact migration this version performs.
     """
 
     def __init__(self, db_path: str | Path) -> None:
@@ -198,8 +284,204 @@ class EconomicAuthorityStore:
         conn = self._connect()
         try:
             conn.executescript(SCHEMA)  # executescript manages its own transaction
+            self._migrate(conn)
         finally:
             conn.close()
+
+    def _schema_version(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is None:
+            return 0
+        return int(row["value"])
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Atomically upgrades an on-disk database to `CURRENT_SCHEMA_VERSION`.
+
+        `CREATE TABLE IF NOT EXISTS` (already applied via `SCHEMA` before
+        this runs) creates missing tables/columns for a brand-new
+        database, but does nothing for a database that already has
+        `delegations`/`economic_events` in an OLDER shape -- SQLite does
+        not add missing columns to an existing table that way. This
+        method detects that case and migrates it, entirely inside one
+        `BEGIN IMMEDIATE` transaction: either every step succeeds and
+        `schema_version` is recorded, or the whole transaction rolls back
+        and the database is left exactly as it was -- there is no
+        half-migrated state possible.
+
+        Version 0 -> 1 (the pre-Phase-B-repair schema, identified by the
+        presence of `delegations` but absence of `schema_meta`/
+        `revocation_started_at`, or `economic_events` still keyed on a
+        bare `event_id`):
+
+        - Adds `delegations.revocation_started_at` (nullable; existing
+          rows get NULL, i.e. "not undergoing revocation", which is
+          correct -- nothing was mid-revocation under a schema that had
+          no concept of it).
+        - Rebuilds `economic_events` onto the new `(delegation_id,
+          event_id)` composite primary key with a `canonical_payload`
+          column. Existing event rows are preserved: each legacy row's
+          `delegation_id`/`event_id`/`kind`/`amount_usd`/`status`/
+          `created_at` carry over unchanged. For the five kinds the
+          legacy schema ever produced (root/reservation/authority_grant/
+          consumption/settlement), the canonical payload is reconstructed
+          in EXACTLY the shape live code would produce today, by joining
+          each event row against its delegation's CURRENT row (which is
+          untouched by this migration and still has `agent_id`/
+          `parent_delegation_id`) for the fields `economic_events` itself
+          never stored -- so a genuine post-migration retry of a
+          pre-migration event_id is still recognized as a safe retry, not
+          a false conflict, and an actually-conflicting reuse is still
+          caught. Any row of an unrecognized kind, or whose delegation no
+          longer exists, gets a payload that can never coincidentally
+          match a live-code-constructed one (so a later reuse of that key
+          is treated as new rather than silently matched) -- conservative
+          by construction, and irrelevant in practice since this public
+          feature has no deployed database and therefore no real
+          pre-migration traffic to ever replay.
+
+        Because this public feature has no deployed database yet, this
+        is the only migration this module needs to carry -- but the
+        `schema_meta` version marker means a future schema change can add
+        its own step the same way, unambiguously, without re-running this
+        one.
+        """
+        current_version = self._schema_version(conn)
+        if current_version >= CURRENT_SCHEMA_VERSION:
+            return
+
+        with self._transaction_on(conn):
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(delegations)").fetchall()
+            }
+            if "revocation_started_at" not in columns:
+                conn.execute("ALTER TABLE delegations ADD COLUMN revocation_started_at TEXT")
+
+            event_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(economic_events)").fetchall()
+            }
+            if "canonical_payload" not in event_columns or "delegation_id" not in event_columns:
+                self._migrate_economic_events_table(conn)
+
+            conn.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(CURRENT_SCHEMA_VERSION),),
+            )
+
+    def _migrate_economic_events_table(self, conn: sqlite3.Connection) -> None:
+        """Rebuilds `economic_events` from its legacy (pre-repair) shape,
+        which had `event_id TEXT PRIMARY KEY` (global, not per-delegation)
+        and no `canonical_payload` column, onto the current
+        `(delegation_id, event_id)` composite-keyed shape -- preserving
+        every existing row.
+        """
+        legacy_rows = conn.execute("SELECT * FROM economic_events").fetchall()
+        legacy_columns = {row[1] for row in conn.execute("PRAGMA table_info(economic_events)")}
+
+        conn.execute("ALTER TABLE economic_events RENAME TO economic_events_legacy")
+        conn.execute(
+            """
+            CREATE TABLE economic_events (
+                delegation_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL,
+                amount_usd TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (delegation_id, event_id)
+            )
+            """
+        )
+        for row in legacy_rows:
+            delegation_id = row["delegation_id"] if "delegation_id" in legacy_columns else None
+            if delegation_id is None:
+                # A legacy row with no delegation_id at all is not
+                # reconstructable; conservatively skip rather than guess.
+                continue
+            raw_amount = row["amount_usd"] if "amount_usd" in legacy_columns else None
+            amount_usd = None if raw_amount is None else Decimal(str(raw_amount))
+            kind = row["kind"] if "kind" in legacy_columns else "unknown"
+            status = row["status"] if "status" in legacy_columns else "accepted"
+            delegation_row = self._get(conn, delegation_id)
+
+            payload: dict[str, Any] | None = None
+            if delegation_row is not None:
+                if kind == "root":
+                    payload = {
+                        "kind": "root",
+                        "delegation_id": delegation_id,
+                        "agent_id": delegation_row["agent_id"],
+                        "envelope_usd": (
+                            amount_usd
+                            if amount_usd is not None
+                            else Decimal(delegation_row["authority_usd"])
+                        ),
+                    }
+                elif kind == "reservation":
+                    payload = {
+                        "kind": "reservation",
+                        "parent_id": delegation_row["parent_delegation_id"],
+                        "delegation_id": delegation_id,
+                        "agent_id": delegation_row["agent_id"],
+                        "maximum_usd": (
+                            amount_usd
+                            if amount_usd is not None
+                            else Decimal(delegation_row["authority_usd"])
+                        ),
+                    }
+                elif kind == "authority_grant":
+                    payload = {
+                        "kind": "authority_grant",
+                        "delegation_id": delegation_id,
+                        "amount_usd": amount_usd,
+                    }
+                elif kind == "consumption":
+                    payload = {
+                        "kind": "consumption",
+                        "delegation_id": delegation_id,
+                        "amount_usd": amount_usd,
+                    }
+                elif kind == "settlement":
+                    payload = {
+                        "kind": "settlement",
+                        "delegation_id": delegation_id,
+                        "outcome": status,
+                    }
+            if payload is None:
+                # Unrecognized kind, or the delegation this event belonged
+                # to no longer exists: reconstruct a payload that can
+                # never coincidentally match what live code would build
+                # for a real replay, so a later reuse of this exact key is
+                # treated as a genuinely new event rather than silently
+                # matched (or silently misjudged as a conflict against a
+                # guess). See this method's docstring.
+                payload = {
+                    "kind": kind,
+                    "delegation_id": delegation_id,
+                    "_unreconstructed_legacy_event_id": row["event_id"],
+                }
+            canonical_payload = _canonical_json(payload)
+            conn.execute(
+                "INSERT INTO economic_events "
+                "(delegation_id, event_id, kind, canonical_payload, "
+                "amount_usd, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    delegation_id,
+                    row["event_id"],
+                    kind,
+                    canonical_payload,
+                    raw_amount,
+                    status,
+                    row["created_at"] if "created_at" in legacy_columns else _now(),
+                ),
+            )
+        conn.execute("DROP TABLE economic_events_legacy")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30.0, isolation_level=None)
@@ -213,14 +495,20 @@ class EconomicAuthorityStore:
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
-            yield conn
+            with self._transaction_on(conn):
+                yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _transaction_on(self, conn: sqlite3.Connection) -> Iterator[None]:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
-        finally:
-            conn.close()
 
     def _get(self, conn: sqlite3.Connection, delegation_id: str) -> sqlite3.Row | None:
         row: sqlite3.Row | None = conn.execute(
@@ -244,6 +532,14 @@ class EconomicAuthorityStore:
                 return True
             current = row["parent_delegation_id"]
         return False
+
+    def is_revocation_in_progress(self, delegation_id: str) -> bool:
+        """Public, read-only version of the ancestor-chain revocation
+        check, for callers outside a mutation (e.g. capability-claim
+        redemption) that need to fail closed once a tree's teardown has
+        begun, even before settlement/token-revocation finish."""
+        with self._transaction() as conn:
+            return self._is_revocation_in_progress_in_lineage(conn, delegation_id)
 
     def _existing_event_payload(
         self, conn: sqlite3.Connection, delegation_id: str, event_id: str
@@ -323,6 +619,10 @@ class EconomicAuthorityStore:
         only be created here, once, per delegation_id; it is never
         re-minted by replay.
         """
+        validate_identifier("delegation_id", delegation_id)
+        validate_identifier("agent_id", agent_id)
+        validate_identifier("event_id", event_id)
+        validate_amount(envelope_usd, name="envelope_usd")
         with self._transaction() as conn:
             existing = self._get(conn, delegation_id)
             if existing is not None:
@@ -347,8 +647,12 @@ class EconomicAuthorityStore:
                 "VALUES (?, NULL, ?, ?, '0', '0', '0', 0, 1, NULL, NULL, ?, ?)",
                 (delegation_id, agent_id, str(envelope_usd), now, now),
             )
-            payload = {"kind": "root", "delegation_id": delegation_id, "agent_id": agent_id,
-                       "envelope_usd": str(envelope_usd)}
+            payload = {
+                "kind": "root",
+                "delegation_id": delegation_id,
+                "agent_id": agent_id,
+                "envelope_usd": envelope_usd,
+            }
             if not self._check_event(conn, delegation_id, event_id, payload):
                 self._record_event(
                     conn, event_id, delegation_id, "root", payload, envelope_usd, "accepted"
@@ -364,26 +668,34 @@ class EconomicAuthorityStore:
         delegation_id: str,
         agent_id: str,
         maximum_usd: Decimal,
-    ) -> bool:
+    ) -> ReserveOutcome:
         """Atomically bound a new child delegation's authority.
 
-        Idempotency is keyed on `delegation_id`, not `event_id`: once a
-        delegation exists, a further reserve call naming it with the SAME
-        parent_id/agent_id/maximum_usd -- same event_id or a
-        caller-assigned different one -- is a no-op that neither
+        Returns `"created"` only the one time this call actually creates
+        `delegation_id`. Returns `"already_exists"` for any subsequent
+        call naming the SAME delegation_id with the SAME parent_id/
+        agent_id/maximum_usd -- a safe, idempotent no-op that neither
         re-reserves parent headroom nor changes the child's authority.
-        This is what makes duplicate message delivery safe even if the
-        transport layer above this store does not itself deduplicate.
+        This distinction (not a plain bool) exists so a caller like
+        `executor.py` can mint a new capability credential only on
+        `"created"`, never on a matching retry -- see repair item 4.
 
         A reserve call naming an *existing* delegation_id with a
         *different* parent_id, agent_id, or maximum_usd is a conflicting
         reuse of that delegation_id and raises `EventConflict` -- it is
         never silently treated as the original reservation's retry.
 
-        Refuses (returns False, no mutation) if `parent_id` or any of its
-        ancestors is undergoing revocation (`mark_revocation_started`) --
-        see the module docstring's "Revocation race safety" section.
+        Returns `"rejected"` (no mutation) if `parent_id` or any of its
+        ancestors is undergoing revocation (`mark_revocation_started`),
+        if the parent lacks headroom, or for any other reason this
+        reservation cannot proceed. See the module docstring's
+        "Revocation race safety" section.
         """
+        validate_identifier("parent_id", parent_id)
+        validate_identifier("delegation_id", delegation_id)
+        validate_identifier("agent_id", agent_id)
+        validate_identifier("event_id", event_id)
+        validate_amount(maximum_usd, name="maximum_usd")
         with self._transaction() as conn:
             existing = self._get(conn, delegation_id)
             if existing is not None:
@@ -397,19 +709,19 @@ class EconomicAuthorityStore:
                         f"delegation_id {delegation_id!r} already exists with a different "
                         f"parent_id/agent_id/maximum_usd"
                     )
-                return True
+                return "already_exists"
             if maximum_usd < 0:
-                return False
+                return "rejected"
             parent = self._get(conn, parent_id)
             if parent is None:
-                return False
+                return "rejected"
             parent_state = _row_to_state(parent)
             if not parent_state.active or parent_state.unknown_cost_count:
-                return False
+                return "rejected"
             if self._is_revocation_in_progress_in_lineage(conn, parent_id):
-                return False
+                return "rejected"
             if parent_state.active_reservation_usd < maximum_usd:
-                return False
+                return "rejected"
             now = _now()
             new_child_reserved = str(parent_state.child_reserved_usd + maximum_usd)
             conn.execute(
@@ -430,18 +742,30 @@ class EconomicAuthorityStore:
                 "parent_id": parent_id,
                 "delegation_id": delegation_id,
                 "agent_id": agent_id,
-                "maximum_usd": str(maximum_usd),
+                "maximum_usd": maximum_usd,
             }
             if not self._check_event(conn, delegation_id, event_id, payload):
                 self._record_event(
                     conn, event_id, delegation_id, "reservation", payload, maximum_usd, "accepted"
                 )
-            return True
+            return "created"
 
     # -- mutation -------------------------------------------------------
 
     def grant(self, event_id: str, delegation_id: str, amount_usd: Decimal) -> bool:
         """Explicitly increase a delegation's authority envelope.
+
+        If `delegation_id` has a parent, the grant is FUNDED from that
+        parent's certain headroom: the parent's `child_reserved_usd`
+        increases by exactly the same amount as the child's
+        `authority_usd`, atomically, and the grant is rejected outright
+        if the parent lacks that much headroom -- including when the
+        parent has any unknown-cost events recorded, since unknown cost
+        is never treated as zero when deciding what's available. A grant
+        against a delegation with NO parent (a root) is a pure top-up,
+        unconstrained by any parent, since there is nothing to fund it
+        from -- this is explicit administrative/policy authority, not
+        payment.
 
         Idempotent on `(delegation_id, event_id)`: replaying the exact
         same grant event must not add the amount twice. A new grant
@@ -450,7 +774,13 @@ class EconomicAuthorityStore:
         same grant again" or "a separately authorized additional grant".
         Reusing an event_id already recorded for this delegation with a
         different amount raises `EventConflict`.
+
+        Refuses (returns False) if `delegation_id` or any ancestor is
+        undergoing revocation.
         """
+        validate_identifier("delegation_id", delegation_id)
+        validate_identifier("event_id", event_id)
+        validate_amount(amount_usd, name="amount_usd")
         with self._transaction() as conn:
             row = self._get(conn, delegation_id)
             if row is None:
@@ -459,15 +789,36 @@ class EconomicAuthorityStore:
             payload = {
                 "kind": "authority_grant",
                 "delegation_id": delegation_id,
-                "amount_usd": str(amount_usd),
+                "amount_usd": amount_usd,
             }
             if self._check_event(conn, delegation_id, event_id, payload):
                 return True
             if amount_usd < 0 or not state.active:
                 return False
+            if self._is_revocation_in_progress_in_lineage(conn, delegation_id):
+                return False
+            now = _now()
+            if state.parent_delegation_id is not None:
+                parent = self._get(conn, state.parent_delegation_id)
+                if parent is None:
+                    return False
+                parent_state = _row_to_state(parent)
+                if not parent_state.active or parent_state.unknown_cost_count:
+                    return False
+                if parent_state.active_reservation_usd < amount_usd:
+                    return False
+                conn.execute(
+                    "UPDATE delegations SET child_reserved_usd = ?, updated_at = ? "
+                    "WHERE delegation_id = ?",
+                    (
+                        str(parent_state.child_reserved_usd + amount_usd),
+                        now,
+                        state.parent_delegation_id,
+                    ),
+                )
             conn.execute(
                 "UPDATE delegations SET authority_usd = ?, updated_at = ? WHERE delegation_id = ?",
-                (str(state.authority_usd + amount_usd), _now(), delegation_id),
+                (str(state.authority_usd + amount_usd), now, delegation_id),
             )
             self._record_event(
                 conn, event_id, delegation_id, "authority_grant", payload, amount_usd, "accepted"
@@ -484,7 +835,14 @@ class EconomicAuthorityStore:
         commit and the caller observing the response. Reusing an
         event_id already recorded for this delegation with a different
         amount (including known vs. unknown) raises `EventConflict`.
+
+        Refuses (returns False) if `delegation_id` or any ancestor is
+        undergoing revocation.
         """
+        validate_identifier("delegation_id", delegation_id)
+        validate_identifier("event_id", event_id)
+        if amount_usd is not None:
+            validate_amount(amount_usd, name="amount_usd")
         with self._transaction() as conn:
             row = self._get(conn, delegation_id)
             if row is None:
@@ -493,11 +851,13 @@ class EconomicAuthorityStore:
             payload = {
                 "kind": "consumption",
                 "delegation_id": delegation_id,
-                "amount_usd": None if amount_usd is None else str(amount_usd),
+                "amount_usd": amount_usd,
             }
             if self._check_event(conn, delegation_id, event_id, payload):
                 return True
             if not state.active:
+                return False
+            if self._is_revocation_in_progress_in_lineage(conn, delegation_id):
                 return False
             if amount_usd is None:
                 conn.execute(
@@ -534,7 +894,8 @@ class EconomicAuthorityStore:
         recorded.
 
         The parent's reservation slot for this child is freed by the full
-        original authority amount, but the child's actual known
+        original authority amount (including any grants folded into it --
+        see `grant`'s parent-funding), but the child's actual known
         consumption is folded into the parent's own `consumed_usd` at the
         same moment -- it does not simply vanish. Without this, a
         reserve-consume-settle cycle would let a chain of settled children
@@ -543,7 +904,15 @@ class EconomicAuthorityStore:
         re-delegated and re-consumed indefinitely. `consumed_usd` on any
         delegation therefore means "known authority permanently spent,
         directly or through a settled descendant."
+
+        Settling itself is intentionally allowed even while `delegation_id`
+        is undergoing revocation -- teardown settles every descendant this
+        way, and a settle already in flight for the same reason must not
+        be blocked by the very revocation it is part of.
         """
+        validate_identifier("delegation_id", delegation_id)
+        validate_identifier("event_id", event_id)
+        validate_identifier("outcome", outcome)
         with self._transaction() as conn:
             row = self._get(conn, delegation_id)
             if row is None:
@@ -585,13 +954,17 @@ class EconomicAuthorityStore:
         a no-op returning True. Returns False if the delegation does not
         exist. This must be the *first* durable step any tree revocation
         takes -- before computing which descendants currently exist --
-        so that `reserve` (which checks this flag across the full ancestor
-        chain of the requested parent, inside its own atomic transaction)
-        can never again create a new descendant anywhere under this
-        delegation from the moment this call commits. See the module
+        so that `reserve`/`grant`/`consume` (each of which checks this
+        flag across the full ancestor chain of the delegation they would
+        mutate, inside their own atomic transaction) can never again
+        create a new descendant or extend/spend authority anywhere under
+        this delegation from the moment this call commits. See the module
         docstring's "Revocation race safety" section for why this closes
-        the snapshot-then-settle race.
+        the snapshot-then-settle race, and why a caller that crashes
+        between this call and finishing teardown can simply retry the
+        whole revoke -- every remaining step is independently idempotent.
         """
+        validate_identifier("delegation_id", delegation_id)
         with self._transaction() as conn:
             row = self._get(conn, delegation_id)
             if row is None:

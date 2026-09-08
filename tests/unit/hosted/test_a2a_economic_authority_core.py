@@ -6,6 +6,7 @@ transport-independent and so are these tests.
 from __future__ import annotations
 
 import inspect
+import sqlite3
 import subprocess
 import sys
 import tomllib
@@ -38,7 +39,7 @@ def _open_root(store: EconomicAuthorityStore, authority_usd: str = "1.00") -> No
 
 def test_reserve_consume_settle_happy_path(store: EconomicAuthorityStore):
     _open_root(store)
-    assert store.reserve("evt:reserve", "root", "child-1", "worker", Decimal("0.30")) is True
+    assert store.reserve("evt:reserve", "root", "child-1", "worker", Decimal("0.30")) == "created"
     assert store.consume("evt:consume", "child-1", Decimal("0.10")) is True
     assert store.settle("evt:settle", "child-1", "SUCCESS") is True
 
@@ -54,10 +55,10 @@ def test_reserve_consume_settle_happy_path(store: EconomicAuthorityStore):
 
 def test_reserve_rejects_when_exceeding_parent_headroom(store: EconomicAuthorityStore):
     _open_root(store, "1.00")
-    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.60")) is True
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.60")) == "created"
     # Only $0.40 headroom remains; a $0.60 reservation must be denied, not
     # partially granted or silently capped.
-    assert store.reserve("evt:r2", "root", "child-2", "worker", Decimal("0.60")) is False
+    assert store.reserve("evt:r2", "root", "child-2", "worker", Decimal("0.60")) == "rejected"
     assert store.get("child-2") is None
 
 
@@ -84,7 +85,7 @@ def test_concurrent_reservations_cannot_exceed_available_authority(tmp_path):
     store = EconomicAuthorityStore(db_path)
     _open_root(store, "1.00")
 
-    def try_reserve(child_id: str) -> bool:
+    def try_reserve(child_id: str) -> str:
         # Each thread uses its own EconomicAuthorityStore instance (and
         # therefore its own SQLite connection) against the same db file,
         # matching how independent concurrent callers would behave.
@@ -97,7 +98,9 @@ def test_concurrent_reservations_cannot_exceed_available_authority(tmp_path):
         future_b = pool.submit(try_reserve, "child-b")
         results = {future_a.result(), future_b.result()}
 
-    assert results == {True, False}, "exactly one of two competing $0.70 reservations must succeed"
+    assert results == {"created", "rejected"}, (
+        "exactly one of two competing $0.70 reservations must succeed"
+    )
     root = store.get("root")
     assert root is not None
     # Whichever one succeeded, exactly $0.70 (not $0.00, not $1.40) is reserved.
@@ -132,11 +135,14 @@ def test_new_event_id_is_a_real_second_charge(store: EconomicAuthorityStore):
 
 def test_duplicate_delegation_id_reserve_is_a_no_op(store: EconomicAuthorityStore):
     _open_root(store, "1.00")
-    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.50")) is True
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.50")) == "created"
     # A second reserve call naming the same delegation_id -- even with a
     # different event_id, as a duplicate transport delivery would produce
     # -- must not re-reserve parent headroom.
-    assert store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.50")) is True
+    assert (
+        store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.50"))
+        == "already_exists"
+    )
     root = store.get("root")
     assert root is not None
     assert root.child_reserved_usd == Decimal("0.50")
@@ -384,8 +390,11 @@ def test_matching_retry_of_reserve_is_still_a_safe_no_op(store: EconomicAuthorit
     retry with the SAME canonical payload (parent/agent/amount) remains a
     safe, non-conflicting no-op."""
     _open_root(store, "1.00")
-    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30")) is True
-    assert store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.30")) is True
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30")) == "created"
+    assert (
+        store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.30"))
+        == "already_exists"
+    )
     root = store.get("root")
     assert root is not None
     assert root.child_reserved_usd == Decimal("0.30")
@@ -409,7 +418,7 @@ def test_mark_revocation_started_is_idempotent_and_reports_missing_delegation(
 def test_reserve_refuses_once_direct_parent_revocation_has_started(store: EconomicAuthorityStore):
     _open_root(store, "1.00")
     store.mark_revocation_started("root")
-    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) is False
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) == "rejected"
     assert store.get("child-1") is None
 
 
@@ -423,7 +432,7 @@ def test_reserve_refuses_once_any_ancestor_revocation_has_started(store: Economi
     store.mark_revocation_started("root")
     assert (
         store.reserve("evt:r3", "grandchild-1", "great-grandchild-1", "worker", Decimal("0.01"))
-        is False
+        == "rejected"
     )
     assert store.get("great-grandchild-1") is None
 
@@ -433,7 +442,7 @@ def test_reserve_before_revocation_mark_still_succeeds(store: EconomicAuthorityS
     genuinely committed first is unaffected (and will be caught by a
     subsequent subtree scan/settle, as `executor.py` performs)."""
     _open_root(store, "1.00")
-    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) is True
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) == "created"
     store.mark_revocation_started("root")
     child = store.get("child-1")
     assert child is not None
@@ -454,7 +463,7 @@ def test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_
     store = EconomicAuthorityStore(db_path)
     store.create_root("evt:root", "root", "buyer", Decimal("100.00"))
 
-    def try_reserve(i: int) -> bool:
+    def try_reserve(i: int) -> str:
         return EconomicAuthorityStore(db_path).reserve(
             f"evt:race-{i}", "root", f"child-race-{i}", "worker", Decimal("0.01")
         )
@@ -476,7 +485,7 @@ def test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_
     assert root_after is not None
     assert root_after.revocation_started_at is not None
 
-    successful_children = [f"child-race-{i}" for i, ok in enumerate(results) if ok]
+    successful_children = [f"child-race-{i}" for i, ok in enumerate(results) if ok == "created"]
     for child_id in successful_children:
         child = store.get(child_id)
         assert child is not None, (
@@ -488,9 +497,354 @@ def test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_
     # regardless of how many succeeded before the mark.
     assert (
         store.reserve("evt:race-after", "root", "child-after-mark", "worker", Decimal("0.01"))
-        is False
+        == "rejected"
     )
     assert store.get("child-after-mark") is None
+
+
+def test_grant_and_consume_refuse_once_ancestor_revocation_has_started(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    store.mark_revocation_started("root")
+    assert store.grant("evt:g1", "child-1", Decimal("0.01")) is False
+    assert store.consume("evt:c1", "child-1", Decimal("0.01")) is False
+    child = store.get("child-1")
+    assert child is not None
+    assert child.authority_usd == Decimal("0.30")  # untouched
+    assert child.consumed_usd == Decimal("0")  # untouched
+
+
+# -- migration: an authentic old-schema database upgrades safely (repair item 1) --
+
+
+def _write_legacy_phase_a_database(db_path: Path) -> None:
+    """Builds an authentic pre-repair (Phase A) schema database by hand --
+    global `event_id TEXT PRIMARY KEY`, no `revocation_started_at`, no
+    `schema_meta` -- with real delegation and event data, exactly as a
+    deployed Phase A database would look."""
+    legacy_schema = """
+    CREATE TABLE delegations (
+        delegation_id TEXT PRIMARY KEY,
+        parent_delegation_id TEXT,
+        agent_id TEXT NOT NULL,
+        authority_usd TEXT NOT NULL,
+        consumed_usd TEXT NOT NULL DEFAULT '0',
+        child_reserved_usd TEXT NOT NULL DEFAULT '0',
+        released_usd TEXT NOT NULL DEFAULT '0',
+        unknown_cost_count INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        outcome TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE economic_events (
+        event_id TEXT PRIMARY KEY,
+        delegation_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        amount_usd TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(legacy_schema)
+        now = "2026-01-01T00:00:00+00:00"
+        conn.execute(
+            "INSERT INTO delegations VALUES "
+            "('root', NULL, 'buyer', '1.00', '0.10', '0.30', '0', 0, 1, NULL, ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO delegations VALUES "
+            "('child-1', 'root', 'worker', '0.30', '0.10', '0', '0', 0, 1, NULL, ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO economic_events VALUES "
+            "('evt:root', 'root', 'root', '1.00', 'accepted', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO economic_events VALUES "
+            "('evt:r1', 'child-1', 'reservation', '0.30', 'accepted', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO economic_events VALUES "
+            "('evt:c1', 'child-1', 'consumption', '0.10', 'accepted', ?)",
+            (now,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_migration_preserves_data_and_upgrades_schema(tmp_path):
+    db_path = tmp_path / "authority.sqlite3"
+    _write_legacy_phase_a_database(db_path)
+
+    store = EconomicAuthorityStore(db_path)
+
+    root = store.get("root")
+    child = store.get("child-1")
+    assert root is not None and child is not None
+    assert root.authority_usd == Decimal("1.00")
+    assert root.consumed_usd == Decimal("0.10")
+    assert root.child_reserved_usd == Decimal("0.30")
+    assert root.revocation_started_at is None  # migrated in, correctly absent
+    assert child.authority_usd == Decimal("0.30")
+    assert child.consumed_usd == Decimal("0.10")
+
+    assert store.invariant("root").label == "SATISFIED"
+    assert store.invariant("child-1").label == "SATISFIED"
+
+
+def test_migration_matching_retry_of_pre_migration_event_is_a_safe_no_op(tmp_path):
+    db_path = tmp_path / "authority.sqlite3"
+    _write_legacy_phase_a_database(db_path)
+    store = EconomicAuthorityStore(db_path)
+
+    assert store.consume("evt:c1", "child-1", Decimal("0.10")) is True  # matches original
+    child = store.get("child-1")
+    assert child is not None
+    assert child.consumed_usd == Decimal("0.10")  # not double-counted
+
+    assert (
+        store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30")) == "already_exists"
+    )
+
+
+def test_migration_conflicting_reuse_of_pre_migration_event_raises(tmp_path):
+    db_path = tmp_path / "authority.sqlite3"
+    _write_legacy_phase_a_database(db_path)
+    store = EconomicAuthorityStore(db_path)
+
+    with pytest.raises(EventConflict):
+        store.consume("evt:c1", "child-1", Decimal("0.99"))  # different amount than original
+
+
+def test_migration_survives_real_process_restart(tmp_path):
+    """The migration itself is atomic and durable: opening the same
+    legacy database repeatedly (as a real restart would) migrates once
+    and is a no-op thereafter, never re-applying or losing data."""
+    db_path = tmp_path / "authority.sqlite3"
+    _write_legacy_phase_a_database(db_path)
+
+    store1 = EconomicAuthorityStore(db_path)
+    assert store1.get("root") is not None
+
+    store2 = EconomicAuthorityStore(db_path)  # a fresh instance, same file -- simulates a restart
+    root = store2.get("root")
+    assert root is not None
+    assert root.authority_usd == Decimal("1.00")
+    assert root.consumed_usd == Decimal("0.10")
+
+    # New operations against the migrated database work exactly as normal.
+    assert store2.reserve("evt:r2", "root", "child-2", "worker", Decimal("0.10")) == "created"
+
+
+def test_migration_is_a_no_op_against_an_already_current_database(tmp_path):
+    """A database created directly by the current code (never legacy) is
+    already at CURRENT_SCHEMA_VERSION -- opening it again must not touch
+    anything."""
+    db_path = tmp_path / "authority.sqlite3"
+    store = EconomicAuthorityStore(db_path)
+    store.create_root("evt:root", "root", "buyer", Decimal("1.00"))
+
+    store2 = EconomicAuthorityStore(db_path)
+    root = store2.get("root")
+    assert root is not None
+    assert root.authority_usd == Decimal("1.00")
+
+
+# -- grant conservation: a funded grant draws down the parent (repair item 2) --
+
+
+def test_grant_against_root_is_a_pure_top_up_with_no_parent_to_fund_it(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    assert store.grant("evt:g1", "root", Decimal("5.00")) is True
+    root = store.get("root")
+    assert root is not None
+    assert root.authority_usd == Decimal("6.00")
+
+
+def test_grant_against_a_child_is_funded_from_parent_headroom(store: EconomicAuthorityStore):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    # root now has 0.70 active_reservation_usd headroom
+    assert store.grant("evt:g1", "child-1", Decimal("0.50")) is True
+
+    child = store.get("child-1")
+    root = store.get("root")
+    assert child is not None and root is not None
+    assert child.authority_usd == Decimal("0.80")  # 0.30 + 0.50
+    assert root.child_reserved_usd == Decimal("0.80")  # 0.30 + 0.50, kept in sync
+    assert root.active_reservation_usd == Decimal("0.20")  # 1.00 - 0.80
+
+
+def test_grant_against_a_child_is_rejected_when_parent_headroom_is_insufficient(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    # root has only 0.70 headroom; requesting 0.71 must be rejected outright,
+    # not partially granted or silently capped.
+    assert store.grant("evt:g1", "child-1", Decimal("0.71")) is False
+
+    child = store.get("child-1")
+    root = store.get("root")
+    assert child is not None and root is not None
+    assert child.authority_usd == Decimal("0.30")  # untouched
+    assert root.child_reserved_usd == Decimal("0.30")  # untouched
+
+
+def test_grant_against_a_child_is_rejected_when_parent_has_unknown_cost(
+    store: EconomicAuthorityStore,
+):
+    """Unknown cost must never be treated as zero when deciding whether
+    more authority is available -- a parent with any unknown-cost event
+    cannot fund a grant, even if its known figures look like they have
+    headroom."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    store.consume("evt:unknown", "root", None)  # root now has unknown cost
+    assert store.grant("evt:g1", "child-1", Decimal("0.10")) is False
+
+
+def test_grant_followed_by_consumption_and_settlement_conserves_correctly(
+    store: EconomicAuthorityStore,
+):
+    """This is the exact scenario the un-funded grant bug broke: without
+    parent-side funding, settling a grant-inflated child could drive the
+    parent's own child_reserved_usd negative. With funding, it cannot."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    store.grant("evt:g1", "child-1", Decimal("0.20"))  # child now has 0.50 authority
+    store.consume("evt:c1", "child-1", Decimal("0.40"))
+    store.settle("evt:s1", "child-1", "SUCCESS")
+
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0")  # fully released, never negative
+    assert root.consumed_usd == Decimal("0.40")  # child's real spend folded in
+    assert root.active_reservation_usd == Decimal("0.60")  # 1.00 - 0.40
+
+    result = store.invariant("root")
+    assert result.satisfied_on_known_values is True
+    assert result.label == "SATISFIED"
+
+
+def test_grant_conservation_holds_across_a_three_level_lineage(store: EconomicAuthorityStore):
+    _open_root(store, "10.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("5.00"))
+    store.reserve("evt:r2", "child-1", "grandchild-1", "sub-worker", Decimal("2.00"))
+
+    assert store.grant("evt:g1", "grandchild-1", Decimal("1.00")) is True
+
+    grandchild = store.get("grandchild-1")
+    child = store.get("child-1")
+    root = store.get("root")
+    assert grandchild is not None and child is not None and root is not None
+    assert grandchild.authority_usd == Decimal("3.00")  # 2.00 + 1.00
+    assert child.child_reserved_usd == Decimal("3.00")  # funded the grant
+    assert child.active_reservation_usd == Decimal("2.00")  # 5.00 - 3.00
+    assert root.child_reserved_usd == Decimal("5.00")  # unaffected -- the grant was funded
+    # entirely from child-1's own headroom, never touching root directly
+
+    for delegation_id in ("root", "child-1", "grandchild-1"):
+        result = store.invariant(delegation_id)
+        assert result.satisfied_on_known_values is True, f"{delegation_id}: {result.detail}"
+
+
+def test_concurrent_grants_against_the_same_parent_cannot_exceed_its_headroom(tmp_path):
+    """Real-thread concurrency proof, mirroring
+    test_concurrent_reservations_cannot_exceed_available_authority: two
+    grants that would together overrun the parent's headroom must
+    serialize so exactly one succeeds."""
+    db_path = tmp_path / "authority.sqlite3"
+    store = EconomicAuthorityStore(db_path)
+    store.create_root("evt:root", "root", "buyer", Decimal("1.00"))
+    store.reserve("evt:r1", "root", "child-a", "worker", Decimal("0.10"))
+    store.reserve("evt:r2", "root", "child-b", "worker", Decimal("0.10"))
+    # root headroom remaining: 0.80
+
+    def try_grant(child_id: str) -> bool:
+        return EconomicAuthorityStore(db_path).grant(
+            f"evt:grant-{child_id}", child_id, Decimal("0.70")
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future_a = pool.submit(try_grant, "child-a")
+        future_b = pool.submit(try_grant, "child-b")
+        results = {future_a.result(), future_b.result()}
+
+    assert results == {True, False}, "exactly one of two competing $0.70 grants must succeed"
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0.90")  # 0.10 + 0.10 + exactly one 0.70 grant
+    assert root.active_reservation_usd == Decimal("0.10")
+
+
+# -- decimal normalization and input validation (repair item 8) -----------
+
+
+def test_equivalent_decimal_amounts_do_not_produce_a_false_conflict(store: EconomicAuthorityStore):
+    """"1.0" and "1.00" are the same amount -- a retry expressed with
+    different trailing-zero precision must not be mistaken for a
+    conflicting reuse of the same event_id."""
+    _open_root(store, "1.00")
+    assert store.consume("evt:c1", "root", Decimal("0.10")) is True
+    assert store.consume("evt:c1", "root", Decimal("0.100")) is True  # same value, different text
+    assert store.consume("evt:c1", "root", Decimal("0.1")) is True
+    root = store.get("root")
+    assert root is not None
+    assert root.consumed_usd == Decimal("0.10")  # never double-counted
+
+
+def test_equivalent_decimal_amounts_do_not_false_conflict_for_reserve(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30")) == "created"
+    assert (
+        store.reserve("evt:r1-retry", "root", "child-1", "worker", Decimal("0.300"))
+        == "already_exists"
+    )
+
+
+@pytest.mark.parametrize("bad_amount", ["NaN", "Infinity", "-Infinity", "sNaN"])
+def test_non_finite_amounts_are_rejected(store: EconomicAuthorityStore, bad_amount: str):
+    _open_root(store, "1.00")
+    with pytest.raises(ValueError):
+        store.grant("evt:g1", "root", Decimal(bad_amount))
+    with pytest.raises(ValueError):
+        store.consume("evt:c1", "root", Decimal(bad_amount))
+    with pytest.raises(ValueError):
+        store.reserve("evt:r1", "root", "child-1", "worker", Decimal(bad_amount))
+    root = store.get("root")
+    assert root is not None
+    assert root.authority_usd == Decimal("1.00")  # untouched by any rejected attempt
+
+
+def test_absurdly_large_amount_is_rejected(store: EconomicAuthorityStore):
+    _open_root(store, "1.00")
+    with pytest.raises(ValueError):
+        store.grant("evt:g1", "root", Decimal("999999999999999999999999"))
+
+
+@pytest.mark.parametrize("bad_value", ["", "x" * 300])
+def test_malformed_identifiers_are_rejected(store: EconomicAuthorityStore, bad_value: str):
+    with pytest.raises(ValueError):
+        store.create_root("evt:root", bad_value, "buyer", Decimal("1.00"))
+    with pytest.raises(ValueError):
+        store.create_root(bad_value, "root2", "buyer", Decimal("1.00"))
+    with pytest.raises(ValueError):
+        store.create_root("evt:root3", "root3", bad_value, Decimal("1.00"))
 
 
 # -- exclusions: no debug hooks, no outbound calls, no package coupling ---
