@@ -36,6 +36,7 @@ import pytest  # noqa: E402
 
 pytest.importorskip("a2a")
 
+import httpx  # noqa: E402
 from _a2a_economic_authority_client import (  # noqa: E402
     agent_process,
     call_context,
@@ -45,7 +46,13 @@ from _a2a_economic_authority_client import (  # noqa: E402
     send,
 )
 from a2a.helpers import get_data_parts  # noqa: E402
-from a2a.types import TaskState  # noqa: E402
+from a2a.types import (  # noqa: E402
+    CancelTaskRequest,
+    GetTaskRequest,
+    ListTasksRequest,
+    TaskPushNotificationConfig,
+    TaskState,
+)
 from bootstrap import bootstrap_root  # noqa: E402
 from capabilities import CapabilityStore  # noqa: E402
 from core import EconomicAuthorityStore  # noqa: E402
@@ -326,6 +333,172 @@ async def test_scopes_are_enforced_per_operation(paths, root):
         assert settle_task.status.state == TaskState.TASK_STATE_COMPLETED
 
 
+# -- repair item 1: every non-SendMessage A2A method is disabled ----------
+#
+# access_control.SendMessageOnlyRequestHandler disables GetTask, ListTasks,
+# CancelTask, SubscribeToTask, and the push-notification-config methods
+# entirely -- these tests prove that holds regardless of credential
+# validity (missing, a valid-but-unrelated token, or the correct token),
+# since "disabled" must mean disabled, not merely "not separately
+# authorized".
+
+
+async def test_get_task_is_disabled_regardless_of_credential(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        task_id = status_task.id
+
+        for token, label in [(root_token, "valid"), (None, "missing"), ("garbage", "invalid")]:
+            probe_client = await make_client(base_url, token, session_id=f"probe-{label}")
+            probe_ctx = call_context(f"probe-{label}")
+            with pytest.raises(Exception) as excinfo:  # noqa: PT011 -- SDK raises a generic A2A client error
+                await probe_client.get_task(GetTaskRequest(id=task_id), context=probe_ctx)
+            assert "SendMessage" in str(excinfo.value), (
+                f"GetTask with a {label} credential must be disabled, not merely unauthorized"
+            )
+
+
+async def test_list_tasks_is_disabled_regardless_of_credential(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        for token, label in [(root_token, "valid"), (None, "missing")]:
+            probe_client = await make_client(base_url, token, session_id=f"probe-{label}")
+            probe_ctx = call_context(f"probe-{label}")
+            with pytest.raises(Exception) as excinfo:  # noqa: PT011
+                await probe_client.list_tasks(ListTasksRequest(), context=probe_ctx)
+            assert "SendMessage" in str(excinfo.value)
+
+
+async def test_cancel_task_is_disabled_regardless_of_credential(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        task_id = status_task.id
+
+        for token, label in [(root_token, "valid"), (None, "missing")]:
+            probe_client = await make_client(base_url, token, session_id=f"probe-{label}")
+            probe_ctx = call_context(f"probe-{label}")
+            with pytest.raises(Exception) as excinfo:  # noqa: PT011
+                await probe_client.cancel_task(CancelTaskRequest(id=task_id), context=probe_ctx)
+            assert "SendMessage" in str(excinfo.value)
+
+        # And the task really is untouched -- it did not silently cancel.
+        after = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        assert after.status.state == TaskState.TASK_STATE_COMPLETED
+
+
+async def test_subscribe_to_task_is_disabled_regardless_of_credential(paths, root):
+    """The real `a2a-sdk` client refuses to even attempt `SubscribeToTask`
+    client-side once it sees the Agent Card declare `streaming=False` --
+    a correct, even stronger outcome. To directly prove the *server's own*
+    disabled path (`access_control.py`) still works regardless -- in case
+    a future Agent Card ever adds streaming support without updating that
+    wrapper -- this test bypasses the smart client and sends the raw
+    JSON-RPC request itself.
+    """
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        task_id = status_task.id
+
+        for headers, label in [
+            ({"Authorization": f"Bearer {root_token}"}, "valid"),
+            ({}, "missing"),
+        ]:
+            response = httpx.post(
+                base_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "probe-1",
+                    "method": "SubscribeToTask",
+                    "params": {"id": task_id},
+                },
+                headers={"A2A-Version": "1.0", **headers},
+                timeout=10.0,
+            )
+            body = response.json()
+            assert "error" in body, f"SubscribeToTask with a {label} credential must be disabled"
+            assert "SendMessage" in body["error"]["message"]
+
+
+async def test_push_notification_config_is_disabled_regardless_of_credential(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        task_id = status_task.id
+
+        for token, label in [(root_token, "valid"), (None, "missing")]:
+            probe_client = await make_client(base_url, token, session_id=f"probe-{label}")
+            probe_ctx = call_context(f"probe-{label}")
+            with pytest.raises(Exception) as excinfo:  # noqa: PT011
+                await probe_client.create_task_push_notification_config(
+                    TaskPushNotificationConfig(task_id=task_id), context=probe_ctx
+                )
+            assert "SendMessage" in str(excinfo.value)
+
+
+async def test_executor_cancel_refuses_without_valid_authorization(tmp_path):
+    """Direct, defense-in-depth proof for `EconomicAuthorityExecutor.cancel()`
+    itself (unreachable via HTTP today, since CancelTask is disabled at the
+    transport layer above, but must never silently succeed if that ever
+    changes): constructs a real `RequestContext`/`Task` and calls `cancel()`
+    directly with no credential, then with an unrelated credential, and
+    asserts neither ever enqueues a cancellation event.
+    """
+    from a2a.helpers import new_data_message, new_task_from_user_message
+    from a2a.server.agent_execution import RequestContext
+    from a2a.server.context import ServerCallContext
+    from a2a.types import Role
+    from capabilities import InMemoryCredentialHandoff
+    from executor import EconomicAuthorityExecutor
+
+    class _SpyEventQueue:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        async def enqueue_event(self, event: object) -> None:
+            self.events.append(event)
+
+    db_path = tmp_path / "authority.sqlite3"
+    cap_db_path = tmp_path / "capabilities.sqlite3"
+    bootstrap_root(db_path=db_path, capability_db_path=cap_db_path, envelope_usd="1.00")
+    core_store = EconomicAuthorityStore(db_path)
+    capability_store = CapabilityStore(cap_db_path)
+    handoff = InMemoryCredentialHandoff()
+    executor_under_test = EconomicAuthorityExecutor(core_store, capability_store, handoff)
+
+    message = new_data_message({"op": "status", "delegation_id": "root"}, role=Role.ROLE_USER)
+    task = new_task_from_user_message(message)
+
+    for headers in ({}, {"authorization": "Bearer some-unrelated-garbage-token"}):
+        call_ctx = ServerCallContext(state={"headers": headers})
+        request_ctx = RequestContext(
+            call_context=call_ctx, task=task, task_id=task.id, context_id=task.context_id
+        )
+        request_ctx.current_task = task
+
+        spy_queue = _SpyEventQueue()
+        await executor_under_test.cancel(request_ctx, spy_queue)  # type: ignore[arg-type]
+
+        assert spy_queue.events == [], (
+            "an unauthenticated or unrelated-credential cancel() call must never enqueue anything"
+        )
+
+
 # -- expired and revoked tokens ---------------------------------------
 
 
@@ -504,6 +677,156 @@ async def test_tokens_never_appear_in_task_history_or_logs(paths, root):
     assert child_token not in log_text
 
 
+# -- repair item 3: /capabilities/claim revalidates the issuer at claim time --
+
+
+async def test_claim_response_is_never_cached(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:cache1",
+                "parent_id": "root",
+                "delegation_id": "child-cache",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+
+        response = claim_credential(base_url, claim_id, root_token)
+        assert response.status_code == 200
+        cache_control = response.headers.get("cache-control", "")
+        assert "no-store" in cache_control
+
+
+async def test_claim_endpoint_rejects_malformed_json_cleanly(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        response = httpx.post(
+            f"{base_url}/capabilities/claim",
+            content=b"{not-valid-json,,,",
+            headers={
+                "Authorization": f"Bearer {root_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=10.0,
+        )
+        assert response.status_code == 400
+        assert "no-store" in response.headers.get("cache-control", "")
+
+
+async def test_claim_rejects_when_issuer_credential_has_expired(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:expire1",
+                "parent_id": "root",
+                "delegation_id": "child-expire",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+
+        # An already-expired token for the SAME delegation/scope must not
+        # redeem the claim -- matching hash bytes is not enough; the
+        # issuer must currently be valid.
+        cap_store = CapabilityStore(paths["cap_db"])
+        _tid, expired_reserve_token = cap_store.issue("root", {"reserve"}, ttl_seconds=-1)
+
+        response = claim_credential(base_url, claim_id, expired_reserve_token)
+        assert response.status_code == 403
+        assert response.json()["error"] == "ExpiredCredential"
+
+
+async def test_claim_rejects_and_purges_when_issuer_credential_is_revoked(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:revoke-issuer",
+                "parent_id": "root",
+                "delegation_id": "child-revoke-issuer",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+
+        # Revoke ROOT entirely -- this both invalidates root_token's own
+        # authority and (via executor.py's purge) removes the outstanding
+        # claim itself.
+        await send(
+            client, ctx, {"op": "revoke", "event_id": "evt:revoke-all", "delegation_id": "root"}
+        )
+
+        response = claim_credential(base_url, claim_id, root_token)
+        assert response.status_code == 403
+        # The claim is gone outright (purged), not merely unredeemable by
+        # this specific now-revoked token -- prove it with a FRESH,
+        # currently-valid reserve-scoped token for root, which still
+        # cannot redeem a purged claim_id.
+        cap_store = CapabilityStore(paths["cap_db"])
+        _tid, fresh_token = cap_store.issue("root", {"reserve"})
+        response2 = claim_credential(base_url, claim_id, fresh_token)
+        assert response2.status_code == 403
+        assert response2.json()["error"] == "InvalidCredential"
+
+
+async def test_concurrent_claim_redemption_yields_exactly_one_success(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:concurrent-claim",
+                "parent_id": "root",
+                "delegation_id": "child-concurrent-claim",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+
+        async def attempt() -> int:
+            response = await asyncio.to_thread(claim_credential, base_url, claim_id, root_token)
+            return response.status_code
+
+        results = await asyncio.gather(*(attempt() for _ in range(12)))
+
+    successes = [code for code in results if code == 200]
+    assert len(successes) == 1, (
+        f"exactly one concurrent claim redemption must succeed, got {results}"
+    )
+    assert all(code in (200, 403) for code in results)
+
+
 # -- duplicate delivery: one economic effect -------------------------------
 
 
@@ -533,6 +856,119 @@ async def test_duplicate_delivery_causes_one_economic_effect(paths, root):
     assert root_state is not None
     assert root_state.child_reserved_usd == Decimal("0.10"), (
         "a duplicate delivery must not reserve twice"
+    )
+
+
+# -- repair item 5: idempotency is scoped per delegation, not global ------
+
+
+async def test_same_event_id_across_two_independent_delegations_does_not_collide(paths, root):
+    """Two independent delegations under the same root, each controlled by
+    its own narrow capability, both pick the SAME caller-chosen event_id
+    for an unrelated `grant` -- they must not collide; each must be
+    applied independently."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        for delegation_id in ("child-indep-a", "child-indep-b"):
+            await send(
+                client,
+                ctx,
+                {
+                    "op": "reserve",
+                    "event_id": f"evt:seed-{delegation_id}",
+                    "parent_id": "root",
+                    "delegation_id": delegation_id,
+                    "agent_id": "worker",
+                    "maximum_usd": "0.30",
+                    "child_scopes": ["read", "grant"],
+                },
+            )
+
+        cap_store = CapabilityStore(paths["cap_db"])
+        _id_a, token_a = cap_store.issue("child-indep-a", {"grant"})
+        _id_b, token_b = cap_store.issue("child-indep-b", {"grant"})
+        client_a = await make_client(base_url, token_a, session_id="indep-a")
+        client_b = await make_client(base_url, token_b, session_id="indep-b")
+
+        result_a = await send(
+            client_a,
+            call_context("indep-a"),
+            {
+                "op": "grant",
+                "event_id": "evt:shared-key",
+                "delegation_id": "child-indep-a",
+                "amount_usd": "0.05",
+            },
+        )
+        result_b = await send(
+            client_b,
+            call_context("indep-b"),
+            {
+                "op": "grant",
+                "event_id": "evt:shared-key",
+                "delegation_id": "child-indep-b",
+                "amount_usd": "0.07",
+            },
+        )
+        assert result_a.status.state == TaskState.TASK_STATE_COMPLETED
+        assert result_b.status.state == TaskState.TASK_STATE_COMPLETED
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    child_a = core_store.get("child-indep-a")
+    child_b = core_store.get("child-indep-b")
+    assert child_a is not None and child_a.authority_usd == Decimal("0.35")
+    assert child_b is not None and child_b.authority_usd == Decimal("0.37")
+
+
+async def test_reserve_retry_with_mismatched_amount_fails_explicitly(paths, root):
+    """A caller reuses an existing delegation_id (the natural retry key
+    for `reserve`) but with a DIFFERENT amount than the original -- this
+    is a conflicting reuse, not a retry, and must fail explicitly rather
+    than silently reporting success for the wrong amount."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        first = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:conflict-r1",
+                "parent_id": "root",
+                "delegation_id": "child-conflict",
+                "agent_id": "worker",
+                "maximum_usd": "0.30",
+            },
+        )
+        assert first.status.state == TaskState.TASK_STATE_COMPLETED
+
+        conflicting = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:conflict-r2-different",
+                "parent_id": "root",
+                "delegation_id": "child-conflict",  # same delegation_id
+                "agent_id": "worker",
+                "maximum_usd": "0.99",  # different amount -- a conflict, not a retry
+            },
+        )
+        assert conflicting.status.state == TaskState.TASK_STATE_FAILED
+        assert "conflict" in get_data_parts(conflicting.status.message.parts)[0]["error"].lower()
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    child = core_store.get("child-conflict")
+    assert child is not None
+    assert child.authority_usd == Decimal("0.30"), (
+        "the original reservation's amount must be untouched"
     )
 
 
@@ -589,6 +1025,84 @@ async def test_concurrent_reservations_cannot_exceed_authority_over_transport(pa
         TaskState.TASK_STATE_AUTH_REQUIRED,
     }
     assert states <= possible_loser_states
+
+
+# -- repair item 4: root revocation races descendant reservation --------
+
+
+async def test_root_revocation_races_new_reservations_and_nothing_escapes(paths, root):
+    """Fires many concurrent `reserve` attempts against root at the same
+    time as a `revoke` of root, over real HTTP transport. This is the
+    transport-level companion to
+    `test_a2a_economic_authority_core.py`'s
+    `test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_unmarked`,
+    which proves the underlying `core.py` mechanism directly; this test
+    proves the same property holds end-to-end through the executor and
+    real transport: whatever the race's outcome, no descendant retains
+    active, usable authority once revocation has completed.
+    """
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+
+        async def try_reserve(i: int):
+            racer_client = await make_client(base_url, root_token, session_id=f"racer-{i}")
+            payload = {
+                "op": "reserve",
+                "event_id": f"evt:escape-race-{i}",
+                "parent_id": "root",
+                "delegation_id": f"child-escape-race-{i}",
+                "agent_id": "worker",
+                "maximum_usd": "0.01",
+            }
+            return await send(racer_client, call_context(f"racer-{i}"), payload)
+
+        async def do_revoke():
+            revoker_client = await make_client(base_url, root_token, session_id="revoker")
+            return await send(
+                revoker_client,
+                call_context("revoker"),
+                {"op": "revoke", "event_id": "evt:escape-race-revoke", "delegation_id": "root"},
+            )
+
+        racer_count = 20
+        results = await asyncio.gather(*(try_reserve(i) for i in range(racer_count)), do_revoke())
+
+        reserve_results = results[:-1]
+        revoke_result = results[-1]
+        assert revoke_result.status.state == TaskState.TASK_STATE_COMPLETED
+
+        core_store = EconomicAuthorityStore(paths["db"])
+        root_state = core_store.get("root")
+        assert root_state is not None
+        assert root_state.revocation_started_at is not None
+        assert root_state.active is False
+
+        successful_claim_ids = []
+        for i, task in enumerate(reserve_results):
+            if task.status.state == TaskState.TASK_STATE_COMPLETED:
+                delegation_id = f"child-escape-race-{i}"
+                child_state = core_store.get(delegation_id)
+                assert child_state is not None, (
+                    f"{delegation_id} was reported reserved but does not exist in the core store"
+                )
+                assert child_state.active is False, (
+                    f"{delegation_id} escaped root revocation while still active -- a usable "
+                    "descendant survived a completed root revocation"
+                )
+                successful_claim_ids.append(_artifact_dict(task)["credential_claim_id"])
+
+        # Every claim for a delegation that DID get created must be
+        # unredeemable now -- either because the claim itself was purged
+        # when the subtree was revoked, or because root_token (the only
+        # credential these test racers used) is itself now revoked.
+        # Either failure mode is correct; success is not.
+        for claim_id in successful_claim_ids:
+            response = claim_credential(base_url, claim_id, root_token)
+            assert response.status_code != 200, (
+                f"claim {claim_id!r} for an escaped-looking descendant was still redeemable "
+                "after root revocation completed"
+            )
 
 
 # -- state and revocation survive real process restart ---------------------
@@ -730,6 +1244,138 @@ async def test_authorization_required_grant_retry_flow(paths, root):
         # retry -- the receipt is the last one appended.
         assert _artifact_dict(retried, index=-1)["delegation_id"] == "child-overrun"
         assert core_store.get("child-overrun") is not None
+
+
+# -- repair item 2: a rejected reservation must never change authority ----
+
+
+async def test_malformed_child_scopes_rejects_with_no_economic_mutation(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:malformed",
+                "parent_id": "root",
+                "delegation_id": "child-malformed",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+                "child_scopes": "read",  # a string, not a list -- malformed
+            },
+        )
+        assert task.status.state == TaskState.TASK_STATE_FAILED
+        assert not task.artifacts, "a rejected reservation must never issue a claim/receipt"
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    assert core_store.get("child-malformed") is None, "the delegation must never have been created"
+    root_state = core_store.get("root")
+    assert root_state is not None
+    assert root_state.child_reserved_usd == Decimal("0"), "the parent's headroom must be untouched"
+
+
+async def test_disallowed_child_scopes_over_real_reserve_rejects_cleanly(paths, root):
+    """A child token minted with only 'reserve' scope attempts to mint a
+    grandchild capability with 'grant' -- a scope it does not itself
+    hold. Must be rejected before any mutation, not after."""
+    _root_id, _root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        # Mint a narrow, reserve-only child token directly (bypassing the
+        # server) so its issuer_scopes contains only 'reserve' -- it must
+        # not be able to mint a grandchild capability with 'grant'.
+        cap_store = CapabilityStore(paths["cap_db"])
+        core_store = EconomicAuthorityStore(paths["db"])
+        core_store.reserve("evt:seed", "root", "child-narrow", "worker", Decimal("0.50"))
+        _token_id, narrow_token = cap_store.issue("child-narrow", {"reserve"})
+
+        narrow_client = await make_client(base_url, narrow_token, session_id="narrow")
+        narrow_ctx = call_context("narrow")
+
+        task = await send(
+            narrow_client,
+            narrow_ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:disallowed",
+                "parent_id": "child-narrow",
+                "delegation_id": "grandchild-disallowed",
+                "agent_id": "sub",
+                "maximum_usd": "0.10",
+                "child_scopes": ["read", "grant"],
+            },
+        )
+        assert task.status.state == TaskState.TASK_STATE_FAILED
+        assert not task.artifacts
+
+    assert core_store.get("grandchild-disallowed") is None
+    child_narrow = core_store.get("child-narrow")
+    assert child_narrow is not None
+    assert child_narrow.child_reserved_usd == Decimal("0"), "no partial reservation must remain"
+
+
+# -- repair item 6: grant-only authority cannot hijack a reservation ------
+
+
+async def test_grant_only_credential_cannot_claim_the_reservation_it_unblocked(paths, root):
+    """Two separate, narrow credentials for the same delegation: one holds
+    only 'reserve', the other only 'grant'. The reserve-only caller parks
+    a reservation that exceeds headroom; the grant-only caller supplies
+    the missing authority on the same task_id. The grant-only caller must
+    not be able to redeem the resulting child credential -- only a
+    currently-valid 'reserve'-scoped credential for the parent can."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        cap_store = CapabilityStore(paths["cap_db"])
+        _rid, reserve_only_token = cap_store.issue("root", {"reserve"})
+        _gid, grant_only_token = cap_store.issue("root", {"grant"})
+
+        reserve_client = await make_client(base_url, reserve_only_token, session_id="reserver")
+        reserve_ctx = call_context("reserver")
+        grant_client = await make_client(base_url, grant_only_token, session_id="granter")
+        grant_ctx = call_context("granter")
+
+        parked = await send(
+            reserve_client,
+            reserve_ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:hijack",
+                "parent_id": "root",
+                "delegation_id": "child-hijack",
+                "agent_id": "worker",
+                "maximum_usd": "5.00",
+            },
+        )
+        assert parked.status.state == TaskState.TASK_STATE_AUTH_REQUIRED
+
+        retried = await send(
+            grant_client,
+            grant_ctx,
+            {
+                "op": "grant",
+                "event_id": "evt:hijack-grant",
+                "delegation_id": "root",
+                "amount_usd": "5.00",
+            },
+            task_id=parked.id,
+        )
+        assert retried.status.state == TaskState.TASK_STATE_COMPLETED
+        claim_id = _artifact_dict(retried, index=-1)["credential_claim_id"]
+
+        hijack_attempt = claim_credential(base_url, claim_id, grant_only_token)
+        assert hijack_attempt.status_code == 403
+        assert hijack_attempt.json()["error"] == "InsufficientScope"
+
+        legitimate_claim = claim_credential(base_url, claim_id, reserve_only_token)
+        assert legitimate_claim.status_code == 200
+        assert "token" in legitimate_claim.json()
 
 
 # -- no automatic outbound agent calls --------------------------------------

@@ -39,11 +39,17 @@ from a2a.server.events import EventQueue  # noqa: E402
 from a2a.server.tasks import TaskUpdater  # noqa: E402
 from a2a.types import Task, TaskState  # noqa: E402
 from capabilities import (  # noqa: E402
+    SCOPES,
     CapabilityError,
     CapabilityStore,
     InMemoryCredentialHandoff,
 )
-from core import DelegationState, EconomicAuthorityStore, InvariantResult  # noqa: E402
+from core import (  # noqa: E402
+    DelegationState,
+    EconomicAuthorityStore,
+    EventConflict,
+    InvariantResult,
+)
 
 DEFAULT_CHILD_SCOPES = frozenset({"read", "consume", "settle"})
 
@@ -141,14 +147,48 @@ class EconomicAuthorityExecutor(AgentExecutor):
                     [new_data_part({"error": type(exc).__name__, "detail": str(exc)})]
                 )
             )
+        except EventConflict as exc:
+            await self._fail(updater, f"event_id conflict: {exc}")
         except (KeyError, InvalidOperation, ValueError) as exc:
             await self._fail(updater, f"invalid request: {exc}")
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Cancels the current task -- but only for a caller who can prove
+        they hold at least `read` authority over the delegation this task
+        belongs to. `on_cancel_task` is disabled entirely at the transport
+        layer (see `access_control.py`), so this method is unreachable via
+        HTTP today; it is hardened anyway as defense-in-depth, since an
+        `AgentExecutor.cancel()` that unconditionally cancels is exactly
+        the kind of unauthenticated-mutation bug that must not exist even
+        when nothing currently calls it.
+        """
+        task = context.current_task
+        delegation_id = self._delegation_id_of_task(task) if task is not None else None
+        if delegation_id is None:
+            return  # no identifiable owner to check against; fail closed, do nothing
+        token = self._bearer_token(context)
+        try:
+            self.capabilities.authorize(token, delegation_id, "read")
+        except CapabilityError:
+            return  # unauthenticated/unauthorized cancellation is refused, not performed
         updater = TaskUpdater(
             event_queue, cast(str, context.task_id), cast(str, context.context_id)
         )
         await updater.cancel()
+
+    @staticmethod
+    def _delegation_id_of_task(task: Task) -> str | None:
+        """Recovers the delegation this task is about from its own initial
+        request message -- every op payload this executor accepts carries
+        either `delegation_id` or (for `reserve`) `parent_id`."""
+        if not task.history:
+            return None
+        for item in get_data_parts(task.history[0].parts):
+            if isinstance(item, dict):
+                delegation_id = item.get("delegation_id") or item.get("parent_id")
+                if isinstance(delegation_id, str):
+                    return delegation_id
+        return None
 
     # -- helpers ----------------------------------------------------------
 
@@ -216,11 +256,24 @@ class EconomicAuthorityExecutor(AgentExecutor):
         issuer_scopes = self.capabilities.live_scopes(token) or frozenset()
         pending = dict(payload)
         pending["issuer_scopes"] = sorted(issuer_scopes)
-        await self._finish_reserve(pending, issuer_scopes, token, updater, retry=False)
+        await self._finish_reserve(pending, issuer_scopes, updater, retry=False)
 
     async def _continue_after_grant(
         self, payload: dict[str, Any], token: str | None, updater: TaskUpdater, task: Task
     ) -> None:
+        """Applies a grant to the parked reservation's parent and, if that
+        clears the shortfall, completes the reservation.
+
+        Repair item 6 (grant/reserve separation): this method authorizes
+        only the *grant* itself (`grant` scope on `parent_id`). It never
+        re-authorizes `reserve` -- the original reservation was already
+        authorized before it parked. And critically, the resulting child
+        credential's claim (minted in `_finish_reserve`) is always bound
+        to `reserve` scope on `parent_id`, never to whichever token
+        happened to supply the grant -- so a grant-only credential can
+        unblock a parked reservation but can never itself redeem, resume,
+        or hijack it.
+        """
         pending = self._find_pending_operation(task)
         if pending is None:
             await self._fail(updater, "no pending operation to resume on this task")
@@ -242,13 +295,44 @@ class EconomicAuthorityExecutor(AgentExecutor):
             return
 
         issuer_scopes = frozenset(pending.get("issuer_scopes", []))
-        await self._finish_reserve(pending, issuer_scopes, token, updater, retry=True)
+        await self._finish_reserve(pending, issuer_scopes, updater, retry=True)
+
+    def _validate_child_scopes(
+        self, requested_scopes: Any, issuer_scopes: frozenset[str]
+    ) -> tuple[bool, frozenset[str] | str]:
+        """Validates and normalizes `child_scopes` -- returns `(True,
+        scopes)` on success or `(False, error_message)` on failure.
+
+        Repair item 2: this must run, and any failure must be handled,
+        BEFORE `core.reserve()` is ever called. A malformed or disallowed
+        `child_scopes` value must never leave a delegation, a parent's
+        drawn-down headroom, an economic event, or an issued capability
+        behind with no way for the caller to use it.
+        """
+        if requested_scopes is None:
+            child_scopes = DEFAULT_CHILD_SCOPES & issuer_scopes
+            if not child_scopes:
+                child_scopes = issuer_scopes or frozenset({"read"})
+            return True, child_scopes
+        if not isinstance(requested_scopes, list) or not all(
+            isinstance(item, str) for item in requested_scopes
+        ):
+            return False, "child_scopes must be a list of scope strings"
+        requested = frozenset(requested_scopes)
+        if not requested:
+            return False, "child_scopes must not be empty"
+        unknown = requested - SCOPES
+        if unknown:
+            return False, f"child_scopes contains unknown scopes: {sorted(unknown)}"
+        disallowed = requested - issuer_scopes
+        if disallowed:
+            return False, f"cannot grant scopes the caller does not hold: {sorted(disallowed)}"
+        return True, requested
 
     async def _finish_reserve(
         self,
         pending: dict[str, Any],
         issuer_scopes: frozenset[str],
-        completing_token: str | None,
         updater: TaskUpdater,
         retry: bool,
     ) -> None:
@@ -261,6 +345,37 @@ class EconomicAuthorityExecutor(AgentExecutor):
         parent = self.core.get(parent_id)
         if parent is None or not parent.active or parent.unknown_cost_count:
             await self._fail(updater, "parent delegation is not available to reserve against")
+            return
+
+        # Validate every fallible input BEFORE any economic mutation --
+        # see `_validate_child_scopes`'s docstring.
+        ok, child_scopes_or_error = self._validate_child_scopes(
+            pending.get("child_scopes"), issuer_scopes
+        )
+        if not ok:
+            await self._fail(updater, str(child_scopes_or_error))
+            return
+        assert isinstance(child_scopes_or_error, frozenset)
+        child_scopes = child_scopes_or_error
+
+        # A delegation_id that already exists is a retry (or a conflicting
+        # reuse) of an existing reservation, not a request for new parent
+        # headroom -- its authority was already carved out of the parent
+        # when it was first created, so the shortfall/park logic below
+        # (which only makes sense for a genuinely NEW reservation) must
+        # not run for it. `core.reserve()` itself decides whether this
+        # matches (a safe no-op) or conflicts (raises `EventConflict`,
+        # caught in `execute()`).
+        if self.core.get(delegation_id) is not None:
+            ok_existing = self.core.reserve(
+                event_id, parent_id, delegation_id, agent_id, maximum_usd
+            )
+            if not ok_existing:
+                await self._fail(updater, "reserve rejected")
+                return
+            await self._mint_reservation_credential(
+                delegation_id, parent_id, agent_id, child_scopes, updater
+            )
             return
 
         shortfall = maximum_usd - parent.active_reservation_usd
@@ -293,28 +408,29 @@ class EconomicAuthorityExecutor(AgentExecutor):
             )
             return
 
-        ok = self.core.reserve(event_id, parent_id, delegation_id, agent_id, maximum_usd)
-        if not ok:
+        ok_reserve = self.core.reserve(event_id, parent_id, delegation_id, agent_id, maximum_usd)
+        if not ok_reserve:
             await self._fail(updater, "reserve rejected")
             return
 
-        requested_scopes = pending.get("child_scopes")
-        if requested_scopes is None:
-            child_scopes = DEFAULT_CHILD_SCOPES & issuer_scopes
-            if not child_scopes:
-                child_scopes = issuer_scopes or frozenset({"read"})
-        else:
-            requested = frozenset(requested_scopes)
-            disallowed = requested - issuer_scopes
-            if disallowed:
-                await self._fail(
-                    updater, f"cannot grant scopes the caller does not hold: {sorted(disallowed)}"
-                )
-                return
-            child_scopes = requested
+        await self._mint_reservation_credential(
+            delegation_id, parent_id, agent_id, child_scopes, updater
+        )
 
+    async def _mint_reservation_credential(
+        self,
+        delegation_id: str,
+        parent_id: str,
+        agent_id: str,
+        child_scopes: frozenset[str],
+        updater: TaskUpdater,
+    ) -> None:
         token_id, plaintext = self.capabilities.issue(delegation_id, child_scopes)
-        claim_id = self.handoff.create(token_id, plaintext, completing_token or "")
+        # Bound to (parent_id, "reserve") -- NOT to whichever credential
+        # completed this call. Any currently-valid, reserve-scoped
+        # credential for parent_id may redeem it; a grant-only credential
+        # never can, even if its grant is what unblocked this retry.
+        claim_id = self.handoff.create(token_id, plaintext, parent_id, "reserve")
         await updater.add_artifact(
             [
                 new_data_part(
@@ -325,9 +441,9 @@ class EconomicAuthorityExecutor(AgentExecutor):
                         "credential_claim_id": claim_id,
                         "credential_claim_scopes": sorted(child_scopes),
                         "credential_claim_instructions": (
-                            "POST /capabilities/claim on this server with your OWN "
-                            "bearer token (the one that authorized this reservation) "
-                            "and this claim_id, once and promptly, to receive the "
+                            "POST /capabilities/claim on this server with a bearer "
+                            "token that currently holds 'reserve' scope on "
+                            "parent_delegation_id, once and promptly, to receive the "
                             "child's capability token. The token itself never appears "
                             "in this A2A task."
                         ),
@@ -431,6 +547,20 @@ class EconomicAuthorityExecutor(AgentExecutor):
     async def _do_revoke(
         self, payload: dict[str, Any], token: str | None, updater: TaskUpdater
     ) -> None:
+        """Revokes `delegation_id` and its complete descendant subtree.
+
+        Repair item 4 (race-safe revocation): `core.mark_revocation_started`
+        is called FIRST, as its own durable, atomic step, before anything
+        that reads which descendants currently exist. From the moment that
+        commits, `core.reserve` refuses any new reservation anywhere under
+        this delegation (it checks the flag across the whole ancestor
+        chain, inside its own transaction) -- so the subtree this method
+        goes on to snapshot, settle, and revoke capabilities for is
+        guaranteed final; nothing can be added to it after the mark, and
+        SQLite's single-writer serialization guarantees nothing that
+        committed before the mark can be invisible to the scan performed
+        after it. See `core.py`'s module docstring for the full argument.
+        """
         delegation_id = payload.get("delegation_id")
         event_id = payload.get("event_id")
         if not delegation_id or not event_id:
@@ -438,6 +568,11 @@ class EconomicAuthorityExecutor(AgentExecutor):
             return
         outcome = payload.get("outcome") or "REVOKED"
         self._authorize_revoke(token, delegation_id)
+
+        marked = self.core.mark_revocation_started(delegation_id)
+        if not marked:
+            await self._fail(updater, "delegation does not exist")
+            return
 
         subtree = self._subtree_ids(delegation_id)
         settled: list[str] = []
@@ -447,6 +582,7 @@ class EconomicAuthorityExecutor(AgentExecutor):
                 self.core.settle(f"{event_id}:{dep_id}", dep_id, outcome)
                 settled.append(dep_id)
         revoked_token_count = self.capabilities.revoke_for_delegations(subtree)
+        purged_claim_count = self.handoff.purge_for_delegations(subtree)
 
         await updater.add_artifact(
             [
@@ -455,6 +591,7 @@ class EconomicAuthorityExecutor(AgentExecutor):
                         "revoked_delegation_ids": subtree,
                         "settled_delegation_ids": settled,
                         "revoked_token_count": revoked_token_count,
+                        "purged_claim_count": purged_claim_count,
                     }
                 )
             ],
