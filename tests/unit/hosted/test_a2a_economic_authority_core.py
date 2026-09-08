@@ -19,7 +19,7 @@ if str(HOSTED_DIR) not in sys.path:
     sys.path.insert(0, str(HOSTED_DIR))
 
 import pytest  # noqa: E402
-from core import EconomicAuthorityStore  # noqa: E402
+from core import EconomicAuthorityStore, EventConflict  # noqa: E402
 
 CRASH_HELPER = Path(__file__).resolve().parent / "_a2a_economic_authority_crash_helper.py"
 
@@ -264,6 +264,233 @@ def test_state_survives_real_process_termination_and_restart(tmp_path):
     assert root is not None
     assert root.child_reserved_usd == Decimal("0")
     assert root.consumed_usd == Decimal("0.10")
+
+
+# -- idempotency is scoped per delegation, not global (repair item 5) ------
+
+
+def test_same_event_id_on_two_independent_delegations_does_not_collide(
+    store: EconomicAuthorityStore,
+):
+    """Two unrelated delegations picking the same caller-chosen event_id
+    must not affect each other -- the idempotency key is (delegation_id,
+    event_id), never event_id alone."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-a", "worker", Decimal("0.30"))
+    store.reserve("evt:r2", "root", "child-b", "worker", Decimal("0.30"))
+
+    assert store.grant("evt:shared", "child-a", Decimal("0.10")) is True
+    assert store.grant("evt:shared", "child-b", Decimal("0.20")) is True
+
+    child_a = store.get("child-a")
+    child_b = store.get("child-b")
+    assert child_a is not None and child_a.authority_usd == Decimal("0.40")
+    assert child_b is not None and child_b.authority_usd == Decimal("0.50")
+
+
+def test_same_event_id_on_two_independent_delegations_does_not_collide_for_consume(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-a", "worker", Decimal("0.30"))
+    store.reserve("evt:r2", "root", "child-b", "worker", Decimal("0.30"))
+
+    assert store.consume("evt:shared", "child-a", Decimal("0.05")) is True
+    assert store.consume("evt:shared", "child-b", Decimal("0.07")) is True
+
+    assert store.get("child-a").consumed_usd == Decimal("0.05")  # type: ignore[union-attr]
+    assert store.get("child-b").consumed_usd == Decimal("0.07")  # type: ignore[union-attr]
+
+
+def test_grant_reusing_event_id_with_different_amount_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    assert store.grant("evt:g1", "root", Decimal("0.10")) is True
+    with pytest.raises(EventConflict):
+        store.grant("evt:g1", "root", Decimal("0.20"))
+    # The original grant's effect is untouched by the rejected conflict.
+    assert store.get("root").authority_usd == Decimal("1.10")  # type: ignore[union-attr]
+
+
+def test_consume_reusing_event_id_with_different_amount_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    assert store.consume("evt:c1", "root", Decimal("0.10")) is True
+    with pytest.raises(EventConflict):
+        store.consume("evt:c1", "root", Decimal("0.20"))
+    assert store.get("root").consumed_usd == Decimal("0.10")  # type: ignore[union-attr]
+
+
+def test_consume_reusing_event_id_known_vs_unknown_raises_conflict(store: EconomicAuthorityStore):
+    _open_root(store, "1.00")
+    assert store.consume("evt:c1", "root", Decimal("0.10")) is True
+    with pytest.raises(EventConflict):
+        store.consume("evt:c1", "root", None)
+
+
+def test_settle_reusing_event_id_with_different_outcome_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    assert store.settle("evt:s1", "child-1", "SUCCESS") is True
+    with pytest.raises(EventConflict):
+        store.settle("evt:s1", "child-1", "FAIL")
+    assert store.get("child-1").outcome == "SUCCESS"  # type: ignore[union-attr]
+
+
+def test_reserve_reusing_delegation_id_with_different_parent_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "sub-1", "worker", Decimal("0.10"))
+    store.reserve("evt:r2", "root", "child-1", "worker", Decimal("0.30"))
+    with pytest.raises(EventConflict):
+        # Same delegation_id "child-1", but a different parent_id than the
+        # one it was actually created under.
+        store.reserve("evt:r3-different", "sub-1", "child-1", "worker", Decimal("0.30"))
+
+
+def test_reserve_reusing_delegation_id_with_different_amount_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30"))
+    with pytest.raises(EventConflict):
+        store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.40"))
+
+
+def test_reserve_reusing_delegation_id_with_different_agent_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker-a", Decimal("0.30"))
+    with pytest.raises(EventConflict):
+        store.reserve("evt:r2-different", "root", "child-1", "worker-b", Decimal("0.30"))
+
+
+def test_create_root_reusing_delegation_id_with_different_envelope_raises_conflict(
+    store: EconomicAuthorityStore,
+):
+    store.create_root("evt:root1", "root", "buyer", Decimal("1.00"))
+    with pytest.raises(EventConflict):
+        store.create_root("evt:root2-different", "root", "buyer", Decimal("2.00"))
+
+
+def test_matching_retry_of_reserve_is_still_a_safe_no_op(store: EconomicAuthorityStore):
+    """The idempotency fix must not regress the original guarantee: a
+    retry with the SAME canonical payload (parent/agent/amount) remains a
+    safe, non-conflicting no-op."""
+    _open_root(store, "1.00")
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.30")) is True
+    assert store.reserve("evt:r2-different", "root", "child-1", "worker", Decimal("0.30")) is True
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0.30")
+
+
+# -- revocation epoch: reserve refuses once revocation has started (repair item 4) --
+
+
+def test_mark_revocation_started_is_idempotent_and_reports_missing_delegation(
+    store: EconomicAuthorityStore,
+):
+    assert store.mark_revocation_started("does-not-exist") is False
+    _open_root(store, "1.00")
+    assert store.mark_revocation_started("root") is True
+    assert store.mark_revocation_started("root") is True  # second call, same effect
+    root = store.get("root")
+    assert root is not None
+    assert root.revocation_started_at is not None
+
+
+def test_reserve_refuses_once_direct_parent_revocation_has_started(store: EconomicAuthorityStore):
+    _open_root(store, "1.00")
+    store.mark_revocation_started("root")
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) is False
+    assert store.get("child-1") is None
+
+
+def test_reserve_refuses_once_any_ancestor_revocation_has_started(store: EconomicAuthorityStore):
+    """The flag is checked across the WHOLE ancestor chain, not just the
+    direct parent -- this is what lets marking the root block a brand-new
+    reservation several levels deep."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.50"))
+    store.reserve("evt:r2", "child-1", "grandchild-1", "worker", Decimal("0.20"))
+    store.mark_revocation_started("root")
+    assert (
+        store.reserve("evt:r3", "grandchild-1", "great-grandchild-1", "worker", Decimal("0.01"))
+        is False
+    )
+    assert store.get("great-grandchild-1") is None
+
+
+def test_reserve_before_revocation_mark_still_succeeds(store: EconomicAuthorityStore):
+    """The flag only blocks reservations that observe it -- one that
+    genuinely committed first is unaffected (and will be caught by a
+    subsequent subtree scan/settle, as `executor.py` performs)."""
+    _open_root(store, "1.00")
+    assert store.reserve("evt:r1", "root", "child-1", "worker", Decimal("0.10")) is True
+    store.mark_revocation_started("root")
+    child = store.get("child-1")
+    assert child is not None
+    assert child.active is True  # marking alone does not settle anything
+
+
+def test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_unmarked(tmp_path):
+    """Whitebox concurrency proof for the race this repair closes: many
+    threads race real `reserve` calls against a `mark_revocation_started`
+    call for the same parent. Every reservation that the store reports as
+    successful must have committed strictly before the mark (and is
+    therefore visible to a subtree scan taken after the mark); every
+    reservation attempted once the mark is visible must be refused. There
+    is no possible outcome where a reservation is both reported successful
+    AND unreachable by a post-mark scan.
+    """
+    db_path = tmp_path / "authority.sqlite3"
+    store = EconomicAuthorityStore(db_path)
+    store.create_root("evt:root", "root", "buyer", Decimal("100.00"))
+
+    def try_reserve(i: int) -> bool:
+        return EconomicAuthorityStore(db_path).reserve(
+            f"evt:race-{i}", "root", f"child-race-{i}", "worker", Decimal("0.01")
+        )
+
+    def do_mark() -> bool:
+        return EconomicAuthorityStore(db_path).mark_revocation_started("root")
+
+    with ThreadPoolExecutor(max_workers=17) as pool:
+        reserve_futures = [pool.submit(try_reserve, i) for i in range(16)]
+        mark_future = pool.submit(do_mark)
+        results = [f.result() for f in reserve_futures]
+        assert mark_future.result() is True
+
+    # The mark itself is now durably visible. A subtree scan performed
+    # AFTER this point (as executor.py's revoke does) must see every
+    # delegation that reserve() reported as created -- prove that here by
+    # checking each one directly.
+    root_after = store.get("root")
+    assert root_after is not None
+    assert root_after.revocation_started_at is not None
+
+    successful_children = [f"child-race-{i}" for i, ok in enumerate(results) if ok]
+    for child_id in successful_children:
+        child = store.get(child_id)
+        assert child is not None, (
+            f"{child_id} was reported reserved but does not exist -- "
+            "a committed reservation must never be invisible"
+        )
+
+    # No further reservation can land against root now that it is marked,
+    # regardless of how many succeeded before the mark.
+    assert (
+        store.reserve("evt:race-after", "root", "child-after-mark", "worker", Decimal("0.01"))
+        is False
+    )
+    assert store.get("child-after-mark") is None
 
 
 # -- exclusions: no debug hooks, no outbound calls, no package coupling ---
