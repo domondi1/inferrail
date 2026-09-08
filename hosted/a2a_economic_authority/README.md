@@ -8,10 +8,14 @@ SQLite. `executor.py`, `agent_card.py`, `access_control.py`, and
 `server.py` add a real, locked-down A2A server on top of it, and
 `capabilities.py` adds a capability-token authorization layer.
 
-**Not yet present, by design at this stage:** any payment/x402 wiring
-(Phase C adds a paid `POST /sessions` path), any deployment configuration,
-and any recursive/automatic delegation between agents -- every operation is
-a direct call initiated by a caller.
+**Not yet present, by design at this stage:** any payment/x402 wiring, any
+deployment configuration, and any recursive/automatic delegation between
+agents -- every operation is a direct call initiated by a caller. The
+`authority_usd` ceiling tracked here is caller-declared accounting/policy
+metadata: Inferrail does not hold, transfer, or escrow the underlying
+money. Whether and how payment is added later is a separate, not-yet-made
+decision; nothing here should be read as committing to a specific future
+mechanism or timeline.
 
 ## What's here
 
@@ -166,9 +170,10 @@ deliberately excluded from the main `mypy` invocation's package list (see
 
 ## Known limitations (Phase B)
 
-- No payment: Phase C adds `POST /sessions` over x402. Until then, the
-  only way a root delegation and its capability come into existence is
-  `bootstrap.py`, called directly in a test process -- never over HTTP.
+- No payment of any kind. There is no public endpoint that creates a root
+  delegation or its capability -- the only way either comes into existence
+  today is `bootstrap.py`, called directly in a test process, never over
+  HTTP. Whether and how a paid path is added later is undecided.
 - No recursive/automatic delegation: every operation is a direct call
   initiated by a caller. Nothing in this service ever calls another agent.
 - `agent_id` is a caller-supplied label, not a verified identity.
