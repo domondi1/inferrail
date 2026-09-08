@@ -1315,6 +1315,135 @@ async def test_state_and_revocation_survive_process_restart(paths, root):
         )
 
 
+# -- finding 3: purging an unclaimed claim by its TARGET delegation -------
+
+
+async def test_revoking_a_direct_child_purges_its_own_unclaimed_claim(paths, root):
+    """A child's reservation is authorized by its PARENT's credential --
+    the claim's `issuer_delegation_id` is the parent, not the child
+    itself. Revoking just the child (not the parent) must still purge that
+    child's own outstanding, unclaimed claim: the claim's `issuer` lies
+    outside the revoked set (only the child itself is being revoked), so
+    only matching on `child_delegation_id` (finding 3) purges it. Before
+    that fix, the claim would survive revocation and remain redeemable for
+    a delegation that no longer has usable authority."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:direct-child-revoke",
+                "parent_id": "root",
+                "delegation_id": "child-revoked-before-claim",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        assert reserve_task.status.state == TaskState.TASK_STATE_COMPLETED
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+        assert claim_id is not None
+
+        revoke_task = await send(
+            client,
+            ctx,
+            {
+                "op": "revoke",
+                "event_id": "evt:revoke-direct-child",
+                "delegation_id": "child-revoked-before-claim",
+            },
+        )
+        assert revoke_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        claimed = claim_credential(base_url, claim_id, root_token)
+        assert claimed.status_code != 200, (
+            "a claim targeting a revoked child must be purged immediately, "
+            "not left redeemable"
+        )
+
+
+async def test_revoking_a_deep_grandchild_directly_purges_its_own_unclaimed_claim(paths, root):
+    """The same finding-3 scenario as the direct-child test, one level
+    deeper: a grandchild's claim is issued by its immediate parent
+    (`mid-node`), which is NOT part of this revoke at all -- only the
+    grandchild itself is revoked, and `mid-node` is left alive and
+    unaffected. The grandchild's own unclaimed claim must still be purged
+    immediately, proving the child_delegation_id match works at any depth,
+    not only for a direct child of the delegation named in the revoke
+    call."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        mid_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:mid",
+                "parent_id": "root",
+                "delegation_id": "mid-node",
+                "agent_id": "worker",
+                "maximum_usd": "0.50",
+                "child_scopes": ["read", "consume", "settle", "reserve"],
+            },
+        )
+        assert mid_task.status.state == TaskState.TASK_STATE_COMPLETED
+        mid_claim_id = _artifact_dict(mid_task)["credential_claim_id"]
+        mid_token = claim_credential(base_url, mid_claim_id, root_token).json()["token"]
+
+        mid_client = await make_client(base_url, mid_token, session_id="mid")
+        grandchild_task = await send(
+            mid_client,
+            call_context("mid"),
+            {
+                "op": "reserve",
+                "event_id": "evt:grandchild",
+                "parent_id": "mid-node",
+                "delegation_id": "grandchild-unclaimed",
+                "agent_id": "sub-worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        assert grandchild_task.status.state == TaskState.TASK_STATE_COMPLETED
+        grandchild_claim_id = _artifact_dict(grandchild_task)["credential_claim_id"]
+        assert grandchild_claim_id is not None
+        # Deliberately never claimed -- this is the outstanding claim the
+        # grandchild-only revoke below must purge, even though its issuer
+        # (`mid-node`) is untouched.
+
+        revoke_task = await send(
+            client,
+            ctx,
+            {
+                "op": "revoke",
+                "event_id": "evt:revoke-grandchild",
+                "delegation_id": "grandchild-unclaimed",
+            },
+        )
+        assert revoke_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        claimed = claim_credential(base_url, grandchild_claim_id, root_token)
+        assert claimed.status_code != 200, (
+            "an unclaimed claim must be purged when its own delegation is revoked, "
+            "even when its issuer (an ancestor) survives untouched"
+        )
+
+        # mid-node itself is untouched by the grandchild-only revoke.
+        status_task = await send(
+            mid_client, call_context("mid"), {"op": "status", "delegation_id": "mid-node"}
+        )
+        assert status_task.status.state == TaskState.TASK_STATE_COMPLETED
+        assert _artifact_dict(status_task)["delegation"]["active"] is True
+
+
 # -- repair item 3: revocation fails closed and crash-recovers --------
 
 

@@ -501,6 +501,82 @@ def test_purge_for_delegations_empty_list_is_a_safe_no_op():
     assert handoff.purge_for_delegations([]) == 0
 
 
+# -- finding 3: purge must also match a claim's TARGET delegation ---------
+
+
+def test_purge_for_delegations_matches_the_direct_child_target_too(store: CapabilityStore):
+    """A claim's ISSUER (the parent whose credential authorized the
+    reservation) may lie outside a revoked subtree even when the claim's
+    CHILD target -- the delegation the claim would grant access to -- is
+    itself the one being revoked. Revoking just that one child must purge
+    its own outstanding claim, not only claims issued under it."""
+    issuer_token, _issuer_plaintext = store.issue("root", {"reserve"})
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id="child-token-id",
+        plaintext="plaintext-for-child",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=issuer_token,
+        child_delegation_id="child-being-revoked",
+    )
+
+    # Revoke only the CHILD -- "root" (the issuer) is untouched and
+    # survives.
+    purged = handoff.purge_for_delegations(["child-being-revoked"])
+    assert purged == 1
+
+    with pytest.raises(InvalidCredential):
+        handoff.redeem(store, claim_id, "irrelevant")
+
+
+def test_purge_for_delegations_matches_a_child_deep_in_a_revoked_tree(store: CapabilityStore):
+    """A full-tree revocation names every delegation_id in the subtree.
+    An outstanding claim whose child target is a GRANDCHILD deep in that
+    subtree -- issued by an ancestor further up, outside the immediately
+    revoked node -- must still be purged."""
+    issuer_token, _issuer_plaintext = store.issue("root", {"reserve"})
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id="grandchild-token-id",
+        plaintext="plaintext-for-grandchild",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=issuer_token,
+        child_delegation_id="grandchild-deep-in-tree",
+    )
+
+    subtree = ["mid-node", "grandchild-deep-in-tree", "great-grandchild"]
+    purged = handoff.purge_for_delegations(subtree)
+    assert purged == 1
+
+    with pytest.raises(InvalidCredential):
+        handoff.redeem(store, claim_id, "irrelevant")
+
+
+def test_purge_for_delegations_survives_when_neither_issuer_nor_child_match(
+    store: CapabilityStore,
+):
+    issuer_token, _issuer_plaintext = store.issue("root", {"reserve"})
+    handoff = InMemoryCredentialHandoff()
+    claim_id = _create_claim(
+        handoff,
+        token_id="unrelated-token-id",
+        plaintext="plaintext-unrelated",
+        issuer_delegation_id="root",
+        issuer_required_scope="reserve",
+        authorizing_token_id=issuer_token,
+        child_delegation_id="unrelated-child",
+    )
+
+    purged = handoff.purge_for_delegations(["some-other-subtree"])
+    assert purged == 0
+
+    assert handoff.redeem(store, claim_id, _issuer_plaintext) == "plaintext-unrelated"
+
+
 def test_concurrent_redemption_of_the_same_claim_succeeds_exactly_once(store: CapabilityStore):
     """Repair item 3's concurrency requirement: race many threads trying
     to redeem the same claim_id. Exactly one must receive the plaintext

@@ -480,17 +480,29 @@ class InMemoryCredentialHandoff:
             return entry.plaintext_token
 
     def purge_for_delegations(self, delegation_ids: list[str]) -> int:
-        """Removes every outstanding claim issued under any of the given
-        delegation_ids. Called when a delegation tree is revoked, so an
-        unclaimed child credential from a reservation whose authority no
-        longer exists cannot be redeemed just because it hadn't expired
-        yet."""
+        """Removes every outstanding claim whose issuer OR child target
+        belongs to any of the given delegation_ids. Called when a
+        delegation tree is revoked, so an unclaimed child credential from a
+        reservation whose authority no longer exists cannot be redeemed
+        just because it hadn't expired yet.
+
+        Both sides matter: a claim is purged if the delegation that
+        authorized it (`issuer_delegation_id`) is revoked -- the reason it
+        was originally checked -- but also if the delegation the claim
+        would *grant access to* (`child_delegation_id`) is revoked, even
+        when its issuer lies outside the revoked subtree (e.g. the issuer
+        is an ancestor). Otherwise revoking a child before its own credential
+        is claimed -- while the reservation that authorized it lives on a
+        surviving ancestor -- would leave a live, redeemable claim for a
+        delegation that no longer exists."""
         if not delegation_ids:
             return 0
         wanted = set(delegation_ids)
         with self._lock:
             purge = [
-                cid for cid, entry in self._pending.items() if entry.issuer_delegation_id in wanted
+                cid
+                for cid, entry in self._pending.items()
+                if entry.issuer_delegation_id in wanted or entry.child_delegation_id in wanted
             ]
             for claim_id in purge:
                 del self._pending[claim_id]
