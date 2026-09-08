@@ -1577,6 +1577,91 @@ async def test_unknown_cost_remains_explicitly_uncertain_over_transport(paths, r
         assert receipt["invariant"]["label"] == "NOT VIOLATED ON KNOWN VALUES (PARTIAL)"
 
 
+# -- finding 2: unknown-cost settlement stays fail-closed over transport ---
+
+
+async def test_settling_a_child_with_unknown_cost_does_not_free_reusable_headroom(paths, root):
+    """Real-transport regression test for finding 2: root ($1.00) reserves
+    part of its authority for a child, the child records unknown
+    consumption, and the child settles. Root must not be able to reserve
+    its full original $1.00 again afterward -- only the genuinely
+    untouched remainder -- even though root's own invariant reports
+    PARTIAL, not a violation."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:unknown-settle-reserve",
+                "parent_id": "root",
+                "delegation_id": "child-unknown-settle",
+                "agent_id": "worker",
+                "maximum_usd": "0.40",
+            },
+        )
+        assert reserve_task.status.state == TaskState.TASK_STATE_COMPLETED
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+        child_token = claim_credential(base_url, claim_id, root_token).json()["token"]
+
+        child_client = await make_client(base_url, child_token, session_id="unknown-settle-child")
+        child_ctx = call_context("unknown-settle-child")
+        consume_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "consume",
+                "event_id": "evt:unknown-spend",
+                "delegation_id": "child-unknown-settle",
+                "amount_usd": None,
+            },
+        )
+        assert consume_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        settle_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "settle",
+                "event_id": "evt:unknown-settle",
+                "delegation_id": "child-unknown-settle",
+                "outcome": "PARTIAL",
+            },
+        )
+        assert settle_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        assert status_task.status.state == TaskState.TASK_STATE_COMPLETED
+        root_receipt = _artifact_dict(status_task)
+        assert root_receipt["delegation"]["child_reserved_usd"] == "0.40", (
+            "the $0.40 reserved for the unknown-cost child must not be released back "
+            "to root just because the child settled"
+        )
+        assert root_receipt["invariant"]["certainty"] == "PARTIAL"
+
+        full_reserve_retry = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:unknown-settle-reserve-full",
+                "parent_id": "root",
+                "delegation_id": "child-after-unknown-settle",
+                "agent_id": "worker",
+                "maximum_usd": "1.00",
+            },
+        )
+        assert full_reserve_retry.status.state in (
+            TaskState.TASK_STATE_FAILED,
+            TaskState.TASK_STATE_AUTH_REQUIRED,
+        ), "root must never be able to reserve its full original authority again"
+
+
 # -- authorization-required -> grant -> retry, over real transport --------
 
 

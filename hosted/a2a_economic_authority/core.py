@@ -905,6 +905,25 @@ class EconomicAuthorityStore:
         delegation therefore means "known authority permanently spent,
         directly or through a settled descendant."
 
+        Unknown-cost accounting rule (smallest conservative choice): if
+        this delegation recorded any unknown-cost event
+        (`unknown_cost_count > 0`), the parent's reservation slot is freed
+        by `consumed_usd` only -- never by the full `authority_usd`. The
+        remainder (whatever was reserved but neither known-consumed nor
+        accounted for) stays counted against the parent's
+        `child_reserved_usd` forever, exactly as if it were still an open
+        reservation. This deliberately treats "unknown how much was truly
+        spent" as "assume the worst, until proven otherwise" rather than
+        "assume zero" -- an unresolved unknown cost can never become
+        reusable known headroom for the parent, and the parent's own
+        `invariant()` keeps reporting PARTIAL certainty (via
+        `has_unknown_cost`, which walks the whole subtree including
+        settled descendants) rather than silently returning to FULL. There
+        is intentionally no mechanism in this store to convert an unknown
+        cost back into a known one and reclaim that headroom -- doing so
+        safely would require an authoritative source for the true amount,
+        which does not exist yet.
+
         Settling itself is intentionally allowed even while `delegation_id`
         is undergoing revocation -- teardown settles every descendant this
         way, and a settle already in flight for the same reason must not
@@ -934,11 +953,17 @@ class EconomicAuthorityStore:
                 parent = self._get(conn, state.parent_delegation_id)
                 if parent is not None:
                     parent_state = _row_to_state(parent)
+                    # See the unknown-cost accounting rule in the docstring
+                    # above: a tainted child frees only its known-consumed
+                    # amount, never its full authority.
+                    parent_reserved_release = (
+                        state.consumed_usd if state.unknown_cost_count else state.authority_usd
+                    )
                     conn.execute(
                         "UPDATE delegations SET child_reserved_usd = ?, consumed_usd = ?, "
                         "updated_at = ? WHERE delegation_id = ?",
                         (
-                            str(parent_state.child_reserved_usd - state.authority_usd),
+                            str(parent_state.child_reserved_usd - parent_reserved_release),
                             str(parent_state.consumed_usd + state.consumed_usd),
                             now,
                             state.parent_delegation_id,

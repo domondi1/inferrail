@@ -183,6 +183,107 @@ def test_invariant_is_full_certainty_with_no_unknown_cost(store: EconomicAuthori
     assert result.label == "SATISFIED"
 
 
+# -- finding 2: settling a child with unknown cost must not free reusable --
+# -- headroom for the parent -----------------------------------------------
+
+
+def test_settling_a_child_with_unknown_cost_never_frees_reusable_parent_headroom(
+    store: EconomicAuthorityStore,
+):
+    """Regression test for finding 2 (independent review round 3): root
+    reserves part of its authority for a child, the child records an
+    UNKNOWN-cost event (the true amount was never resolved), and the
+    child settles. Before the fix, settle() released the child's full
+    authority back to the parent's headroom regardless of unknown cost,
+    treating the unresolved amount as though it were certainly zero --
+    root could then reserve its full original authority again even though
+    part of it might have actually been spent by the settled child.
+
+    Correct (smallest conservative) behavior: a settled child that ever
+    recorded unknown cost releases only its KNOWN consumption back to the
+    parent; the remainder stays counted against the parent's
+    `child_reserved_usd` forever -- unavailable, not reusable, not
+    silently discarded either (conservation still holds) -- and the
+    parent's own invariant keeps reporting PARTIAL certainty because the
+    settled child (still present in its subtree) still carries the
+    unknown-cost event.
+    """
+    _open_root(store, "1.00")
+    store.reserve("evt:reserve", "root", "child-unknown", "worker", Decimal("0.40"))
+    assert store.consume("evt:unknown-spend", "child-unknown", None) is True
+    assert store.settle("evt:settle", "child-unknown", "PARTIAL") is True
+
+    root = store.get("root")
+    assert root is not None
+    # None of the $0.40 reserved for this child is released back to root
+    # -- the unresolved unknown cost could be anywhere up to that amount.
+    assert root.child_reserved_usd == Decimal("0.40")
+    assert root.consumed_usd == Decimal("0")
+    assert root.active_reservation_usd == Decimal("0.60")
+
+    # Root must never be able to reserve the full original $1.00 again --
+    # only the genuinely untouched $0.60 remains available.
+    assert store.reserve("evt:reserve-full", "root", "child-2", "worker", Decimal("1.00")) == (
+        "rejected"
+    )
+    assert store.reserve("evt:reserve-remaining", "root", "child-3", "worker", Decimal("0.60")) == (
+        "created"
+    )
+    assert (
+        store.reserve("evt:reserve-over", "root", "child-4", "worker", Decimal("0.01"))
+        == "rejected"
+    )
+
+    result = store.invariant("root")
+    assert result.certainty == "PARTIAL", (
+        "an unresolved unknown cost from a settled child must keep the parent's "
+        "invariant at PARTIAL certainty forever, never silently return to FULL"
+    )
+    assert result.satisfied_on_known_values is True
+
+
+def test_settling_a_child_with_partial_known_and_unknown_cost_releases_only_the_known_part(
+    store: EconomicAuthorityStore,
+):
+    """A child that recorded BOTH a known consumption and an unknown-cost
+    event still only releases the known amount to the parent -- the
+    unknown-tainted remainder is never assumed to be free just because
+    part of the child's activity happened to be resolved."""
+    _open_root(store, "1.00")
+    store.reserve("evt:reserve", "root", "child-mixed", "worker", Decimal("0.50"))
+    assert store.consume("evt:known-spend", "child-mixed", Decimal("0.10")) is True
+    assert store.consume("evt:unknown-spend", "child-mixed", None) is True
+    assert store.settle("evt:settle", "child-mixed", "PARTIAL") is True
+
+    root = store.get("root")
+    assert root is not None
+    # Only the known $0.10 is folded into root's consumed_usd and released
+    # from child_reserved_usd; the remaining $0.40 stays locked.
+    assert root.consumed_usd == Decimal("0.10")
+    assert root.child_reserved_usd == Decimal("0.40")
+    assert root.active_reservation_usd == Decimal("0.50")
+
+
+def test_settling_a_child_with_no_unknown_cost_still_releases_its_full_authority(
+    store: EconomicAuthorityStore,
+):
+    """The conservative unknown-cost rule must not regress the ordinary,
+    fully-known case: a child with zero unknown-cost events still frees
+    its complete unused reservation back to the parent on settlement,
+    exactly as before."""
+    _open_root(store, "1.00")
+    store.reserve("evt:reserve", "root", "child-known-only", "worker", Decimal("0.40"))
+    store.consume("evt:known-spend", "child-known-only", Decimal("0.15"))
+    store.settle("evt:settle", "child-known-only", "SUCCESS")
+
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0")
+    assert root.consumed_usd == Decimal("0.15")
+    assert root.active_reservation_usd == Decimal("0.85")
+    assert store.invariant("root").certainty == "FULL"
+
+
 # -- the previously-fixed parent/child settlement defect: regression test ---
 
 
