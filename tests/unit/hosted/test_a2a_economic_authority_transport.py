@@ -13,6 +13,10 @@ that does not need one belongs in
 specifically to carry the transport-level evidence those unit tests
 cannot: real HTTP authentication, real concurrent requests, real process
 restart.
+
+Skips automatically unless the hosted extra (a2a-sdk) is installed -- the
+same pattern this repo already uses for hosted/work_economics/'s
+cdp-sdk/x402-dependent tests (`pip install -e ".[hosted]"`).
 """
 
 from __future__ import annotations
@@ -29,6 +33,9 @@ if str(HOSTED_DIR) not in sys.path:
     sys.path.insert(0, str(HOSTED_DIR))
 
 import pytest  # noqa: E402
+
+pytest.importorskip("a2a")
+
 from _a2a_economic_authority_client import (  # noqa: E402
     agent_process,
     call_context,
