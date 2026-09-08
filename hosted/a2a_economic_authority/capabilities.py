@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -231,9 +232,10 @@ class CapabilityStore:
     def _lookup(self, token: str) -> sqlite3.Row | None:
         token_hash = _hash_token(token)
         with self._transaction() as conn:
-            return conn.execute(
+            row: sqlite3.Row | None = conn.execute(
                 "SELECT * FROM capability_tokens WHERE token_hash = ?", (token_hash,)
             ).fetchone()
+            return row
 
     def revoke_for_delegations(self, delegation_ids: list[str]) -> int:
         """Revokes every live token scoped to any of the given delegation_ids.
@@ -254,57 +256,137 @@ class CapabilityStore:
             return cur.rowcount
 
 
+@dataclass(frozen=True)
+class _PendingClaim:
+    token_id: str
+    plaintext_token: str
+    issuer_delegation_id: str
+    issuer_required_scope: str
+    expires_at_monotonic: float
+
+
 class InMemoryCredentialHandoff:
     """Non-persistent, single-use handoff for a freshly minted child token.
 
     Exists specifically because the installed A2A SDK's JSON-RPC transport
-    (see `docs/adr` note in `server.py`) gives an `AgentExecutor` no channel
-    to influence the outbound HTTP response other than A2A Task/Message
-    content, which is durably persisted in `TaskStore` and must never carry
-    a credential. This buffer lives only in this process's memory: it is
-    never written to disk, is consumed exactly once, and is bound to the
-    same bearer credential that triggered its creation -- so even a party
-    that learns the (non-secret) claim_id from Task history cannot redeem
-    it without also holding the original caller's own bearer token.
+    (see the module docstring in `server.py`) gives an `AgentExecutor` no
+    channel to influence the outbound HTTP response other than A2A
+    Task/Message content, which is durably persisted in `TaskStore` and
+    must never carry a credential. This buffer lives only in this
+    process's memory: it is never written to disk, and is consumed exactly
+    once.
+
+    Redemption is bound to a *scope requirement on a delegation*
+    (`issuer_delegation_id`, `issuer_required_scope`) rather than to one
+    specific token. At redemption time (`redeem`), the presented bearer
+    token is revalidated in full against the live `CapabilityStore` --
+    existence, expiry, revocation, delegation binding, and scope -- via
+    the same `authorize()` every other operation uses. This means: (1) a
+    credential that has since expired or been revoked cannot redeem a
+    claim even if it is the exact one that triggered the reservation; and
+    (2) a *different* token that currently holds the required scope on the
+    same delegation can redeem it too -- which is what prevents a
+    grant-only credential from redeeming a reservation only a
+    reserve-scoped credential authorized (see `executor.py`'s
+    `_finish_reserve`, which always sets `issuer_required_scope="reserve"`
+    regardless of which credential completed the call).
 
     Not durable across a process restart by design: an unclaimed handoff is
     lost on restart, same as an unclaimed one-time code from any other
     system would be. The economic effect of the `reserve` that created it
     is unaffected -- that state lives in `core.EconomicAuthorityStore`.
+
+    Thread-safe via a plain `threading.Lock`: `redeem` never awaits between
+    reading and mutating `_pending`, so concurrent redemption attempts for
+    the same claim_id are strictly serialized and at most one can succeed.
+    This buffer is process-local by design (see `server.py`'s
+    single-process requirement) -- the lock only needs to work within one
+    process, not across a future multi-worker deployment.
     """
 
     def __init__(self, ttl_seconds: int = _DEFAULT_CLAIM_TTL_SECONDS) -> None:
         self._ttl_seconds = ttl_seconds
-        self._pending: dict[str, tuple[str, str, str, float]] = {}
-        # claim_id -> (token_id, plaintext_token, issuer_token_hash, expires_at_monotonic)
+        self._pending: dict[str, _PendingClaim] = {}
+        self._lock = threading.Lock()
 
-    def create(self, token_id: str, plaintext_token: str, issuer_token: str) -> str:
+    def create(
+        self,
+        token_id: str,
+        plaintext_token: str,
+        issuer_delegation_id: str,
+        issuer_required_scope: str,
+    ) -> str:
         claim_id = secrets.token_urlsafe(24)
         expires_at = time.monotonic() + self._ttl_seconds
-        self._pending[claim_id] = (token_id, plaintext_token, _hash_token(issuer_token), expires_at)
+        with self._lock:
+            self._pending[claim_id] = _PendingClaim(
+                token_id=token_id,
+                plaintext_token=plaintext_token,
+                issuer_delegation_id=issuer_delegation_id,
+                issuer_required_scope=issuer_required_scope,
+                expires_at_monotonic=expires_at,
+            )
         return claim_id
 
-    def redeem(self, claim_id: str, presented_token: str | None) -> str:
+    def redeem(
+        self, capability_store: CapabilityStore, claim_id: str, presented_token: str | None
+    ) -> str:
         """Returns the plaintext token for `claim_id`, consuming it only on
-        success. A wrong or missing credential leaves the claim intact --
-        so a mistyped retry by the legitimate holder still works -- but an
-        expired or successfully-redeemed claim is removed and can never be
-        used again.
+        success.
 
-        Raises `MissingCredential`/`InvalidCredential`/`ExpiredCredential`/
-        `WrongDelegation` (reused here as "wrong presented credential") on
-        any failure.
+        Fully revalidates the presented credential against
+        `capability_store` (existence, expiry, revocation, delegation
+        binding, scope) before releasing anything -- matching hash bytes
+        alone is never sufficient. A wrong-but-currently-valid credential
+        (e.g. right shape, wrong scope) leaves the claim intact so a
+        legitimate holder's retry still works; an expired or revoked
+        *issuer* credential is terminal (it can never become valid again),
+        so the claim is purged immediately rather than left dangling.
+        Successful redemption always removes the entry.
+
+        Raises the specific `CapabilityError` subclass `authorize()`
+        raised for the presented credential, or `InvalidCredential`/
+        `ExpiredCredential` for a claim_id problem itself.
         """
-        entry = self._pending.get(claim_id)
-        if entry is None:
-            raise InvalidCredential("unknown or already-redeemed claim")
-        _token_id, plaintext_token, issuer_hash, expires_at = entry
-        if time.monotonic() > expires_at:
+        with self._lock:
+            entry = self._pending.get(claim_id)
+            if entry is None:
+                raise InvalidCredential("unknown or already-redeemed claim")
+            if time.monotonic() > entry.expires_at_monotonic:
+                del self._pending[claim_id]
+                raise ExpiredCredential("claim has expired")
+            try:
+                capability_store.authorize(
+                    presented_token, entry.issuer_delegation_id, entry.issuer_required_scope
+                )
+            except (RevokedCredential, ExpiredCredential):
+                # The issuing authority is permanently gone -- this claim
+                # can never be redeemed by anyone now, so purge it rather
+                # than leave a dead entry (and a live plaintext token)
+                # sitting in memory.
+                del self._pending[claim_id]
+                raise
+            except CapabilityError:
+                # Wrong/missing/insufficiently-scoped credential: the
+                # claim itself may still be legitimately redeemable by its
+                # rightful holder, so it survives this failed attempt.
+                raise
             del self._pending[claim_id]
-            raise ExpiredCredential("claim has expired")
-        if not presented_token:
-            raise MissingCredential("no bearer credential presented")
-        if _hash_token(presented_token) != issuer_hash:
-            raise WrongDelegation("claim was not issued to this credential")
-        del self._pending[claim_id]
-        return plaintext_token
+            return entry.plaintext_token
+
+    def purge_for_delegations(self, delegation_ids: list[str]) -> int:
+        """Removes every outstanding claim issued under any of the given
+        delegation_ids. Called when a delegation tree is revoked, so an
+        unclaimed child credential from a reservation whose authority no
+        longer exists cannot be redeemed just because it hadn't expired
+        yet."""
+        if not delegation_ids:
+            return 0
+        wanted = set(delegation_ids)
+        with self._lock:
+            purge = [
+                cid for cid, entry in self._pending.items() if entry.issuer_delegation_id in wanted
+            ]
+            for claim_id in purge:
+                del self._pending[claim_id]
+            return len(purge)
