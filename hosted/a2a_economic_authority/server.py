@@ -188,7 +188,12 @@ def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | P
                 {"error": "claim_id is required"}, status_code=400, headers=_NO_STORE_HEADERS
             )
         try:
-            plaintext = handoff.redeem(capability_store, claim_id, presented_token.strip())
+            plaintext = handoff.redeem(
+                capability_store,
+                claim_id,
+                presented_token.strip(),
+                is_target_revoked=core_store.is_revocation_in_progress,
+            )
         except CapabilityError as exc:
             return JSONResponse(
                 {"error": type(exc).__name__}, status_code=403, headers=_NO_STORE_HEADERS

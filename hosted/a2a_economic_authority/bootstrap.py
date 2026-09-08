@@ -4,10 +4,10 @@ Provisions the initial root delegation and its root capability token
 *before* a server process starts, by writing directly into the same SQLite
 files the server will open. This is deliberately not an HTTP endpoint --
 there is no unauthenticated public root-creation route anywhere in
-`server.py`. Phase C is what adds a paid `POST /sessions` path; until then,
-the only way a root delegation and its capability come into existence is
-this function, called directly from test setup code in the same Python
-process, never over the network.
+`server.py`, and no payment of any kind exists yet. The only way a root
+delegation and its capability come into existence today is this function,
+called directly from test setup code in the same Python process, never
+over the network.
 """
 
 from __future__ import annotations

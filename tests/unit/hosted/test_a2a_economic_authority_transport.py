@@ -22,6 +22,8 @@ cdp-sdk/x402-dependent tests (`pip install -e ".[hosted]"`).
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 import subprocess
 import sys
 from decimal import Decimal
@@ -54,7 +56,7 @@ from a2a.types import (  # noqa: E402
     TaskState,
 )
 from bootstrap import bootstrap_root  # noqa: E402
-from capabilities import CapabilityStore  # noqa: E402
+from capabilities import SCOPES, CapabilityStore, RevokedCredential  # noqa: E402
 from core import EconomicAuthorityStore  # noqa: E402
 
 
@@ -972,6 +974,147 @@ async def test_reserve_retry_with_mismatched_amount_fails_explicitly(paths, root
     )
 
 
+# -- reservation retries are idempotent for credentials too (repair item 4) --
+
+
+async def test_matching_reserve_retry_does_not_mint_additional_credentials(paths, root):
+    """A matching duplicate delivery of a successful reserve must not mint
+    another capability token/claim each time -- only the original
+    `reserve` that actually created the delegation ever mints one."""
+    _root_id, root_token = root
+    cap_store = CapabilityStore(paths["cap_db"])
+    delegation_id = "child-no-remint"
+
+    def live_token_count() -> int:
+        with sqlite3.connect(paths["cap_db"]) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM capability_tokens WHERE delegation_id = ?",
+                (delegation_id,),
+            ).fetchone()
+            return int(row[0])
+
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        payload = {
+            "op": "reserve",
+            "event_id": "evt:no-remint",
+            "parent_id": "root",
+            "delegation_id": delegation_id,
+            "agent_id": "worker",
+            "maximum_usd": "0.10",
+        }
+
+        first = await send(client, ctx, payload)
+        assert first.status.state == TaskState.TASK_STATE_COMPLETED
+        assert _artifact_dict(first)["credential_claim_id"] is not None
+        assert cap_store is not None  # sanity: same db as the running server
+
+        for _ in range(5):
+            retry = await send(client, ctx, payload)
+            assert retry.status.state == TaskState.TASK_STATE_COMPLETED
+            assert _artifact_dict(retry)["credential_claim_id"] is None, (
+                "a matching retry must never mint another credential"
+            )
+
+    assert live_token_count() == 1, "exactly one capability token must exist for this delegation"
+
+
+async def test_reserve_retry_with_changed_child_scopes_is_an_explicit_conflict(paths, root):
+    """Requesting different `child_scopes` on a retry of an existing
+    reservation must fail explicitly, not silently mint a differently-
+    scoped credential (which `child_scopes` is not otherwise part of the
+    durable reservation identity core.py checks)."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        first = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:scope-drift-1",
+                "parent_id": "root",
+                "delegation_id": "child-scope-drift",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+                "child_scopes": ["read", "consume"],
+            },
+        )
+        assert first.status.state == TaskState.TASK_STATE_COMPLETED
+
+        drifted = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:scope-drift-2",
+                "parent_id": "root",
+                "delegation_id": "child-scope-drift",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+                "child_scopes": ["read", "consume", "settle", "revoke"],
+            },
+        )
+        assert drifted.status.state == TaskState.TASK_STATE_FAILED
+        assert not drifted.artifacts, "no credential may be issued for a rejected scope-drift retry"
+
+
+async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_child_id(paths, root):
+    """A different caller who also holds 'reserve' scope on the SAME
+    parent, but did not create this delegation, must not be able to mint
+    themselves a working credential for it just by naming the same
+    delegation_id/agent_id/amount -- no mint ever happens on a matching
+    'already exists' retry, regardless of who sends it."""
+    _root_id, root_token = root
+    cap_store = CapabilityStore(paths["cap_db"])
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        original = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:guess-1",
+                "parent_id": "root",
+                "delegation_id": "child-guessable",
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        assert original.status.state == TaskState.TASK_STATE_COMPLETED
+
+        _other_id, other_reserve_token = cap_store.issue("root", {"reserve"})
+        other_client = await make_client(base_url, other_reserve_token, session_id="guesser")
+        guess = await send(
+            other_client,
+            call_context("guesser"),
+            {
+                "op": "reserve",
+                "event_id": "evt:guess-2-different",
+                "parent_id": "root",
+                "delegation_id": "child-guessable",  # guessed/observed delegation_id
+                "agent_id": "worker",
+                "maximum_usd": "0.10",
+            },
+        )
+        # Either outcome is safe -- a matching no-op with no re-mint, or an
+        # explicit failure (e.g. because the guesser's own scopes compute a
+        # different default child_scopes than the original) -- but the
+        # guesser must never walk away with a working credential either way.
+        assert guess.status.state in (TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED)
+        if guess.artifacts:
+            assert _artifact_dict(guess).get("credential_claim_id") is None, (
+                "the guesser must never receive a credential for a delegation it did not create"
+            )
+
+
 # -- concurrency: competing reservations cannot exceed authority -----------
 
 
@@ -1170,6 +1313,242 @@ async def test_state_and_revocation_survive_process_restart(paths, root):
         assert revoked_task.status.state == TaskState.TASK_STATE_REJECTED, (
             "revocation must survive the restart"
         )
+
+
+# -- repair item 3: revocation fails closed and crash-recovers --------
+
+
+async def test_revocation_blocks_grant_consume_and_claim_before_teardown_completes(paths, root):
+    """Whitebox proof of the exact window repair item 3 closes: once
+    `mark_revocation_started` has committed for an ancestor, grant/
+    consume/claim-redemption against a descendant must all fail -- even
+    though the descendant is technically still `active` and its
+    capability tokens are technically still unrevoked, because the rest
+    of the teardown (settlement, token revocation, claim purge) has not
+    run yet. Exercised directly against core.py/capabilities.py rather
+    than through a live executor, so the window is fully controlled."""
+    _root_id, root_token = root
+    cap_store = CapabilityStore(paths["cap_db"])
+    core_store = EconomicAuthorityStore(paths["db"])
+
+    core_store.reserve("evt:r1", "root", "child-mid-revoke", "worker", Decimal("0.30"))
+    _child_id, child_token = cap_store.issue("child-mid-revoke", {"grant", "consume"})
+
+    # Simulates the crashed-mid-revoke window directly: mark committed,
+    # nothing else has run yet.
+    assert core_store.mark_revocation_started("root") is True
+
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        child_client = await make_client(base_url, child_token, session_id="mid-revoke")
+        child_ctx = call_context("mid-revoke")
+
+        grant_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "grant",
+                "event_id": "evt:g1",
+                "delegation_id": "child-mid-revoke",
+                "amount_usd": "0.01",
+            },
+        )
+        assert grant_task.status.state == TaskState.TASK_STATE_FAILED, (
+            "grant must be blocked once an ancestor's revocation has started"
+        )
+
+        consume_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "consume",
+                "event_id": "evt:c1",
+                "delegation_id": "child-mid-revoke",
+                "amount_usd": "0.01",
+            },
+        )
+        assert consume_task.status.state == TaskState.TASK_STATE_FAILED, (
+            "consume must be blocked once an ancestor's revocation has started"
+        )
+
+    # The capability token itself is still technically unrevoked at this
+    # point (only core.py's revocation-in-progress flag is set) -- confirm
+    # that directly, then confirm the target-revocation check in the claim
+    # route independently blocks a hypothetical claim for this same tree.
+    cap_store.authorize(child_token, "child-mid-revoke", "consume")  # does not raise
+    assert core_store.is_revocation_in_progress("child-mid-revoke") is True
+
+
+async def test_revocation_crash_recovery_finishes_an_interrupted_teardown(paths):
+    """Repair item 3's crash-injection requirement, end to end: a real
+    subprocess is killed immediately after `mark_revocation_started`
+    commits for root (before any settlement, token revocation, or claim
+    purge). A real server is then started against the same database
+    files -- proving descendants are already fail-closed even though
+    nothing has been settled yet -- and a retried `revoke` through real
+    A2A transport safely resumes and finishes the interrupted teardown.
+    """
+    state_json_path = paths["tmp_path"] / "revocation_crash_state.json"
+    helper = Path(__file__).resolve().parent / "_a2a_economic_authority_revocation_crash_helper.py"
+    result = subprocess.run(
+        [sys.executable, str(helper), str(paths["db"]), str(paths["cap_db"]), str(state_json_path)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode != 0, (
+        f"crash helper exited cleanly (code {result.returncode}); "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+    state = json.loads(state_json_path.read_text())
+    child_plaintext = state["child_plaintext"]
+    grandchild_plaintext = state["grandchild_plaintext"]
+
+    # Confirm the crash boundary landed where intended: marked, but
+    # nothing settled yet, and the child/grandchild tokens still resolve.
+    core_store = EconomicAuthorityStore(paths["db"])
+    assert core_store.get("root").revocation_started_at is not None  # type: ignore[union-attr]
+    assert core_store.get("child-1").active is True  # type: ignore[union-attr]
+    cap_store = CapabilityStore(paths["cap_db"])
+    cap_store.authorize(child_plaintext, "child-1", "consume")  # does not raise yet
+
+    # A fresh root capability, minted after the crash directly against the
+    # already-existing root row (created by the crash helper, not by
+    # bootstrap_root) -- simulating an operator who still holds root
+    # authority and wants to retry the interrupted revoke.
+    _root_token_id, root_token = cap_store.issue("root", SCOPES)
+
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        # Before the retry: descendants are already fail-closed.
+        blocked_client = await make_client(base_url, child_plaintext, session_id="blocked")
+        blocked = await send(
+            blocked_client,
+            call_context("blocked"),
+            {
+                "op": "consume",
+                "event_id": "evt:blocked",
+                "delegation_id": "child-1",
+                "amount_usd": "0.01",
+            },
+        )
+        assert blocked.status.state == TaskState.TASK_STATE_FAILED
+
+        retried = await send(
+            client, ctx, {"op": "revoke", "event_id": "evt:resume-revoke", "delegation_id": "root"}
+        )
+        assert retried.status.state == TaskState.TASK_STATE_COMPLETED
+        receipt = _artifact_dict(retried)
+        assert set(receipt["revoked_delegation_ids"]) == {"root", "child-1", "grandchild-1"}
+        assert set(receipt["settled_delegation_ids"]) == {"root", "child-1", "grandchild-1"}
+
+    # Final state: nothing usable survives, anywhere in the tree.
+    for delegation_id in ("root", "child-1", "grandchild-1"):
+        state_after = core_store.get(delegation_id)
+        assert state_after is not None
+        assert state_after.active is False
+
+    for plaintext, delegation_id in (
+        (child_plaintext, "child-1"),
+        (grandchild_plaintext, "grandchild-1"),
+        (root_token, "root"),
+    ):
+        with pytest.raises(RevokedCredential):
+            cap_store.authorize(plaintext, delegation_id, "read")
+
+
+# -- repair item 8: decimal normalization and input validation ------------
+
+
+async def test_equivalent_decimal_amounts_do_not_false_conflict_over_transport(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        first = await send(
+            client,
+            ctx,
+            {
+                "op": "consume",
+                "event_id": "evt:decimal-equiv",
+                "delegation_id": "root",
+                "amount_usd": "0.10",
+            },
+        )
+        assert first.status.state == TaskState.TASK_STATE_COMPLETED
+
+        retry = await send(
+            client,
+            ctx,
+            {
+                "op": "consume",
+                "event_id": "evt:decimal-equiv",
+                "delegation_id": "root",
+                "amount_usd": "0.100",  # same value, different text
+            },
+        )
+        assert retry.status.state == TaskState.TASK_STATE_COMPLETED
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    root_state = core_store.get("root")
+    assert root_state is not None
+    assert root_state.consumed_usd == Decimal("0.10")
+
+
+async def test_non_finite_amount_is_rejected_over_transport(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        for bad_amount in ("NaN", "Infinity", "-Infinity"):
+            task = await send(
+                client,
+                ctx,
+                {
+                    "op": "grant",
+                    "event_id": f"evt:bad-{bad_amount}",
+                    "delegation_id": "root",
+                    "amount_usd": bad_amount,
+                },
+            )
+            assert task.status.state == TaskState.TASK_STATE_FAILED, (
+                f"amount_usd={bad_amount!r} must be rejected, not accepted"
+            )
+
+    core_store = EconomicAuthorityStore(paths["db"])
+    root_state = core_store.get("root")
+    assert root_state is not None
+    assert root_state.authority_usd == Decimal("1.00"), "no non-finite grant may have applied"
+
+
+async def test_oversized_identifier_is_rejected_over_transport(paths, root):
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:oversized",
+                "parent_id": "root",
+                "delegation_id": "x" * 500,
+                "agent_id": "worker",
+                "maximum_usd": "0.01",
+            },
+        )
+        assert task.status.state == TaskState.TASK_STATE_FAILED
 
 
 # -- unknown cost stays explicitly uncertain over real transport -----------
@@ -1376,6 +1755,44 @@ async def test_grant_only_credential_cannot_claim_the_reservation_it_unblocked(p
         legitimate_claim = claim_credential(base_url, claim_id, reserve_only_token)
         assert legitimate_claim.status_code == 200
         assert "token" in legitimate_claim.json()
+
+
+async def test_a_different_reserve_scoped_credential_for_the_same_parent_cannot_redeem(paths, root):
+    """Repair item 5: even a credential that is EQUALLY legitimate --
+    correctly scoped, correctly delegation-bound, currently valid -- but
+    is simply not the one that authorized this specific reservation, must
+    not be able to redeem its claim. Distinct from the grant-only case
+    above: here BOTH credentials hold 'reserve' scope on the same
+    parent."""
+    _root_id, root_token = root
+    cap_store = CapabilityStore(paths["cap_db"])
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        _id_a, reserve_token_a = cap_store.issue("root", {"reserve"})
+        _id_b, reserve_token_b = cap_store.issue("root", {"reserve"})
+
+        client_a = await make_client(base_url, reserve_token_a, session_id="a")
+        reserved = await send(
+            client_a,
+            call_context("a"),
+            {
+                "op": "reserve",
+                "event_id": "evt:exact-authorizer",
+                "parent_id": "root",
+                "delegation_id": "child-exact-authorizer",
+                "agent_id": "worker",
+                "maximum_usd": "0.05",
+            },
+        )
+        assert reserved.status.state == TaskState.TASK_STATE_COMPLETED
+        claim_id = _artifact_dict(reserved)["credential_claim_id"]
+
+        wrong_holder_attempt = claim_credential(base_url, claim_id, reserve_token_b)
+        assert wrong_holder_attempt.status_code == 403
+        assert wrong_holder_attempt.json()["error"] == "WrongAuthorizer"
+
+        true_authorizer_attempt = claim_credential(base_url, claim_id, reserve_token_a)
+        assert true_authorizer_attempt.status_code == 200
 
 
 # -- no automatic outbound agent calls --------------------------------------

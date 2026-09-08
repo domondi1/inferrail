@@ -57,6 +57,14 @@ _RESERVE_REQUIRED_FIELDS = frozenset(
     {"event_id", "parent_id", "delegation_id", "agent_id", "maximum_usd"}
 )
 
+# Reserved namespace for event_ids this executor generates internally
+# (currently: the per-descendant settlement events a tree revocation
+# issues). No caller-supplied event_id may use this prefix -- otherwise a
+# caller could pick an event_id that collides with (and, per core.py's
+# EventConflict semantics, obstructs) an internal revocation-settlement
+# event for the same delegation. See `_do_revoke` and repair item 3.
+RESERVED_EVENT_ID_PREFIX = "__a2a_economic_authority_internal__:"
+
 
 def _state_to_dict(state: DelegationState) -> dict[str, Any]:
     return {
@@ -116,6 +124,13 @@ class EconomicAuthorityExecutor(AgentExecutor):
         op = payload["op"]
         token = self._bearer_token(context)
         task = context.current_task
+
+        raw_event_id = payload.get("event_id")
+        if isinstance(raw_event_id, str) and raw_event_id.startswith(RESERVED_EVENT_ID_PREFIX):
+            await self._fail(
+                updater, "event_id may not use the reserved internal prefix"
+            )
+            return
 
         try:
             if task is not None and task.status.state == TaskState.TASK_STATE_AUTH_REQUIRED:
@@ -252,10 +267,16 @@ class EconomicAuthorityExecutor(AgentExecutor):
             await self._fail(updater, f"reserve requires {sorted(_RESERVE_REQUIRED_FIELDS)}")
             return
         parent_id = payload["parent_id"]
-        self.capabilities.authorize(token, parent_id, "reserve")
-        issuer_scopes = self.capabilities.live_scopes(token) or frozenset()
+        info = self.capabilities.authorize(token, parent_id, "reserve")
+        issuer_scopes = info.scopes
         pending = dict(payload)
         pending["issuer_scopes"] = sorted(issuer_scopes)
+        # Repair item 5: the non-secret token_id of the credential that
+        # authorized THIS reservation is preserved across the park/grant/
+        # retry cycle -- the resulting claim is bound to exactly this
+        # credential, never to "whichever credential currently holds
+        # reserve scope on the parent". Never the plaintext token itself.
+        pending["reserve_authorizer_token_id"] = info.token_id
         await self._finish_reserve(pending, issuer_scopes, updater, retry=False)
 
     async def _continue_after_grant(
@@ -269,10 +290,12 @@ class EconomicAuthorityExecutor(AgentExecutor):
         re-authorizes `reserve` -- the original reservation was already
         authorized before it parked. And critically, the resulting child
         credential's claim (minted in `_finish_reserve`) is always bound
-        to `reserve` scope on `parent_id`, never to whichever token
-        happened to supply the grant -- so a grant-only credential can
-        unblock a parked reservation but can never itself redeem, resume,
-        or hijack it.
+        to the EXACT credential that authorized the original reserve call
+        (`pending["reserve_authorizer_token_id"]`, carried through
+        unchanged from `_do_reserve` -- never overwritten with the grant
+        caller's own token_id) -- so a grant-only credential can unblock a
+        parked reservation but can never itself redeem, resume, or hijack
+        it (repair item 5).
         """
         pending = self._find_pending_operation(task)
         if pending is None:
@@ -341,6 +364,7 @@ class EconomicAuthorityExecutor(AgentExecutor):
         agent_id = pending["agent_id"]
         event_id = pending["event_id"]
         maximum_usd = Decimal(str(pending["maximum_usd"]))
+        authorizer_token_id = pending["reserve_authorizer_token_id"]
 
         parent = self.core.get(parent_id)
         if parent is None or not parent.active or parent.unknown_cost_count:
@@ -367,14 +391,27 @@ class EconomicAuthorityExecutor(AgentExecutor):
         # matches (a safe no-op) or conflicts (raises `EventConflict`,
         # caught in `execute()`).
         if self.core.get(delegation_id) is not None:
-            ok_existing = self.core.reserve(
-                event_id, parent_id, delegation_id, agent_id, maximum_usd
-            )
-            if not ok_existing:
+            outcome = self.core.reserve(event_id, parent_id, delegation_id, agent_id, maximum_usd)
+            if outcome == "rejected":
                 await self._fail(updater, "reserve rejected")
                 return
-            await self._mint_reservation_credential(
-                delegation_id, parent_id, agent_id, child_scopes, updater
+            # Repair item 4: a matching retry never mints another
+            # credential -- minting happens exactly once, only when
+            # core.reserve() actually just created the delegation. This
+            # also closes the "another reserve-scoped token on the parent
+            # guesses an existing child_id to mint itself access" vector,
+            # since no mint ever happens here regardless of who is asking.
+            original_scopes = self.capabilities.scopes_issued_for(delegation_id)
+            if original_scopes is not None and child_scopes != original_scopes:
+                await self._fail(
+                    updater,
+                    "child_scopes does not match this reservation's originally issued "
+                    "credential -- changing scopes on a retry is an explicit conflict, "
+                    "not a silent re-mint",
+                )
+                return
+            await self._complete_reservation_without_minting(
+                delegation_id, parent_id, agent_id, updater
             )
             return
 
@@ -408,14 +445,43 @@ class EconomicAuthorityExecutor(AgentExecutor):
             )
             return
 
-        ok_reserve = self.core.reserve(event_id, parent_id, delegation_id, agent_id, maximum_usd)
-        if not ok_reserve:
+        outcome = self.core.reserve(event_id, parent_id, delegation_id, agent_id, maximum_usd)
+        if outcome != "created":
             await self._fail(updater, "reserve rejected")
             return
 
         await self._mint_reservation_credential(
-            delegation_id, parent_id, agent_id, child_scopes, updater
+            delegation_id, parent_id, agent_id, child_scopes, authorizer_token_id, updater
         )
+
+    async def _complete_reservation_without_minting(
+        self, delegation_id: str, parent_id: str, agent_id: str, updater: TaskUpdater
+    ) -> None:
+        """Reports a matching reservation retry without minting a new
+        credential -- see `_finish_reserve`'s "already exists" branch
+        (repair item 4). Credential loss/recovery, if ever supported, must
+        be its own explicit rotation operation, not a side effect of this
+        path."""
+        await updater.add_artifact(
+            [
+                new_data_part(
+                    {
+                        "delegation_id": delegation_id,
+                        "parent_delegation_id": parent_id,
+                        "agent_id": agent_id,
+                        "note": "reservation_already_exists",
+                        "credential_claim_id": None,
+                        "hint": (
+                            "this delegation already exists; a matching retry does not "
+                            "issue another credential -- use the claim from the original "
+                            "reservation"
+                        ),
+                    }
+                )
+            ],
+            name="receipt",
+        )
+        await updater.complete()
 
     async def _mint_reservation_credential(
         self,
@@ -423,14 +489,21 @@ class EconomicAuthorityExecutor(AgentExecutor):
         parent_id: str,
         agent_id: str,
         child_scopes: frozenset[str],
+        authorizer_token_id: str,
         updater: TaskUpdater,
     ) -> None:
         token_id, plaintext = self.capabilities.issue(delegation_id, child_scopes)
-        # Bound to (parent_id, "reserve") -- NOT to whichever credential
-        # completed this call. Any currently-valid, reserve-scoped
-        # credential for parent_id may redeem it; a grant-only credential
-        # never can, even if its grant is what unblocked this retry.
-        claim_id = self.handoff.create(token_id, plaintext, parent_id, "reserve")
+        # Repair item 5: bound to the EXACT credential that authorized
+        # this reservation (authorizer_token_id), not merely to "some
+        # currently-valid reserve-scoped credential for parent_id".
+        claim_id = self.handoff.create(
+            token_id,
+            plaintext,
+            parent_id,
+            "reserve",
+            authorizing_token_id=authorizer_token_id,
+            child_delegation_id=delegation_id,
+        )
         await updater.add_artifact(
             [
                 new_data_part(
@@ -441,11 +514,10 @@ class EconomicAuthorityExecutor(AgentExecutor):
                         "credential_claim_id": claim_id,
                         "credential_claim_scopes": sorted(child_scopes),
                         "credential_claim_instructions": (
-                            "POST /capabilities/claim on this server with a bearer "
-                            "token that currently holds 'reserve' scope on "
-                            "parent_delegation_id, once and promptly, to receive the "
-                            "child's capability token. The token itself never appears "
-                            "in this A2A task."
+                            "POST /capabilities/claim on this server with the exact "
+                            "bearer token that authorized this reservation, once and "
+                            "promptly, to receive the child's capability token. The "
+                            "token itself never appears in this A2A task."
                         ),
                     }
                 )
@@ -579,7 +651,14 @@ class EconomicAuthorityExecutor(AgentExecutor):
         for dep_id in reversed(subtree):  # leaves first, target last
             state = self.core.get(dep_id)
             if state is not None and state.active:
-                self.core.settle(f"{event_id}:{dep_id}", dep_id, outcome)
+                # Derived purely from dep_id, in the reserved namespace no
+                # caller-supplied event_id may use (checked in execute())
+                # -- so this can never collide with, or be obstructed by,
+                # a caller's own event_id, and a retried revoke recomputes
+                # the identical internal event_id every time regardless of
+                # what top-level event_id the retry uses (repair item 3).
+                internal_event_id = f"{RESERVED_EVENT_ID_PREFIX}revoke-settle:{dep_id}"
+                self.core.settle(internal_event_id, dep_id, outcome)
                 settled.append(dep_id)
         revoked_token_count = self.capabilities.revoke_for_delegations(subtree)
         purged_claim_count = self.handoff.purge_for_delegations(subtree)
