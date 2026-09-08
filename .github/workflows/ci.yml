@@ -44,3 +44,44 @@ jobs:
         run: |
           python scripts/generate_errors_md.py
           git diff --exit-code ERRORS.md
+
+  hosted-economic-authority:
+    # Dedicated, required job for hosted/a2a_economic_authority/: the main
+    # `test` job above only installs `[dev,mcp]`, so its transport tests
+    # self-skip (pytest.importorskip("a2a")) exactly like
+    # hosted/work_economics/'s cdp-sdk/x402 tests already do -- a skipped
+    # transport suite proves nothing. This job installs `[hosted]` (which
+    # includes a2a-sdk) so the real A2A transport suite actually runs, and
+    # type-checks the hosted module directly, since it is deliberately
+    # excluded from the main `mypy` invocation's package list (see
+    # docs/adr/0010 and pyproject.toml's `[tool.mypy]`).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev and hosted dependencies
+        run: pip install -e ".[dev,hosted]"
+
+      - name: Lint (ruff) -- hosted/a2a_economic_authority
+        run: ruff check hosted/a2a_economic_authority
+
+      - name: Type-check (mypy) -- hosted/a2a_economic_authority
+        run: mypy hosted/a2a_economic_authority --strict --ignore-missing-imports
+
+      - name: Test -- Economic Authority core, capabilities, and real A2A transport
+        run: |
+          pytest tests/unit/hosted/test_a2a_economic_authority_core.py \
+                 tests/unit/hosted/test_a2a_economic_authority_capabilities.py \
+                 tests/unit/hosted/test_a2a_economic_authority_transport.py \
+                 -v -rs | tee /tmp/hosted-a2a-pytest.log
+          if grep -q "^SKIPPED" /tmp/hosted-a2a-pytest.log; then
+            echo "::error::a2a-sdk is installed in this job -- no Economic Authority test should skip."
+            exit 1
+          fi
+
+      - name: Boundary check (belt-and-suspenders alongside the dedicated job)
+        run: bash scripts/check_no_internal_content.sh
