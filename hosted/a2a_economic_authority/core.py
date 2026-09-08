@@ -881,6 +881,24 @@ class EconomicAuthorityStore:
             )
             return True
 
+    def _has_active_descendant(self, conn: sqlite3.Connection, delegation_id: str) -> bool:
+        """True if any descendant (direct or indirect) of `delegation_id`
+        is currently `active`. Walked inside the caller's own transaction
+        so the check is atomic with whatever mutation it's guarding --
+        see `settle`'s "must not settle over a live descendant" rule."""
+        stack = [delegation_id]
+        while stack:
+            current = stack.pop()
+            rows = conn.execute(
+                "SELECT delegation_id, active FROM delegations WHERE parent_delegation_id = ?",
+                (current,),
+            ).fetchall()
+            for row in rows:
+                if row["active"]:
+                    return True
+                stack.append(row["delegation_id"])
+        return False
+
     def settle(self, event_id: str, delegation_id: str, outcome: str) -> bool:
         """Close a delegation and release its unused reservation.
 
@@ -893,36 +911,58 @@ class EconomicAuthorityStore:
         reporting success for an outcome that was never actually
         recorded.
 
-        The parent's reservation slot for this child is freed by the full
-        original authority amount (including any grants folded into it --
-        see `grant`'s parent-funding), but the child's actual known
-        consumption is folded into the parent's own `consumed_usd` at the
-        same moment -- it does not simply vanish. Without this, a
-        reserve-consume-settle cycle would let a chain of settled children
-        each really spend money while the parent's tracked state always
-        returned to "nothing spent," letting the same dollars be
-        re-delegated and re-consumed indefinitely. `consumed_usd` on any
-        delegation therefore means "known authority permanently spent,
-        directly or through a settled descendant."
+        Rejected (returns False, no event recorded) if any descendant of
+        `delegation_id` -- direct or indirect -- is still `active`. A
+        delegation must not settle in a way that releases authority while
+        an active descendant still holds, or can still spend, part of it:
+        settling here can only ever be safe once every descendant has
+        already been settled (or was never created). Tear down a whole
+        subtree with `revoke`, which already settles bottom-up for
+        exactly this reason, or settle descendants individually before
+        their ancestor.
+
+        The parent's reservation slot for this child is freed by
+        `consumed_usd` (known spend, folded into the parent's own
+        `consumed_usd` -- it does not simply vanish) plus `released_usd`
+        (the genuinely unused, now-reusable remainder -- see below).
+        Anything not covered by those two stays counted against the
+        parent's `child_reserved_usd`, unreleased. Without folding
+        `consumed_usd` into the parent, a reserve-consume-settle cycle
+        would let a chain of settled children each really spend money
+        while the parent's tracked state always returned to "nothing
+        spent," letting the same dollars be re-delegated and re-consumed
+        indefinitely. `consumed_usd` on any delegation therefore means
+        "known authority permanently spent, directly or through a settled
+        descendant."
 
         Unknown-cost accounting rule (smallest conservative choice): if
-        this delegation recorded any unknown-cost event
-        (`unknown_cost_count > 0`), the parent's reservation slot is freed
-        by `consumed_usd` only -- never by the full `authority_usd`. The
-        remainder (whatever was reserved but neither known-consumed nor
-        accounted for) stays counted against the parent's
-        `child_reserved_usd` forever, exactly as if it were still an open
-        reservation. This deliberately treats "unknown how much was truly
-        spent" as "assume the worst, until proven otherwise" rather than
-        "assume zero" -- an unresolved unknown cost can never become
-        reusable known headroom for the parent, and the parent's own
+        this delegation itself ever recorded an unknown-cost event
+        (`unknown_cost_count > 0`), NONE of its remaining, seemingly-idle
+        authority is reported as `released_usd` or freed to the parent --
+        only `consumed_usd` (known spend) moves to the parent; everything
+        else stays locked, because the unknown cost could BE that
+        remainder. Otherwise (this delegation itself is untainted),
+        `released_usd` is exactly its own unused headroom
+        (`active_reservation_usd`), and that same amount -- together with
+        `consumed_usd` -- is what the parent's reservation slot is freed
+        by: `authority_usd - child_reserved_usd`. Because settling is
+        rejected while any descendant is still active (see above),
+        `child_reserved_usd` at this point can only reflect amounts a
+        tainted descendant's own settlement already chose not to release
+        -- so this delegation correctly keeps that quarantine intact and
+        propagates it upward, one settlement at a time, all the way to
+        the root, no matter how many ancestors settle afterward. This
+        deliberately treats "unknown how much was truly spent" as "assume
+        the worst, until proven otherwise" rather than "assume zero" -- an
+        unresolved unknown cost can never become reusable known headroom
+        anywhere in the ancestor chain, and every ancestor's own
         `invariant()` keeps reporting PARTIAL certainty (via
         `has_unknown_cost`, which walks the whole subtree including
-        settled descendants) rather than silently returning to FULL. There
-        is intentionally no mechanism in this store to convert an unknown
-        cost back into a known one and reclaim that headroom -- doing so
-        safely would require an authoritative source for the true amount,
-        which does not exist yet.
+        settled descendants) rather than silently returning to FULL.
+        There is intentionally no mechanism in this store to convert an
+        unknown cost back into a known one and reclaim that headroom --
+        doing so safely would require an authoritative source for the
+        true amount, which does not exist yet.
 
         Settling itself is intentionally allowed even while `delegation_id`
         is undergoing revocation -- teardown settles every descendant this
@@ -942,7 +982,9 @@ class EconomicAuthorityStore:
                 return True
             if not state.active:
                 return False
-            released = state.active_reservation_usd
+            if self._has_active_descendant(conn, delegation_id):
+                return False
+            released = Decimal("0") if state.unknown_cost_count else state.active_reservation_usd
             now = _now()
             conn.execute(
                 "UPDATE delegations SET released_usd = ?, active = 0, outcome = ?, updated_at = ? "
@@ -953,12 +995,7 @@ class EconomicAuthorityStore:
                 parent = self._get(conn, state.parent_delegation_id)
                 if parent is not None:
                     parent_state = _row_to_state(parent)
-                    # See the unknown-cost accounting rule in the docstring
-                    # above: a tainted child frees only its known-consumed
-                    # amount, never its full authority.
-                    parent_reserved_release = (
-                        state.consumed_usd if state.unknown_cost_count else state.authority_usd
-                    )
+                    parent_reserved_release = state.consumed_usd + released
                     conn.execute(
                         "UPDATE delegations SET child_reserved_usd = ?, consumed_usd = ?, "
                         "updated_at = ? WHERE delegation_id = ?",

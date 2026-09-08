@@ -1862,6 +1862,94 @@ async def test_settling_a_child_with_unknown_cost_does_not_free_reusable_headroo
         ), "root must never be able to reserve its full original authority again"
 
 
+# -- finding 1: settlement must reject a live descendant, over transport ---
+
+
+async def test_settle_over_transport_is_rejected_while_a_grandchild_is_still_active(paths, root):
+    """Real-transport regression test for finding 1: a child reserves
+    part of root's authority and, in turn, reserves part of its own
+    authority for a grandchild. Settling the child while the grandchild
+    is still active must be rejected -- not silently release the child's
+    authority back to root while the grandchild can still spend its own
+    share of the same dollars."""
+    _root_id, root_token = root
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        reserve_child = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:live-descendant-child",
+                "parent_id": "root",
+                "delegation_id": "child-live-descendant",
+                "agent_id": "worker",
+                "maximum_usd": "0.50",
+                "child_scopes": ["read", "consume", "settle", "reserve"],
+            },
+        )
+        assert reserve_child.status.state == TaskState.TASK_STATE_COMPLETED
+        child_claim_id = _artifact_dict(reserve_child)["credential_claim_id"]
+        child_token = claim_credential(base_url, child_claim_id, root_token).json()["token"]
+
+        child_client = await make_client(base_url, child_token, session_id="live-descendant")
+        child_ctx = call_context("live-descendant")
+        reserve_grandchild = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:live-descendant-grandchild",
+                "parent_id": "child-live-descendant",
+                "delegation_id": "grandchild-live-descendant",
+                "agent_id": "sub-worker",
+                "maximum_usd": "0.40",
+            },
+        )
+        assert reserve_grandchild.status.state == TaskState.TASK_STATE_COMPLETED
+
+        settle_child = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "settle",
+                "event_id": "evt:settle-live-descendant-child",
+                "delegation_id": "child-live-descendant",
+                "outcome": "SUCCESS",
+            },
+        )
+        assert settle_child.status.state == TaskState.TASK_STATE_FAILED, (
+            "settling a delegation with a still-active descendant must be rejected"
+        )
+
+        status_task = await send(client, ctx, {"op": "status", "delegation_id": "root"})
+        root_receipt = _artifact_dict(status_task)
+        assert root_receipt["delegation"]["child_reserved_usd"] == "0.50", (
+            "a rejected settle must leave root's headroom completely untouched"
+        )
+
+        # Root must not be able to reserve as though the $0.50 were freed.
+        overreach = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:live-descendant-overreach",
+                "parent_id": "root",
+                "delegation_id": "child-overreach",
+                "agent_id": "worker",
+                "maximum_usd": "0.60",
+            },
+        )
+        assert overreach.status.state in (
+            TaskState.TASK_STATE_FAILED,
+            TaskState.TASK_STATE_AUTH_REQUIRED,
+        ), "root's headroom must reflect the still-outstanding grandchild reservation"
+
+
 # -- authorization-required -> grant -> retry, over real transport --------
 
 

@@ -284,6 +284,220 @@ def test_settling_a_child_with_no_unknown_cost_still_releases_its_full_authority
     assert store.invariant("root").certainty == "FULL"
 
 
+# -- finding 1 (round 4): settlement must reject a live descendant --------
+
+
+def test_settle_is_rejected_while_a_direct_child_is_still_active(store: EconomicAuthorityStore):
+    """Regression test for finding 1 (independent review round 4): root
+    reserves for a child, the child reserves for its own grandchild, and
+    the child is settled while the grandchild is still active. Before the
+    fix, this released the child's full authority back to root -- root
+    could then reserve its full $1.00 again while the still-active
+    grandchild could still spend its own $0.40, a real double-spend of
+    the same dollars.
+
+    Correct behavior: settle() rejects outright while any descendant
+    (direct or indirect) is still active. Nothing is released, nothing is
+    marked inactive, and root's headroom is completely unaffected by the
+    rejected attempt."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.50"))
+    store.reserve("evt:r2", "child", "grandchild", "sub", Decimal("0.40"))
+
+    assert store.settle("evt:settle-child", "child", "SUCCESS") is False
+
+    child = store.get("child")
+    root = store.get("root")
+    assert child is not None and child.active is True, "child must remain active -- not settled"
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0.50"), "root's headroom must be untouched"
+
+    # Root must not be able to reserve as though the $0.50 were freed.
+    assert store.reserve("evt:r3", "root", "child2", "worker", Decimal("0.60")) == "rejected"
+
+    # Once the grandchild is itself settled, settling the child succeeds.
+    assert store.settle("evt:settle-gc", "grandchild", "SUCCESS") is True
+    assert store.settle("evt:settle-child", "child", "SUCCESS") is True
+    assert store.get("child").active is False
+
+
+def test_settle_is_rejected_while_an_indirect_descendant_is_still_active(
+    store: EconomicAuthorityStore,
+):
+    """The active-descendant check walks the WHOLE subtree, not just
+    direct children: settling `child` must be rejected even when the
+    still-active delegation is a grandchild (or deeper)."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.50"))
+    store.reserve("evt:r2", "child", "grandchild", "sub", Decimal("0.40"))
+    store.reserve("evt:r3", "grandchild", "great-grandchild", "sub2", Decimal("0.10"))
+    assert store.settle("evt:settle-gc", "grandchild", "SUCCESS") is False
+    grandchild = store.get("grandchild")
+    assert grandchild is not None and grandchild.active is True
+
+    assert store.settle("evt:settle-child", "child", "SUCCESS") is False
+    assert store.get("child").active is True
+
+
+def test_settle_active_descendant_check_survives_actual_overspend_scenario(
+    store: EconomicAuthorityStore,
+):
+    """End-to-end reproduction of the exact scenario from finding 1: with
+    the fix in place, the sequence that used to let $1.40 be spent against
+    a $1.00 root is no longer reachable at all."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.50"))
+    store.reserve("evt:r2", "child", "grandchild", "sub", Decimal("0.40"))
+    assert store.settle("evt:settle-child", "child", "SUCCESS") is False
+
+    # Root cannot reserve a full new $1.00 child while grandchild is
+    # unaccounted for -- the vulnerability's premise is closed off before
+    # the double-spend can even be attempted.
+    assert store.reserve("evt:r3", "root", "child2", "worker", Decimal("1.00")) == "rejected"
+    result = store.invariant("root")
+    assert result.satisfied_on_known_values is True
+
+
+# -- finding 2 (round 4): unknown-cost taint must propagate through -------
+# -- EVERY ancestor settlement, not just the tainted delegation's own -----
+# -- immediate parent -------------------------------------------------------
+
+
+def test_unknown_cost_taint_propagates_through_nested_settlements(store: EconomicAuthorityStore):
+    """Regression test for finding 2 (independent review round 4): root
+    has $1.00, delegates $0.50 to a child, which delegates $0.40 to a
+    grandchild. The grandchild records unknown consumption and settles
+    (correctly quarantining its $0.40 at the child's level, per round 3's
+    fix). The child is THEN settled too. Before this fix, settling the
+    child treated only the CHILD's own `unknown_cost_count` (zero, since
+    the child itself never recorded unknown cost directly) and released
+    its full $0.50 authority back to root -- silently un-quarantining the
+    grandchild's unresolved $0.40 and letting root reserve its full $1.00
+    again.
+
+    Correct behavior: the $0.40 stays locked all the way up to root
+    (root ends up with exactly $0.60 of reusable authority), and the
+    child releases only its own genuinely safe, never-delegated $0.10.
+    """
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.50"))
+    store.reserve("evt:r2", "child", "grandchild", "sub", Decimal("0.40"))
+    assert store.consume("evt:unknown", "grandchild", None) is True
+
+    assert store.settle("evt:settle-gc", "grandchild", "PARTIAL") is True
+    child_after_gc = store.get("child")
+    assert child_after_gc is not None
+    assert child_after_gc.child_reserved_usd == Decimal("0.40"), (
+        "quarantine at the child's own level, from round 3's fix"
+    )
+
+    assert store.settle("evt:settle-child", "child", "PARTIAL") is True
+    child = store.get("child")
+    root = store.get("root")
+    assert child is not None and root is not None
+
+    assert child.released_usd == Decimal("0.10"), (
+        "the child may release only its genuinely safe, never-delegated $0.10"
+    )
+    assert root.child_reserved_usd == Decimal("0.40"), (
+        "the grandchild's uncertain $0.40 must remain quarantined through the child's "
+        "own settlement, not silently freed"
+    )
+    assert root.active_reservation_usd == Decimal("0.60"), (
+        "root must end up with exactly $0.60 of reusable authority"
+    )
+
+    assert store.reserve("evt:r-full", "root", "child2", "worker", Decimal("1.00")) == "rejected"
+    assert store.reserve("evt:r-remaining", "root", "child3", "worker", Decimal("0.60")) == (
+        "created"
+    )
+
+    result = store.invariant("root")
+    assert result.certainty == "PARTIAL"
+    assert result.satisfied_on_known_values is True
+
+
+def test_unknown_cost_taint_propagates_through_three_levels_of_settlement(
+    store: EconomicAuthorityStore,
+):
+    """The same quarantine-propagation property, one level deeper: root ->
+    child -> grandchild -> great-grandchild, with the unknown cost
+    recorded at the deepest node. Settling bottom-up (great-grandchild,
+    then grandchild, then child) must keep the tainted amount locked all
+    the way to root regardless of how many ancestor settlements occur
+    after the taint is first recorded."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.80"))
+    store.reserve("evt:r2", "child", "grandchild", "sub", Decimal("0.60"))
+    store.reserve("evt:r3", "grandchild", "great-grandchild", "sub2", Decimal("0.30"))
+    assert store.consume("evt:unknown", "great-grandchild", None) is True
+
+    assert store.settle("evt:settle-ggc", "great-grandchild", "PARTIAL") is True
+    assert store.settle("evt:settle-gc", "grandchild", "PARTIAL") is True
+    assert store.settle("evt:settle-child", "child", "PARTIAL") is True
+
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0.30"), (
+        "the $0.30 tainted at the deepest level must remain locked at root regardless "
+        "of how many ancestor settlements happened afterward"
+    )
+    assert root.active_reservation_usd == Decimal("0.70")
+    assert store.invariant("root").certainty == "PARTIAL"
+
+
+# -- finding 3 (round 4): released_usd must report only what actually -----
+# -- became reusable, never the raw unused-headroom figure -----------------
+
+
+def test_released_usd_is_zero_for_a_directly_tainted_delegation(store: EconomicAuthorityStore):
+    """Regression test for finding 3 (independent review round 4): a
+    direct child with a $0.40 reservation that records unknown
+    consumption must report `released_usd == 0` on settlement -- not its
+    raw unused headroom ($0.40) -- since none of that amount actually
+    became reusable at the parent (the parent correctly keeps it locked).
+    `released_usd` must always describe money that genuinely returned to
+    the available pool, never money that merely wasn't directly consumed
+    but still can't be trusted to be free."""
+    _open_root(store, "1.00")
+    store.reserve("evt:reserve", "root", "child", "worker", Decimal("0.40"))
+    assert store.consume("evt:unknown", "child", None) is True
+    assert store.settle("evt:settle", "child", "PARTIAL") is True
+
+    child = store.get("child")
+    assert child is not None
+    assert child.released_usd == Decimal("0"), (
+        "released_usd must report zero when none of the reservation actually became "
+        "reusable, even though the raw authority_usd - consumed_usd figure is nonzero"
+    )
+    root = store.get("root")
+    assert root is not None
+    assert root.child_reserved_usd == Decimal("0.40")
+
+
+def test_released_usd_matches_what_actually_frees_up_at_the_parent(store: EconomicAuthorityStore):
+    """`released_usd` for an UNTAINTED delegation must equal exactly the
+    amount its parent's `child_reserved_usd` decreases by beyond the
+    known-consumed portion -- i.e. the genuinely reusable remainder, not
+    merely `authority_usd - consumed_usd - child_reserved_usd` computed
+    in isolation without regard to what the parent actually recovers."""
+    _open_root(store, "1.00")
+    store.reserve("evt:r1", "root", "child", "worker", Decimal("0.50"))
+    store.consume("evt:known", "child", Decimal("0.20"))
+    root_before = store.get("root")
+    assert root_before is not None
+    assert store.settle("evt:settle", "child", "SUCCESS") is True
+
+    child = store.get("child")
+    root_after = store.get("root")
+    assert child is not None and root_after is not None
+    assert child.released_usd == Decimal("0.30")
+    # root's own reusable headroom increased by exactly released_usd.
+    assert root_after.active_reservation_usd - root_before.active_reservation_usd == (
+        child.released_usd
+    )
+
+
 # -- the previously-fixed parent/child settlement defect: regression test ---
 
 
