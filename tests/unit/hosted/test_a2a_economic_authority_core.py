@@ -8,6 +8,7 @@ from __future__ import annotations
 import inspect
 import subprocess
 import sys
+import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
@@ -294,12 +295,16 @@ def test_core_module_does_not_import_the_inferrail_package():
 
 
 def test_hosted_a2a_economic_authority_is_not_in_the_wheel_build():
-    pyproject = (REPO_ROOT / "pyproject.toml").read_text()
-    # A light textual check (not a TOML parse) that the wheel's package
-    # list hasn't grown to include this directory -- mirrors the same
+    # A real TOML parse of just the wheel's package list -- not a whole-file
+    # substring check, which would false-positive on legitimate, unrelated
+    # mentions of "hosted/..." paths elsewhere in the file (e.g. a comment
+    # documenting an optional dependency, same as
+    # hosted/work_economics/requirements.txt already has). Mirrors the same
     # boundary hosted/work_economics/ already keeps (docs/adr/0010).
-    assert '"hosted' not in pyproject
-    assert "hosted/a2a_economic_authority" not in pyproject
+    with (REPO_ROOT / "pyproject.toml").open("rb") as f:
+        config = tomllib.load(f)
+    wheel_packages = config["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+    assert not any("hosted" in package for package in wheel_packages)
 
 
 def test_no_private_strategy_language_in_core_module():

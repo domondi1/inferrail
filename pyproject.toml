@@ -53,12 +53,15 @@ dev = [
 mcp = [
     "mcp>=1.0",
 ]
-# Only needed to run/test hosted/work_economics/ locally -- not part of the
-# `inferrail` package's own dependencies (see docs/adr/0010). Pinned to
-# match hosted/work_economics/requirements.txt exactly.
+# Only needed to run/test hosted/work_economics/ and
+# hosted/a2a_economic_authority/ locally -- not part of the `inferrail`
+# package's own dependencies (see docs/adr/0010). Pinned to match
+# hosted/work_economics/requirements.txt and
+# hosted/a2a_economic_authority/requirements.txt exactly.
 hosted = [
     "cdp-sdk==1.48.1",
     "x402[evm,fastapi,httpx,extensions]==2.22.0",
+    "a2a-sdk[fastapi]==1.1.2",
 ]
 
 [project.scripts]
