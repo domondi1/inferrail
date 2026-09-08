@@ -974,38 +974,38 @@ async def test_reserve_retry_with_mismatched_amount_fails_explicitly(paths, root
     )
 
 
-# -- reservation retries recover a fresh credential (finding 1) -----------
+# -- reservation retries: ordinary duplicate delivery vs. explicit
+# -- recovery (finding 4) --------------------------------------------------
 
 
-async def test_matching_reserve_retry_by_the_original_authorizer_recovers_a_fresh_credential(
+def _live_token_ids(cap_db_path, delegation_id: str) -> list[str]:
+    with sqlite3.connect(cap_db_path) as conn:
+        rows = conn.execute(
+            "SELECT token_id FROM capability_tokens WHERE delegation_id = ? AND revoked = 0",
+            (delegation_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+
+async def test_ordinary_matching_retry_never_mints_and_preserves_a_claimed_credential(
     paths, root
 ):
-    """A matching duplicate delivery of a successful reserve, sent by the
-    EXACT credential that authorized the original reservation, must
-    recover a fresh, usable claim/credential each time -- this is the
-    crash-safe recovery path (finding 1): a crash or lost response
-    between committing the reservation and the caller obtaining a usable
-    credential must never strand the child authority. Economic authority
-    is never reserved twice, and at most one capability token for this
-    delegation is ever live: each recovery revokes whatever came before."""
+    """An ORDINARY duplicate delivery of an identical reserve request --
+    no `recover_credential` flag -- must be a pure idempotent no-op: it
+    must never mint another credential, and a credential the caller
+    already claimed and is actively using must remain valid and
+    unrevoked. This is the overwhelmingly common case (e.g. a network
+    layer retrying a call whose first response actually arrived fine),
+    and must never be confused with intentional crash recovery."""
     _root_id, root_token = root
-    delegation_id = "child-recovers"
-
-    def live_token_ids() -> list[str]:
-        with sqlite3.connect(paths["cap_db"]) as conn:
-            rows = conn.execute(
-                "SELECT token_id FROM capability_tokens WHERE delegation_id = ? AND revoked = 0",
-                (delegation_id,),
-            ).fetchall()
-            return [row[0] for row in rows]
-
+    delegation_id = "child-ordinary-retry"
     port = free_port()
     with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
         client = await make_client(base_url, root_token)
         ctx = call_context()
         payload = {
             "op": "reserve",
-            "event_id": "evt:recovers",
+            "event_id": "evt:ordinary-retry",
             "parent_id": "root",
             "delegation_id": delegation_id,
             "agent_id": "worker",
@@ -1014,39 +1014,239 @@ async def test_matching_reserve_retry_by_the_original_authorizer_recovers_a_fres
 
         first = await send(client, ctx, payload)
         assert first.status.state == TaskState.TASK_STATE_COMPLETED
-        claim_ids = [_artifact_dict(first)["credential_claim_id"]]
-        assert claim_ids[0] is not None
+        claim_id = _artifact_dict(first)["credential_claim_id"]
+        assert claim_id is not None
+        claimed = claim_credential(base_url, claim_id, root_token)
+        assert claimed.status_code == 200
+        token = claimed.json()["token"]
+
+        # The child actually uses the claimed credential successfully.
+        child_client = await make_client(base_url, token, session_id="child")
+        child_ctx = call_context("child")
+        status = await send(
+            child_client, child_ctx, {"op": "status", "delegation_id": delegation_id}
+        )
+        assert status.status.state == TaskState.TASK_STATE_COMPLETED
 
         for _ in range(5):
             retry = await send(client, ctx, payload)
             assert retry.status.state == TaskState.TASK_STATE_COMPLETED
-            retry_claim_id = _artifact_dict(retry)["credential_claim_id"]
-            assert retry_claim_id is not None, (
-                "the exact original authorizer must recover a fresh, usable claim on retry"
+            assert _artifact_dict(retry)["credential_claim_id"] is None, (
+                "an ordinary duplicate retry must never mint another credential"
             )
-            assert retry_claim_id not in claim_ids, "each recovery must be a genuinely new claim"
-            claim_ids.append(retry_claim_id)
 
-        assert len(live_token_ids()) == 1, (
-            "exactly one live capability token must exist after repeated recovery -- every "
-            "previous one must have been revoked"
+        # The credential the child already has must still work after
+        # every one of those retries.
+        status_after = await send(
+            child_client,
+            child_ctx,
+            {"op": "status", "delegation_id": delegation_id},
+        )
+        assert status_after.status.state == TaskState.TASK_STATE_COMPLETED, (
+            "a claimed, actively-used credential must remain valid after ordinary retries"
         )
 
-        final_claim = claim_ids[-1]
-        claimed = claim_credential(base_url, final_claim, root_token)
+    assert _live_token_ids(paths["cap_db"], delegation_id) == [
+        CapabilityStore(paths["cap_db"]).token_id_for(token)
+    ]
+
+
+async def test_explicit_recovery_by_the_original_authorizer_issues_a_working_replacement(
+    paths, root
+):
+    """An EXPLICIT, intentional recovery request (`recover_credential:
+    true`) from the exact original authorizer -- used specifically after
+    a crash or a genuinely lost delivery -- issues a fresh, usable
+    credential and revokes whatever credential existed before. Economic
+    authority is never reserved twice."""
+    _root_id, root_token = root
+    delegation_id = "child-explicit-recovery"
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        payload = {
+            "op": "reserve",
+            "event_id": "evt:explicit-recovery",
+            "parent_id": "root",
+            "delegation_id": delegation_id,
+            "agent_id": "worker",
+            "maximum_usd": "0.10",
+        }
+
+        first = await send(client, ctx, payload)
+        assert first.status.state == TaskState.TASK_STATE_COMPLETED
+        first_claim_id = _artifact_dict(first)["credential_claim_id"]
+        assert first_claim_id is not None
+        # Deliberately never claimed -- simulating a genuinely lost
+        # delivery (e.g. the response never reached the caller).
+
+        recovery = await send(client, ctx, {**payload, "recover_credential": True})
+        assert recovery.status.state == TaskState.TASK_STATE_COMPLETED
+        recovery_claim_id = _artifact_dict(recovery)["credential_claim_id"]
+        assert recovery_claim_id is not None, "explicit recovery must issue a fresh claim"
+        assert recovery_claim_id != first_claim_id
+
+        claimed = claim_credential(base_url, recovery_claim_id, root_token)
         assert claimed.status_code == 200
         plaintext = claimed.json()["token"]
-
         cap_store = CapabilityStore(paths["cap_db"])
         info = cap_store.authorize(plaintext, delegation_id, "read")
-        assert info.token_id == live_token_ids()[0], "the redeemed credential must be the live one"
+        assert info.delegation_id == delegation_id
+
+        assert _live_token_ids(paths["cap_db"], delegation_id) == [info.token_id], (
+            "recovery must revoke whatever credential existed before and leave exactly one live"
+        )
+
+        # The original, never-delivered claim is gone -- it was purged
+        # when recovery rotated the credential (see
+        # `_mint_reservation_credential`'s purge-before-rotate step).
+        stale = claim_credential(base_url, first_claim_id, root_token)
+        assert stale.status_code != 200
 
     core_store = EconomicAuthorityStore(paths["db"])
     root_state = core_store.get("root")
     assert root_state is not None
     assert root_state.child_reserved_usd == Decimal("0.10"), (
-        "economic authority must never be reserved twice across repeated recovery retries"
+        "economic authority must never be reserved twice by an explicit recovery"
     )
+
+
+async def test_explicit_recovery_invalidates_the_old_credential_only_when_requested(paths, root):
+    """Replacement must invalidate the previous credential ONLY when
+    recovery is intentionally requested -- not as a side effect of any
+    ordinary retry. This proves the full sequence: claim, use, ordinary
+    retries (no effect), then an explicit recovery that finally does
+    revoke the original."""
+    _root_id, root_token = root
+    delegation_id = "child-recovery-after-use"
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        payload = {
+            "op": "reserve",
+            "event_id": "evt:recovery-after-use",
+            "parent_id": "root",
+            "delegation_id": delegation_id,
+            "agent_id": "worker",
+            "maximum_usd": "0.10",
+        }
+
+        first = await send(client, ctx, payload)
+        claim_id = _artifact_dict(first)["credential_claim_id"]
+        original_token = claim_credential(base_url, claim_id, root_token).json()["token"]
+
+        # Ordinary retries: the original credential keeps working.
+        for _ in range(3):
+            await send(client, ctx, payload)
+        cap_store = CapabilityStore(paths["cap_db"])
+        cap_store.authorize(original_token, delegation_id, "read")  # does not raise
+
+        # Now an explicit recovery request.
+        recovery = await send(client, ctx, {**payload, "recover_credential": True})
+        recovery_claim_id = _artifact_dict(recovery)["credential_claim_id"]
+        assert recovery_claim_id is not None
+        claim_credential(base_url, recovery_claim_id, root_token)
+
+        # Only NOW is the original credential invalidated.
+        with pytest.raises(RevokedCredential):
+            cap_store.authorize(original_token, delegation_id, "read")
+
+
+async def test_a_different_credential_cannot_recover_or_rotate_via_explicit_recovery(paths, root):
+    """A different caller who also holds `reserve` scope on the same
+    parent, but did not create this delegation, must not be able to
+    recover or rotate its credential merely by setting
+    `recover_credential: true` -- explicit recovery is gated on the exact
+    original authorizer's non-secret token_id, never on scope or
+    delegation_id alone. The legitimate authorizer's own credential must
+    be unaffected by the rejected attempt."""
+    _root_id, root_token = root
+    delegation_id = "child-guess-recovery"
+    cap_store = CapabilityStore(paths["cap_db"])
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        payload = {
+            "op": "reserve",
+            "event_id": "evt:guess-recovery",
+            "parent_id": "root",
+            "delegation_id": delegation_id,
+            "agent_id": "worker",
+            "maximum_usd": "0.10",
+        }
+        original = await send(client, ctx, payload)
+        assert original.status.state == TaskState.TASK_STATE_COMPLETED
+        original_claim_id = _artifact_dict(original)["credential_claim_id"]
+        original_token = claim_credential(base_url, original_claim_id, root_token).json()["token"]
+
+        # Full scopes (not just 'reserve') so this credential's own
+        # default child_scopes computation matches the original
+        # authorization's -- isolating the identity check under test from
+        # the unrelated, pre-existing "retry names different child_scopes"
+        # conflict check.
+        _other_id, other_reserve_token = cap_store.issue("root", SCOPES)
+        other_client = await make_client(base_url, other_reserve_token, session_id="guesser")
+        guess = await send(
+            other_client,
+            call_context("guesser"),
+            {**payload, "event_id": "evt:guess-recovery-2", "recover_credential": True},
+        )
+        assert guess.status.state == TaskState.TASK_STATE_REJECTED
+        assert get_data_parts(guess.status.message.parts)[0]["error"] == "WrongAuthorizer"
+        assert not guess.artifacts
+
+        # The legitimate authorizer's credential is completely unaffected.
+        cap_store.authorize(original_token, delegation_id, "read")  # does not raise
+
+    assert _live_token_ids(paths["cap_db"], delegation_id) == [
+        cap_store.token_id_for(original_token)
+    ]
+
+
+async def test_recovery_identity_check_runs_before_the_child_scopes_check(paths, root):
+    """A wrong-authorizer recovery attempt must be rejected as
+    `WrongAuthorizer` even when it ALSO names mismatched `child_scopes` --
+    identity is verified first, so a caller who is not the original
+    authorizer never learns whether its guessed child_scopes would have
+    conflicted."""
+    _root_id, root_token = root
+    delegation_id = "child-recovery-scope-and-identity"
+    cap_store = CapabilityStore(paths["cap_db"])
+    port = free_port()
+    with agent_process(port, paths["db"], paths["cap_db"], paths["log"]) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+        payload = {
+            "op": "reserve",
+            "event_id": "evt:recovery-scope-and-identity",
+            "parent_id": "root",
+            "delegation_id": delegation_id,
+            "agent_id": "worker",
+            "maximum_usd": "0.10",
+        }
+        original = await send(client, ctx, payload)
+        assert original.status.state == TaskState.TASK_STATE_COMPLETED
+
+        # A narrowly-scoped guesser whose own natural child_scopes would
+        # differ from the original AND who is not the original authorizer.
+        _other_id, other_reserve_token = cap_store.issue("root", {"reserve"})
+        other_client = await make_client(base_url, other_reserve_token, session_id="guesser2")
+        guess = await send(
+            other_client,
+            call_context("guesser2"),
+            {
+                **payload,
+                "event_id": "evt:recovery-scope-and-identity-2",
+                "recover_credential": True,
+            },
+        )
+        assert guess.status.state == TaskState.TASK_STATE_REJECTED
+        assert get_data_parts(guess.status.message.parts)[0]["error"] == "WrongAuthorizer", (
+            "identity must be checked before child_scopes for an explicit recovery request"
+        )
 
 
 async def test_reserve_retry_without_a_durable_authorization_record_falls_back_safely(paths, root):
@@ -1129,13 +1329,13 @@ async def test_reserve_retry_with_changed_child_scopes_is_an_explicit_conflict(p
 
 async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_child_id(paths, root):
     """A different caller who also holds 'reserve' scope on the SAME
-    parent, but did not create this delegation, must not be able to
-    recover, rotate, claim, or mint themselves a working credential for it
-    just by naming the same delegation_id/agent_id/amount -- crash-safe
-    recovery (finding 1) is only ever available to the exact original
-    authorizer, identified by non-secret token_id, never merely by
-    matching parent/agent/amount or by holding a generically valid
-    `reserve`-scoped credential on the same parent."""
+    parent, but did not create this delegation, must not be able to mint
+    themselves a working credential for it just by naming the same
+    delegation_id/agent_id/amount -- no mint ever happens on an ORDINARY
+    matching 'already exists' retry, regardless of who sends it (finding
+    4). Explicit `recover_credential: true` guessing is covered
+    separately by
+    `test_a_different_credential_cannot_recover_or_rotate_via_explicit_recovery`."""
     _root_id, root_token = root
     cap_store = CapabilityStore(paths["cap_db"])
     port = free_port()
@@ -1156,7 +1356,12 @@ async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_chi
         )
         assert original.status.state == TaskState.TASK_STATE_COMPLETED
 
-        _other_id, other_reserve_token = cap_store.issue("root", {"reserve"})
+        # Full scopes (not just 'reserve') so this credential's own
+        # default child_scopes computation matches the original
+        # authorization's -- isolating the ordinary-retry-is-idempotent
+        # behavior under test from the unrelated, pre-existing "retry
+        # names different child_scopes" conflict check.
+        _other_id, other_reserve_token = cap_store.issue("root", SCOPES)
         other_client = await make_client(base_url, other_reserve_token, session_id="guesser")
         guess = await send(
             other_client,
@@ -1170,9 +1375,11 @@ async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_chi
                 "maximum_usd": "0.10",
             },
         )
-        assert guess.status.state == TaskState.TASK_STATE_REJECTED
-        assert get_data_parts(guess.status.message.parts)[0]["error"] == "WrongAuthorizer"
-        assert not guess.artifacts, (
+        # An ordinary retry (no recover_credential) is a safe idempotent
+        # no-op for anyone, including a guesser -- it must complete
+        # without ever minting a credential.
+        assert guess.status.state == TaskState.TASK_STATE_COMPLETED
+        assert _artifact_dict(guess).get("credential_claim_id") is None, (
             "the guesser must never receive a credential for a delegation it did not create"
         )
 
@@ -1182,7 +1389,8 @@ async def test_another_reserve_scoped_token_cannot_mint_access_by_guessing_a_chi
             "AND revoked = 0"
         ).fetchone()[0]
     assert live_count == 1, (
-        "a rejected guess must never revoke or replace the legitimate authorizer's credential"
+        "an ordinary guess retry must never revoke or replace the legitimate authorizer's "
+        "credential"
     )
 
 

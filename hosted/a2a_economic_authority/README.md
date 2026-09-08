@@ -108,28 +108,39 @@ issuing delegation's tree **or the child delegation it targets** is
 revoked, and concurrent redemption attempts for the same claim are
 serialized so exactly one can ever succeed.
 
-**Crash-safe recovery.** Committing the economic reservation, minting the
-child capability, and creating its claim happen as separate steps across
-two SQLite databases and one in-memory buffer -- a crash or a lost
-response between any of them must not strand a real reservation with no
-way to ever obtain its credential. Before the economic reservation is
-even committed, `capabilities.record_reservation_authorization` durably
-binds the child's `delegation_id` to the exact authorizing credential's
-`token_id` and the requested `child_scopes`, in `capabilities.sqlite3`.
-If the process (or its response to the caller) is lost at any point after
-that, the same original authorizer can safely retry the identical
-`reserve` request -- including after a full restart -- and
-`rotate_reservation_credential` mints a fresh child credential, revoking
-whatever one may already exist for that delegation in the same atomic
-step, and hands back a brand-new claim. A different credential, even one
-that legitimately holds `reserve` scope on the same parent, cannot
-recover, rotate, claim, or mint access this way merely by knowing or
-guessing the child's `delegation_id` -- recovery checks the exact
-`token_id`, not scope or delegation match. The underlying economic
-reservation is never re-created (`core.reserve` is idempotent on
-`delegation_id` regardless of how many times this recovery path runs),
-and only its non-secret `token_id` is ever persisted -- never a plaintext
-credential.
+**Crash-safe recovery vs. ordinary retries.** Committing the economic
+reservation, minting the child capability, and creating its claim happen
+as separate steps across two SQLite databases and one in-memory buffer --
+a crash or a lost response between any of them must not strand a real
+reservation with no way to ever obtain its credential. But an ORDINARY
+duplicate delivery of the same `reserve` request (the overwhelming common
+case -- e.g. a network layer retrying a call whose first response
+actually arrived fine) must never mint another credential or touch
+whatever credential the caller already claimed and may be actively using.
+These two situations are handled differently on purpose.
+
+Before the economic reservation is even committed,
+`capabilities.record_reservation_authorization` durably binds the
+child's `delegation_id` to the exact authorizing credential's `token_id`
+and the requested `child_scopes`, in `capabilities.sqlite3`. A matching
+retry of the same `reserve` request is, by default, a pure no-op: it
+reports the existing reservation and never mints or rotates anything,
+regardless of who sends it. Recovery only happens when the caller
+explicitly sets `recover_credential: true` in the `reserve` payload --
+sent specifically because the caller knows delivery of the credential was
+genuinely lost (a crash, a timeout with no response), never as a side
+effect of an ordinary retry. Only then does `rotate_reservation_credential`
+mint a fresh child credential, revoking whatever one may already exist
+for that delegation in the same atomic step, and hand back a brand-new
+claim -- and only for the EXACT original authorizer: a different
+credential, even one that legitimately holds `reserve` scope on the same
+parent, cannot recover, rotate, claim, or mint access this way merely by
+knowing or guessing the child's `delegation_id` and asking for recovery --
+recovery checks the exact `token_id`, not scope or delegation match. The
+underlying economic reservation is never re-created either way
+(`core.reserve` is idempotent on `delegation_id` regardless of how many
+times a retry or a recovery request runs), and only non-secret `token_id`s
+are ever persisted -- never a plaintext credential.
 
 **Idempotency boundary.** Economic event IDs are scoped to
 `(delegation_id, event_id)`, never to `event_id` alone -- two unrelated

@@ -49,10 +49,12 @@ non-secret `token_id` -- not to "any credential that currently holds
 live and correctly scoped. This is also what separates `grant` authority
 from `reserve` authority: a grant-only credential can unblock a parked
 reservation but can never itself redeem the resulting child credential.
-If the process or the caller's response is lost between committing the
-reservation and the caller ever obtaining this claim, the exact same
-authorizer can safely retry the reservation and recover a fresh claim --
-see `README.md`'s "Crash-safe recovery" and
+An ordinary retry of the same reservation never mints or rotates a
+credential, for anyone -- only an explicit `recover_credential: true`
+retry from the exact same authorizer does, used specifically when the
+process or the caller's response was genuinely lost between committing
+the reservation and the caller ever obtaining this claim -- see
+`README.md`'s "Crash-safe recovery vs. ordinary retries" and
 `capabilities.rotate_reservation_credential`.
 
 The claim response is marked `Cache-Control: no-store` (plus the other
