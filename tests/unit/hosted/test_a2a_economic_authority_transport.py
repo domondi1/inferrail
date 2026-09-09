@@ -2529,9 +2529,19 @@ def test_sessions_route_is_absent_without_the_pay_to_env_var(tmp_path, monkeypat
 
 
 def test_work_economics_is_untouched():
+    """Watches exactly Work Economics' own files -- not the whole
+    `docs/capabilities/` directory, which also holds Economic Authority's
+    own `economic-authority.md` and `schemas/economic-authority/`
+    (confirmed by directory listing: nothing under `docs/capabilities/`
+    belongs to Work Economics except `work-economics.md` itself). An
+    earlier, broader `docs/capabilities` watch path would have flagged
+    every legitimate edit to Economic Authority's own documentation as a
+    false Work Economics violation -- exactly what happened when this
+    test failed against a real, intentional `economic-authority.md` edit
+    that never touched Work Economics at all."""
     watched_paths = [
         "hosted/work_economics",
-        "docs/capabilities",
+        "docs/capabilities/work-economics.md",
         "examples/work_economics_purchase.py",
     ]
     diff = subprocess.run(
