@@ -523,8 +523,11 @@ running the gateway above never requires it and never talks to it.
 hosted capability, also in `hosted/`: a buyer purchases a durable
 coordination boundary — a spending ceiling shared across agents, without
 double-allocating it — again paid for over x402 by any agent with its own
-wallet. **Base Sepolia testnet only, not deployed anywhere yet.**
+wallet. **Base Sepolia testnet only.** Whether session purchase is
+currently enabled on a given deployment is always authoritative from
+that deployment's own Agent Card, not this README.
 
+- Canonical endpoint: `https://authority.tryinferrail.com` ([Agent Card](https://authority.tryinferrail.com/.well-known/agent-card.json))
 - Full contract: [docs/capabilities/economic-authority.md](docs/capabilities/economic-authority.md)
 - Standalone client example: [`examples/economic_authority_session.py`](examples/economic_authority_session.py)
 

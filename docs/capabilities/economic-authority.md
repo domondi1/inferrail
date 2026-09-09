@@ -43,8 +43,22 @@ POST <base_url>/capabilities/claim            # claim a freshly minted child cre
 
 `GET /.well-known/agent-card.json` declares the service's name, its six
 skills (`reserve`, `grant`, `consume`, `settle`, `status`, `revoke`), the
-JSON-RPC transport endpoint, and its bearer security scheme
-(`capabilityBearer`). No payment or prior knowledge required to read it.
+JSON-RPC transport endpoint, its bearer security scheme
+(`capabilityBearer`), and a `documentation_url` pointing back at this
+document. No payment or prior knowledge required to read it.
+
+`POST /sessions` is deliberately **never** listed as a skill -- it is a
+plain HTTP route outside the A2A `SendMessage` pipeline (see step 2
+below), and every other standard A2A method is disabled regardless of
+credential. When this deployment has paid session creation enabled, the
+card instead declares it as an `AgentExtension` under
+`capabilities.extensions` (URI
+`https://tryinferrail.com/a2a-extensions/economic-authority-session-purchase-v1`),
+whose `params` carry the exact purchase endpoint, price, and network for
+this deployment. A deployment that has not enabled session creation
+declares no such extension -- there is nothing to purchase yet, and the
+card says so plainly rather than describing a route that doesn't exist
+on this instance.
 
 ## 2–5. Purchase a session
 
