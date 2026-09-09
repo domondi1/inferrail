@@ -25,7 +25,8 @@ if [ "$#" -eq 0 ]; then
         tests/unit/hosted/test_a2a_economic_authority_capabilities.py \
         tests/unit/hosted/test_a2a_economic_authority_reservation_recovery.py \
         tests/unit/hosted/test_a2a_economic_authority_sessions.py \
-        tests/unit/hosted/test_a2a_economic_authority_transport.py
+        tests/unit/hosted/test_a2a_economic_authority_transport.py \
+        tests/unit/hosted/test_a2a_economic_authority_deployment_readiness.py
 fi
 # test_a2a_economic_authority_session_service.py (Phase C's x402/CDP
 # service-wiring tests) is deliberately NOT in this strict, zero-skip
