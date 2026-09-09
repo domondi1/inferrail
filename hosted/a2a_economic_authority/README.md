@@ -311,6 +311,16 @@ needs, verified locally, not a live instance.
 
 Any host that can run a long-lived Python HTTPS **single** process (see
 above) with a **persistent, private disk** for two SQLite files works.
+
+Build step: `pip install -r requirements.txt` from this directory --
+that alone is sufficient (it now includes `cdp-sdk` and `x402`, both
+required unconditionally by `server.py`'s Phase C wiring, not just when
+a session-purchase env var is set; see
+`test_requirements_txt_installs_a_working_server.py`, which proves this
+file alone lets the server import and reach its fail-closed startup
+behavior in a fully isolated environment -- no extra packages need to be
+installed alongside it).
+
 Set:
 
 - `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` -- CDP facilitator credentials
