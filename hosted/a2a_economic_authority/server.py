@@ -1,4 +1,4 @@
-"""Inferrail Economic Authority — FastAPI/A2A server assembly (Phase B).
+"""Inferrail Economic Authority — FastAPI/A2A server assembly (Phase B/C).
 
 Wires the real, installed `a2a-sdk` (verified against its actual API, not
 an invented interface -- see the module docstrings in `executor.py` and
@@ -7,6 +7,20 @@ routes (locked down to `SendMessage` only -- see `access_control.py`),
 plus exactly one additional plain HTTP route, `POST /capabilities/claim`,
 that exists solely to hand a newly-minted child capability token to its
 rightful caller outside A2A message/task content.
+
+## Phase C: paid session creation
+
+`POST /sessions`, added in Phase C, is the ONLY x402-gated route in this
+service -- see `sessions.py`'s module docstring for the full design.
+Every other operation (reserve/grant/consume/settle/status/revoke, and
+the claim route above) remains protected exclusively by its own
+capability credential, exactly as in Phase B; purchasing a session is not
+required to use them, and using them never requires a second payment.
+`/sessions` is registered ONLY when `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS`
+is set in the environment, so every existing Phase B deployment, test, or
+import of this module that does not set it behaves exactly as before --
+no new required environment variable, no new required dependency import
+at call time for anyone not using Phase C.
 
 ## Documented SDK limitation and the smallest safe alternative
 
@@ -106,7 +120,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 _HOSTED_DIR = Path(__file__).resolve().parent
@@ -122,25 +138,54 @@ from a2a.server.routes import (  # noqa: E402
 from a2a.server.tasks import InMemoryTaskStore  # noqa: E402
 from access_control import SendMessageOnlyRequestHandler  # noqa: E402
 from agent_card import build_agent_card  # noqa: E402
-from capabilities import CapabilityError, CapabilityStore, InMemoryCredentialHandoff  # noqa: E402
+from capabilities import (  # noqa: E402
+    CapabilityError,
+    CapabilityStore,
+    InMemoryCredentialHandoff,
+)
+from cdp.x402 import create_facilitator_config  # noqa: E402
 from core import EconomicAuthorityStore  # noqa: E402
 from executor import EconomicAuthorityExecutor  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
+from sessions import handle_session_request  # noqa: E402
+from x402.http import HTTPFacilitatorClient  # noqa: E402
+from x402.http.middleware.fastapi import payment_middleware  # noqa: E402
+from x402.http.types import PaymentOption, RouteConfig  # noqa: E402
+from x402.mechanisms.evm.exact import register_exact_evm_server  # noqa: E402
+from x402.server import x402ResourceServer  # noqa: E402
 
 _NO_STORE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate",
     "Pragma": "no-cache",
 }
 
+# Phase C: session-purchase x402 configuration. Deliberately read with
+# `.get` (not `os.environ[...]`), so importing or running this module for
+# plain Phase B purposes -- every existing Phase B test does exactly that
+# -- never requires these to be set. `/sessions` is registered in
+# `build_app` only when `_SESSION_PAY_TO_ADDRESS` is present. A distinct
+# pay-to address from `hosted/work_economics`'s own
+# `X402_SELLER_PAY_TO_ADDRESS` keeps the two capabilities' commercial
+# identities separate even though both may share the same underlying CDP
+# facilitator account (`CDP_API_KEY_ID`/`CDP_API_KEY_SECRET`, also reused
+# from Work Economics' own env var names -- those identify the CDP
+# account talking to the facilitator, not a capability-specific secret).
+_SESSION_PAY_TO_ADDRESS = os.environ.get("ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS")
+_SESSION_PRICE_USD = Decimal(os.environ.get("ECONOMIC_AUTHORITY_SESSION_PRICE_USD", "0.05"))
+_SESSION_NETWORK = "eip155:84532"  # Base Sepolia, CAIP-2 -- testnet only, see sessions.py
+
 
 def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | Path) -> FastAPI:
     """Assembles one server instance. Callers own the SQLite files at
     `db_path` (economic state, `core.EconomicAuthorityStore`'s schema) and
     `capability_db_path` (capability tokens, `capabilities.CapabilityStore`'s
-    schema) -- both must already contain a bootstrapped root delegation and
-    root capability before this app is asked to do anything useful; see
-    `bootstrap.py`, which is test-only and never wired to an HTTP route.
+    schema). A root delegation and its root capability can come from
+    either of two places: `bootstrap.py` (test-only, never wired to an
+    HTTP route, writes directly into these same files before the server
+    starts) or, since Phase C, a real buyer completing a payment against
+    `POST /sessions` once this app is already running -- see this
+    module's docstring.
     """
     core_store = EconomicAuthorityStore(db_path)
     capability_store = CapabilityStore(capability_db_path)
@@ -210,7 +255,108 @@ def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | P
             )
         return JSONResponse({"token": plaintext}, headers=_NO_STORE_HEADERS)
 
+    if _SESSION_PAY_TO_ADDRESS:
+        _wire_session_purchase_route(app, core_store, capability_store, base_url)
+
     return app
+
+
+def _wire_session_purchase_route(
+    app: FastAPI,
+    core_store: EconomicAuthorityStore,
+    capability_store: CapabilityStore,
+    base_url: str,
+) -> None:
+    """Registers the ONLY x402-gated route in this service, `POST
+    /sessions` -- see this module's docstring and `sessions.py`'s for the
+    full design. Only called when `_SESSION_PAY_TO_ADDRESS` is set, so a
+    plain Phase B deployment/test never pays this section's import-time
+    or wiring cost.
+    """
+    facilitator_config = create_facilitator_config(
+        api_key_id=os.environ["CDP_API_KEY_ID"],
+        api_key_secret=os.environ["CDP_API_KEY_SECRET"],
+    )
+    facilitator_client = HTTPFacilitatorClient(facilitator_config)
+    x402_server = x402ResourceServer(facilitator_client)
+    register_exact_evm_server(x402_server, networks=_SESSION_NETWORK)
+
+    resource_url = os.environ.get(
+        "ECONOMIC_AUTHORITY_SESSION_RESOURCE_URL", f"{base_url.rstrip('/')}/sessions"
+    )
+    routes: dict[str, RouteConfig] = {
+        "POST /sessions": RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to=_SESSION_PAY_TO_ADDRESS,  # type: ignore[arg-type]  # guarded by the caller
+                price=f"${_SESSION_PRICE_USD}",
+                network=_SESSION_NETWORK,
+            ),
+            resource=resource_url,
+            description=(
+                "Purchase an Inferrail Economic Authority session: a durable "
+                "coordination boundary with a buyer-declared spending ceiling "
+                "(authority_ceiling_usd) that lets agents operate under a "
+                "shared budget without double-allocation. This fee pays for "
+                "the coordination service itself -- it is never a deposit "
+                "into, or escrow of, the delegated ceiling; Inferrail holds, "
+                "transfers, or escrows none of it."
+            ),
+            service_name="Inferrail Economic Authority",
+        )
+    }
+    x402_middleware = payment_middleware(routes, x402_server)
+
+    @app.middleware("http")
+    async def _sessions_payment_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        return await x402_middleware(request, call_next)
+
+    @app.post("/sessions")
+    async def create_session(request: Request) -> JSONResponse:
+        """x402-protected. The only payment-gated route in this service.
+
+        By the time this handler runs, the x402 middleware has already
+        cryptographically verified the payment
+        (`request.state.payment_payload` is set); on-chain settlement
+        happens after this handler returns, and is cancelled by the
+        middleware itself if this handler returns any 4xx/5xx status --
+        see `x402.http.middleware.fastapi.payment_middleware`. This
+        handler is deliberately thin: it never calls the facilitator
+        directly and never decides whether a payment is valid, only
+        extracts the verified payment's nonce and hands everything else
+        to `sessions.handle_session_request` -- see that function and
+        `sessions.create_or_recover_session` for the actual idempotency
+        and crash-safety guarantee, and for how this is tested without a
+        real facilitator/network dependency.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse(
+                {"error": "malformed JSON body"}, status_code=400, headers=_NO_STORE_HEADERS
+            )
+
+        payment_payload = getattr(request.state, "payment_payload", None)
+        if payment_payload is None:
+            # Unreachable in practice -- the middleware only calls through
+            # to this handler once payment is verified -- but fail closed
+            # rather than trust an unverified request.
+            return JSONResponse(
+                {"error": "payment not verified"}, status_code=402, headers=_NO_STORE_HEADERS
+            )
+        try:
+            payment_nonce = payment_payload.payload.authorization.nonce
+        except AttributeError:
+            payment_nonce = str(payment_payload)
+
+        status_code, response_body = handle_session_request(
+            core_store,
+            capability_store,
+            body=body,
+            payment_nonce=payment_nonce,
+            service_fee_usd=_SESSION_PRICE_USD,
+        )
+        return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
 
 
 def main() -> None:

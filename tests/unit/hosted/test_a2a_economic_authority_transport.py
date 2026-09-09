@@ -58,6 +58,7 @@ from a2a.types import (  # noqa: E402
 from bootstrap import bootstrap_root  # noqa: E402
 from capabilities import SCOPES, CapabilityStore, RevokedCredential  # noqa: E402
 from core import EconomicAuthorityStore  # noqa: E402
+from sessions import create_or_recover_session  # noqa: E402
 
 
 @pytest.fixture
@@ -2389,6 +2390,138 @@ def test_no_outbound_calls_in_executor_and_server_modules():
         assert "delegate_to" not in source.lower(), (
             f"{filename} must not automatically call another agent"
         )
+
+
+# -- Phase C: a purchased session's root credential drives the real A2A ---
+# -- flow, over real transport ---------------------------------------------
+
+
+async def test_a_purchased_sessions_root_capability_drives_the_real_a2a_flow(tmp_path):
+    """End-to-end proof that a session created by `sessions.py` (the
+    exact code `POST /sessions` calls once x402 payment is verified) is a
+    real, fully-usable root delegation: reserve/grant/consume/settle/
+    revoke all work over genuine A2A transport with the credential the
+    purchase returned, exactly like a `bootstrap_root`-seeded root would.
+
+    Payment verification itself is the ONLY thing not exercised here --
+    this test calls `create_or_recover_session` directly with a synthetic
+    `payment_nonce`, standing in for "the x402 middleware already
+    cryptographically verified a real payment and handed this handler its
+    nonce" -- see this repo's test plan notes on which parts are
+    simulated vs. a real Base Sepolia transaction. Everything downstream
+    of that point -- root creation, credential issuance, and the entire
+    A2A lifecycle below -- is the real, production code path against real
+    SQLite files and a real server subprocess.
+    """
+    db_path = tmp_path / "authority.sqlite3"
+    cap_db_path = tmp_path / "capabilities.sqlite3"
+    log_path = tmp_path / "server.log"
+
+    core_store = EconomicAuthorityStore(db_path)
+    cap_store = CapabilityStore(cap_db_path)
+    purchase = create_or_recover_session(
+        core_store,
+        cap_store,
+        payment_nonce="integration-test-nonce",
+        agent_id="external-buyer",
+        authority_ceiling_usd=Decimal("1.00"),
+        service_fee_usd=Decimal("0.05"),
+    )
+    assert purchase.plaintext_token is not None
+    session_id = purchase.session_id
+    root_token = purchase.plaintext_token
+
+    port = free_port()
+    with agent_process(port, db_path, cap_db_path, log_path) as base_url:
+        client = await make_client(base_url, root_token)
+        ctx = call_context()
+
+        reserve_task = await send(
+            client,
+            ctx,
+            {
+                "op": "reserve",
+                "event_id": "evt:session-reserve",
+                "parent_id": session_id,
+                "delegation_id": "child-of-purchased-session",
+                "agent_id": "worker",
+                "maximum_usd": "0.40",
+            },
+        )
+        assert reserve_task.status.state == TaskState.TASK_STATE_COMPLETED
+        claim_id = _artifact_dict(reserve_task)["credential_claim_id"]
+        child_token = claim_credential(base_url, claim_id, root_token).json()["token"]
+
+        child_client = await make_client(base_url, child_token, session_id="child")
+        child_ctx = call_context("child")
+        consume_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "consume",
+                "event_id": "evt:session-consume",
+                "delegation_id": "child-of-purchased-session",
+                "amount_usd": "0.15",
+            },
+        )
+        assert consume_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        settle_task = await send(
+            child_client,
+            child_ctx,
+            {
+                "op": "settle",
+                "event_id": "evt:session-settle",
+                "delegation_id": "child-of-purchased-session",
+                "outcome": "SUCCESS",
+            },
+        )
+        assert settle_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+        revoke_task = await send(
+            client,
+            ctx,
+            {"op": "revoke", "event_id": "evt:session-revoke", "delegation_id": session_id},
+        )
+        assert revoke_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+    root_state = core_store.get(session_id)
+    assert root_state is not None
+    assert root_state.consumed_usd == Decimal("0.15")
+    assert root_state.active is False  # revoked
+
+
+# -- Phase C: /sessions is wired only when explicitly configured -----------
+
+
+def test_sessions_route_is_absent_without_the_pay_to_env_var(tmp_path, monkeypatch):
+    """A plain Phase B deployment/test -- one that never sets
+    `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS` -- must not expose
+    `POST /sessions` at all, and must not require CDP/x402 credentials to
+    import or run `server.py`. This is what keeps every pre-Phase-C test
+    in this file working unchanged (see
+    `test_a2a_economic_authority_session_service.py` for the
+    real-credentials-gated tests of the route itself when it IS
+    configured)."""
+    monkeypatch.delenv("ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS", raising=False)
+    import importlib
+
+    import server
+
+    # `_SESSION_PAY_TO_ADDRESS` is read once at module import time -- if
+    # some other test in this process already imported `server` with the
+    # env var set, `import server` alone would just return that cached
+    # module unchanged. Reload to force a fresh read under the env this
+    # test just set.
+    importlib.reload(server)
+
+    app = server.build_app(
+        base_url="http://testserver/",
+        db_path=tmp_path / "authority.sqlite3",
+        capability_db_path=tmp_path / "capabilities.sqlite3",
+    )
+    paths = [r.path for r in app.routes if hasattr(r, "path")]
+    assert "/sessions" not in paths
 
 
 # -- Work Economics is completely unchanged ---------------------------------

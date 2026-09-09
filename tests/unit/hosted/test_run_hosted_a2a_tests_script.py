@@ -80,6 +80,7 @@ def test_no_argument_default_targets_the_real_economic_authority_suite():
     source = SCRIPT.read_text()
     assert "test_a2a_economic_authority_core.py" in source
     assert "test_a2a_economic_authority_capabilities.py" in source
+    assert "test_a2a_economic_authority_sessions.py" in source
     assert "test_a2a_economic_authority_transport.py" in source
 
 
