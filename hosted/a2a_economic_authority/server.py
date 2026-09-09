@@ -505,8 +505,13 @@ def main() -> None:
       `--port`, `--db-path`, and `--capability-db-path` given explicitly on
       the command line. `--host` defaults to `127.0.0.1`. `base_url`
       defaults to the computed `http://<host>:<port>/` unless `--base-url`
-      is also given. Behavior is byte-for-byte unchanged from before this
-      function grew env-var support.
+      is also given. Argument parsing and validation are unchanged from
+      before this function grew env-var support; the one behavioral change
+      that applies to *both* shapes is `uvicorn.run()` now also passing
+      `proxy_headers=True, forwarded_allow_ips="*"` (see below), matching
+      `hosted/work_economics/service.py`'s own production-shape pattern --
+      inert for a direct loopback connection with no reverse proxy in
+      front of it, as every existing test uses.
     - **Production/deployment shape** (a bare `python3 server.py`, no CLI
       args): `--port`/`--db-path`/`--capability-db-path` are read from
       `PORT`/`ECONOMIC_AUTHORITY_DB_PATH`/`ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH`

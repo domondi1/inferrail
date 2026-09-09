@@ -341,11 +341,18 @@ Set:
 - `PORT` -- injected by most hosting platforms (not secret).
 
 Then run `python3 server.py` (no CLI args -- this is the production
-shape: binds `0.0.0.0`, reads `$PORT`, reads the four
-`ECONOMIC_AUTHORITY_*` variables above). Passing explicit `--port`
-`--db-path` `--capability-db-path` (optionally `--host`/`--base-url`) is
-the local/test shape instead (binds `127.0.0.1` by default); every
-existing test in this directory uses that shape unchanged.
+shape: binds `0.0.0.0`, reads `$PORT`, and reads three of the variables
+above directly -- `ECONOMIC_AUTHORITY_DB_PATH`,
+`ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH`, `ECONOMIC_AUTHORITY_BASE_URL` --
+all three required in this shape). The other three -- `CDP_API_KEY_ID`/
+`CDP_API_KEY_SECRET`/`ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS` and its
+two optional siblings -- are read separately, at import time, by the
+Phase C session-purchase wiring (`_wire_session_purchase_route`), not by
+`main()` itself, and apply identically in either invocation shape.
+Passing explicit `--port` `--db-path` `--capability-db-path` (optionally
+`--host`/`--base-url`) is the local/test shape instead (binds
+`127.0.0.1` by default); every existing test in this directory uses that
+shape unchanged.
 
 `GET /health` is a plain, unauthenticated liveness route for a platform's
 health-check probe -- see `test_health_endpoint_returns_ok`.
