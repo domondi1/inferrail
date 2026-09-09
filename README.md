@@ -519,6 +519,15 @@ running the gateway above never requires it and never talks to it.
 - Full contract: [docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
 - Standalone buyer example: [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
 
+**Inferrail Economic Authority** (working name) is a second, independent
+hosted capability, also in `hosted/`: a buyer purchases a durable
+coordination boundary — a spending ceiling shared across agents, without
+double-allocating it — again paid for over x402 by any agent with its own
+wallet. **Base Sepolia testnet only, not deployed anywhere yet.**
+
+- Full contract: [docs/capabilities/economic-authority.md](docs/capabilities/economic-authority.md)
+- Standalone client example: [`examples/economic_authority_session.py`](examples/economic_authority_session.py)
+
 ## Configuration
 
 For a real deployment instead of quickstart defaults:
