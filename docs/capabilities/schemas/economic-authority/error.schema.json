@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://inferrail.example/schemas/economic-authority/error.schema.json",
+  "title": "EconomicAuthorityError",
+  "description": "Shared error shape across every surface this capability exposes: POST /sessions (400 validation, 409 SessionAuthorizationConflict), POST /sessions/recover (400 validation, 403 InvalidRecoverySecret), POST /capabilities/claim (400/401/403), and the `error` data-part an A2A operation's Task returns on TASK_STATE_FAILED/TASK_STATE_REJECTED. `detail` is not always present -- see hosted/a2a_economic_authority/sessions.py, server.py, and executor.py's `_fail`/CapabilityError handling.",
+  "type": "object",
+  "required": ["error"],
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "type": "string",
+      "description": "Either a short human-readable message (HTTP validation errors) or an exact exception class name (e.g. \"SessionAuthorizationConflict\", \"InvalidRecoverySecret\", \"MissingCredential\", \"InvalidCredential\", \"ExpiredCredential\", \"RevokedCredential\", \"InsufficientScope\", \"WrongDelegation\", \"WrongAuthorizer\"). `POST /sessions/recover` deliberately returns the single value \"InvalidRecoverySecret\" for every failure mode (unknown payment_nonce, no recovery opt-in, or a wrong secret) so the response never discloses which case occurred."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Optional additional context. Never contains a plaintext capability token or recovery secret."
+    }
+  }
+}

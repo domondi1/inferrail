@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://inferrail.example/schemas/economic-authority/response.schema.json",
+  "title": "EconomicAuthoritySessionPurchaseResponse",
+  "description": "POST /sessions 200 response body. See hosted/a2a_economic_authority/sessions.py::handle_session_request. `service_fee` and `authority_ceiling_usd` are always separate fields -- the fee is what was paid to Inferrail, the ceiling is buyer-declared policy metadata Inferrail never holds.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "agent_id",
+    "authority_ceiling_usd",
+    "service_fee",
+    "root_capability",
+    "newly_claimed"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "Server-generated (secrets.token_hex(16)). NOT knowable by the buyer before this response arrives -- this is exactly why /sessions/recover is keyed on payment_nonce instead. See recovery.schema.json."
+    },
+    "agent_id": { "type": "string" },
+    "authority_ceiling_usd": {
+      "type": "string",
+      "description": "Canonical decimal string of the buyer-declared ceiling. Never a deposit; Inferrail holds none of it."
+    },
+    "service_fee": {
+      "type": "object",
+      "required": ["amount_usd", "currency", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "amount_usd": {
+          "type": "string",
+          "description": "The actual x402 fee charged, e.g. \"0.05\". Configurable via ECONOMIC_AUTHORITY_SESSION_PRICE_USD; always a separate figure from authority_ceiling_usd."
+        },
+        "currency": { "const": "USD" },
+        "status": {
+          "const": "PAID",
+          "description": "Always \"PAID\" on a 200 response -- under this route's x402 \"upfront\" payment flow, settlement has already succeeded before this handler ever runs, so there is no code path that reaches a 200 with a lesser status."
+        }
+      }
+    },
+    "root_capability": {
+      "description": "The root capability token, shown exactly once. `null` when this exact payment_nonce was already claimed by an earlier call (ordinary duplicate delivery) -- see `note` below.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["token", "scopes", "instructions"],
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "type": "string",
+              "description": "Opaque bearer token. Use as `Authorization: Bearer <token>` on every A2A SendMessage call and on POST /capabilities/claim. Never persisted anywhere in plaintext by Inferrail -- only its SHA-256 hash."
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "enum": ["read", "reserve", "grant", "consume", "settle", "revoke"]
+              },
+              "description": "The root token always carries all six scopes."
+            },
+            "instructions": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "newly_claimed": {
+      "type": "boolean",
+      "description": "true only on the transaction that actually minted `root_capability`. false on a retry of the same payment_nonce (root_capability is then null)."
+    },
+    "note": {
+      "type": "string",
+      "const": "session_already_created_and_claimed",
+      "description": "Present only when root_capability is null."
+    }
+  }
+}
