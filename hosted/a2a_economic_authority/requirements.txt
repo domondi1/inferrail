@@ -1,0 +1,7 @@
+# Minimal runtime dependencies for server.py's hosted deployment.
+# Pinned to the version verified working end-to-end (real a2a-sdk server +
+# real a2a-sdk client transport, see tests/unit/hosted/
+# test_a2a_economic_authority_transport.py).
+fastapi==0.141.1
+uvicorn==0.52.4
+a2a-sdk[fastapi]==1.1.2
