@@ -1,26 +1,31 @@
-# Inferrail Economic Authority (hosted) — Phase C
+# Inferrail Economic Authority (hosted)
 
 **Status: durable core (Phase A), authenticated A2A transport (Phase B),
-and x402-gated paid session creation (Phase C), all security-repaired.**
-`core.py` is the transport-independent durable economic-authority core:
-reserve/grant/consume/settle over a delegated spending ceiling, with
-conservation and idempotency guarantees enforced by SQLite. `executor.py`,
-`agent_card.py`, `access_control.py`, and `server.py` add a real,
-locked-down A2A server on top of it, `capabilities.py` adds a
-capability-token authorization layer, and `sessions.py` adds the Phase C
-paid-session business logic behind `POST /sessions` (and its unpaid
-recovery sibling, `POST /sessions/recover`) -- see "Phase C: paid session
-creation" below.
+x402-gated paid session creation (Phase C), the public contract/ADR/
+schemas/example (Phase D), and deployment-readiness (Phase E prep), all
+security-repaired.** `core.py` is the transport-independent durable
+economic-authority core: reserve/grant/consume/settle over a delegated
+spending ceiling, with conservation and idempotency guarantees enforced
+by SQLite. `executor.py`, `agent_card.py`, `access_control.py`, and
+`server.py` add a real, locked-down A2A server on top of it,
+`capabilities.py` adds a capability-token authorization layer, and
+`sessions.py` adds the Phase C paid-session business logic behind
+`POST /sessions` (and its unpaid recovery sibling, `POST
+/sessions/recover`) -- see "Phase C: paid session creation" below. See
+[`docs/capabilities/economic-authority.md`](../../docs/capabilities/economic-authority.md)
+for the public, agent-facing contract.
 
-**Still not present, by design at this stage:** any deployment
-configuration and any recursive/automatic delegation between agents --
-every operation is a direct call initiated by a caller. The
-`authority_ceiling_usd` tracked here is caller-declared accounting/policy
-metadata: Inferrail does not hold, transfer, or escrow the underlying
-money, even now that a real x402 payment exists -- that payment is
-Inferrail's service fee for creating and hosting the coordination
-boundary, never a deposit into, or escrow of, the ceiling itself. See
-"Phase C" below for the full design.
+**Not yet deployed anywhere.** `server.py` now has what a deployment
+needs -- a `/health` liveness route and an environment-variable-driven
+production startup shape (see "Deploying it" below) -- but no instance of
+this service is running on any host. **Still not present, by design:**
+any recursive/automatic delegation between agents -- every operation is
+a direct call initiated by a caller. The `authority_ceiling_usd` tracked
+here is caller-declared accounting/policy metadata: Inferrail does not
+hold, transfer, or escrow the underlying money, even now that a real
+x402 payment exists -- that payment is Inferrail's service fee for
+creating and hosting the coordination boundary, never a deposit into, or
+escrow of, the ceiling itself. See "Phase C" below for the full design.
 
 ## What's here
 
@@ -293,10 +298,62 @@ Because of the second point, **this server must run as a single process**.
 `uvicorn.run()` without one. Running multiple worker processes against the
 same task/claim state would silently break both in-memory stores; only the
 SQLite-backed economic and capability state (including revocation
-race-safety) would remain correct. There is no deployment configuration
-in this repository yet that could introduce a multi-worker setup, but this
-constraint is enforced by omission today and must be addressed explicitly
-before any future phase adds one.
+race-safety) would remain correct. This constraint is enforced by
+omission (no `--workers` flag exists to misuse -- see
+`test_server_module_never_exposes_a_workers_flag`) and must be addressed
+explicitly, not merely re-checked, before any future phase makes this
+service multi-process.
+
+## Deploying it
+
+**Not deployed anywhere yet.** This section documents what a deployment
+needs, verified locally, not a live instance.
+
+Any host that can run a long-lived Python HTTPS **single** process (see
+above) with a **persistent, private disk** for two SQLite files works.
+Set:
+
+- `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` -- CDP facilitator credentials
+  (secret). Only required if `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS`
+  is also set (Phase C's `/sessions` route).
+- `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS` -- the EVM address to
+  receive the session service fee (not secret; a public on-chain
+  address). Deliberately distinct from `hosted/work_economics`'s own
+  `X402_SELLER_PAY_TO_ADDRESS` so the two capabilities' commercial
+  identities never overlap. Omit this to run in Phase B mode only (no
+  `/sessions` route at all).
+- `ECONOMIC_AUTHORITY_SESSION_PRICE_USD` -- optional, default `0.05`
+  (not secret).
+- `ECONOMIC_AUTHORITY_SESSION_RESOURCE_URL` -- optional, defaults to
+  `<base_url>/sessions` (not secret).
+- `ECONOMIC_AUTHORITY_BASE_URL` -- **required** in the production shape
+  below: the real public HTTPS URL this service is reachable at (not
+  secret). Used for the Agent Card's own `url` field and, unless
+  `ECONOMIC_AUTHORITY_SESSION_RESOURCE_URL` overrides it, the x402
+  resource URL. `main()` refuses to start without it in this shape --
+  see `test_fails_closed_in_production_shape_without_base_url`.
+- `ECONOMIC_AUTHORITY_DB_PATH`, `ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH` --
+  **required** in the production shape below: file paths on the
+  persistent disk for the two durable SQLite databases (not secret, but
+  the files they point at must be on private storage -- see "Durable" vs.
+  "Not durable" above for exactly what each file does and does not
+  survive a restart).
+- `PORT` -- injected by most hosting platforms (not secret).
+
+Then run `python3 server.py` (no CLI args -- this is the production
+shape: binds `0.0.0.0`, reads `$PORT`, reads the four
+`ECONOMIC_AUTHORITY_*` variables above). Passing explicit `--port`
+`--db-path` `--capability-db-path` (optionally `--host`/`--base-url`) is
+the local/test shape instead (binds `127.0.0.1` by default); every
+existing test in this directory uses that shape unchanged.
+
+`GET /health` is a plain, unauthenticated liveness route for a platform's
+health-check probe -- see `test_health_endpoint_returns_ok`.
+
+Whatever host runs this must terminate HTTPS in front of it --
+`/sessions`' plaintext root credential and `/sessions/recover`'s
+plaintext recovery secret are exactly as HTTPS-dependent as every other
+bearer credential this service issues.
 
 ## CI
 
@@ -321,8 +378,8 @@ deliberately excluded from the main `mypy` invocation's package list (see
   is ever durably written has no automated recovery path (see "Known
   residual gap" above) -- this must be resolved with a human-support/
   refund runbook before any real (mainnet) deployment.
-- No deployment configuration exists yet; when one is added, it must run
-  this service as a single process (see above) and terminate HTTPS in
-  front of it -- `/sessions`' plaintext root credential and
-  `/sessions/recover`'s plaintext recovery secret are exactly as
-  HTTPS-dependent as every other bearer credential this service issues.
+- Not deployed anywhere yet -- see "Deploying it" above for what a
+  deployment needs and what has been verified locally in advance of one.
+- `/sessions`' payment-settled-but-crashed-before-first-durable-write
+  residual gap (previous bullet) means a real deployment needs a
+  human-support/refund runbook in place from the start, not added later.

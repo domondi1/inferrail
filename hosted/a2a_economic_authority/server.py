@@ -122,10 +122,14 @@ below never exposes a `--workers` option and calls `uvicorn.run()` without
 one, which keeps it single-process by default. Running multiple worker
 processes (or multiple independent server processes) against the same
 task/claim state would silently break both in-memory stores; only the
-SQLite-backed economic and capability state would remain correct. Phase B
-has no deployment configuration that could accidentally introduce a
-multi-worker setup, but this constraint is called out here explicitly so
-a future phase does not add one without addressing it first.
+SQLite-backed economic and capability state would remain correct. This
+constraint is enforced by omission (no `--workers` flag exists to misuse)
+and must be addressed explicitly, not merely re-checked, before any
+future phase makes this service multi-process. Not deployed anywhere
+yet -- see `hosted/a2a_economic_authority/README.md`'s "Deploying it"
+for what `main()`'s two invocation shapes (explicit local/test args vs.
+`PORT`/`ECONOMIC_AUTHORITY_*`-env-var-driven production startup) verify
+in advance of one.
 """
 
 from __future__ import annotations
@@ -234,6 +238,15 @@ def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | P
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         await real_request_handler.aclose()
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        """Plain, unauthenticated liveness check for a deployment platform's
+        health-check probe -- deliberately outside the A2A/capability
+        pipeline, same as `hosted/work_economics/service.py`'s `/health`.
+        Returns process liveness only, not economic-state correctness.
+        """
+        return {"status": "ok"}
 
     @app.post("/capabilities/claim")
     async def claim_capability(request: Request) -> JSONResponse:
@@ -485,26 +498,88 @@ def _wire_session_purchase_route(
 
 
 def main() -> None:
+    """Two invocation shapes, mirroring `hosted/work_economics/service.py`'s
+    own explicit-args-vs-production convention:
+
+    - **Local/test shape** (every existing Phase B/C test uses this):
+      `--port`, `--db-path`, and `--capability-db-path` given explicitly on
+      the command line. `--host` defaults to `127.0.0.1`. `base_url`
+      defaults to the computed `http://<host>:<port>/` unless `--base-url`
+      is also given. Behavior is byte-for-byte unchanged from before this
+      function grew env-var support.
+    - **Production/deployment shape** (a bare `python3 server.py`, no CLI
+      args): `--port`/`--db-path`/`--capability-db-path` are read from
+      `PORT`/`ECONOMIC_AUTHORITY_DB_PATH`/`ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH`
+      instead, `--host` defaults to `0.0.0.0`, and the public HTTPS
+      `base_url` -- used for the Agent Card's own `url` field and as the
+      default x402 resource URL -- **must** come from
+      `ECONOMIC_AUTHORITY_BASE_URL` (there is no way to derive a public
+      HTTPS URL from an internal bind address/port). Fails closed with a
+      clear error rather than silently advertising an unreachable Agent
+      Card URL.
+    """
     parser = argparse.ArgumentParser(
-        description="Run an Inferrail Economic Authority Phase B server."
+        description="Run an Inferrail Economic Authority Phase B/C server."
     )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--db-path", required=True)
-    parser.add_argument("--capability-db-path", required=True)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--db-path")
+    parser.add_argument("--capability-db-path")
+    parser.add_argument("--base-url")
     args = parser.parse_args()
+
+    explicit_args = (
+        args.port is not None or args.db_path is not None or args.capability_db_path is not None
+    )
+
+    port_str = str(args.port) if args.port is not None else os.environ.get("PORT")
+    if not port_str:
+        parser.error(
+            "--port is required (explicit shape) or the PORT environment "
+            "variable must be set (production shape)"
+        )
+    port = int(port_str)
+
+    db_path = args.db_path or os.environ.get("ECONOMIC_AUTHORITY_DB_PATH")
+    if not db_path:
+        parser.error(
+            "--db-path is required (explicit shape) or ECONOMIC_AUTHORITY_DB_PATH "
+            "must be set (production shape)"
+        )
+
+    capability_db_path = args.capability_db_path or os.environ.get(
+        "ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH"
+    )
+    if not capability_db_path:
+        parser.error(
+            "--capability-db-path is required (explicit shape) or "
+            "ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH must be set (production shape)"
+        )
+
+    host = args.host or ("127.0.0.1" if explicit_args else "0.0.0.0")
+
+    base_url = args.base_url or os.environ.get("ECONOMIC_AUTHORITY_BASE_URL")
+    if not base_url:
+        if explicit_args:
+            base_url = f"http://{host}:{port}/"
+        else:
+            parser.error(
+                "ECONOMIC_AUTHORITY_BASE_URL (or --base-url) must be set in the "
+                "production shape -- the Agent Card and x402 resource URL must "
+                "advertise the real public HTTPS URL, which cannot be derived "
+                "from an internal bind host/port"
+            )
 
     import uvicorn
 
-    base_url = f"http://{args.host}:{args.port}/"
-    app = build_app(
-        base_url=base_url, db_path=args.db_path, capability_db_path=args.capability_db_path
-    )
+    app = build_app(base_url=base_url, db_path=db_path, capability_db_path=capability_db_path)
     # No `workers=` argument, deliberately -- see this module's docstring's
     # "Durability and single-process requirement" section. Do not add one
     # without first making InMemoryTaskStore and InMemoryCredentialHandoff
     # durable/shared across processes.
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(
+        app, host=host, port=port, log_level="warning", proxy_headers=True, forwarded_allow_ips="*"
+    )
 
 
 if __name__ == "__main__":
