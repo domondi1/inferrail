@@ -32,6 +32,7 @@ semantics.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 import sqlite3
 import threading
@@ -106,6 +107,17 @@ class SessionAuthorizationConflict(CapabilityError):
     attempted reuse, never a safe retry."""
 
 
+class InvalidRecoverySecret(CapabilityError):
+    """A `POST /sessions/recover` call did not present a secret whose
+    SHA-256 hash matches the `recovery_secret_hash` commitment recorded
+    for that `session_id` -- covers "no such session", "this session was
+    never opted into recovery", and "wrong secret" alike, deliberately
+    collapsed into one error/message so the response never discloses
+    which case occurred (an unrelated caller probing session ids must
+    learn nothing more than "recovery denied"). See
+    `CapabilityStore.recover_session_credential`."""
+
+
 @dataclass(frozen=True)
 class CapabilityInfo:
     token_id: str
@@ -134,7 +146,16 @@ class SessionPurchase:
     `delegation_id`), the buyer-declared coordination ceiling, the
     service fee actually charged, and whether its root credential has
     been minted/claimed yet -- see
-    `CapabilityStore.record_session_purchase`."""
+    `CapabilityStore.record_session_purchase`.
+
+    `payment_identifier` is the optional x402 payment-identifier
+    extension value the buyer chose (never used as a trust boundary --
+    see `sessions.py`'s module docstring for why -- stored only so a
+    human/ops trail can correlate multiple HTTP attempts to one logical
+    purchase intent). `recovery_secret_hash` is the optional SHA-256
+    commitment the buyer supplied at purchase time for
+    `POST /sessions/recover`; `None` means this buyer did not opt into
+    recovery for this session."""
 
     payment_nonce: str
     session_id: str
@@ -143,6 +164,8 @@ class SessionPurchase:
     service_fee_usd: str
     current_token_id: str | None
     claimed: bool
+    payment_identifier: str | None = None
+    recovery_secret_hash: str | None = None
 
 
 def _now() -> datetime:
@@ -151,6 +174,23 @@ def _now() -> datetime:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _session_purchase_from_row(row: sqlite3.Row) -> SessionPurchase:
+    keys = row.keys()
+    return SessionPurchase(
+        payment_nonce=row["payment_nonce"],
+        session_id=row["session_id"],
+        agent_id=row["agent_id"],
+        authority_ceiling_usd=row["authority_ceiling_usd"],
+        service_fee_usd=row["service_fee_usd"],
+        current_token_id=row["current_token_id"],
+        claimed=bool(row["claimed"]),
+        payment_identifier=row["payment_identifier"] if "payment_identifier" in keys else None,
+        recovery_secret_hash=(
+            row["recovery_secret_hash"] if "recovery_secret_hash" in keys else None
+        ),
+    )
 
 
 SCHEMA = """
@@ -189,6 +229,17 @@ CREATE TABLE IF NOT EXISTS session_purchases (
 );
 """
 
+# Columns added after the original Phase C schema shipped. SQLite has no
+# "ADD COLUMN IF NOT EXISTS" on the minimum version this repo targets, so
+# migration is done defensively via PRAGMA table_info -- safe to run
+# against a brand-new database (columns already present via SCHEMA above
+# on a fresh install) or an existing Phase C database created before this
+# repair.
+_SESSION_PURCHASES_MIGRATION_COLUMNS = (
+    ("payment_identifier", "TEXT"),
+    ("recovery_secret_hash", "TEXT"),
+)
+
 
 class CapabilityStore:
     """SQLite-backed capability-token ledger. Persists hashes only.
@@ -205,6 +256,12 @@ class CapabilityStore:
         conn = self._connect()
         try:
             conn.executescript(SCHEMA)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(session_purchases)")}
+            for column, column_type in _SESSION_PURCHASES_MIGRATION_COLUMNS:
+                if column not in existing:
+                    conn.execute(
+                        f"ALTER TABLE session_purchases ADD COLUMN {column} {column_type}"
+                    )
         finally:
             conn.close()
 
@@ -412,6 +469,9 @@ class CapabilityStore:
         agent_id: str,
         authority_ceiling_usd: str,
         service_fee_usd: str,
+        *,
+        payment_identifier: str | None = None,
+        recovery_secret_hash: str | None = None,
     ) -> SessionPurchase:
         """Idempotent, race-safe purchase record for one Phase C session.
 
@@ -433,6 +493,17 @@ class CapabilityStore:
         purchase two unrelated sessions" structural rather than
         best-effort: a given `payment_nonce` can only ever have one row,
         forever.
+
+        `payment_identifier` and `recovery_secret_hash` are recorded only
+        on the very first INSERT for a brand-new `payment_nonce` (this is
+        the one call per real payment that ever creates the row) and are
+        never compared/enforced on a retry -- they are not part of the
+        conflict check above, since neither changes the economic meaning
+        of the purchase. `payment_identifier` is NOT treated as a trust
+        boundary here (see `sessions.py`'s module docstring on why it is
+        recorded for audit/correlation only); `recovery_secret_hash` is a
+        one-way SHA-256 commitment the buyer computed client-side over a
+        secret only they hold -- see `recover_session_credential`.
         """
         now = _now().isoformat()
         with self._transaction() as conn:
@@ -444,8 +515,9 @@ class CapabilityStore:
                 conn.execute(
                     "INSERT INTO session_purchases "
                     "(payment_nonce, session_id, agent_id, authority_ceiling_usd, "
-                    "service_fee_usd, current_token_id, claimed, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?)",
+                    "service_fee_usd, current_token_id, claimed, created_at, updated_at, "
+                    "payment_identifier, recovery_secret_hash) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?)",
                     (
                         payment_nonce,
                         session_id,
@@ -454,6 +526,8 @@ class CapabilityStore:
                         service_fee_usd,
                         now,
                         now,
+                        payment_identifier,
+                        recovery_secret_hash,
                     ),
                 )
                 row = conn.execute(
@@ -469,15 +543,7 @@ class CapabilityStore:
                     "agent_id, authority_ceiling_usd, or service_fee_usd"
                 )
         assert row is not None
-        return SessionPurchase(
-            payment_nonce=row["payment_nonce"],
-            session_id=row["session_id"],
-            agent_id=row["agent_id"],
-            authority_ceiling_usd=row["authority_ceiling_usd"],
-            service_fee_usd=row["service_fee_usd"],
-            current_token_id=row["current_token_id"],
-            claimed=bool(row["claimed"]),
-        )
+        return _session_purchase_from_row(row)
 
     def get_session_purchase(self, payment_nonce: str) -> SessionPurchase | None:
         with self._transaction() as conn:
@@ -486,15 +552,7 @@ class CapabilityStore:
             ).fetchone()
         if row is None:
             return None
-        return SessionPurchase(
-            payment_nonce=row["payment_nonce"],
-            session_id=row["session_id"],
-            agent_id=row["agent_id"],
-            authority_ceiling_usd=row["authority_ceiling_usd"],
-            service_fee_usd=row["service_fee_usd"],
-            current_token_id=row["current_token_id"],
-            claimed=bool(row["claimed"]),
-        )
+        return _session_purchase_from_row(row)
 
     def issue_or_rotate_session_credential(
         self,
@@ -566,6 +624,95 @@ class CapabilityStore:
                 "UPDATE session_purchases SET current_token_id = ?, claimed = 1, updated_at = ? "
                 "WHERE payment_nonce = ?",
                 (token_id, now.isoformat(), payment_nonce),
+            )
+        return token_id, plaintext
+
+    def recover_session_credential(
+        self,
+        session_id: str,
+        presented_secret: str,
+        scopes: frozenset[str] | set[str],
+        ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+    ) -> tuple[str, str]:
+        """Re-mints the root capability for an already-paid session, for a
+        buyer who was genuinely charged but never received (or has since
+        lost) the credential -- the Phase C analogue of
+        `rotate_reservation_credential`.
+
+        Unlike Phase B's `reserve`/claim flow, Phase C has no pre-existing
+        capability token to check the caller's identity against (see
+        `sessions.py`'s module docstring). Instead, authorization here is
+        proof of knowledge of a secret the BUYER generated and hashed
+        client-side *before ever paying*, and sent to us only as a
+        SHA-256 commitment (`recovery_secret_hash` on `POST /sessions`,
+        the request body param `recovery_secret_hash`) -- never as the
+        plaintext, and never stored as anything but that one-way hash.
+        Because the buyer already holds the plaintext locally from the
+        moment they built the purchase request, this recovery path works
+        even if literally every response this service ever sent them was
+        lost (a total crash before the first response, an interrupted
+        connection after a later response, or anything in between) --
+        unlike a server-minted "recovery token" delivered only in a
+        response, which would share the same loss risk as the credential
+        it exists to recover.
+
+        Raises `InvalidRecoverySecret` -- a single error covering
+        "no such session", "this session never opted into recovery", and
+        "wrong secret" -- for every failure mode, so a caller who does not
+        already hold the correct secret learns nothing else. Comparison
+        is constant-time (`hmac.compare_digest`). On success, atomically
+        revokes whatever root credential is currently live for
+        `session_id` and mints a fresh one in its place -- exactly
+        `rotate_reservation_credential`'s guarantee, so recovery can never
+        leave two live root credentials for the same session, and never
+        creates a new session, a new root delegation, or changes
+        `authority_ceiling_usd`.
+        """
+        bad_scopes = set(scopes) - SCOPES
+        if bad_scopes:
+            raise ValueError(f"unknown scopes: {sorted(bad_scopes)}")
+        if not scopes:
+            raise ValueError("a capability must carry at least one scope")
+        presented_hash = _hash_token(presented_secret)
+        token_id = secrets.token_hex(16)
+        plaintext = secrets.token_urlsafe(_TOKEN_ENTROPY_BYTES)
+        token_hash = _hash_token(plaintext)
+        now = _now()
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT recovery_secret_hash FROM session_purchases WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            stored_hash = row["recovery_secret_hash"] if row is not None else None
+            if (
+                row is None
+                or stored_hash is None
+                or not hmac.compare_digest(stored_hash, presented_hash)
+            ):
+                raise InvalidRecoverySecret("recovery denied")
+            conn.execute(
+                "UPDATE capability_tokens SET revoked = 1 "
+                "WHERE delegation_id = ? AND revoked = 0",
+                (session_id,),
+            )
+            conn.execute(
+                "INSERT INTO capability_tokens "
+                "(token_id, token_hash, delegation_id, scopes, expires_at, revoked, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                (
+                    token_id,
+                    token_hash,
+                    session_id,
+                    ",".join(sorted(scopes)),
+                    expires_at,
+                    now.isoformat(),
+                ),
+            )
+            conn.execute(
+                "UPDATE session_purchases SET current_token_id = ?, updated_at = ? "
+                "WHERE session_id = ?",
+                (token_id, now.isoformat(), session_id),
             )
         return token_id, plaintext
 

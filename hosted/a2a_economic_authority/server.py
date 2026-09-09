@@ -16,11 +16,21 @@ Every other operation (reserve/grant/consume/settle/status/revoke, and
 the claim route above) remains protected exclusively by its own
 capability credential, exactly as in Phase B; purchasing a session is not
 required to use them, and using them never requires a second payment.
-`/sessions` is registered ONLY when `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS`
-is set in the environment, so every existing Phase B deployment, test, or
-import of this module that does not set it behaves exactly as before --
-no new required environment variable, no new required dependency import
-at call time for anyone not using Phase C.
+`/sessions` (and its unpaid sibling `/sessions/recover`, see below) is
+registered ONLY when `ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS` is set in
+the environment, so every existing Phase B deployment, test, or import of
+this module that does not set it behaves exactly as before -- no new
+required environment variable, no new required dependency import at call
+time for anyone not using Phase C.
+
+`/sessions` settles payment BEFORE calling its route handler (x402's
+`"upfront"` payment flow, not the scheme's default) -- see `sessions.py`'s
+"Settlement-before-handler" docstring section for the payment-security
+defect this closes and why. `/sessions/recover` is a plain, unpaid HTTP
+route for a buyer who was genuinely charged but never received (or has
+since lost) their session's root credential -- see
+`sessions.handle_session_recovery_request` and `capabilities.
+CapabilityStore.recover_session_credential`.
 
 ## Documented SDK limitation and the smallest safe alternative
 
@@ -148,7 +158,12 @@ from core import EconomicAuthorityStore  # noqa: E402
 from executor import EconomicAuthorityExecutor  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
-from sessions import handle_session_request  # noqa: E402
+from sessions import handle_session_recovery_request, handle_session_request  # noqa: E402
+from x402.extensions.payment_identifier import (  # noqa: E402
+    PAYMENT_IDENTIFIER,
+    declare_payment_identifier_extension,
+    extract_payment_identifier,
+)
 from x402.http import HTTPFacilitatorClient  # noqa: E402
 from x402.http.middleware.fastapi import payment_middleware  # noqa: E402
 from x402.http.types import PaymentOption, RouteConfig  # noqa: E402
@@ -291,6 +306,17 @@ def _wire_session_purchase_route(
                 pay_to=_SESSION_PAY_TO_ADDRESS,  # type: ignore[arg-type]  # guarded by the caller
                 price=f"${_SESSION_PRICE_USD}",
                 network=_SESSION_NETWORK,
+                # Payment-security repair: settle BEFORE calling the route
+                # handler, instead of the "exact"/eip3009 scheme's default
+                # "authorization" flow (settle after). This is an
+                # officially supported flow for this asset transfer
+                # method (see `x402.mechanisms.evm.exact.server
+                # .ExactEvmScheme.payment_flows`), not a bespoke
+                # workaround. See `sessions.py`'s module docstring,
+                # "Settlement-before-handler", for the full defect this
+                # closes and why it is closed structurally rather than by
+                # convention.
+                extra={"paymentFlow": "upfront"},
             ),
             resource=resource_url,
             description=(
@@ -303,6 +329,12 @@ def _wire_session_purchase_route(
                 "transfers, or escrows none of it."
             ),
             service_name="Inferrail Economic Authority",
+            # Optional (not required): a buyer MAY include the official
+            # x402 payment-identifier extension. See sessions.py's module
+            # docstring for exactly what this is, and is not, used for
+            # here (audit/correlation only -- never a substitute for the
+            # verified on-chain payment_nonce as the idempotency key).
+            extensions={PAYMENT_IDENTIFIER: declare_payment_identifier_extension(required=False)},
         )
     }
     x402_middleware = payment_middleware(routes, x402_server)
@@ -316,15 +348,19 @@ def _wire_session_purchase_route(
         """x402-protected. The only payment-gated route in this service.
 
         By the time this handler runs, the x402 middleware has already
-        cryptographically verified the payment
-        (`request.state.payment_payload` is set); on-chain settlement
-        happens after this handler returns, and is cancelled by the
-        middleware itself if this handler returns any 4xx/5xx status --
-        see `x402.http.middleware.fastapi.payment_middleware`. This
-        handler is deliberately thin: it never calls the facilitator
-        directly and never decides whether a payment is valid, only
-        extracts the verified payment's nonce and hands everything else
-        to `sessions.handle_session_request` -- see that function and
+        cryptographically verified the payment AND completed real
+        on-chain settlement (`request.state.payment_payload` is set, and
+        the route's `"upfront"` payment flow means settlement is a
+        precondition of this handler ever being called at all -- see
+        `sessions.py`'s "Settlement-before-handler" docstring section).
+        If settlement fails, the middleware returns a 402 directly and
+        this handler never runs -- there is no code path here that must
+        itself distinguish "verified" from "settled". This handler is
+        deliberately thin: it never calls the facilitator directly and
+        never decides whether a payment is valid, only extracts the
+        verified payment's nonce (and, if present, its optional
+        payment-identifier extension value) and hands everything else to
+        `sessions.handle_session_request` -- see that function and
         `sessions.create_or_recover_session` for the actual idempotency
         and crash-safety guarantee, and for how this is tested without a
         real facilitator/network dependency.
@@ -339,15 +375,34 @@ def _wire_session_purchase_route(
         payment_payload = getattr(request.state, "payment_payload", None)
         if payment_payload is None:
             # Unreachable in practice -- the middleware only calls through
-            # to this handler once payment is verified -- but fail closed
-            # rather than trust an unverified request.
+            # to this handler once payment is verified AND (for this
+            # route's "upfront" flow) settled -- but fail closed rather
+            # than trust an unverified request.
             return JSONResponse(
                 {"error": "payment not verified"}, status_code=402, headers=_NO_STORE_HEADERS
             )
+        # `payment_payload.payload` is a plain `dict[str, Any]` (the exact
+        # scheme's V2 wire shape is `{"authorization": {...}, "signature":
+        # ...}`), never an attribute-accessible object -- there is no
+        # `PaymentPayload.payload.authorization` attribute on the installed
+        # SDK. Fail closed (never silently substitute some other string as
+        # the idempotency key) if the shape is ever something else.
+        nonce = None
+        if isinstance(payment_payload.payload, dict):
+            authorization = payment_payload.payload.get("authorization")
+            if isinstance(authorization, dict):
+                nonce = authorization.get("nonce")
+        if not isinstance(nonce, str) or not nonce:
+            return JSONResponse(
+                {"error": "malformed verified payment payload"},
+                status_code=500,
+                headers=_NO_STORE_HEADERS,
+            )
+        payment_nonce = nonce
         try:
-            payment_nonce = payment_payload.payload.authorization.nonce
-        except AttributeError:
-            payment_nonce = str(payment_payload)
+            payment_identifier = extract_payment_identifier(payment_payload)
+        except (AttributeError, TypeError, ValueError):
+            payment_identifier = None
 
         status_code, response_body = handle_session_request(
             core_store,
@@ -355,7 +410,30 @@ def _wire_session_purchase_route(
             body=body,
             payment_nonce=payment_nonce,
             service_fee_usd=_SESSION_PRICE_USD,
+            payment_identifier=payment_identifier,
         )
+        return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
+
+    @app.post("/sessions/recover")
+    async def recover_session(request: Request) -> JSONResponse:
+        """Plain HTTP route, deliberately outside the x402/A2A pipeline
+        and NOT payment-gated -- recovering access to a session the
+        buyer already paid for costs nothing further. See `sessions.py`'s
+        `handle_session_recovery_request` and `capabilities.
+        CapabilityStore.recover_session_credential` for the full design:
+        authorization is proof of knowledge of the plaintext behind the
+        `recovery_secret_hash` commitment supplied on the original
+        `POST /sessions` call, never anything server-issued that could
+        share the same loss-of-response risk as the credential it
+        recovers.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse(
+                {"error": "malformed JSON body"}, status_code=400, headers=_NO_STORE_HEADERS
+            )
+        status_code, response_body = handle_session_recovery_request(capability_store, body=body)
         return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
 
 
