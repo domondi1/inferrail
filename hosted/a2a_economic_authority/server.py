@@ -28,9 +28,11 @@ time for anyone not using Phase C.
 "Settlement-before-handler" docstring section for the payment-security
 defect this closes and why. `/sessions/recover` is a plain, unpaid HTTP
 route for a buyer who was genuinely charged but never received (or has
-since lost) their session's root credential -- see
-`sessions.handle_session_recovery_request` and `capabilities.
-CapabilityStore.recover_session_credential`.
+since lost) their session's root credential -- identified by
+`payment_nonce`, never the server-generated `session_id` -- see
+`sessions.recover_session`'s docstring for exactly why, and `sessions.
+handle_session_recovery_request`/`capabilities.CapabilityStore.
+get_session_purchase_for_recovery` for the full design.
 
 ## Documented SDK limitation and the smallest safe alternative
 
@@ -158,7 +160,11 @@ from core import EconomicAuthorityStore  # noqa: E402
 from executor import EconomicAuthorityExecutor  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
-from sessions import handle_session_recovery_request, handle_session_request  # noqa: E402
+from sessions import (  # noqa: E402
+    _RECOVERY_HASH_PATTERN,
+    handle_session_recovery_request,
+    handle_session_request,
+)
 from x402.extensions.payment_identifier import (  # noqa: E402
     PAYMENT_IDENTIFIER,
     declare_payment_identifier_extension,
@@ -343,6 +349,43 @@ def _wire_session_purchase_route(
     async def _sessions_payment_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         return await x402_middleware(request, call_next)
 
+    # Registered AFTER `_sessions_payment_middleware` above -- Starlette's
+    # `Starlette.add_middleware` INSERTS each new middleware at the front
+    # of its internal list (`user_middleware.insert(0, ...)`), which
+    # `build_middleware_stack` then wraps such that the LAST-registered
+    # middleware ends up OUTERMOST and therefore runs FIRST on the way in.
+    # Registering this one second makes it run before x402 ever verifies
+    # or settles anything -- so it can reject, and does, BEFORE any money
+    # moves. This is what makes `recovery_secret_hash` genuinely "reject
+    # before payment" rather than merely "reject before the route handler
+    # runs": the latter is NOT good enough under this route's `"upfront"`
+    # payment flow, where settlement happens before the handler runs
+    # regardless of what the handler would have validated. Reads the body
+    # via `request.json()` -- Starlette caches the raw bytes on first
+    # read, so the x402 middleware (which already ran) and the route
+    # handler below can still read the same body afterward. Malformed
+    # JSON is deliberately NOT rejected here (that is `create_session`'s
+    # job) -- this middleware only ever produces an early rejection for
+    # the one thing it exists to check.
+    @app.middleware("http")
+    async def _require_recovery_secret_hash(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.method == "POST" and request.url.path == "/sessions":
+            try:
+                body = await request.json()
+            except (json.JSONDecodeError, ValueError):
+                body = None
+            if isinstance(body, dict):
+                recovery_secret_hash = body.get("recovery_secret_hash")
+                if not isinstance(recovery_secret_hash, str) or not _RECOVERY_HASH_PATTERN.match(
+                    recovery_secret_hash
+                ):
+                    return JSONResponse(
+                        {"error": "recovery_secret_hash is required"},
+                        status_code=400,
+                        headers=_NO_STORE_HEADERS,
+                    )
+        return await call_next(request)
+
     @app.post("/sessions")
     async def create_session(request: Request) -> JSONResponse:
         """x402-protected. The only payment-gated route in this service.
@@ -415,17 +458,19 @@ def _wire_session_purchase_route(
         return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
 
     @app.post("/sessions/recover")
-    async def recover_session(request: Request) -> JSONResponse:
+    async def recover_session_route(request: Request) -> JSONResponse:
         """Plain HTTP route, deliberately outside the x402/A2A pipeline
         and NOT payment-gated -- recovering access to a session the
-        buyer already paid for costs nothing further. See `sessions.py`'s
-        `handle_session_recovery_request` and `capabilities.
-        CapabilityStore.recover_session_credential` for the full design:
-        authorization is proof of knowledge of the plaintext behind the
-        `recovery_secret_hash` commitment supplied on the original
-        `POST /sessions` call, never anything server-issued that could
-        share the same loss-of-response risk as the credential it
-        recovers.
+        buyer already paid for costs nothing further. Identifies the
+        purchase by `payment_nonce` (never `session_id` -- see
+        `sessions.recover_session`'s docstring for exactly why). See
+        `sessions.py`'s `handle_session_recovery_request` and
+        `capabilities.CapabilityStore.get_session_purchase_for_recovery`
+        for the full design: authorization is proof of knowledge of the
+        plaintext behind the `recovery_secret_hash` commitment required
+        on the original `POST /sessions` call, never anything
+        server-issued that could share the same loss-of-response risk as
+        the credential it recovers.
         """
         try:
             body = await request.json()
@@ -433,7 +478,9 @@ def _wire_session_purchase_route(
             return JSONResponse(
                 {"error": "malformed JSON body"}, status_code=400, headers=_NO_STORE_HEADERS
             )
-        status_code, response_body = handle_session_recovery_request(capability_store, body=body)
+        status_code, response_body = handle_session_recovery_request(
+            core_store, capability_store, body=body
+        )
         return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
 
 
