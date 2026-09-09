@@ -24,8 +24,16 @@ if [ "$#" -eq 0 ]; then
         tests/unit/hosted/test_a2a_economic_authority_core.py \
         tests/unit/hosted/test_a2a_economic_authority_capabilities.py \
         tests/unit/hosted/test_a2a_economic_authority_reservation_recovery.py \
+        tests/unit/hosted/test_a2a_economic_authority_sessions.py \
         tests/unit/hosted/test_a2a_economic_authority_transport.py
 fi
+# test_a2a_economic_authority_session_service.py (Phase C's x402/CDP
+# service-wiring tests) is deliberately NOT in this strict, zero-skip
+# list -- like hosted/work_economics/'s own test_work_economics_service.py,
+# it is skip-gated on real CDP_API_KEY_ID/CDP_API_KEY_SECRET/
+# ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS and never performs a real
+# payment. It still runs (and is allowed to skip) as part of the normal
+# `pytest` invocation in the main `test` CI job.
 
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
