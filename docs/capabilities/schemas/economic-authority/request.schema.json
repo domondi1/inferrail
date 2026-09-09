@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://inferrail.example/schemas/economic-authority/request.schema.json",
+  "title": "EconomicAuthoritySessionPurchaseRequest",
+  "description": "POST /sessions request body. See hosted/a2a_economic_authority/sessions.py::handle_session_request. Sent both on the initial (unpaid, price-discovery) request and again on the retry carrying the signed x402 PAYMENT-SIGNATURE header -- the body is identical both times.",
+  "type": "object",
+  "required": ["agent_id", "authority_ceiling_usd", "recovery_secret_hash"],
+  "additionalProperties": true,
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Caller-supplied label for the buyer/agent. NOT a verified identity -- see docs/capabilities/economic-authority.md's Limitations section."
+    },
+    "authority_ceiling_usd": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?$",
+      "description": "Buyer-declared decimal string. Policy/accounting metadata enforced by core.py, never money deposited with or held by Inferrail. Must be positive; validated after parsing."
+    },
+    "recovery_secret_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "REQUIRED. Lowercase hex SHA-256 digest of a high-entropy secret the buyer generates and keeps for themselves, computed BEFORE this request is ever sent. Never send the plaintext secret here -- only its hash. See recovery.schema.json."
+    }
+  }
+}

@@ -1,0 +1,322 @@
+"""Buy and operate an Inferrail Economic Authority session — Base Sepolia
+TESTNET only.
+
+A complete, standalone external-agent client. Uses YOUR OWN Base Sepolia
+wallet's private key to sign a real (testnet) x402 payment authorization,
+then drives the full lifecycle over real A2A JSON-RPC transport: discover
+the Agent Card, purchase a session, recover its root credential (a
+deliberate illustration — see step 2 below), check status, reserve a
+child delegation, claim its credential, consume and settle it, then
+revoke the whole session. No Inferrail account, no CDP account, and no
+prior relationship with Inferrail is required. See
+docs/capabilities/economic-authority.md for the full contract this
+mirrors, and its `schemas/` subdirectory for the machine-readable request/
+response/receipt/error/recovery shapes.
+
+This is testnet-only. Base Sepolia test-USDC has no real monetary value.
+There is no hosted instance of this capability yet (unlike Work
+Economics) — you must run `hosted/a2a_economic_authority/server.py`
+yourself (see its own `--help`) and pass its base URL as this script's
+first argument.
+
+Install:
+    pip install "x402[evm]" "a2a-sdk==1.1.2" httpx
+
+Run:
+    TESTER_PRIVATE_KEY=0xYOUR_TESTNET_PRIVATE_KEY \\
+        python3 economic_authority_session.py http://127.0.0.1:8000
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import os
+import secrets
+import sys
+from decimal import Decimal
+from typing import Any
+
+import httpx
+from a2a.client import AuthInterceptor, ClientConfig, ClientFactory, InMemoryContextCredentialStore
+from a2a.client.client import Client, ClientCallContext
+from a2a.helpers import get_data_parts, new_data_message
+from a2a.types import Role, SendMessageRequest, Task, TaskState
+from eth_account import Account
+from x402 import x402Client
+from x402.http.x402_http_client import x402HTTPClient
+from x402.mechanisms.evm.exact import register_exact_evm_client
+from x402.mechanisms.evm.signers import EthAccountSigner
+
+NETWORK = "eip155:84532"  # Base Sepolia (CAIP-2)
+BEARER_SCHEME = "capabilityBearer"  # must match agent_card.BEARER_SECURITY_SCHEME
+AGENT_ID = "example-external-agent"
+AUTHORITY_CEILING_USD = Decimal("10.00")  # buyer-declared policy ceiling, not a deposit
+
+
+# --- Step 1: discover the Agent Card -----------------------------------
+
+
+def discover_agent_card(base_url: str) -> dict[str, Any]:
+    resp = httpx.get(f"{base_url}/.well-known/agent-card.json", timeout=10.0)
+    resp.raise_for_status()
+    card = resp.json()
+    print(f"[1] Agent Card: {card['name']!r}, skills: {[s['id'] for s in card['skills']]}")
+    return card
+
+
+# --- Steps 2-5: generate a recovery secret, purchase a session ----------
+
+
+async def buy_session(base_url: str, account: Account) -> tuple[str, str, str, str]:
+    """Returns (session_id, root_token, payment_nonce, recovery_secret).
+
+    `payment_nonce` and `recovery_secret` are both generated on THIS side
+    before any request is sent -- the buyer holds both independent of
+    whatever this service ever responds with, which is exactly what makes
+    `/sessions/recover` reachable even if every response below were lost.
+    """
+    # Step 2: generate a high-entropy recovery secret, client-side, before
+    # ever paying. Only its SHA-256 hash is ever sent to Inferrail.
+    recovery_secret = secrets.token_urlsafe(32)
+    recovery_secret_hash = hashlib.sha256(recovery_secret.encode("utf-8")).hexdigest()
+    print("[2] Generated recovery secret locally (never sent as plaintext until recovery)")
+
+    # Step 3: send only the hash on the purchase request. See
+    # docs/capabilities/economic-authority.md#request -- recovery_secret_hash
+    # is REQUIRED, not optional.
+    body = {
+        "agent_id": AGENT_ID,
+        "authority_ceiling_usd": str(AUTHORITY_CEILING_USD),
+        "recovery_secret_hash": recovery_secret_hash,
+    }
+
+    unpaid = httpx.post(f"{base_url}/sessions", json=body, timeout=15.0)
+    if unpaid.status_code != 402:
+        raise SystemExit(f"expected HTTP 402, got {unpaid.status_code}: {unpaid.text}")
+
+    signer = EthAccountSigner(account)
+    client = x402Client()
+    register_exact_evm_client(client, signer, networks=NETWORK)
+    http_client = x402HTTPClient(client)
+
+    payment_required = http_client.get_payment_required_response(
+        lambda name: unpaid.headers.get(name), unpaid.json() if unpaid.text else None
+    )
+    accepted = payment_required.accepts[0]
+    print(
+        f"[3] Payment required: {accepted.amount} atomic units of "
+        f"{accepted.asset} on {accepted.network}, pay to {accepted.pay_to}"
+    )
+
+    # Step 4: satisfy the requirement -- sign with YOUR OWN key.
+    payment_payload = await client.create_payment_payload(payment_required)
+    payment_headers = http_client.encode_payment_signature_header(payment_payload)
+
+    # The EIP-3009 authorization's nonce was generated by OUR OWN client
+    # library inside create_payment_payload above -- we already hold it,
+    # independent of anything this service has said back to us yet. This
+    # is the identifier /sessions/recover is keyed on (never session_id).
+    payment_nonce = str(payment_payload.payload["authorization"]["nonce"])  # type: ignore[index]
+
+    paid = httpx.post(f"{base_url}/sessions", json=body, headers=payment_headers, timeout=30.0)
+    if paid.status_code != 200:
+        raise SystemExit(f"payment did not succeed: {paid.status_code} {paid.text}")
+    data = paid.json()
+    assert data["service_fee"]["status"] == "PAID"
+    assert data["service_fee"]["amount_usd"] != data["authority_ceiling_usd"], (
+        "service_fee and authority_ceiling_usd must never be conflated"
+    )
+
+    # Step 5: receive the root capability. It is shown exactly once, in
+    # this response -- never persist it in plaintext.
+    session_id = data["session_id"]
+    root_token = data["root_capability"]["token"]
+    print(
+        f"[5] Session purchased: session_id={session_id}, "
+        f"authority_ceiling_usd={data['authority_ceiling_usd']}, "
+        f"service_fee={data['service_fee']['amount_usd']} {data['service_fee']['currency']}"
+    )
+    return session_id, root_token, payment_nonce, recovery_secret
+
+
+def recover_session(base_url: str, payment_nonce: str, recovery_secret: str) -> tuple[str, str]:
+    """Illustrates the recovery path a buyer would use if the purchase
+    response above (or a later credential) were lost -- unpaid, and
+    reachable using only information generated on the buyer's own side
+    before payment (never the server-generated session_id). See
+    docs/capabilities/economic-authority.md#recovery.
+
+    Returns (session_id, new_root_token). Revokes whatever root
+    credential was previously live for this session -- see the module
+    docstring: only one call site should hold the live token at a time.
+    """
+    resp = httpx.post(
+        f"{base_url}/sessions/recover",
+        json={"payment_nonce": payment_nonce, "recovery_secret": recovery_secret},
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    print(f"[recovery] Recovered session_id={data['session_id']} with a fresh root credential")
+    return data["session_id"], data["root_capability"]["token"]
+
+
+# --- A2A operations: status / reserve / claim / consume / settle / revoke -
+
+
+async def make_a2a_client(base_url: str, token: str, context_key: str) -> Client:
+    """`token` is delivered only via the real HTTP `Authorization: Bearer`
+    header (through the SDK's own AuthInterceptor) -- never inside a
+    message. `context_key` just partitions this in-memory credential
+    store per logical caller (root vs. child) within this one script."""
+    cred_store = InMemoryContextCredentialStore()
+    await cred_store.set_credentials(context_key, BEARER_SCHEME, token)
+    factory = ClientFactory(ClientConfig(streaming=False))
+    return await factory.create_from_url(base_url, interceptors=[AuthInterceptor(cred_store)])
+
+
+def call_context(context_key: str) -> ClientCallContext:
+    return ClientCallContext(state={"sessionId": context_key})
+
+
+async def call_op(client: Client, ctx: ClientCallContext, payload: dict[str, Any]) -> Task:
+    message = new_data_message(payload, role=Role.ROLE_USER)
+    request = SendMessageRequest(message=message)
+    async for response in client.send_message(request, context=ctx):
+        if response.HasField("task"):
+            return response.task
+        raise RuntimeError(f"expected a Task, got a bare Message: {response}")
+    raise RuntimeError("send_message yielded no response")
+
+
+def first_artifact(task: Task) -> dict[str, Any]:
+    for artifact in task.artifacts:
+        for item in get_data_parts(artifact.parts):
+            if isinstance(item, dict):
+                return item
+    raise RuntimeError(f"task has no data artifact: {task}")
+
+
+def claim_credential(base_url: str, claim_id: str, authorizing_token: str) -> str:
+    """Plain HTTP call to the out-of-band claim endpoint -- deliberately
+    not an A2A operation, since the A2A JSON-RPC transport has no channel
+    to deliver a freshly minted credential outside task history."""
+    resp = httpx.post(
+        f"{base_url}/capabilities/claim",
+        json={"claim_id": claim_id},
+        headers={"Authorization": f"Bearer {authorizing_token}"},
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    return str(resp.json()["token"])
+
+
+# --- Full lifecycle -------------------------------------------------------
+
+
+async def main() -> None:
+    if len(sys.argv) < 2:
+        raise SystemExit(
+            "usage: economic_authority_session.py <base_url>\n"
+            "(there is no hosted instance of this capability yet -- run "
+            "hosted/a2a_economic_authority/server.py yourself and pass its base URL)"
+        )
+    base_url = sys.argv[1].rstrip("/")
+
+    private_key = os.environ.get("TESTER_PRIVATE_KEY")
+    if not private_key:
+        raise SystemExit(
+            "Set TESTER_PRIVATE_KEY to your own Base Sepolia TESTNET wallet's "
+            "private key (never share this key, never commit it anywhere)."
+        )
+    account = Account.from_key(private_key)
+    print(f"Buyer address: {account.address}")
+
+    discover_agent_card(base_url)
+
+    session_id, original_token, payment_nonce, recovery_secret = await buy_session(
+        base_url, account
+    )
+
+    # Step 7 (illustrative): recover access using only what the buyer
+    # generated before ever paying. A real buyer would only do this after
+    # genuinely losing every response for this payment; here it simply
+    # proves the mechanism -- the original token above is revoked the
+    # moment this call succeeds, so the script uses the recovered one from
+    # here on.
+    _session_id_again, root_token = recover_session(base_url, payment_nonce, recovery_secret)
+    assert _session_id_again == session_id
+
+    root_client = await make_a2a_client(base_url, root_token, "root")
+    root_ctx = call_context("root")
+
+    # Step 6a: status.
+    status_task = await call_op(
+        root_client, root_ctx, {"op": "status", "delegation_id": session_id}
+    )
+    assert status_task.status.state == TaskState.TASK_STATE_COMPLETED
+    print(f"[status] {first_artifact(status_task)['delegation']}")
+
+    # Step 6b: reserve a child delegation out of the session's authority.
+    child_id = f"child-of-{session_id}"
+    reserve_task = await call_op(
+        root_client,
+        root_ctx,
+        {
+            "op": "reserve",
+            "event_id": f"evt:{child_id}:reserve",
+            "parent_id": session_id,
+            "delegation_id": child_id,
+            "agent_id": "example-worker",
+            "maximum_usd": "1.00",
+        },
+    )
+    assert reserve_task.status.state == TaskState.TASK_STATE_COMPLETED
+    claim_id = first_artifact(reserve_task)["credential_claim_id"]
+    child_token = claim_credential(base_url, claim_id, root_token)
+    print(f"[reserve] Reserved {child_id}, claimed its credential")
+
+    child_client = await make_a2a_client(base_url, child_token, "child")
+    child_ctx = call_context("child")
+
+    # Step 6c: consume against the child.
+    consume_task = await call_op(
+        child_client,
+        child_ctx,
+        {
+            "op": "consume",
+            "event_id": f"evt:{child_id}:consume",
+            "delegation_id": child_id,
+            "amount_usd": "0.25",
+        },
+    )
+    assert consume_task.status.state == TaskState.TASK_STATE_COMPLETED
+    print(f"[consume] {first_artifact(consume_task)['delegation']}")
+
+    # Step 6d: settle the child, releasing its unused reservation.
+    settle_task = await call_op(
+        child_client,
+        child_ctx,
+        {
+            "op": "settle",
+            "event_id": f"evt:{child_id}:settle",
+            "delegation_id": child_id,
+            "outcome": "SUCCESS",
+        },
+    )
+    assert settle_task.status.state == TaskState.TASK_STATE_COMPLETED
+    print(f"[settle] {first_artifact(settle_task)['delegation']}")
+
+    # Step 6e: revoke the whole session (its subtree, if any remains).
+    revoke_task = await call_op(
+        root_client,
+        root_ctx,
+        {"op": "revoke", "event_id": f"evt:{session_id}:revoke", "delegation_id": session_id},
+    )
+    assert revoke_task.status.state == TaskState.TASK_STATE_COMPLETED
+    print(f"[revoke] {first_artifact(revoke_task)}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

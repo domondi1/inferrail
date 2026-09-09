@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://inferrail.example/schemas/economic-authority/receipt.schema.json",
+  "title": "EconomicAuthorityDelegationReceipt",
+  "description": "The `receipt` data-part artifact returned by the `status`, `grant`, `consume`, and `settle` A2A operations once their Task reaches TASK_STATE_COMPLETED. See hosted/a2a_economic_authority/executor.py::_complete_with_status/_state_to_dict. Every amount is a decimal string, never a float.",
+  "type": "object",
+  "required": ["note", "delegation", "lineage", "invariant"],
+  "additionalProperties": false,
+  "properties": {
+    "note": {
+      "type": "string",
+      "enum": ["status", "granted", "consumed", "settled"]
+    },
+    "delegation": {
+      "description": "null only if the delegation_id does not exist (should not occur for a request that already passed capability authorization).",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/delegationState" }]
+    },
+    "lineage": {
+      "type": "array",
+      "description": "This delegation's ancestor chain, root first, ending with this delegation itself.",
+      "items": { "$ref": "#/definitions/delegationState" }
+    },
+    "invariant": {
+      "type": "object",
+      "required": ["satisfied_on_known_values", "certainty", "label", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "satisfied_on_known_values": { "type": "boolean" },
+        "certainty": { "type": "string" },
+        "label": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    }
+  },
+  "definitions": {
+    "delegationState": {
+      "type": "object",
+      "required": [
+        "delegation_id",
+        "parent_delegation_id",
+        "agent_id",
+        "authority_usd",
+        "consumed_usd",
+        "child_reserved_usd",
+        "released_usd",
+        "active_reservation_usd",
+        "unknown_cost_count",
+        "active",
+        "outcome"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "delegation_id": { "type": "string" },
+        "parent_delegation_id": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
+        "agent_id": { "type": "string" },
+        "authority_usd": { "type": "string" },
+        "consumed_usd": { "type": "string" },
+        "child_reserved_usd": { "type": "string" },
+        "released_usd": { "type": "string" },
+        "active_reservation_usd": { "type": "string" },
+        "unknown_cost_count": { "type": "integer", "minimum": 0 },
+        "active": { "type": "boolean" },
+        "outcome": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+      }
+    }
+  }
+}
