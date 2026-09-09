@@ -1,6 +1,6 @@
 """Guards `docs/capabilities/economic-authority.md`, its ADR, and the
 README's reference to both against link rot and malformed schemas --
-part of Phase D's "documentation cannot silently drift" requirement.
+this capability's documentation-cannot-silently-drift guarantee.
 
 Pure file-system checks, no network access and no hosted extra required
 -- this test always runs as part of the main `pytest` job.

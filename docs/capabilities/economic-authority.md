@@ -96,11 +96,13 @@ persisted anywhere in plaintext by Inferrail — only its SHA-256 hash.
 Every operation is a `SendMessage` call carrying one JSON data part with
 an `op` field, authenticated by `Authorization: Bearer <token>` (never
 inside the message itself). A successful op returns a `Task` in
-`TASK_STATE_COMPLETED` with a `receipt` data-part artifact — schema:
+`TASK_STATE_COMPLETED` with a data-part artifact. For every op except
+`reserve`, that artifact is a `receipt` — schema:
 [`receipt.schema.json`](schemas/economic-authority/receipt.schema.json).
-A failure returns `TASK_STATE_FAILED`/`TASK_STATE_REJECTED` with an
-`error` data-part — schema:
-[`error.schema.json`](schemas/economic-authority/error.schema.json).
+`reserve`'s artifact has a different shape (`credential_claim_id`, not a
+receipt) — see below. A failure returns
+`TASK_STATE_FAILED`/`TASK_STATE_REJECTED` with an `error` data-part —
+schema: [`error.schema.json`](schemas/economic-authority/error.schema.json).
 
 | `op` | Required fields | Scope required |
 |---|---|---|
