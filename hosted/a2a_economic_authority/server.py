@@ -217,7 +217,24 @@ def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | P
     handoff = InMemoryCredentialHandoff()
     executor = EconomicAuthorityExecutor(core_store, capability_store, handoff)
 
-    agent_card = build_agent_card(url=base_url)
+    session_purchase_enabled = bool(_SESSION_PAY_TO_ADDRESS)
+    # Computed once, here -- both the Agent Card (what a discovering agent
+    # is told) and `_wire_session_purchase_route` (what the server actually
+    # runs) must agree on the exact same URL. Previously only the latter
+    # computed this, so the Agent Card had no way to advertise it at all.
+    session_resource_url = (
+        os.environ.get(
+            "ECONOMIC_AUTHORITY_SESSION_RESOURCE_URL", f"{base_url.rstrip('/')}/sessions"
+        )
+        if session_purchase_enabled
+        else None
+    )
+    agent_card = build_agent_card(
+        url=base_url,
+        session_purchase_enabled=session_purchase_enabled,
+        session_purchase_url=session_resource_url,
+        session_price_usd=str(_SESSION_PRICE_USD) if session_purchase_enabled else None,
+    )
     task_store = InMemoryTaskStore()
     real_request_handler = DefaultRequestHandler(
         agent_executor=executor,
@@ -289,8 +306,11 @@ def build_app(*, base_url: str, db_path: str | Path, capability_db_path: str | P
             )
         return JSONResponse({"token": plaintext}, headers=_NO_STORE_HEADERS)
 
-    if _SESSION_PAY_TO_ADDRESS:
-        _wire_session_purchase_route(app, core_store, capability_store, base_url)
+    if session_purchase_enabled:
+        assert session_resource_url is not None  # narrows for mypy; guaranteed above
+        _wire_session_purchase_route(
+            app, core_store, capability_store, base_url, session_resource_url
+        )
 
     return app
 
@@ -300,12 +320,15 @@ def _wire_session_purchase_route(
     core_store: EconomicAuthorityStore,
     capability_store: CapabilityStore,
     base_url: str,
+    resource_url: str,
 ) -> None:
     """Registers the ONLY x402-gated route in this service, `POST
     /sessions` -- see this module's docstring and `sessions.py`'s for the
     full design. Only called when `_SESSION_PAY_TO_ADDRESS` is set, so a
     plain Phase B deployment/test never pays this section's import-time
-    or wiring cost.
+    or wiring cost. `resource_url` is computed once by the caller
+    (`build_app`) so the Agent Card and this route always agree on the
+    exact same purchase URL.
     """
     facilitator_config = create_facilitator_config(
         api_key_id=os.environ["CDP_API_KEY_ID"],
@@ -315,9 +338,6 @@ def _wire_session_purchase_route(
     x402_server = x402ResourceServer(facilitator_client)
     register_exact_evm_server(x402_server, networks=_SESSION_NETWORK)
 
-    resource_url = os.environ.get(
-        "ECONOMIC_AUTHORITY_SESSION_RESOURCE_URL", f"{base_url.rstrip('/')}/sessions"
-    )
     routes: dict[str, RouteConfig] = {
         "POST /sessions": RouteConfig(
             accepts=PaymentOption(
