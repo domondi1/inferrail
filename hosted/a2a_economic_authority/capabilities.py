@@ -16,6 +16,17 @@ economic state.
 
 Six scopes cover every direct operation this service exposes:
 `read`, `reserve`, `grant`, `consume`, `settle`, `revoke`.
+
+Phase C (`sessions.py`) adds one further durable table here,
+`session_purchases`, to get the exact-same crash-safe, atomic
+revoke-then-reissue guarantee `reservation_authorizations` already gives
+Phase B's `reserve` flow, for a session's own root credential. This
+module still performs no economic arithmetic anywhere -- `authority_
+ceiling_usd`/`service_fee_usd` are stored and compared only as opaque,
+already-canonicalized strings (canonicalization and all Decimal handling
+happen in `sessions.py`), exactly like `child_scopes` is already stored
+and compared as an opaque string without this module interpreting scope
+semantics.
 """
 
 from __future__ import annotations
@@ -86,6 +97,15 @@ class ReservationAuthorizationConflict(CapabilityError):
     conflicting reuse, never a safe retry."""
 
 
+class SessionAuthorizationConflict(CapabilityError):
+    """A `payment_nonce` was already durably bound (via
+    `record_session_purchase`) to a different `agent_id`,
+    `authority_ceiling_usd`, or `service_fee_usd` than what is being
+    requested now. This is exactly the "one payment proof purchasing an
+    unrelated session" attempt Phase C must reject -- a caller bug or an
+    attempted reuse, never a safe retry."""
+
+
 @dataclass(frozen=True)
 class CapabilityInfo:
     token_id: str
@@ -105,6 +125,24 @@ class ReservationAuthorization:
     authorizing_token_id: str
     child_scopes: frozenset[str]
     current_token_id: str | None
+
+
+@dataclass(frozen=True)
+class SessionPurchase:
+    """Durable record of one paid Phase C session: which payment nonce
+    purchased it, its server-generated `session_id` (the root
+    `delegation_id`), the buyer-declared coordination ceiling, the
+    service fee actually charged, and whether its root credential has
+    been minted/claimed yet -- see
+    `CapabilityStore.record_session_purchase`."""
+
+    payment_nonce: str
+    session_id: str
+    agent_id: str
+    authority_ceiling_usd: str
+    service_fee_usd: str
+    current_token_id: str | None
+    claimed: bool
 
 
 def _now() -> datetime:
@@ -134,6 +172,18 @@ CREATE TABLE IF NOT EXISTS reservation_authorizations (
     authorizing_token_id TEXT NOT NULL,
     child_scopes TEXT NOT NULL,
     current_token_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_purchases (
+    payment_nonce TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    agent_id TEXT NOT NULL,
+    authority_ceiling_usd TEXT NOT NULL,
+    service_fee_usd TEXT NOT NULL,
+    current_token_id TEXT,
+    claimed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -354,6 +404,169 @@ class CapabilityStore:
                     f"no reservation_authorizations row for {child_delegation_id!r} -- "
                     "record_reservation_authorization must be called first"
                 )
+        return token_id, plaintext
+
+    def record_session_purchase(
+        self,
+        payment_nonce: str,
+        agent_id: str,
+        authority_ceiling_usd: str,
+        service_fee_usd: str,
+    ) -> SessionPurchase:
+        """Idempotent, race-safe purchase record for one Phase C session.
+
+        If `payment_nonce` is new, atomically generates a fresh
+        `session_id` (server-determined, never caller-supplied) and
+        records this purchase. If `payment_nonce` already exists, returns
+        the EXISTING record -- with its EXISTING `session_id` -- after
+        verifying `agent_id`/`authority_ceiling_usd`/`service_fee_usd`
+        match; raises `SessionAuthorizationConflict` otherwise. Amounts
+        are compared as the exact strings given -- callers must pass
+        already-canonicalized Decimal strings (see `sessions.py`) so
+        "10" and "10.00" are never mistaken for a conflicting reuse.
+
+        Because `session_id` is always server-generated inside this one
+        atomic transaction, two callers racing on the same brand-new
+        `payment_nonce` can never end up disagreeing about which
+        `session_id` resulted -- the loser simply observes the winner's
+        row. This is also what makes "one payment proof can never
+        purchase two unrelated sessions" structural rather than
+        best-effort: a given `payment_nonce` can only ever have one row,
+        forever.
+        """
+        now = _now().isoformat()
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM session_purchases WHERE payment_nonce = ?", (payment_nonce,)
+            ).fetchone()
+            if row is None:
+                session_id = secrets.token_hex(16)
+                conn.execute(
+                    "INSERT INTO session_purchases "
+                    "(payment_nonce, session_id, agent_id, authority_ceiling_usd, "
+                    "service_fee_usd, current_token_id, claimed, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?)",
+                    (
+                        payment_nonce,
+                        session_id,
+                        agent_id,
+                        authority_ceiling_usd,
+                        service_fee_usd,
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM session_purchases WHERE payment_nonce = ?", (payment_nonce,)
+                ).fetchone()
+            elif (
+                row["agent_id"] != agent_id
+                or row["authority_ceiling_usd"] != authority_ceiling_usd
+                or row["service_fee_usd"] != service_fee_usd
+            ):
+                raise SessionAuthorizationConflict(
+                    f"payment_nonce {payment_nonce!r} is already bound to a different "
+                    "agent_id, authority_ceiling_usd, or service_fee_usd"
+                )
+        assert row is not None
+        return SessionPurchase(
+            payment_nonce=row["payment_nonce"],
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            authority_ceiling_usd=row["authority_ceiling_usd"],
+            service_fee_usd=row["service_fee_usd"],
+            current_token_id=row["current_token_id"],
+            claimed=bool(row["claimed"]),
+        )
+
+    def get_session_purchase(self, payment_nonce: str) -> SessionPurchase | None:
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM session_purchases WHERE payment_nonce = ?", (payment_nonce,)
+            ).fetchone()
+        if row is None:
+            return None
+        return SessionPurchase(
+            payment_nonce=row["payment_nonce"],
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            authority_ceiling_usd=row["authority_ceiling_usd"],
+            service_fee_usd=row["service_fee_usd"],
+            current_token_id=row["current_token_id"],
+            claimed=bool(row["claimed"]),
+        )
+
+    def issue_or_rotate_session_credential(
+        self,
+        payment_nonce: str,
+        session_id: str,
+        scopes: frozenset[str] | set[str],
+        ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+    ) -> tuple[str, str] | None:
+        """Atomically mints a fresh root capability for `session_id` and
+        marks the purchase `claimed` -- but ONLY if it has not already
+        been claimed, re-checked here inside the same atomic transaction
+        so two concurrent callers for the same `payment_nonce` (a genuine
+        duplicate-delivery race) can never both walk away with a working
+        plaintext credential. Returns `None`, minting nothing, if this
+        purchase was already claimed by the time this transaction
+        acquires the write lock -- the caller (`sessions.py`) treats that
+        exactly like `executor._complete_reservation_without_minting`'s
+        "already exists" case.
+
+        Revokes whatever token may already exist for `session_id` in the
+        same atomic step (should only ever be a genuinely-unclaimed prior
+        mint orphaned by a crash before `claimed` committed), so at most
+        one root credential for a session is ever live. Requires
+        `record_session_purchase` to have already been called for
+        `payment_nonce` (raises `ValueError` otherwise -- a programmer
+        error, since `sessions.create_or_recover_session` always calls it
+        first).
+        """
+        bad_scopes = set(scopes) - SCOPES
+        if bad_scopes:
+            raise ValueError(f"unknown scopes: {sorted(bad_scopes)}")
+        if not scopes:
+            raise ValueError("a capability must carry at least one scope")
+        token_id = secrets.token_hex(16)
+        plaintext = secrets.token_urlsafe(_TOKEN_ENTROPY_BYTES)
+        token_hash = _hash_token(plaintext)
+        now = _now()
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT claimed FROM session_purchases WHERE payment_nonce = ?", (payment_nonce,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"no session_purchases row for payment_nonce={payment_nonce!r} -- "
+                    "record_session_purchase must be called first"
+                )
+            if row["claimed"]:
+                return None
+            conn.execute(
+                "UPDATE capability_tokens SET revoked = 1 "
+                "WHERE delegation_id = ? AND revoked = 0",
+                (session_id,),
+            )
+            conn.execute(
+                "INSERT INTO capability_tokens "
+                "(token_id, token_hash, delegation_id, scopes, expires_at, revoked, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                (
+                    token_id,
+                    token_hash,
+                    session_id,
+                    ",".join(sorted(scopes)),
+                    expires_at,
+                    now.isoformat(),
+                ),
+            )
+            conn.execute(
+                "UPDATE session_purchases SET current_token_id = ?, claimed = 1, updated_at = ? "
+                "WHERE payment_nonce = ?",
+                (token_id, now.isoformat(), payment_nonce),
+            )
         return token_id, plaintext
 
     def authorize(
