@@ -2426,6 +2426,7 @@ async def test_a_purchased_sessions_root_capability_drives_the_real_a2a_flow(tmp
         agent_id="external-buyer",
         authority_ceiling_usd=Decimal("1.00"),
         service_fee_usd=Decimal("0.05"),
+        recovery_secret_hash="a" * 64,
     )
     assert purchase.plaintext_token is not None
     session_id = purchase.session_id

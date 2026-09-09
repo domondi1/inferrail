@@ -61,7 +61,12 @@ def test_unpaid_sessions_request_returns_402_with_payment_requirements(client):
     import json
 
     resp = client.post(
-        "/sessions", json={"agent_id": "buyer", "authority_ceiling_usd": "10.00"}
+        "/sessions",
+        json={
+            "agent_id": "buyer",
+            "authority_ceiling_usd": "10.00",
+            "recovery_secret_hash": "a" * 64,
+        },
     )
     assert resp.status_code == 402
     encoded = resp.headers.get("payment-required")

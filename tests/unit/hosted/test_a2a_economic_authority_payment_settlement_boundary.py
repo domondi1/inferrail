@@ -99,6 +99,19 @@ def _unpaid_402(client: TestClient, body: dict) -> PaymentRequired:
     return PaymentRequired.model_validate(json.loads(base64.b64decode(encoded)))
 
 
+def _nonce_from_header(header: str) -> str:
+    """Extracts `payment_nonce` straight from the signed header the buyer
+    itself built -- exactly the information a real buyer's client already
+    holds before ever sending the request (see
+    `x402.mechanisms.evm.utils.create_nonce`, called client-side). Used by
+    recovery tests to prove recovery never needs `session_id`."""
+    from x402.http.utils import decode_payment_signature_header
+
+    payload = decode_payment_signature_header(header)
+    authorization = payload.payload["authorization"]  # type: ignore[index]
+    return str(authorization["nonce"])
+
+
 def _signed_header(payment_required: PaymentRequired) -> tuple[str, str]:
     """Signs a real (throwaway, unfunded) EIP-3009 authorization against
     the server's own advertised requirements, exactly as a real buyer's
@@ -155,7 +168,11 @@ def test_settlement_failure_leaves_no_session_and_no_credential(stores, monkeypa
     client, _core, capability_store = stores
     monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _fake_settle(False))
 
-    body = {"agent_id": "buyer-settle-fail", "authority_ceiling_usd": "10.00"}
+    body = {
+        "agent_id": "buyer-settle-fail",
+        "authority_ceiling_usd": "10.00",
+        "recovery_secret_hash": _recovery_secret_pair()[1],
+    }
     payment_required = _unpaid_402(client, body)
     header, _payer = _signed_header(payment_required)
 
@@ -272,7 +289,11 @@ def test_reproduces_the_pre_repair_defect_when_settlement_runs_after_the_handler
     monkeypatch.setattr(server.HTTPFacilitatorClient, "verify", _fake_verify)
     monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _fake_settle(False))
 
-    body = {"agent_id": "buyer-defect-repro", "authority_ceiling_usd": "10.00"}
+    body = {
+        "agent_id": "buyer-defect-repro",
+        "authority_ceiling_usd": "10.00",
+        "recovery_secret_hash": _recovery_secret_pair()[1],
+    }
     resp = client.post("/pre-repair-sessions", json=body)
     assert resp.status_code == 402
     payment_required = PaymentRequired.model_validate(
@@ -306,6 +327,15 @@ def _recovery_secret_pair() -> tuple[str, str]:
 def test_settlement_success_is_honestly_paid_and_lost_response_is_recoverable(
     stores, monkeypatch
 ):
+    """Recovery is keyed on `payment_nonce`, not the server-generated
+    `session_id` -- so this test deliberately proves recovery using ONLY
+    `payment_nonce` (extracted straight from the signed header the buyer
+    itself built, exactly as the buyer's own client already has it) and
+    the buyer's own `recovery_secret`, and never reads `session_id` out
+    of `data` before calling `/sessions/recover`. This is the actual
+    "every response lost" scenario: a buyer who genuinely never received
+    `resp` never learns `session_id` at all, so recovery MUST NOT require
+    it."""
     client, core_store, capability_store = stores
     monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _fake_settle(True))
 
@@ -317,6 +347,7 @@ def test_settlement_success_is_honestly_paid_and_lost_response_is_recoverable(
     }
     payment_required = _unpaid_402(client, body)
     header, _payer = _signed_header(payment_required)
+    payment_nonce = _nonce_from_header(header)
 
     resp = client.post("/sessions", json=body, headers={"PAYMENT-SIGNATURE": header})
     assert resp.status_code == 200, resp.text
@@ -327,13 +358,18 @@ def test_settlement_success_is_honestly_paid_and_lost_response_is_recoverable(
     original_token = data["root_capability"]["token"]
 
     # Simulate: the buyer never actually received `resp` (dropped
-    # connection / crashed client) -- they only have the recovery_secret
-    # they generated locally before ever sending the request.
+    # connection / crashed client) -- they only have the payment_nonce and
+    # recovery_secret they generated/held locally before ever sending the
+    # request, never `session_id`.
     recover_resp = client.post(
         "/sessions/recover",
-        json={"session_id": session_id, "recovery_secret": recovery_secret},
+        json={"payment_nonce": payment_nonce, "recovery_secret": recovery_secret},
     )
     assert recover_resp.status_code == 200, recover_resp.text
+    assert recover_resp.json()["session_id"] == session_id, (
+        "recovery must resolve and return the buyer's own session_id, "
+        "since a lost-response buyer does not know it"
+    )
     new_token = recover_resp.json()["root_capability"]["token"]
     assert new_token != original_token
 
@@ -366,6 +402,7 @@ def test_recovery_rejects_the_wrong_secret(stores, monkeypatch):
     }
     payment_required = _unpaid_402(client, body)
     header, _payer = _signed_header(payment_required)
+    payment_nonce = _nonce_from_header(header)
     resp = client.post("/sessions", json=body, headers={"PAYMENT-SIGNATURE": header})
     assert resp.status_code == 200
     session_id = resp.json()["session_id"]
@@ -373,7 +410,7 @@ def test_recovery_rejects_the_wrong_secret(stores, monkeypatch):
 
     bad = client.post(
         "/sessions/recover",
-        json={"session_id": session_id, "recovery_secret": "not-the-right-secret"},
+        json={"payment_nonce": payment_nonce, "recovery_secret": "not-the-right-secret"},
     )
     assert bad.status_code == 403
     assert bad.json()["error"] == "InvalidRecoverySecret"
@@ -384,14 +421,79 @@ def test_recovery_rejects_the_wrong_secret(stores, monkeypatch):
     assert info.delegation_id == session_id
 
 
-def test_recovery_rejects_an_unrelated_session_id(stores, monkeypatch):
+def test_recovery_rejects_an_unrelated_payment_nonce(stores, monkeypatch):
     client, _core, _capability_store = stores
     resp = client.post(
         "/sessions/recover",
-        json={"session_id": "never-purchased", "recovery_secret": secrets.token_urlsafe(32)},
+        json={"payment_nonce": "never-purchased", "recovery_secret": secrets.token_urlsafe(32)},
     )
     assert resp.status_code == 403
     assert resp.json()["error"] == "InvalidRecoverySecret"
+
+
+def test_purchase_without_a_recovery_secret_hash_is_rejected_before_settlement(
+    stores, monkeypatch
+):
+    """An agent-first buyer that omits the (now-required) recovery
+    commitment must be rejected with 400 -- and never even reach
+    settlement (or even payment-requirements discovery), so nothing is
+    ever charged for a purchase that could not have honestly promised
+    recovery. See sessions.py's module docstring on why
+    `recovery_secret_hash` is required, not optional, and server.py's
+    `_require_recovery_secret_hash` docstring for why this check runs as
+    its own middleware BEFORE the x402 payment middleware, not merely
+    before the route handler -- under this route's `"upfront"` payment
+    flow, settlement happens before the handler runs regardless, so a
+    handler-level check alone would reject the buyer only AFTER they had
+    already been charged.
+
+    Deliberately never calls `_unpaid_402` here: that helper itself
+    asserts a 402, and a body missing `recovery_secret_hash` must never
+    get one -- not even the unpaid payment-requirements-discovery
+    request, since a well-behaved buyer already holds the secret before
+    making ANY request for this purchase."""
+    client, _core, capability_store = stores
+    settle_calls: list = []
+    verify_calls: list = []
+    real_settle = _fake_settle(True)
+
+    async def _spy_settle(self, payload, requirements):  # noqa: ANN001
+        settle_calls.append(1)
+        return await real_settle(self, payload, requirements)
+
+    real_verify = server.HTTPFacilitatorClient.verify
+
+    async def _spy_verify(self, payload, requirements):  # noqa: ANN001
+        verify_calls.append(1)
+        return await real_verify(self, payload, requirements)
+
+    monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _spy_settle)
+    monkeypatch.setattr(server.HTTPFacilitatorClient, "verify", _spy_verify)
+
+    body = {"agent_id": "buyer-no-secret", "authority_ceiling_usd": "10.00"}
+    resp = client.post("/sessions", json=body)
+    assert resp.status_code == 400, resp.text
+    assert "recovery_secret_hash" in resp.json()["error"]
+    assert not verify_calls, "must never even reach x402 verification"
+    assert not settle_calls, "a rejected-for-missing-recovery-secret purchase must never settle"
+    assert _session_row_count(capability_store) == 0
+
+
+def test_purchase_with_a_malformed_recovery_secret_hash_is_also_rejected_before_settlement(
+    stores,
+):
+    client, _core, capability_store = stores
+    resp = client.post(
+        "/sessions",
+        json={
+            "agent_id": "buyer-bad-secret-shape",
+            "authority_ceiling_usd": "10.00",
+            "recovery_secret_hash": "not-a-valid-hex-sha256",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "recovery_secret_hash" in resp.json()["error"]
+    assert _session_row_count(capability_store) == 0
 
 
 # -- 4. ordinary retry after real settlement does not recharge/recreate -----
@@ -401,7 +503,11 @@ def test_retrying_the_same_signed_request_after_settlement_never_recharges(store
     client, core_store, capability_store = stores
     monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _fake_settle(True))
 
-    body = {"agent_id": "buyer-retry", "authority_ceiling_usd": "12.00"}
+    body = {
+        "agent_id": "buyer-retry",
+        "authority_ceiling_usd": "12.00",
+        "recovery_secret_hash": _recovery_secret_pair()[1],
+    }
     payment_required = _unpaid_402(client, body)
     header, _payer = _signed_header(payment_required)
 
@@ -434,7 +540,11 @@ def test_concurrent_duplicate_requests_mint_exactly_one_credential(stores, monke
     client, core_store, capability_store = stores
     monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _fake_settle(True))
 
-    body = {"agent_id": "buyer-concurrent", "authority_ceiling_usd": "8.00"}
+    body = {
+        "agent_id": "buyer-concurrent",
+        "authority_ceiling_usd": "8.00",
+        "recovery_secret_hash": _recovery_secret_pair()[1],
+    }
     payment_required = _unpaid_402(client, body)
     header, _payer = _signed_header(payment_required)
 
@@ -466,3 +576,84 @@ def test_concurrent_duplicate_requests_mint_exactly_one_credential(stores, monke
     root = core_store.get(session_id)
     assert root is not None
     assert root.authority_usd == Decimal("8.00")
+
+
+# -- 6. facilitator rejects a replayed EIP-3009 authorization (window 5) ----
+
+
+def test_facilitator_rejecting_a_replayed_nonce_leaves_the_first_purchase_intact(
+    stores, monkeypatch
+):
+    """Failure window 5: the buyer retries the ORIGINAL signed payment
+    (identical PAYMENT-SIGNATURE header) after it already settled once.
+    Deterministically simulates the facilitator's real behavior (per this
+    PR's live Base Sepolia evidence: a reused EIP-3009 nonce is rejected
+    by the facilitator itself, before application code runs) by having
+    `.settle` succeed exactly once and then fail for every subsequent
+    call with the same payload -- proving the retry is correctly refused
+    (never a second session, never a second charge application-side) AND
+    that the buyer's already-completed first purchase is completely
+    unaffected by the failed retry."""
+    client, core_store, capability_store = stores
+
+    real_settle = _fake_settle(True)
+    seen_nonces: set[str] = set()
+
+    async def _settle_once_per_nonce(self, payload, requirements):  # noqa: ANN001
+        nonce = payload.payload["authorization"]["nonce"]
+        if nonce in seen_nonces:
+            return SettleResponse(
+                success=False,
+                transaction="",
+                network=requirements.network,
+                error_reason="invalid_exact_evm_nonce_already_used",
+                error_message="nonce already used",
+            )
+        seen_nonces.add(nonce)
+        return await real_settle(self, payload, requirements)
+
+    monkeypatch.setattr(server.HTTPFacilitatorClient, "settle", _settle_once_per_nonce)
+
+    recovery_secret, recovery_hash = _recovery_secret_pair()
+    body = {
+        "agent_id": "buyer-replay",
+        "authority_ceiling_usd": "9.00",
+        "recovery_secret_hash": recovery_hash,
+    }
+    payment_required = _unpaid_402(client, body)
+    header, _payer = _signed_header(payment_required)
+    payment_nonce = _nonce_from_header(header)
+
+    first = client.post("/sessions", json=body, headers={"PAYMENT-SIGNATURE": header})
+    assert first.status_code == 200, first.text
+    session_id = first.json()["session_id"]
+    original_token = first.json()["root_capability"]["token"]
+
+    # The buyer (or a naive automatic retry) resends the IDENTICAL signed
+    # payload -- the facilitator itself rejects it before this service's
+    # own application code (handle_session_request) ever runs again.
+    retry = client.post("/sessions", json=body, headers={"PAYMENT-SIGNATURE": header})
+    assert retry.status_code == 402, retry.text
+    assert "PAID" not in retry.text
+
+    # The first purchase is completely unaffected: same session, same
+    # root, same live credential -- no second row, no second charge, no
+    # rotation triggered by the rejected retry.
+    assert _session_row_count(capability_store) == 1
+    assert _live_token_count(capability_store, session_id) == 1
+    info = capability_store.authorize(original_token, session_id, "reserve")
+    assert info.delegation_id == session_id
+    from decimal import Decimal
+
+    root = core_store.get(session_id)
+    assert root is not None
+    assert root.authority_usd == Decimal("9.00")
+
+    # The buyer can still recover using the payment_nonce/secret they
+    # always held -- the rejected replay did not poison recovery.
+    recover_resp = client.post(
+        "/sessions/recover",
+        json={"payment_nonce": payment_nonce, "recovery_secret": recovery_secret},
+    )
+    assert recover_resp.status_code == 200, recover_resp.text
+    assert recover_resp.json()["session_id"] == session_id
