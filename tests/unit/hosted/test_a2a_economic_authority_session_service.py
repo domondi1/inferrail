@@ -71,7 +71,13 @@ def test_unpaid_sessions_request_returns_402_with_payment_requirements(client):
     assert accepted["network"] == "eip155:84532"
     assert accepted["scheme"] == "exact"
     assert accepted["payTo"] == os.environ["ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS"]
-    assert accepted["maxAmountRequired"] is not None
+    # x402 v2 wire schema (this repo pins x402==2.22.0) names this field
+    # "amount", not the v1 "maxAmountRequired".
+    assert accepted["amount"] is not None
+    # Payment-security repair: settlement must happen before the route
+    # handler runs for this route -- see sessions.py's module docstring,
+    # "Settlement-before-handler".
+    assert accepted["extra"]["paymentFlow"] == "upfront"
 
 
 def test_existing_a2a_and_claim_routes_are_unaffected_by_session_wiring(client):
