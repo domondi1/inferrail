@@ -1,21 +1,26 @@
-# Inferrail Economic Authority (hosted) — Phase B
+# Inferrail Economic Authority (hosted) — Phase C
 
-**Status: durable core (Phase A) plus authenticated A2A transport (Phase
-B), security-repaired.** `core.py` is the transport-independent durable
-economic-authority core: reserve/grant/consume/settle over a delegated
-spending ceiling, with conservation and idempotency guarantees enforced by
-SQLite. `executor.py`, `agent_card.py`, `access_control.py`, and
-`server.py` add a real, locked-down A2A server on top of it, and
-`capabilities.py` adds a capability-token authorization layer.
+**Status: durable core (Phase A), authenticated A2A transport (Phase B),
+and x402-gated paid session creation (Phase C), all security-repaired.**
+`core.py` is the transport-independent durable economic-authority core:
+reserve/grant/consume/settle over a delegated spending ceiling, with
+conservation and idempotency guarantees enforced by SQLite. `executor.py`,
+`agent_card.py`, `access_control.py`, and `server.py` add a real,
+locked-down A2A server on top of it, `capabilities.py` adds a
+capability-token authorization layer, and `sessions.py` adds the Phase C
+paid-session business logic behind `POST /sessions` (and its unpaid
+recovery sibling, `POST /sessions/recover`) -- see "Phase C: paid session
+creation" below.
 
-**Not yet present, by design at this stage:** any payment/x402 wiring, any
-deployment configuration, and any recursive/automatic delegation between
-agents -- every operation is a direct call initiated by a caller. The
-`authority_usd` ceiling tracked here is caller-declared accounting/policy
+**Still not present, by design at this stage:** any deployment
+configuration and any recursive/automatic delegation between agents --
+every operation is a direct call initiated by a caller. The
+`authority_ceiling_usd` tracked here is caller-declared accounting/policy
 metadata: Inferrail does not hold, transfer, or escrow the underlying
-money. Whether and how payment is added later is a separate, not-yet-made
-decision; nothing here should be read as committing to a specific future
-mechanism or timeline.
+money, even now that a real x402 payment exists -- that payment is
+Inferrail's service fee for creating and hosting the coordination
+boundary, never a deposit into, or escrow of, the ceiling itself. See
+"Phase C" below for the full design.
 
 ## What's here
 
@@ -168,6 +173,68 @@ See `core.py`'s module docstring for the full argument, and
 `test_concurrent_reserve_and_revocation_mark_never_lets_a_reservation_escape_unmarked`
 for the whitebox proof.
 
+## Phase C: paid session creation
+
+`POST /sessions` is the only x402-gated route in this service. A buyer
+pays a fixed service fee (`ECONOMIC_AUTHORITY_SESSION_PRICE_USD`, default
+$0.05, Base Sepolia test-USDC) to have this service create an **Economic
+Authority session**: a durable root delegation with a buyer-declared
+`authority_ceiling_usd`, plus its root capability token. `/sessions` (and
+`/sessions/recover`) are registered only when
+`ECONOMIC_AUTHORITY_SESSION_PAY_TO_ADDRESS` is set; every Phase B
+deployment/test that does not set it is unaffected.
+
+**Settlement-before-handler.** The route uses x402's officially supported
+`"upfront"` payment flow (`PaymentOption(..., extra={"paymentFlow":
+"upfront"})`, supported by the `eip3009` asset-transfer method the `exact`
+scheme uses here) instead of the scheme's default `"authorization"` flow.
+Concretely: real on-chain settlement completes *before* this service's own
+route handler ever runs, and a settlement failure returns a 402 straight
+from the x402 middleware without ever calling the handler. This closes a
+payment-security defect present in an earlier version of this route: under
+the default flow, settlement runs *after* the handler, so the handler
+would durably create a session, mint its root credential, and label the
+service fee `"PAID"` before knowing whether settlement would actually
+succeed -- a settlement failure after that point left an orphaned, unpaid
+session and an unclaimed root credential behind, even though the
+buyer-visible response was an honest failure. Under `"upfront"`, by the
+time any code in `sessions.py` runs, the payment has already, genuinely
+settled; there is no longer a code path where this service reports `PAID`
+and settlement then fails. See `sessions.py`'s module docstring
+("Settlement-before-handler") and
+`tests/unit/hosted/test_a2a_economic_authority_payment_settlement_boundary.py`
+for a deterministic reproduction of the historical defect alongside the
+tests proving the fix.
+
+**Idempotency.** The verified, on-chain EIP-3009 payment nonce
+(`payment_nonce`) is the sole authoritative idempotency key: a given
+nonce can only ever back one session, `session_id` is always
+server-generated, and at most one root credential per session is ever
+live -- see `sessions.py` and `capabilities.record_session_purchase`/
+`issue_or_rotate_session_credential`. The route also accepts x402's
+official payment-identifier extension (optional, not required); the
+buyer-supplied `id` is recorded for audit/correlation only and is
+deliberately never used as a substitute idempotency key, since (unlike
+the verified nonce) it is buyer-chosen and not cryptographically bound to
+the actual transfer -- see `sessions.py`'s module docstring for why
+trusting it that way would risk a buyer's own reused `id` silently
+absorbing a second, real payment.
+
+**Recovery.** A buyer who was genuinely charged but never received (or
+has since lost) their session's root credential can recover it via
+`POST /sessions/recover` -- a plain, unpaid HTTP route (recovering access
+to something already paid for costs nothing further). Authorization is
+proof of knowledge of a secret the buyer generates and hashes (SHA-256)
+*client-side*, sent to `POST /sessions` only as that hash
+(`recovery_secret_hash`, optional) and never as plaintext on the happy
+path. Because the buyer holds the plaintext locally from the moment they
+built the purchase request, this works even if every response this
+service ever sent them was lost. See
+`capabilities.CapabilityStore.recover_session_credential`'s docstring for
+the full guarantee, including why an unrelated caller who does not hold
+that secret can never use this route to obtain or rotate a session's root
+credential.
+
 ## Durability and the single-process requirement
 
 - **Durable (SQLite, `BEGIN IMMEDIATE`, survives process restart):**
@@ -208,15 +275,20 @@ hosted/a2a_economic_authority --strict` directly, since this directory is
 deliberately excluded from the main `mypy` invocation's package list (see
 `docs/adr/0010`).
 
-## Known limitations (Phase B)
+## Known limitations (Phase C)
 
-- No payment of any kind. There is no public endpoint that creates a root
-  delegation or its capability -- the only way either comes into existence
-  today is `bootstrap.py`, called directly in a test process, never over
-  HTTP. Whether and how a paid path is added later is undecided.
+- No mainnet, no custody, no escrow -- `/sessions` is Base Sepolia
+  test-USDC only, and Inferrail never holds, transfers, or escrows
+  `authority_ceiling_usd`.
 - No recursive/automatic delegation: every operation is a direct call
   initiated by a caller. Nothing in this service ever calls another agent.
 - `agent_id` is a caller-supplied label, not a verified identity.
+- A buyer's `recovery_secret_hash` is optional; a buyer who omits it and
+  later loses their root credential has no recovery path beyond an
+  ordinary retry with the same payment (which never re-exposes an
+  already-claimed credential, by design).
 - No deployment configuration exists yet; when one is added, it must run
   this service as a single process (see above) and terminate HTTPS in
-  front of it.
+  front of it -- `/sessions`' plaintext root credential and
+  `/sessions/recover`'s plaintext recovery secret are exactly as
+  HTTPS-dependent as every other bearer credential this service issues.
