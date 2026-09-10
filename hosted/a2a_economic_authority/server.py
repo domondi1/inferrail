@@ -125,11 +125,12 @@ task/claim state would silently break both in-memory stores; only the
 SQLite-backed economic and capability state would remain correct. This
 constraint is enforced by omission (no `--workers` flag exists to misuse)
 and must be addressed explicitly, not merely re-checked, before any
-future phase makes this service multi-process. Not deployed anywhere
-yet -- see `hosted/a2a_economic_authority/README.md`'s "Deploying it"
-for what `main()`'s two invocation shapes (explicit local/test args vs.
-`PORT`/`ECONOMIC_AUTHORITY_*`-env-var-driven production startup) verify
-in advance of one.
+future phase makes this service multi-process. An experimental instance
+is deployed at `https://authority.tryinferrail.com` (Base Sepolia
+testnet only) -- see `hosted/a2a_economic_authority/README.md`'s
+"Deploying it" for what `main()`'s two invocation shapes (explicit
+local/test args vs. `PORT`/`ECONOMIC_AUTHORITY_*`-env-var-driven
+production startup) require if you run your own.
 """
 
 from __future__ import annotations
