@@ -554,6 +554,8 @@ Bearer <token>` — see [SECURITY.md](SECURITY.md).
 ## Documentation
 
 - [docs/PRODUCT.md](docs/PRODUCT.md) — exact current scope
+- [docs/comparison.md](docs/comparison.md) — how Inferrail keeps prompt
+  and response content out of its receipts
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — package layout, request
   lifecycle
 - [docs/adr/](docs/adr/) — why specific structural decisions were made
