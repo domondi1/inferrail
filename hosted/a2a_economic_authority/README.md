@@ -15,10 +15,11 @@ by SQLite. `executor.py`, `agent_card.py`, `access_control.py`, and
 [`docs/capabilities/economic-authority.md`](../../docs/capabilities/economic-authority.md)
 for the public, agent-facing contract.
 
-**Not yet deployed anywhere.** `server.py` now has what a deployment
+**Deployed experimentally on Base Sepolia testnet** at
+`https://authority.tryinferrail.com`. `server.py` has what a deployment
 needs -- a `/health` liveness route and an environment-variable-driven
-production startup shape (see "Deploying it" below) -- but no instance of
-this service is running on any host. **Still not present, by design:**
+production startup shape (see "Deploying it" below). **Still not present,
+by design:**
 any recursive/automatic delegation between agents -- every operation is
 a direct call initiated by a caller. The `authority_ceiling_usd` tracked
 here is caller-declared accounting/policy metadata: Inferrail does not
@@ -306,8 +307,9 @@ service multi-process.
 
 ## Deploying it
 
-**Not deployed anywhere yet.** This section documents what a deployment
-needs, verified locally, not a live instance.
+**An experimental instance runs at `https://authority.tryinferrail.com`
+(Base Sepolia testnet only).** This section documents what any
+deployment needs, verified locally, if you want to run your own instance.
 
 Any host that can run a long-lived Python HTTPS **single** process (see
 above) with a **persistent, private disk** for two SQLite files works.
@@ -395,8 +397,9 @@ deliberately excluded from the main `mypy` invocation's package list (see
   is ever durably written has no automated recovery path (see "Known
   residual gap" above) -- this must be resolved with a human-support/
   refund runbook before any real (mainnet) deployment.
-- Not deployed anywhere yet -- see "Deploying it" above for what a
-  deployment needs and what has been verified locally in advance of one.
+- Deployed experimentally on Base Sepolia testnet at
+  `https://authority.tryinferrail.com` -- see "Deploying it" above if you
+  want to run your own instance.
 - `/sessions`' payment-settled-but-crashed-before-first-durable-write
   residual gap (previous bullet) means a real deployment needs a
   human-support/refund runbook in place from the start, not added later.

@@ -185,10 +185,10 @@ async def test_real_stdio_session_lists_and_calls_both_tools(tmp_path: Path) -> 
 
 
 def test_server_name_and_instructions_are_set() -> None:
-    # Agent-facing metadata is part of the product surface (see
-    # standards/machine-readability.md) — a regression here silently
-    # degrades what an agent sees in tools/list, with no test failure
-    # anywhere else to catch it.
+    # Agent-facing metadata is part of the product surface — see
+    # Inferrail's internal machine-readability standard. A regression
+    # here silently degrades what an agent sees in tools/list, with no
+    # test failure anywhere else to catch it.
     assert server.name == "inferrail"
     assert server.instructions is not None
     assert "read-only" in server.instructions

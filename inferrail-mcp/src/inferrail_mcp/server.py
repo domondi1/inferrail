@@ -12,7 +12,7 @@ recent local receipt as evidence of attribution — it never makes a new,
 billable inference call, so it can't silently spend an operator's
 provider budget as a side effect of a "health check."
 
-Every response follows `standards/machine-readability.md` (internal):
+Every response follows Inferrail's internal machine-readability standard:
 explicit units (`known_cost_usd` as a string, never a bare float),
 explicit nullability (`null` when unknown, never a fabricated `0`),
 stable identifiers, and a `schema_version` on every payload.

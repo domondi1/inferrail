@@ -14,10 +14,10 @@ mirrors, and its `schemas/` subdirectory for the machine-readable request/
 response/receipt/error/recovery shapes.
 
 This is testnet-only. Base Sepolia test-USDC has no real monetary value.
-There is no hosted instance of this capability yet (unlike Work
-Economics) — you must run `hosted/a2a_economic_authority/server.py`
-yourself (see its own `--help`) and pass its base URL as this script's
-first argument.
+An experimental hosted instance runs at https://authority.tryinferrail.com
+(Base Sepolia testnet only) — pass that as this script's first argument,
+or run `hosted/a2a_economic_authority/server.py` yourself (see its own
+`--help`) and pass your own instance's base URL instead.
 
 Install:
     pip install "x402[evm]" "a2a-sdk==1.1.2" httpx
@@ -219,7 +219,7 @@ async def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit(
             "usage: economic_authority_session.py <base_url>\n"
-            "(there is no hosted instance of this capability yet -- run "
+            "(e.g. https://authority.tryinferrail.com, or run "
             "hosted/a2a_economic_authority/server.py yourself and pass its base URL)"
         )
     base_url = sys.argv[1].rstrip("/")

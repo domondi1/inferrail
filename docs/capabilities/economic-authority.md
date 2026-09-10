@@ -1,10 +1,10 @@
 # Inferrail Economic Authority (working name)
 
-**Status:** Base Sepolia testnet only. Not mainnet, not real money, and
-not deployed anywhere yet — unlike Work Economics, there is no hosted
-instance of this capability to call. Run
-`hosted/a2a_economic_authority/server.py` yourself to try it (see its
-`--help`).
+**Status:** Deployed experimentally on Base Sepolia testnet at
+`https://authority.tryinferrail.com`. Not mainnet, not real money.
+Inferrail does not hold, transfer, or escrow the declared authority
+ceiling. You can also run `hosted/a2a_economic_authority/server.py`
+yourself (see its `--help`) to try it against your own instance.
 
 Inferrail's second hosted, paid capability. An agent purchases a durable
 **Economic Authority session**: a coordination boundary that lets
