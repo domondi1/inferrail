@@ -181,8 +181,13 @@ def build_agent_card(
                 "session_purchase_enabled is True"
             )
         description = (
-            "Durable, transport-authenticated delegated spending-ceiling "
-            "authority for agent-to-agent work. Direct operations only: no "
+            "The declared authority ceiling is caller-declared and the "
+            "ledger is cooperative. Inferrail records and coordinates it "
+            "entirely within its own service, does not control any "
+            "external wallet, provider, or network spending, and this is "
+            "not real-world spend enforcement. Durable, "
+            "transport-authenticated delegated spending-ceiling authority "
+            "for agent-to-agent work. Direct operations only: no "
             "automatic recursive delegation. A new root capability can be "
             f"purchased via {SESSION_PURCHASE_EXTENSION_URI} (see the "
             f"declared extension below) -- an x402-gated ${session_price_usd} "
@@ -217,8 +222,13 @@ def build_agent_card(
         ]
     else:
         description = (
-            "Durable, transport-authenticated delegated spending-ceiling "
-            "authority for agent-to-agent work. Direct operations only: no "
+            "The declared authority ceiling is caller-declared and the "
+            "ledger is cooperative. Inferrail records and coordinates it "
+            "entirely within its own service, does not control any "
+            "external wallet, provider, or network spending, and this is "
+            "not real-world spend enforcement. Durable, "
+            "transport-authenticated delegated spending-ceiling authority "
+            "for agent-to-agent work. Direct operations only: no "
             "automatic recursive delegation. This deployment does not "
             "currently offer session purchase -- every operation requires an "
             "existing capability token obtained out-of-band. See "

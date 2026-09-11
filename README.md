@@ -503,6 +503,14 @@ Anything beyond one host is out of scope for v0.x — see
 
 ## Paid capabilities (hosted, separate from the gateway)
 
+Inferrail helps companies measure, attribute, and eventually govern the
+economics of work performed by AI agents. The gateway and receipts above
+are today's working part of that: privacy-preserving evidence of what AI
+work costs and what customer, workflow, or task its cost is attributed
+to. The two capabilities below extend that same foundation toward
+machine buyers. Both are experimental and Base Sepolia testnet only;
+neither controls external wallets, providers, or network spending.
+
 **Inferrail Work Economics** is Inferrail's first hosted, paid capability:
 given caller-declared economic events for a unit of AI work, it returns a
 normalized cost receipt — known cost, a breakdown by resource class and
@@ -519,10 +527,14 @@ running the gateway above never requires it and never talks to it.
 - Full contract: [docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
 - Standalone buyer example: [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
 
-**Inferrail Economic Authority** (working name) is a second, independent
-hosted capability, also in `hosted/`: a buyer purchases a durable
-coordination boundary — a spending ceiling shared across agents, without
-double-allocating it — again paid for over x402 by any agent with its own
+**Inferrail Economic Authority** (working name) explores voluntary
+coordination of a caller-declared spending boundary between agents. The
+boundary is caller-declared and the ledger is cooperative: Inferrail
+records and coordinates it entirely within its own service, and does not
+control any external wallet, provider, or network spending. This is not
+real-world spend enforcement. A buyer purchases a durable coordination
+boundary — a spending ceiling shared across agents, without
+double-allocating it — paid for over x402 by any agent with its own
 wallet. **Base Sepolia testnet only.** Whether session purchase is
 currently enabled on a given deployment is always authoritative from
 that deployment's own Agent Card, not this README.

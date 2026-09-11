@@ -289,7 +289,13 @@ gateway to it, not a privacy boundary against it.
 
 Everything above is the self-hosted gateway: zero dependency on any
 Inferrail-operated service (see "Who it's for" and `docs/adr/0004`).
-Separately, Inferrail also operates its first hosted, paid capability:
+Inferrail helps companies measure, attribute, and eventually govern the
+economics of work performed by AI agents. The gateway and receipts above
+are today's working measurement layer. Separately, Inferrail also
+operates two hosted, paid capabilities that extend that foundation
+toward machine buyers. Both are experimental and Base Sepolia testnet
+only; neither controls external wallets, providers, or network
+spending:
 
 - **Inferrail Work Economics** (`hosted/work_economics/`) — given
   caller-declared economic events for a unit of AI work, returns a
@@ -297,6 +303,14 @@ Separately, Inferrail also operates its first hosted, paid capability:
   Base Sepolia testnet only right now. Full contract:
   `docs/capabilities/work-economics.md`. Why this lives outside the
   package installed by `pip install inferrail`: `docs/adr/0010`.
+- **Inferrail Economic Authority** (`hosted/a2a_economic_authority/`):
+  explores voluntary coordination of a caller-declared spending
+  boundary between agents. The boundary is caller-declared and the
+  ledger is cooperative; Inferrail records and coordinates it within
+  its own service and does not control external wallets, providers, or
+  network spending. This is not real-world spend enforcement. Base
+  Sepolia testnet only. Full contract:
+  `docs/capabilities/economic-authority.md`.
 
 ## Long-term direction
 

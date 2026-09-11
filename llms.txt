@@ -11,7 +11,10 @@
 > transaction (`inferrail transaction <task-id>`), including via an
 > ambient `inferrail.track_task(...)` helper that tags nested agent calls
 > automatically. Apache-2.0 licensed. Self-hosted with zero dependency on
-> any Inferrail-operated service.
+> any Inferrail-operated service. Inferrail also operates two
+> experimental, Base-Sepolia-testnet-only hosted capabilities (below)
+> that extend this same measurement toward capabilities a machine buyer
+> can discover and purchase directly.
 
 ## Docs
 
@@ -38,8 +41,11 @@
 
 ## Paid capabilities
 
+Both capabilities below are experimental and Base Sepolia testnet only.
+Neither controls external wallets, providers, or network spending.
+
 - [Inferrail Work Economics](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/work-economics.md): given caller-declared economic events for a unit of AI work, returns a normalized cost summary and a commercial receipt. Paid via the [x402](https://www.x402.org/) protocol — any x402-capable agent can buy it with its own wallet. **Base Sepolia testnet only right now, not mainnet.** Canonical endpoint: `https://work.tryinferrail.com` — machine-readable manifest (price, schema, `pay_to` address) served unauthenticated at [`https://work.tryinferrail.com/manifest`](https://work.tryinferrail.com/manifest); human-readable overview at [tryinferrail.com/work-economics](https://tryinferrail.com/work-economics/).
-- [Inferrail Economic Authority](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md): a durable, transport-authenticated delegated spending-ceiling authority for agent-to-agent coordination, operated over the [A2A protocol](https://a2a-protocol.org/) (`reserve`/`grant`/`consume`/`settle`/`status`/`revoke`), with an optional x402-gated `POST /sessions` for buying a new root capability when a given deployment has it enabled. **Base Sepolia testnet only, not mainnet.** Canonical endpoint: `https://authority.tryinferrail.com` — Agent Card served unauthenticated at [`https://authority.tryinferrail.com/.well-known/agent-card.json`](https://authority.tryinferrail.com/.well-known/agent-card.json), which declares whether this specific deployment currently has session purchase enabled.
+- [Inferrail Economic Authority](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md): explores voluntary coordination of a caller-declared spending boundary between agents. The boundary is caller-declared and the ledger is cooperative; Inferrail records and coordinates it within its own service and does not control external wallets, providers, or network spending; this is not real-world spend enforcement. Operated over the [A2A protocol](https://a2a-protocol.org/) (`reserve`/`grant`/`consume`/`settle`/`status`/`revoke`), with an optional x402-gated `POST /sessions` for buying a new root capability when a given deployment has it enabled. **Base Sepolia testnet only, not mainnet.** Canonical endpoint: `https://authority.tryinferrail.com` — Agent Card served unauthenticated at [`https://authority.tryinferrail.com/.well-known/agent-card.json`](https://authority.tryinferrail.com/.well-known/agent-card.json), which declares whether this specific deployment currently has session purchase enabled.
 
 ## Optional
 

@@ -111,9 +111,15 @@
         <p class="agents-copy">Submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 — no subscription, no Inferrail account.</p>
         <a class="button button-ghost" href="/work-economics/">See the Work Economics capability</a>
       </div>
+      <div class="agents-card">
+        <p class="agents-eyebrow">Also experimental, testnet only</p>
+        <h3>Coordinate a shared spending boundary</h3>
+        <p class="agents-copy">Inferrail Economic Authority lets multiple agents coordinate a caller-declared, cooperative spending boundary, paid per session over x402. Inferrail records and coordinates it within its own service only; it does not control external wallets, providers, or network spending, and is not real-world spend enforcement.</p>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">See the Economic Authority capability</a>
+      </div>
     </section>
   </main>
-  <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="/work-economics/">Work Economics</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
+  <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="/work-economics/">Work Economics</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">Economic Authority</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
   <script>
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
