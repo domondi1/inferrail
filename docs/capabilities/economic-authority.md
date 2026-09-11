@@ -1,15 +1,23 @@
 # Inferrail Economic Authority (working name)
 
 **Status:** Deployed experimentally on Base Sepolia testnet at
-`https://authority.tryinferrail.com`. Not mainnet, not real money.
-Inferrail does not hold, transfer, or escrow the declared authority
-ceiling. You can also run `hosted/a2a_economic_authority/server.py`
+`https://authority.tryinferrail.com`. Not mainnet, not real money. The
+declared authority ceiling is caller-declared and the ledger that
+tracks it is cooperative: Inferrail records and coordinates it entirely
+within its own service. Inferrail does not hold, transfer, or escrow
+the declared authority ceiling, and does not control any external
+wallet, provider, or network spending. This is not real-world spend
+enforcement. You can also run `hosted/a2a_economic_authority/server.py`
 yourself (see its `--help`) to try it against your own instance.
 
-Inferrail's second hosted, paid capability. An agent purchases a durable
-**Economic Authority session**: a coordination boundary that lets
-multiple agents operate under a shared, buyer-declared spending ceiling
-without double-allocating that authority. Payment is the real
+Inferrail's second hosted, paid capability, exploring voluntary
+coordination of a caller-declared spending boundary between agents. It
+is one step toward Inferrail's broader goal of helping companies
+measure, attribute, and eventually govern the economics of work
+performed by AI agents. An agent purchases a durable **Economic
+Authority session**: a coordination boundary that lets multiple agents
+operate under a shared, buyer-declared spending ceiling without
+double-allocating that authority. Payment is the real
 [x402](https://www.x402.org/) protocol — any x402-capable agent can buy
 it with its own wallet, no Inferrail account required. Every operation on
 a purchased session runs over [A2A](https://a2a-protocol.org/) JSON-RPC
