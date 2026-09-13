@@ -18,7 +18,7 @@
     a:focus-visible,button:focus-visible { outline:2px solid var(--stamp); outline-offset:5px; }
     .wrap { width:100%; max-width:1240px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
     .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); }
-    .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp,.tier-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
+    .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
     .wordmark { font-size:clamp(16px,1.4vw,22px); }
     .nav { display:flex; gap:clamp(18px,2.8vw,42px); font-size:clamp(13px,1vw,16px); }
     .nav a { text-underline-offset:4px; }
@@ -56,18 +56,8 @@
     .button:disabled { cursor:default; opacity:.72; }
     .action-hint { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     .section-break { height:4px; margin:clamp(24px,4vw,60px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
-    .network { padding:clamp(64px,7vw,120px) 0 clamp(72px,8vw,140px); }
     h2 { font-size:clamp(30px,6.4vw,104px); line-height:.96; }
     .sub { max-width:58ch; margin:clamp(26px,3vw,44px) 0 clamp(30px,4vw,56px); color:var(--ink-2); font-size:clamp(15px,1.25vw,22px); }
-    .ladder { border-top:1px solid var(--ink); }
-    .tier { display:grid; grid-template-columns:minmax(100px,1fr) 2.3fr; align-items:center; min-height:clamp(92px,9vw,145px); padding:12px clamp(12px,2vw,28px); border-bottom:1px solid var(--rule); }
-    .tier:nth-child(even) { background:var(--bar); }
-    .tier-number { font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(26px,3.4vw,58px); font-weight:700; line-height:1; }
-    .tier-label { display:block; margin-top:5px; color:var(--ink-3); font-size:clamp(10px,.75vw,12px); }
-    .tier-reward { margin:0; font-size:clamp(14.5px,1.25vw,21px); line-height:1.3; }
-    .qualification { max-width:70ch; margin:clamp(26px,3vw,42px) 0 0; padding-left:16px; color:var(--ink-3); border-left:2px solid var(--stamp); font-size:clamp(12px,.9vw,14px); }
-    .network-action { margin-top:clamp(30px,4vw,54px); }
-    .network-status { margin:14px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     .agents { padding:0 0 clamp(56px,6vw,96px); }
     .agents-card { max-width:66ch; padding:clamp(22px,2.2vw,32px) clamp(24px,2.4vw,36px); margin-top:clamp(8px,1vw,16px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); }
     .agents-eyebrow { margin:0 0 10px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
@@ -76,12 +66,12 @@
     .agents-card .button { margin-top:clamp(18px,2vw,26px); padding:clamp(11px,1vw,15px) clamp(22px,2vw,30px); font-size:clamp(13px,1vw,15px); }
     footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     footer nav { display:flex; gap:18px; }
-    @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}.tier{grid-template-columns:88px 1fr}footer{display:block}footer nav{margin-top:10px} }
+    @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}footer{display:block}footer nav{margin-top:10px} }
     @media (prefers-reduced-motion:reduce) { html{scroll-behavior:auto}.receipt > *{opacity:1;animation:none} }
   </style>
 </head>
 <body>
-  <header class="masthead wrap"><a class="wordmark" href=".">Inferrail</a><nav class="nav" aria-label="Primary navigation"><a href="#gateway">Gateway &amp; dev tools</a><a href="#agents">For agents</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">Docs</a></nav></header>
+  <header class="masthead wrap"><a class="wordmark" href=".">Inferrail</a><nav class="nav" aria-label="Primary navigation"><a href="#gateway">Gateway &amp; dev tools</a><a href="#ap-hosted">Hosted AP API</a><a href="#agents">For agents (testnet)</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">Docs</a></nav></header>
   <main>
     <section class="hero wrap" aria-labelledby="hero-title">
       <h1 id="hero-title">Retry it once, or send it to review.<span>Decided, executed, recorded.</span></h1>
@@ -94,14 +84,7 @@
         <p class="receipt-note">Invoice content and provider credentials never reach an Inferrail-operated service — only identifiers, confidence/validation results, and cost figures.</p><div class="dash"></div>
         <div class="install-wrap"><div class="install"><code>$ pip install inferrail &amp;&amp; inferrail ap demo</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">fixture-based · zero-key · runs locally · Apache-2.0</p></div>
       </article>
-      <div class="primary-action"><a class="button button-dark" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a><a class="button button-ghost" href="https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery">See the examples</a><button class="button button-ghost" id="try-button" type="button">Try Inferrail</button><p class="action-hint" id="action-hint">Then run: inferrail ap demo</p></div>
-    </section>
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="network wrap" aria-labelledby="network-title">
-      <h2 id="network-title">Bring your team.<span>Grow with Inferrail.</span></h2>
-      <p class="sub">Early referral program — opening soon. Rewards activate on verified routed usage.</p>
-      <div class="ladder" aria-label="Inferrail referral program"><div class="tier"><div><span class="tier-number">01</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>+90 DAYS</strong><br>Both you and the team you introduce get 90 extra days of cost history.</p></div><div class="tier"><div><span class="tier-number">03</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PRO · 1 YEAR</strong><br>Pro for a year. Unlimited seats.</p></div><div class="tier"><div><span class="tier-number">10</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>FOUNDING OPERATOR</strong><br>Permanent Pro · logo on the site · roadmap vote · private channel.</p></div><div class="tier"><div><span class="tier-number">25</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PARTNER</strong><br>Inferrail free for life + 20% recurring on every additional team you bring.</p></div></div>
-      <p class="qualification">A referral qualifies after real routed usage, not signup.</p><div class="network-action"><button class="button button-ghost" id="referral-button" type="button">Get my referral link</button><p class="network-status" id="network-status">Referral access is opening soon.</p></div>
+      <div class="primary-action"><a class="button button-dark" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a><a class="button button-ghost" href="https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery">See the examples</a><button class="button button-ghost" id="try-button" type="button">Copy the local demo command</button><p class="action-hint" id="action-hint">Then run it locally: inferrail ap demo</p></div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="agents wrap" id="gateway" aria-labelledby="gateway-title">
@@ -113,14 +96,18 @@
       </div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="agents wrap" id="agents" aria-labelledby="agents-title">
-      <h2 id="agents-title">Experimental, testnet only<span>Secondary capabilities for autonomous agents.</span></h2>
+    <section class="agents wrap" id="ap-hosted" aria-labelledby="ap-hosted-title">
+      <h2 id="ap-hosted-title">Hosted, when you don't want to run your own store.<span>Not testnet — a real service with real API keys.</span></h2>
       <div class="agents-card">
         <p class="agents-eyebrow">Hosted, optional</p>
         <h3>AP Exceptions hosted API</h3>
-        <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key. Retry execution always happens in your own process, never on this service.</p>
+        <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service.</p>
         <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">See the hosted AP service</a>
       </div>
+    </section>
+    <div class="section-break wrap" aria-hidden="true"></div>
+    <section class="agents wrap" id="agents" aria-labelledby="agents-title">
+      <h2 id="agents-title">Experimental, testnet only<span>Secondary capabilities for autonomous agents.</span></h2>
       <div class="agents-card">
         <p class="agents-eyebrow">For autonomous agents</p>
         <h3>Buy Work Economics per call</h3>
@@ -140,9 +127,8 @@
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
       const install = 'pip install inferrail && inferrail ap demo'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
-      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied. Next: run inferrail ap demo'; hint.textContent='Fixture-based, zero-key. Then inspect it: inferrail ap report --db inferrail-ap-demo.sqlite3'; } catch { hint.textContent='Copy failed. Run: pip install inferrail'; } };
+      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied — now run it in your own terminal'; hint.textContent='Fixture-based, zero-key. Then inspect it: inferrail ap report --db inferrail-ap-demo.sqlite3'; } catch { hint.textContent='Copy failed. Run this yourself: pip install inferrail && inferrail ap demo'; } };
       button.addEventListener('click', () => copyInstall(button)); copyButton.addEventListener('click', () => copyInstall(copyButton));
-      const referralButton = document.querySelector('#referral-button'); referralButton.addEventListener('click', () => { referralButton.textContent='Coming soon'; document.querySelector('#network-status').textContent='Referral links open soon.'; });
     })();
   </script>
 </body>

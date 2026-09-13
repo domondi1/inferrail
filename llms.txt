@@ -49,7 +49,7 @@
 
 ## Examples
 
-- [AP invoice-exception recovery examples](https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery): fixture-based demo, real-provider (OpenAI) demo, and a custom-integration example (your own extraction pipeline + review queue)
+- [AP invoice-exception recovery examples](https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery): fixture-based demo, real-provider (OpenAI) demo, a custom-integration example (your own extraction pipeline + review queue, threading decision → retry → recovered data or review → outcome → report end to end), and a hosted-API client example (local authorization/execution against the hosted decision API, keeping invoice content and credentials out of every hosted call)
 - [Basic chat request](https://github.com/domondi1/inferrail/blob/main/examples/basic_chat_request.py)
 - [Work Economics purchase](https://github.com/domondi1/inferrail/blob/main/examples/work_economics_purchase.py): a complete, standalone x402 buyer — no Inferrail account required
 

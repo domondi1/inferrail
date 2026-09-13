@@ -46,10 +46,29 @@ python examples/ap_invoice_exception_recovery/custom_integration_example.py
 ```
 
 Shows the two things you actually implement to integrate for real: a
-`RetryAdapter` that calls your own extraction system, and a
+`RetryAdapter` that calls your own extraction system (including
+`estimate_cost`, required for a retry to be authorized at all — see
+"Prospective retry-cost authorization" in the capability doc), and a
 `HumanReviewHandoff` that enqueues into your own review queue/ticketing
-system. Everything else (policy, persistence, idempotency, the report)
-is provided.
+system. Threads the full chain in one run: decision → retry → validation
+→ usable recovered fields (not just a status) **or** an acknowledged
+handoff → recorded outcome → the joined report. Everything else (policy,
+persistence, idempotency) is provided.
+
+## 4. The hosted API, from a client that never sends it invoice data
+
+```bash
+cd hosted/ap_exceptions && pip install -r requirements.txt && pip install -e ../..
+AP_API_KEYS=dev-key-1 python3 service.py /tmp/inferrail_ap_hosted_example 8422 &
+
+python examples/ap_invoice_exception_recovery/hosted_client_example.py
+```
+
+One coherent flow against the hosted decision/persistence/reporting API:
+decision → local cost authorization and retry execution (never inside the
+hosted service) → recorded attempt → an example review receiver on
+validation failure → recorded resolution → retrieved report. Also works
+against a real deployed instance via `--base-url`/`--api-key`.
 
 ## Data boundary
 

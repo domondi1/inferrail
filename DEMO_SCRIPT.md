@@ -6,7 +6,7 @@
 
 ## Opening (20-30 seconds)
 
-> "Most teams running LLM applications get a bill from OpenAI at the end of the month. What they *don't* get is which customer, which task, or which feature actually spent that money. If you're running agents — multi-step workflows where one business task triggers multiple model calls — you have no way to know which task cost you what. That's the problem Inferrail solves right now."
+> "If you run AP invoice processing with an LLM in the loop, you already have exceptions: a field extracted with low confidence, or a deterministic check that failed. Today, whoever built that pipeline has to decide, by hand, whether it's worth one more automated attempt or whether it goes straight to a human reviewer — and there's usually no record of what that decision actually cost versus what the alternative would have cost. Inferrail decides that one retry-vs-review call for you, executes it, and records the resulting cost and outcome so you can check whether the policy is actually saving money against your own historical data. That's what I'm going to show you."
 
 ---
 
@@ -19,116 +19,87 @@
 ### Commands to run, in order:
 
 ```bash
-# Install from PyPI (public, v0.1.2)
+# Install (SDK + CLI; the fixture-based demo below needs no extra deps)
 pip install inferrail
 
-# Run the synthetic demo (zero API key, zero network, takes ~2 seconds)
-inferrail demo
-
-# (Demo creates inferrail-demo-receipts.jsonl with 6 sample receipts)
+# Run the synthetic, fixture-based demo (zero API key, zero network, ~1 second)
+inferrail ap demo
 ```
 
 ---
 
-## Show #1: The Receipt Report (1-2 minutes)
+## Show #1: The AP Decision + Report (2-3 minutes)
 
 **Say before running:**
 
-> "This demo simulates six LLM calls — three to handle one customer's request, two for another, and one unattributed. Each call goes through Inferrail, which records an economic receipt. Let's see what the aggregated cost looks like:"
+> "This demo walks five scenarios against the exact same decision engine a real integration uses: an eligible exception that the one permitted retry actually recovers, one where the retry doesn't resolve it and falls back to your existing human-review path, one where the policy sends it straight to review without ever calling the retry adapter, a repeated request handled idempotently, and a recorded human-review outcome. Watch scenario 1:"
 
 ```bash
-# Show receipts grouped by customer
-inferrail report --by customer --receipts inferrail-demo-receipts.jsonl
+inferrail ap demo
 ```
 
-**Expected output:**
+**Expected output (excerpt):**
 ```
-CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
-globex          2                 1621          416            $0.007825
-acme            3                 1952          361            $0.000483   1
-(unattributed)  1                 300           50             $0.0001
---------------  --------  ------  ------------  -------------  ----------  -----------
-TOTAL           6                 3873          827            $0.008408   1
+1. Eligible exception, one retry recovers it:
+   recommended=retry status=retry_resolved retry_status=success
+   recovered fields (usable data, not just a status): {'invoice_number': 'INV-10482', 'vendor': 'Acme Supply Co', 'total': '1420.00'}
 ```
 
 **Pause here and highlight:**
 
-- "Two calls for globex, three for acme. Costs are rolled up per customer without storing their prompts or responses."
-- "That `1` in `UNKNOWN COST` — one request used a model we don't have pricing for. It shows `null`, not `$0`. We don't guess costs."
+- "That's not just a status — those are the actual re-extracted invoice fields coming back to the caller. A success signal alone isn't the point; usable data is."
+- "The policy that made this call is a configurable heuristic on your own extraction confidence — we don't claim it's a calibrated economic optimum. What it does guarantee: at most one retry, a fixed fallback to your existing human-review path, never a fabricated outcome for an action that wasn't taken."
 
----
-
-## Show #2: One Full Receipt (1 minute)
-
-**Say:**
-
-> "Let's open one actual receipt to prove we don't persist prompts:"
+**Then show the full report:**
 
 ```bash
-python -c "
-import json
-with open('inferrail-demo-receipts.jsonl') as f:
-    receipt = json.loads(f.readline())
-    print(json.dumps(receipt, indent=2))
-" | head -30
+inferrail ap report --db inferrail-ap-demo.sqlite3
 ```
 
-**Expected output (showing payload-free schema):**
-```json
-{
-  "receipt_id": "ir_...",
-  "request_id": "req_...",
-  "timestamp": "2026-08-22T...",
-  "route": "default",
-  "provider": "demo",
-  "model": "demo-small",
-  "status": "success",
-  "prompt_tokens": 812,
-  "completion_tokens": 143,
-  "pricing": {
-    "input_usd_per_million": "0.20",
-    "output_usd_per_million": "0.80",
-    "source": "DEMO — a made-up round number...",
-    "verified_date": "2026-08-22"
-  },
-  "estimated_cost_usd": "0.000277",
-  "attributes": {
-    "customer": "acme",
-    "workflow": "contract-review"
-  },
-  "total_latency_ms": 0.044,
-  "retry_count": 0
-}
+**Expected output:**
+```
+demo-retry-succeeds         decision=dec_... action=retry        status=retry_resolved        retry_status=success validation_passed=True  established_outcome=None
+demo-retry-fails            decision=dec_... action=retry        status=awaiting_human_review retry_status=failed  validation_passed=False established_outcome=None
+demo-policy-disallows-retry decision=dec_... action=human_review status=resolved              retry_status=-       validation_passed=None  established_outcome=corrected
 ```
 
 **Point out:**
 
-- "No `messages`, no `response`, no `choices`. Just economics: tokens, cost, who it was for, and timing."
-- "The `attributes` object lets you tag calls with whatever business context matters: customer, workflow, feature, endpoint, AI agent name."
+- "`demo-retry-fails` is still `awaiting_human_review` — that row's cost is honestly incomplete until a real review outcome comes back, never silently marked done."
+- Run `inferrail ap report --db inferrail-ap-demo.sqlite3 --json` for the full auditable record per work_id, including `sunk_cost_usd`, `retry_cost_usd`, `pre_flight_estimate_usd`, `retry_cost_overrun_usd`, and `observed_cost_complete` — this is the same record a real integration inspects to check the policy against its own history.
 
 ---
 
-## Show #3: Multi-Call Task Aggregation (1-2 minutes)
+## Show #2: One Full Decision Record (1 minute)
 
 **Say:**
 
-> "Those six receipts came from two different business tasks. Watch what happens when we ask Inferrail to aggregate all calls sharing one task ID:"
+> "Let's open one full record to show exactly what's tracked, and what isn't:"
 
 ```bash
-# First, show what task IDs are in the receipts
-grep '"task_id"' inferrail-demo-receipts.jsonl | head -3
-
-# Then aggregate one task (task IDs are deterministic from the demo)
-inferrail transaction "acme_task_001" --receipts inferrail-demo-receipts.jsonl
+inferrail ap report --db inferrail-ap-demo.sqlite3 --json | python3 -m json.tool
 ```
 
-**What the user should see:**
+**Point out on the `demo-retry-succeeds` row:**
 
-- Multiple receipts roll up into a single `InferenceTransaction` object showing:
-  - Total cost for that task
-  - Total tokens (input + completion)
-  - All sub-receipts that made up the task
-  - Task succeeded or failed overall
+- `checkpoint_attempt_id`, `retry_attempt_id`, and `decision_id` are all preserved — a decision can always be traced back to the extraction attempt that triggered it.
+- `pre_flight_estimate_usd` is the adapter's own bound on the retry's cost, checked *before* the retry was authorized — separate from `sunk_cost_usd` (what was already spent before this decision).
+- No invoice content or provider credentials appear anywhere in this record — see "Privacy Boundary," below.
+
+---
+
+## Show #3 (secondary): The Gateway/Work Economics Substrate (1 minute, optional)
+
+**Say:**
+
+> "AP builds on Inferrail's original product: a self-hosted, OpenAI-compatible gateway that turns supported chat-completion traffic into local, payload-free economic receipts. If that's more relevant to what you're building, here's the same idea one level down:"
+
+```bash
+inferrail demo
+inferrail report --by customer
+```
+
+See the gateway's own receipt/report walkthrough in `README.md` for the full script — this remains a real, working, unchanged capability; it's just no longer the lead of this demo.
 
 ---
 
@@ -136,15 +107,15 @@ inferrail transaction "acme_task_001" --receipts inferrail-demo-receipts.jsonl
 
 **Summarize:**
 
-> "That's the core insight: you can now tell an early-adopter or customer exactly what their specific request cost you in model spend — at the task level, not just per API call. You never store their prompts. And if a model's price isn't in our catalog, we say `null` instead of guessing. That's a foundation for cost-aware features and governance."
+> "That's the core loop: one eligible exception, one permitted automated attempt or your existing review path, executed and recorded honestly enough that you can check whether the policy is actually worth it against your own data. No claim of proven savings here — the auditable report is exactly what you'd use to find out for your own volumes."
 
 ---
 
 ## Privacy Boundary (Technical Proof)
 
-**If asked "Can Inferrail see my prompts?"**
+**If asked "Can Inferrail see my invoice content?"**
 
-> "Inferrail operates inline, so requests pass through it. But the receipt schema has no fields for prompts or responses — not configurable, not a flag, just absent from the Pydantic model. The tests enforce it. What Inferrail *does* store and persist: token counts, model, provider, cost, customer/task attribution, timing, and outcome."
+> "No. The retry adapter runs entirely in your own process — invoice text goes from your process directly to whichever extraction provider you configure, never through an Inferrail-operated service. If you use the optional hosted API instead of a local store, it receives only identifiers, policy-config numbers, confidence/validation results, cost figures, and status enums — never invoice field values or provider credentials. The schema has no field for them."
 
 ---
 
@@ -152,51 +123,45 @@ inferrail transaction "acme_task_001" --receipts inferrail-demo-receipts.jsonl
 
 **If asked "Is this production-ready?"**
 
-> "v0.1.2 is single-node only: one Inferrail process per receipts file. Multi-host aggregation, budgets, hosted control planes, and broad provider support (Anthropic, Bedrock, etc.) are not yet in scope — see the README's 'Supported today' and 'Not yet' sections."
+> "v0.2.0's AP module is a first release: exactly one retry per case, two supported failure types, and a policy that's an honest heuristic, not calibrated optimization — see docs/capabilities/ap-invoice-exception-recovery.md's 'What this does not do' for the full bounded scope."
 
 ---
 
 ## Close: The Qualifying Question
 
-> "Which of these sounds closest to your current pain point: (A) you want to know what each customer costs you but are nervous about storing prompts, (B) you want to understand which features or workflows are most expensive, or (C) something else?"
+> "Does your AP pipeline already produce these two kinds of exceptions — low-confidence extractions or failed deterministic checks — and do you already have a human-review path we'd be routing into, or would we be starting from scratch on the review side?"
 
 **Listen for:**
 
-- Anything involving multi-step/multi-call workflows + cost attribution + privacy concern = **strong signal**
-- Single-call, not multi-call workflows = less immediate fit for v0.1 (but note it for future enhancements)
-- Needs multi-host aggregation or enforcement = out of scope for v0.1, good to understand for roadmap
+- An existing review queue/ticketing system + real exception volume = **strong signal**
+- No existing review path = Inferrail doesn't build one for you (see "What this does not do") — still useful, but a bigger lift
+- Interest in the underlying cost-attribution substrate rather than AP specifically = point them at the gateway/Work Economics instead
 
 ---
 
 ## After the Demo (Optional Real Provider Test)
 
-If the early adopter has an OpenAI key and wants to see Inferrail against real data:
+If the early adopter has an OpenAI key and wants to see the same engine against a real extraction call:
 
 ```bash
-# Edit inferrail.yaml to point to real OpenAI
-inferrail serve &
-# Point your OpenAI client at http://localhost:8000 instead of api.openai.com
-# Make a real call
-# Check the receipt:
-inferrail report --by customer
+OPENAI_API_KEY=sk-... python examples/ap_invoice_exception_recovery/live_openai_demo.py
 ```
 
-(This requires an `inferrail.yaml` and env var setup — suitable for 1-on-1 technical evaluation, not a mass walkthrough.)
+Makes exactly one real, billed OpenAI call against a synthetic (not customer) invoice, prints the pre-flight cost authorization decision before the call, and asserts the real re-extracted fields came back — not just that the call succeeded. Suitable for 1-on-1 technical evaluation, not a mass walkthrough.
 
 ---
 
 ## Artifacts to Preserve
 
 After the demo, save:
-- `inferrail-demo-receipts.jsonl` — show the skeptical person the raw JSONL to prove schema
-- Screenshot of the report output — use for follow-up email if the person is interested
+- `inferrail-ap-demo.sqlite3` / `inferrail-ap-demo-handoffs.jsonl` — the raw store and handoff log, to show a skeptical person the actual persisted record
+- Screenshot of the `--json` report output — use for follow-up email if the person is interested
 
 ---
 
 ## Notes for the Founder
 
-- **Do not oversell beyond v0.1.2 scope.** It's tempting to say "Inferrail will do X" when the ADR mentions it as a future direction. Stick to "today it does Y."
-- **Emphasize the payload-free property by pointing at the schema, not just claiming it.** Open the JSON. Show them there is no `messages`, `response`, or `prompt` field.
-- **Use the unknown pricing `1` in the report as a teaching moment.** It's the clearest proof that you're *not* guessing costs — you're explicitly saying "I don't know."
-- **If they ask about agents ("Can an AI agent use this?")** — yes, Inferrail is B2A ready: it's self-contained, has MCP tools for spend/health queries, and agents can point their OpenAI client at it via `base_url`. But emphasize: agent adoption is a hypothesis, not shipped yet.
-
+- **Do not oversell beyond v0.2.0's bounded scope.** One retry per case, two failure types, a heuristic policy — stick to "today it does Y," see the capability doc's "What this does not do."
+- **Emphasize the payload-free/data-boundary property by pointing at the record, not just claiming it.** Open the `--json` report. Show them there is no invoice field or credential anywhere in it.
+- **Use `demo-retry-fails`'s incomplete cost as a teaching moment.** It's the clearest proof the report isn't just declaring victory — a case that hasn't actually resolved stays honestly marked incomplete.
+- **If they ask about the hosted option** — a hosted decision/persistence/reporting API exists, but retry execution always happens in the customer's own process; point them at `hosted/ap_exceptions/README.md`.

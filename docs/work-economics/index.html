@@ -101,6 +101,11 @@
       </div>
       <p class="testnet-note"><strong>Testnet only.</strong> Every receipt is stamped <code>network_class: TESTNET</code> so a testnet purchase is never mistaken for real revenue.</p>
     </section>
+
+    <section class="block" aria-labelledby="ap-relationship-title">
+      <h2 id="ap-relationship-title">Relationship to AP invoice-exception recovery</h2>
+      <p>AP invoice-exception recovery — a separate, non-testnet hosted service, unrelated to this page's own testnet purchase flow — can export its own already-recorded retry and human-review costs as events shaped for this same contract (<code>inferrail.ap.work_economics_export.export_work_economics_events</code>), so a caller who already consumes events in this shape can represent AP's costs the same way. This is a same-process data export, not a shared ledger, shared database, or dependency between the two services: this page's own paid, per-call testnet purchase flow is unaffected and unchanged.</p>
+    </section>
   </main>
   <footer class="wrap">Inferrail Work Economics · <a href="/">Home</a></footer>
 </body>
