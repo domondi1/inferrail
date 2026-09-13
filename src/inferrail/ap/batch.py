@@ -1,13 +1,13 @@
 """Historical/shadow-mode batch analysis over already-exported attempt
 and review data.
 
-Ported from the private repo's analysis-only pilot prototype
-(`pilot/invoice_exception/`, PR #2 on `inferrail-internal`, D34) --
-reuses its eligibility, checkpoint-decision, and sunk-vs-incremental
-cost-boundary discipline (and the bugs D35's productization found fixed
-there) rather than re-deriving it. That prototype never executed
-anything; this module still doesn't -- it answers "how would a policy's
-recommendation have compared against what a vendor's historical export
+Ported from an earlier, private, analysis-only prototype of this same
+decision -- reuses its eligibility, checkpoint-decision, and
+sunk-vs-incremental cost-boundary discipline (and the correctness fixes
+that prototype's own productization found) rather than re-deriving it.
+That prototype never executed anything; this module still doesn't -- it
+answers "how would a policy's recommendation have compared against what
+a vendor's historical export
 shows actually happened," for a vendor's existing dataset. The live,
 executing decision path is `engine.RecoveryEngine`, which shares this
 module's enums (`models.Action`, `models.Eligibility`, etc.) but not its

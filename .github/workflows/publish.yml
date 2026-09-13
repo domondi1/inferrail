@@ -6,6 +6,13 @@ on:
       - "v*.*.*"
 
 jobs:
+  ci:
+    # Runs the full CI workflow (lint, mypy, tests, generated-file freshness,
+    # the hosted-economic-authority job, the ap-exceptions job) against the
+    # exact tagged commit. Publication depends on this passing -- a version
+    # bump alone is never sufficient for a release.
+    uses: ./.github/workflows/ci.yml
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -28,8 +35,36 @@ jobs:
           name: distribution
           path: dist/
 
-  publish:
+  verify-wheel:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: distribution
+          path: dist/
+
+      - name: Install the built wheel into a clean environment
+        run: |
+          python -m venv /tmp/inferrail-release-check
+          /tmp/inferrail-release-check/bin/pip install "$(ls dist/*.whl)"
+
+      - name: Run the documented AP quickstart against the installed wheel
+        working-directory: /tmp
+        run: |
+          /tmp/inferrail-release-check/bin/inferrail ap demo
+          /tmp/inferrail-release-check/bin/inferrail ap report --db inferrail-ap-demo.sqlite3 --json | python3 -m json.tool > /dev/null
+          /tmp/inferrail-release-check/bin/inferrail --help
+          /tmp/inferrail-release-check/bin/python3 -c "import inferrail; print('version:', inferrail.__version__)"
+          /tmp/inferrail-release-check/bin/python3 -c "import inferrail.ap; print(sorted(inferrail.ap.__all__))"
+
+  publish:
+    needs: [ci, build, verify-wheel]
     runs-on: ubuntu-latest
     environment:
       name: pypi

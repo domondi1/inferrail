@@ -1,7 +1,7 @@
 """Regression coverage for the historical/batch analysis module, ported
-from the private repo's superseded analysis-only prototype (PR #2,
-`inferrail-internal`). These scenarios reconstruct that prototype's
-regression cases against this release's ported implementation.
+from an earlier, private, superseded analysis-only prototype of this
+same decision. These scenarios reconstruct that prototype's regression
+cases against this release's ported implementation.
 """
 
 from __future__ import annotations

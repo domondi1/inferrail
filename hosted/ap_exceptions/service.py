@@ -7,7 +7,7 @@ Lives outside `src/inferrail`, exactly like `hosted/work_economics` and
 dependency on this service; both work standalone with local storage.
 
 **What this service does, and does not, do.** It runs the same
-`inferrail.ap.policy.recommend` decision logic and
+`inferrail.ap.policy.recommend` policy evaluation and
 `inferrail.ap.store.RecoveryStore` persistence the local SDK uses, over
 the network, per authenticated tenant. **It never executes a retry
 itself** -- retry execution always happens in the caller's own process

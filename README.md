@@ -2,7 +2,53 @@
 
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-Know what your AI work costs.
+Decide, execute, and record AP invoice-exception recovery.
+
+For one eligible invoice-extraction exception, Inferrail decides whether it
+gets one permitted machine retry or your established human-review path,
+executes the retry through a supported integration, and records the
+resulting cost and outcome — with invoice content and provider credentials
+staying in your own process the whole time.
+
+[![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
+## AP invoice-exception recovery: 30-second demo
+
+```bash
+pip install inferrail
+inferrail ap demo
+```
+
+Fixture-based, zero-key, no network call. Runs the real decision engine
+through all five core scenarios — an eligible exception recovered by one
+retry, an unsuccessful retry that falls back to human review, a case the
+policy routes straight to human review, a repeated request handled without
+re-executing anything, and inspecting the resulting decision/outcome records
+— then points you at `inferrail ap report` to inspect them yourself.
+
+Want a real (billed) OpenAI call instead of fixtures, or to see how you'd
+wire in your own extraction pipeline and review queue? See
+[`examples/ap_invoice_exception_recovery/`](examples/ap_invoice_exception_recovery/).
+Full contract — supported failure types, retry method, validation contract,
+human-review handoff, versioned policy config, persistence/idempotency, the
+hosted HTTP API — in
+[`docs/capabilities/ap-invoice-exception-recovery.md`](docs/capabilities/ap-invoice-exception-recovery.md).
+
+**No claim of proven savings or customer adoption is made anywhere in this
+README** — see that capability doc's "Pricing and performance assumptions,"
+which labels every dollar figure as an explicit assumption, not a validated
+result.
+
+## Also in this package: the self-hosted LLM gateway and cost receipts
+
+Everything below this point is Inferrail's original, still fully-supported
+product: a self-hosted gateway that turns supported OpenAI chat-completion
+traffic into local, attributable economic receipts — the same receipt/cost
+substrate the AP product's `OpenAIRetryAdapter` and reporting build on. It
+remains available and unchanged; nothing about the AP release modifies its
+behavior or its commands.
 
 Inferrail turns supported OpenAI chat-completion traffic into local,
 attributable economic receipts. Give related requests a customer-defined
@@ -10,15 +56,11 @@ attributable economic receipts. Give related requests a customer-defined
 known inference economics associated with that work without storing prompts,
 responses, or tool payloads in Inferrail's own records.
 
-[![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-
 For the supported chat-completions surface, Inferrail records known cost when
 measured usage and a verified price are available. Otherwise it reports
 `unknown`, never a fabricated `$0`.
 
-## 30-second demo
+## Gateway: 30-second demo
 
 **Current main / upcoming Work Economics release.** Work Economics was added
 after the current PyPI release. To try the current product before the next
@@ -501,6 +543,16 @@ one filesystem.
 Anything beyond one host is out of scope for v0.x — see
 [docs/PRODUCT.md](docs/PRODUCT.md).
 
+## Hosted services (optional, separate from the gateway)
+
+**Inferrail AP Exceptions** (`hosted/ap_exceptions/`) is the optional
+hosted counterpart to the AP invoice-exception recovery SDK above:
+authenticated decision/persistence/reporting over HTTP, isolated per
+API key. It never executes a retry itself — that always happens in your
+own process. Not paid/x402-gated; a plain `Authorization: Bearer
+<api-key>` header. Full contract:
+[hosted/ap_exceptions/README.md](hosted/ap_exceptions/README.md).
+
 ## Paid capabilities (hosted, separate from the gateway)
 
 Inferrail helps companies measure, attribute, and eventually govern the
@@ -565,6 +617,8 @@ Bearer <token>` — see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
+- [docs/capabilities/ap-invoice-exception-recovery.md](docs/capabilities/ap-invoice-exception-recovery.md)
+  — AP invoice-exception recovery: full contract
 - [docs/PRODUCT.md](docs/PRODUCT.md) — exact current scope
 - [docs/comparison.md](docs/comparison.md) — how Inferrail keeps prompt
   and response content out of its receipts
@@ -580,12 +634,14 @@ Bearer <token>` — see [SECURITY.md](SECURITY.md).
 
 ```bash
 git clone https://github.com/domondi1/inferrail.git && cd inferrail
-pip install -e ".[dev,mcp]"
+pip install -e ".[dev,mcp,ap]"
 ruff check . && mypy && pytest
 ```
 
 `pytest` needs no API key or network access — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md). The `ap` extra is only needed to
+exercise `OpenAIRetryAdapter`'s code path; the live-provider integration
+test still self-skips without `OPENAI_API_KEY` and `INFERRAIL_LIVE_TESTS=1`.
 
 ## License
 

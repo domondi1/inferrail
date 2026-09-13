@@ -8,7 +8,7 @@ for the public contract and
 for why this lives outside `src/inferrail`.
 
 **This service never executes a retry itself.** It runs the same
-`inferrail.ap.policy.recommend` decision logic and
+`inferrail.ap.policy.recommend` policy evaluation and
 `inferrail.ap.store.RecoveryStore` persistence the local SDK uses, over
 HTTP, per authenticated tenant. Retry execution always happens in your
 own process (a `RetryAdapter`) — invoice content and provider credentials

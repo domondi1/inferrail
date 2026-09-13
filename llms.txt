@@ -1,15 +1,27 @@
 # Inferrail
 
-> Inferrail is an open-source, self-hosted, OpenAI-compatible gateway that
-> measures the cost of every LLM request and attributes it to the customer,
-> workflow, or task that drove it — without persisting the prompt or
-> response in its local receipt/telemetry records. Point your app's OpenAI
-> client at Inferrail instead of directly at your provider, and every call
-> produces a payload-free economic receipt: verified pricing, measured
-> token usage, and whatever business attribution you attach. Receipts
-> sharing one attribution tag can be rolled up into a single task-level
-> transaction (`inferrail transaction <task-id>`), including via an
-> ambient `inferrail.track_task(...)` helper that tags nested agent calls
+> Inferrail's primary product, as of v0.2.0, is AP invoice-exception
+> recovery: for one eligible invoice-extraction exception, it decides
+> whether to make one permitted machine retry or send it to your
+> established human-review path, executes the retry through a supported
+> integration (your own adapter, or the bundled OpenAI reference
+> adapter), and records the resulting cost and outcome — durably,
+> idempotently, with invoice content and provider credentials staying in
+> your own process. `pip install inferrail && inferrail ap demo` for a
+> zero-key, fixture-based walkthrough. Full contract:
+> [docs/capabilities/ap-invoice-exception-recovery.md](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md).
+>
+> Inferrail also ships, unchanged, the original open-source,
+> self-hosted, OpenAI-compatible gateway that measures the cost of every
+> LLM request and attributes it to the customer, workflow, or task that
+> drove it — without persisting the prompt or response in its local
+> receipt/telemetry records. Point your app's OpenAI client at Inferrail
+> instead of directly at your provider, and every call produces a
+> payload-free economic receipt: verified pricing, measured token usage,
+> and whatever business attribution you attach. Receipts sharing one
+> attribution tag can be rolled up into a single task-level transaction
+> (`inferrail transaction <task-id>`), including via an ambient
+> `inferrail.track_task(...)` helper that tags nested agent calls
 > automatically. Apache-2.0 licensed. Self-hosted with zero dependency on
 > any Inferrail-operated service. Inferrail also operates two
 > experimental, Base-Sepolia-testnet-only hosted capabilities (below)
@@ -18,6 +30,7 @@
 
 ## Docs
 
+- [AP invoice-exception recovery](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md): supported failure types, retry method, validation contract, human-review handoff, versioned policy config, hosted API
 - [README](https://github.com/domondi1/inferrail/blob/main/README.md): quickstart, install, configuration, privacy verification
 - [Product scope](https://github.com/domondi1/inferrail/blob/main/docs/PRODUCT.md): exact current scope — what works, explicit non-goals
 - [Architecture](https://github.com/domondi1/inferrail/blob/main/docs/ARCHITECTURE.md): package layout, request lifecycle
@@ -36,8 +49,13 @@
 
 ## Examples
 
+- [AP invoice-exception recovery examples](https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery): fixture-based demo, real-provider (OpenAI) demo, and a custom-integration example (your own extraction pipeline + review queue)
 - [Basic chat request](https://github.com/domondi1/inferrail/blob/main/examples/basic_chat_request.py)
 - [Work Economics purchase](https://github.com/domondi1/inferrail/blob/main/examples/work_economics_purchase.py): a complete, standalone x402 buyer — no Inferrail account required
+
+## Hosted services
+
+- [Inferrail AP Exceptions](https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md): the optional hosted counterpart to AP invoice-exception recovery — authenticated decision/persistence/reporting over HTTP, isolated per API key. Not paid/x402-gated. Never executes a retry itself.
 
 ## Paid capabilities
 
