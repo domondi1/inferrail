@@ -4,19 +4,30 @@ per-tenant isolation, idempotency, retention/deletion, and rate limiting.
 Uses only dependencies already required by `inferrail` core (fastapi,
 pydantic) -- no optional extra needed, unlike the CDP/x402/a2a-gated
 hosted-service tests.
+
+Loads hosted/ap_exceptions's flat-file modules by explicit path via
+`importlib.util` rather than `sys.path.insert` + a bare `import service`.
+`hosted/work_economics/service.py` is a same-named sibling module under
+the same flat-file convention -- pytest collects every test file before
+running any of them, so by test-run time *every* hosted test's
+`sys.path.insert` has already executed, and a bare `import service`
+would silently resolve to whichever hosted directory landed first on
+`sys.path`, not necessarily this one. Loading by explicit file path (and
+pre-registering `auth`/`tenant_store` under their own plain names --
+unique in this repo, so this is safe) avoids that entirely, regardless
+of collection order or what other hosted directories exist now or later.
 """
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 HOSTED_DIR = Path(__file__).resolve().parents[3] / "hosted" / "ap_exceptions"
-if str(HOSTED_DIR) not in sys.path:
-    sys.path.insert(0, str(HOSTED_DIR))
 
 _POLICY_CONFIG = {
     "eligible_failure_types": ["low_confidence", "validation_check_failed"],
@@ -27,19 +38,29 @@ _POLICY_CONFIG = {
 }
 
 
+def _load(name: str, filename: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, HOSTED_DIR / filename)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.fixture
 def service_module(monkeypatch, tmp_path):
     monkeypatch.setenv("AP_API_KEYS", "key-a,key-b")
     monkeypatch.setenv("AP_RATE_LIMIT_MAX_REQUESTS", "1000")
     monkeypatch.setenv("AP_RATE_LIMIT_WINDOW_SECONDS", "60")
-    import auth
-    import service
-    import tenant_store
-
-    importlib.reload(tenant_store)
-    importlib.reload(auth)
-    importlib.reload(service)
-    return service
+    # "auth"/"tenant_store" are unique names in this repo -- registering
+    # them under their own plain names is safe and lets service.py's
+    # internal `from auth import ...` / `from tenant_store import ...`
+    # resolve correctly without hosted/ap_exceptions ever touching
+    # sys.path. "service" is deliberately NOT reused as the registration
+    # name -- that's the exact name the collision above is about.
+    _load("tenant_store", "tenant_store.py")
+    _load("auth", "auth.py")
+    return _load("ap_exceptions_service_under_test", "service.py")
 
 
 @pytest.fixture
@@ -163,12 +184,13 @@ def test_deleting_a_never_created_work_id_is_404(client):
 def test_rate_limit_returns_429_after_the_configured_max(
     service_module, tmp_path, monkeypatch
 ):
+    del service_module  # re-loaded fresh below with the tighter rate limit in effect
     monkeypatch.setenv("AP_RATE_LIMIT_MAX_REQUESTS", "3")
     monkeypatch.setenv("AP_RATE_LIMIT_WINDOW_SECONDS", "60")
-    importlib.reload(service_module)
+    tight_service_module = _load("ap_exceptions_service_under_test_tight", "service.py")
     from fastapi.testclient import TestClient
 
-    limited_client = TestClient(service_module.create_app(tmp_path / "data"))
+    limited_client = TestClient(tight_service_module.create_app(tmp_path / "data"))
 
     for i in range(3):
         resp = limited_client.get(f"/v1/decisions/NOPE-{i}", headers=_auth())
