@@ -171,3 +171,66 @@ def test_retry_cost_overrun_recorded_honestly(tmp_path: Path) -> None:
     from decimal import Decimal
 
     assert row.retry_cost_overrun_usd == Decimal("0.15")
+
+
+def test_late_retry_result_surfaced_exactly_once_never_promoted_to_accepted(
+    tmp_path: Path,
+) -> None:
+    """A real result that arrives after this work_id's lease was
+    already reaped must be preserved and surfaced for audit -- but
+    never silently promoted to an accepted business outcome: the
+    decision's authoritative status and observed_cost_usd/
+    observed_cost_complete must be unaffected by it."""
+    from decimal import Decimal
+
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _decision(store, "W8")
+    # Simulate a reap: a synthetic ambiguous attempt was recorded and
+    # the decision moved to awaiting_human_review.
+    store.record_retry_attempt(
+        work_id="W8", attempt_id="ret_reaped_W8", status="ambiguous",
+        cost_usd=None, confidence=None, provider="lease_reaper",
+    )
+    store.set_decision_status("W8", "awaiting_human_review")
+
+    row = build_live_report(store).rows[0]
+    assert row.late_result_status is None
+    assert row.late_result_cost_usd is None
+
+    # Now the "dead" worker's real result arrives late.
+    store.record_late_retry_result(
+        work_id="W8", attempt_id="ret-real-late", status="success",
+        cost_usd="0.09", provider="fixture", detail="arrived after reap",
+    )
+
+    row = build_live_report(store).rows[0]
+    assert row.late_result_status == "success"
+    assert row.late_result_cost_usd == Decimal("0.09")
+    # Never promoted: the official record stays exactly as the reap left it.
+    assert row.status == "awaiting_human_review"
+    assert row.retry_status == "ambiguous"
+    assert row.observed_cost_usd is None
+    assert row.observed_cost_complete is False
+
+
+def test_late_retry_result_surfaces_only_the_latest_when_more_than_one(
+    tmp_path: Path,
+) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _decision(store, "W9")
+    store.record_retry_attempt(
+        work_id="W9", attempt_id="ret_reaped_W9", status="ambiguous",
+        cost_usd=None, confidence=None, provider="lease_reaper",
+    )
+    store.set_decision_status("W9", "awaiting_human_review")
+    store.record_late_retry_result(
+        work_id="W9", attempt_id="ret-late-1", status="failed",
+        cost_usd="0.05", provider="fixture", detail="first late arrival",
+    )
+    store.record_late_retry_result(
+        work_id="W9", attempt_id="ret-late-2", status="success",
+        cost_usd="0.09", provider="fixture", detail="second late arrival",
+    )
+
+    row = build_live_report(store).rows[0]
+    assert row.late_result_status == "success"  # only the latest, exactly once

@@ -110,7 +110,8 @@ jobs:
           ruff check src/inferrail/ap hosted/ap_exceptions \
             examples/ap_invoice_exception_recovery tests/unit/ap \
             tests/unit/hosted/test_ap_exceptions_service.py \
-            tests/integration/test_ap_openai_live.py
+            tests/integration/test_ap_openai_live.py \
+            tests/integration/test_ap_crash_recovery.py
 
       - name: Type-check (mypy) -- inferrail.ap (with openai installed)
         run: mypy src/inferrail/ap --strict
@@ -118,5 +119,7 @@ jobs:
       - name: Type-check (mypy) -- hosted/ap_exceptions
         run: mypy hosted/ap_exceptions --strict --ignore-missing-imports
 
-      - name: Test -- AP unit and hosted-service tests
-        run: pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py -v
+      - name: Test -- AP unit, hosted-service, and crash-recovery tests
+        run: |
+          pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
+            tests/integration/test_ap_crash_recovery.py -v

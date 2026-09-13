@@ -104,6 +104,12 @@
         <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service.</p>
         <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">See the hosted AP service</a>
       </div>
+      <div class="agents-card">
+        <p class="agents-eyebrow">Reporting</p>
+        <h3>Connects to Work Economics — without sharing its ledger</h3>
+        <p class="agents-copy">AP's own retry and human-review costs can be exported in the same event shape Work Economics already uses for reporting — a same-process data export, not a shared database or a dependency on Work Economics' separate (testnet) payment flow below.</p>
+        <a class="button button-ghost" href="/work-economics/">See the Work Economics connector</a>
+      </div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="agents wrap" id="agents" aria-labelledby="agents-title">

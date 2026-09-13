@@ -13,6 +13,14 @@ jobs:
     # bump alone is never sufficient for a release.
     uses: ./.github/workflows/ci.yml
 
+  platform-verify:
+    # Native Windows/macOS/Linux wheel-install verification (see
+    # platform-verify.yml's own header) against the exact tagged commit --
+    # not just Ubuntu CI. A release must never be published on the theory
+    # that a platform "would obviously pass" when it was never actually
+    # run for this commit.
+    uses: ./.github/workflows/platform-verify.yml
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -64,7 +72,7 @@ jobs:
           /tmp/inferrail-release-check/bin/python3 -c "import inferrail.ap; print(sorted(inferrail.ap.__all__))"
 
   publish:
-    needs: [ci, build, verify-wheel]
+    needs: [ci, build, verify-wheel, platform-verify]
     runs-on: ubuntu-latest
     environment:
       name: pypi

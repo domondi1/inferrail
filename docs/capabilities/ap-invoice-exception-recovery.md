@@ -166,23 +166,45 @@ an actual crash — the case is left `retry_in_progress` with no one able
 to act on it, until the lease expires. At that point:
 
 - `RecoveryEngine.reap_stale_retries()` (or the CLI's `inferrail ap
-  reap`, or the hosted API's `POST /v1/reap-stale`) finds every expired
-  lease, records a synthetic `ambiguous` retry attempt (`provider:
-  lease_reaper`), and moves the decision to `awaiting_human_review` —
-  the same terminal, non-guessed state a raised exception produces.
-  **Idempotent**: a repeat reap call for an already-reaped or
-  already-resolved work_id is a no-op, never a duplicate attempt.
-- **Abandoned vs. still-running is checked, not assumed**: reaping
-  re-verifies the lease is still expired and that no real attempt has
-  been recorded in the meantime before acting — a "dead" worker that
-  was actually still running is never overwritten.
-- **A late-arriving real result is never silently lost.** If the
-  supposedly-dead worker's retry call does eventually complete after
-  its lease was reaped, the real result (status, cost) is preserved in
-  an audit-only `late_retry_results` record — but the decision's
-  authoritative status is never silently flipped back to
-  `retry_resolved`, because no receiving system ever acknowledged
-  anything about it after the reap.
+  reap`, or the hosted API's `POST /v1/reap-stale`) recovers every
+  expired lease **one of two ways**, distinguished by each result's
+  `"kind"`:
+  - **`"reaped"`** — no real attempt was ever durably recorded (the
+    process died before or during the adapter call itself): records a
+    synthetic `ambiguous` retry attempt (`provider: lease_reaper`) and
+    moves the decision to `awaiting_human_review` — the same terminal,
+    non-guessed state a raised exception produces.
+  - **`"reconciled"`** — a real attempt *was* already durably recorded,
+    but the process died between that and the decision's own status
+    transition (i.e. killed after `record_retry_attempt` succeeded, before
+    `set_decision_status` ran). The external action already happened and
+    its result is already known, so this never inserts a second,
+    synthetic attempt and never leaves the decision stuck at
+    `retry_in_progress` forever — it derives the correct terminal status
+    (`retry_resolved` or `awaiting_human_review`) from that real
+    attempt's own recorded validation result, exactly matching what the
+    original call would have done had it not crashed.
+
+  **Idempotent either way**: a repeat reap/reconcile call for a work_id
+  already recovered or already resolved by its real worker is a no-op,
+  never a duplicate attempt or a re-reconciliation.
+- **Abandoned vs. still-running is checked, not assumed**: recovery
+  re-verifies the lease is still expired before acting, and inspects
+  whether a real attempt already exists to choose reap vs. reconcile —
+  a "dead" worker that was actually still running is never overwritten.
+- **A late-arriving real result is never silently lost, and never
+  silently promoted.** If the supposedly-dead worker's retry call does
+  eventually complete after its lease was already reaped (the
+  `"reaped"` case above, not `"reconciled"`), the real result (status,
+  cost) is preserved in an audit-only `late_retry_results` record and
+  surfaced for inspection — `report.LiveReportRow.late_result_status`/
+  `late_result_cost_usd`, and
+  `work_economics_export.export_unconfirmed_late_result` (see "Work
+  Economics connector," below) — but the decision's authoritative
+  status and `observed_cost_usd`/`observed_cost_complete` are never
+  changed by it, because no receiving system ever acknowledged anything
+  about it after the reap. A reader sees both facts side by side: what
+  is officially recorded, and what a late, unconfirmed signal reported.
 - **A handoff is never fabricated during a sweep.** `reap_stale_retries`
   deliberately does not send a handoff itself — the store doesn't
   persist enough of the original `ExceptionCase` to reconstruct one
@@ -246,6 +268,25 @@ running `estimate_cost`/`authorize_retry_cost` locally, before calling
 [`examples/ap_invoice_exception_recovery/hosted_client_example.py`](../../examples/ap_invoice_exception_recovery/hosted_client_example.py)
 for the full pattern.
 
+**The hosted API enforces the same lifecycle rules as the local SDK
+engine, not a looser version of them:**
+
+- `POST .../retry-attempts` only transitions a decision to
+  `retry_resolved` when the attempt's own `status` is exactly `success`
+  *and* `validation_passed` is `true`. A caller claiming
+  `validation_passed=true` for a `failed`/`ambiguous` attempt is
+  rejected outright with `422` — a failed or interrupted attempt cannot
+  "pass validation," and this endpoint never lets a contradictory pair
+  silently produce `retry_resolved`.
+- A late result — a *different* attempt recorded for a work_id that
+  already has one (typically because its lease was already reaped) —
+  is never an unhandled `500`. It returns a defined `409` and is
+  durably recorded for audit via the same `late_retry_results` path the
+  local engine uses (see "Persistence, idempotency, and crash
+  recovery," above) — visible afterward in `GET /v1/report`'s
+  `late_result_status`/`late_result_cost_usd`, never silently dropped
+  and never promoted to the decision's own accepted status.
+
 A running instance auto-serves its own OpenAPI schema at
 `GET /openapi.json` — the authoritative, always-current machine-readable
 reference for this service (the repo's committed `openapi.json` at the
@@ -286,6 +327,17 @@ guessed shape.
   cost is exported with `price_basis="UNKNOWN"`, never silently dropped
   and never folded into the machine-cost resource class where it could
   be misread as part of the retry's own cost.
+- **A late-arriving, unconfirmed result is never included in this
+  function's own list.** A real result that arrives after a work_id's
+  lease was already reaped (see "Persistence, idempotency, and crash
+  recovery," above) is, by definition, not acknowledged by anything —
+  feeding it into the same list a caller sums into a cost total would
+  let an unconfirmed number quietly become part of an accepted figure.
+  [`export_unconfirmed_late_result`](../../src/inferrail/ap/work_economics_export.py)
+  surfaces it instead as a **structurally distinct**, non-`EconomicEvent`-
+  shaped dict (no `price_basis`, no `currency`, explicitly marked
+  `"confirmed": False`) for a caller to display or log for audit —
+  never to sum alongside the main event list.
 
 This is a supported connection for a caller who already has a Work
 Economics consumer and wants AP's costs represented the same way — it

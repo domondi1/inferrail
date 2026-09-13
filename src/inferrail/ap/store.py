@@ -344,18 +344,37 @@ class RecoveryStore:
     def reap_stale_retry_lease(
         self, work_id: str, *, now: float | None = None
     ) -> dict[str, Any] | None:
-        """Recovers one work_id whose retry lease has expired: records a
-        synthetic `ambiguous` retry attempt (provider `lease_reaper`) and
-        moves the decision to `awaiting_human_review`. Never re-invokes
-        the customer's retry adapter -- this is a pure store-level status
+        """Recovers one work_id whose retry lease has expired -- one of
+        two distinct cases, both handled here, neither ever re-invoking
+        the customer's retry adapter (this is a pure store-level status
         transition; the caller's `RecoveryEngine` is responsible for any
-        resulting handoff (see `RecoveryEngine.reap_stale_retries`).
+        resulting handoff, see `RecoveryEngine.reap_stale_retries`):
 
-        Idempotent: returns `None` (no-op) if the decision is no longer
-        `retry_in_progress`, its lease isn't actually stale relative to
-        `now`, or a real retry attempt already exists for this work_id
-        (the "dead" worker actually finished between the staleness scan
-        and this call -- never overwritten or duplicated)."""
+        - **No real attempt was ever durably recorded** (the process
+          died before or during the adapter call itself): inserts a
+          synthetic `ambiguous` attempt (provider `lease_reaper`,
+          returned dict's `"kind"` is `"reaped"`) and moves the decision
+          to `awaiting_human_review`.
+        - **A real attempt WAS already durably recorded, but the
+          process died before the decision's own status could be
+          updated** (killed between `record_retry_attempt` succeeding
+          and `set_decision_status`/`clear_retry_lease` running): the
+          external action already happened and its real result is
+          already known -- inserting a second, synthetic attempt would
+          be wrong, and leaving the decision at `retry_in_progress`
+          forever (the pre-existing bug this branch fixes) is exactly
+          the "stuck" failure mode this store exists to prevent.
+          Instead, **reconciles**: derives the correct terminal status
+          from the real attempt's own recorded `validation_passed`
+          (`retry_resolved` only if it is exactly `"True"`; otherwise
+          `awaiting_human_review`, matching `engine.RecoveryEngine.
+          _execute_retry`'s own success-path logic exactly) and clears
+          the lease. Returned dict's `"kind"` is `"reconciled"`.
+
+        Idempotent either way: returns `None` (no-op) if the decision is
+        no longer `retry_in_progress` or its lease isn't actually stale
+        relative to `now`.
+        """
         ts = now if now is not None else time.time()
         attempt_id = f"ret_reaped_{work_id}"
         conn = self._connect()
@@ -375,11 +394,30 @@ class RecoveryStore:
             ):
                 conn.rollback()
                 return None
-            if conn.execute(
-                "SELECT 1 FROM retry_attempts WHERE work_id = ?", (work_id,)
-            ).fetchone() is not None:
-                conn.rollback()
-                return None
+
+            existing_attempt = conn.execute(
+                "SELECT * FROM retry_attempts WHERE work_id = ?", (work_id,)
+            ).fetchone()
+            if existing_attempt is not None:
+                # A real attempt already exists -- the retry itself
+                # already happened and its result is already known;
+                # only the decision's own terminal-status transition
+                # never ran. Reconcile using that attempt's own
+                # recorded validation result, never a guess and never a
+                # second synthetic attempt.
+                attempt_dict = self._row_to_dict(existing_attempt, _ATTEMPT_COLUMNS)
+                reconciled_status = (
+                    DecisionStatus.RETRY_RESOLVED.value
+                    if attempt_dict["validation_passed"] == "True"
+                    else DecisionStatus.AWAITING_HUMAN_REVIEW.value
+                )
+                conn.execute(
+                    "UPDATE decisions SET status = ?, worker_id = NULL, "
+                    "lease_expires_at = NULL WHERE work_id = ?",
+                    (reconciled_status, work_id),
+                )
+                conn.commit()
+                return {**attempt_dict, "kind": "reconciled"}
 
             conn.execute(
                 """INSERT INTO retry_attempts
@@ -399,7 +437,7 @@ class RecoveryStore:
                 "SELECT * FROM retry_attempts WHERE attempt_id = ?", (attempt_id,)
             ).fetchone()
             assert row is not None
-            return self._row_to_dict(row, _ATTEMPT_COLUMNS)
+            return {**self._row_to_dict(row, _ATTEMPT_COLUMNS), "kind": "reaped"}
         finally:
             conn.close()
 

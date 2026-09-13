@@ -46,7 +46,7 @@ from .models import (
 from .policy import PolicyConfig, authorize_retry_cost, recommend
 from .store import AmbiguousRetryError, RecoveryStore
 from .validation import FieldPresenceAndConfidenceValidator, Validator
-from .work_economics_export import export_work_economics_events
+from .work_economics_export import export_unconfirmed_late_result, export_work_economics_events
 
 __all__ = [
     "Action",
@@ -76,6 +76,7 @@ __all__ = [
     "ValidationResult",
     "Validator",
     "authorize_retry_cost",
+    "export_unconfirmed_late_result",
     "export_work_economics_events",
     "get_cost_estimate",
     "recommend",

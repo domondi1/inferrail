@@ -177,3 +177,77 @@ def test_sigkill_mid_sleep_still_recovers_via_reap(tmp_path):
     reaped = engine.reap_stale_retries()
     assert [r["work_id"] for r in reaped] == ["CRASH-3"]
     assert store.get_decision("CRASH-3")["status"] == "awaiting_human_review"
+
+
+def test_crash_after_attempt_recorded_reconciles_using_the_real_result(tmp_path):
+    """The exact boundary this pass's review named: terminate the
+    process after the retry attempt has been durably recorded but
+    before the decision status is updated. Recovery must reconcile
+    using the real, known attempt -- never re-invoke anything, never
+    insert a second attempt, and never leave the decision stuck at
+    retry_in_progress forever (the bug this test guards against)."""
+    db_path = tmp_path / "ap.sqlite3"
+    result = subprocess.run(
+        [
+            sys.executable, str(CRASH_HELPER), str(db_path), "record_attempt_then_crash",
+            "CRASH-4", "0.05", "True", "0.06",
+        ],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode != 0, (
+        f"helper exited cleanly (code {result.returncode}); "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+    store = RecoveryStore(db_path)
+    stuck = store.get_decision("CRASH-4")
+    assert stuck["status"] == "retry_in_progress"
+    attempt_before = store.get_retry_attempt("CRASH-4")
+    assert attempt_before is not None
+    assert attempt_before["cost_usd"] == "0.06"  # the real cost is already durably known
+
+    time.sleep(0.1)  # let the 0.05s lease expire
+
+    handoff = LoggingHandoff(path=tmp_path / "handoffs.jsonl")
+    engine = RecoveryEngine(
+        store=store, config=_config(), retry_adapter=FixtureRetryAdapter(results_by_work_id={}),
+        validator=FieldPresenceAndConfidenceValidator(), handoff=handoff,
+    )
+    reaped = engine.reap_stale_retries()
+    assert len(reaped) == 1
+    assert reaped[0]["kind"] == "reconciled"
+    assert reaped[0]["status"] == "retry_resolved"
+
+    final = store.get_decision("CRASH-4")
+    assert final["status"] == "retry_resolved"
+    assert final["worker_id"] is None
+    attempt_after = store.get_retry_attempt("CRASH-4")
+    assert attempt_after["attempt_id"] == attempt_before["attempt_id"]  # never duplicated
+    assert attempt_after["cost_usd"] == "0.06"  # never lost or altered
+
+    # Idempotent: a repeat sweep reconciles nothing new.
+    assert engine.reap_stale_retries() == []
+
+
+def test_crash_after_failed_validation_attempt_recorded_reconciles_to_human_review(tmp_path):
+    db_path = tmp_path / "ap.sqlite3"
+    result = subprocess.run(
+        [
+            sys.executable, str(CRASH_HELPER), str(db_path), "record_attempt_then_crash",
+            "CRASH-5", "0.05", "False", "0.06",
+        ],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode != 0
+
+    store = RecoveryStore(db_path)
+    time.sleep(0.1)
+    handoff = LoggingHandoff(path=tmp_path / "handoffs.jsonl")
+    engine = RecoveryEngine(
+        store=store, config=_config(), retry_adapter=FixtureRetryAdapter(results_by_work_id={}),
+        validator=FieldPresenceAndConfidenceValidator(), handoff=handoff,
+    )
+    reaped = engine.reap_stale_retries()
+    assert reaped[0]["kind"] == "reconciled"
+    assert reaped[0]["status"] == "awaiting_human_review"
+    assert store.get_decision("CRASH-5")["status"] == "awaiting_human_review"

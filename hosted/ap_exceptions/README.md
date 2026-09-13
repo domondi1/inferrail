@@ -65,17 +65,29 @@ All routes except `/health` require `Authorization: Bearer <api-key>`.
 - `GET /v1/decisions/{work_id}` — fetch one decision.
 - `POST /v1/decisions/{work_id}/retry-attempts` — record the result of a
   retry your own `RetryAdapter` already executed locally. Transitions
-  the decision's status off `retry_in_progress` (to `retry_resolved` or
-  `awaiting_human_review`, mirroring the local SDK engine's own
-  transition) so `/v1/report`'s `observed_cost_complete` can become
-  `true`. **This service never invokes your adapter itself** — before
-  calling this endpoint, run `inferrail.ap.adapters.get_cost_estimate`
-  and `inferrail.ap.policy.authorize_retry_cost` locally to decide
-  whether to invoke your adapter at all, and pass the resulting
+  the decision's status off `retry_in_progress` only when the attempt's
+  own `status` is exactly `success` *and* `validation_passed` is `true`
+  (to `retry_resolved`; otherwise `awaiting_human_review`, mirroring the
+  local SDK engine's own transition exactly) so `/v1/report`'s
+  `observed_cost_complete` can become `true`. **This service never
+  invokes your adapter itself** — before calling this endpoint, run
+  `inferrail.ap.adapters.get_cost_estimate` and
+  `inferrail.ap.policy.authorize_retry_cost` locally to decide whether
+  to invoke your adapter at all, and pass the resulting
   `pre_flight_estimate_usd` here for an honest overrun to be recorded if
   the real cost exceeds it. See
   [`examples/ap_invoice_exception_recovery/hosted_client_example.py`](../../examples/ap_invoice_exception_recovery/hosted_client_example.py)
   for the full pattern.
+  - **`422`** if `validation_passed=true` is paired with any `status`
+    other than `success` — a failed or interrupted attempt cannot have
+    "passed validation," and this is rejected explicitly rather than
+    silently accepted as `retry_resolved`.
+  - **`409`** if a *different* attempt already exists for this work_id
+    (typically because its lease was already reaped) — never an
+    unhandled `500`. The real result is still durably recorded (for
+    audit, via `late_retry_results`) and becomes visible in
+    `GET /v1/report`'s `late_result_status`/`late_result_cost_usd`, but
+    the decision's own accepted status is never changed by it.
 - `POST /v1/decisions/{work_id}/handoff` — record a human-review
   handoff reference your own system already generated.
 - `POST /v1/decisions/{work_id}/outcome` — record a real human-review
@@ -83,8 +95,13 @@ All routes except `/health` require `Authorization: Bearer <api-key>`.
 - `POST /v1/decisions/{work_id}/reap` — operator recovery for one
   work_id whose retry lease has expired (your own caller's process died
   after receiving a `retry_in_progress` decision but before calling back
-  `/retry-attempts`). Idempotent: a repeat call once the lease is no
-  longer stale returns `reaped: false`.
+  `/retry-attempts`). Response `kind` says which of two things happened:
+  `"reaped"` (no real attempt was ever recorded -- a synthetic
+  `ambiguous` one is inserted) or `"reconciled"` (a real attempt WAS
+  already recorded before the crash -- its own validation result decides
+  the terminal status, never re-guessed and never duplicated). Idempotent:
+  a repeat call once the lease is no longer stale returns
+  `{"reaped": false, "kind": null}`.
 - `POST /v1/reap-stale` — sweeps every stale retry lease for your
   tenant. Safe to call on a schedule (a cron job, a health-check
   companion task).

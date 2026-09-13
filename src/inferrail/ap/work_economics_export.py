@@ -56,6 +56,20 @@ review was recorded but its cost is unknown, this module still emits a
 `known_cost_usd=None` -- it is never silently omitted, and never
 coerced into the machine-cost resource class where a reader might
 mistake it for part of the retry's own cost.
+
+**A late result (see `report.LiveReportRow.late_result_status`) is
+never included in `export_work_economics_events`'s own list.** A real
+result that arrives after a work_id's lease was already reaped is, by
+definition, not acknowledged by anything -- feeding it into the same
+list `compute_work_economics` sums into a total would let an unconfirmed
+number quietly become part of an accepted cost figure, exactly the
+"silently promoted to an accepted business outcome" failure this module
+must never cause. `export_unconfirmed_late_result` returns it instead as
+a **structurally distinct**, non-`EconomicEvent`-shaped dict (no
+`price_basis`, no `currency` -- so it can never be mistaken for one or
+accidentally round-tripped through `EconomicEvent.from_dict`) explicitly
+marked `"confirmed": False`, for a caller to display or log for audit
+purposes, never to sum.
 """
 
 from __future__ import annotations
@@ -127,3 +141,33 @@ def export_work_economics_events(store: RecoveryStore, work_id: str) -> list[dic
         )
 
     return events
+
+
+def export_unconfirmed_late_result(store: RecoveryStore, work_id: str) -> dict[str, Any] | None:
+    """Surfaces a real retry result that arrived after `work_id`'s
+    retry lease was already reaped -- **exactly once** (the latest, if
+    `RecoveryStore.get_late_retry_results` ever holds more than one) --
+    or `None` if no late result was ever recorded for this work_id.
+
+    Deliberately **not** `EconomicEvent`-shaped (no `price_basis`, no
+    `currency`) and deliberately **not** included in
+    `export_work_economics_events`'s own list -- see this module's
+    docstring. Callers must treat this as an audit signal, never sum
+    `known_cost_usd` here into any accepted cost total: nothing
+    acknowledged this result, and the decision's own authoritative
+    status was never changed by it (see `report.LiveReportRow.status`
+    vs. `late_result_status`).
+    """
+    late_results = store.get_late_retry_results(work_id)
+    if not late_results:
+        return None
+    latest = late_results[-1]
+    return {
+        "work_id": work_id,
+        "attempt_id": latest["attempt_id"],
+        "status": latest["status"],
+        "known_cost_usd": latest["cost_usd"],
+        "supplier": latest["provider"],
+        "detail": latest["detail"],
+        "confirmed": False,
+    }

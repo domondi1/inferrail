@@ -44,7 +44,7 @@ from inferrail.ap import Action, PolicyConfig
 from inferrail.ap.models import AttemptStatus, DecisionStatus, ExceptionCase
 from inferrail.ap.policy import recommend
 from inferrail.ap.report import build_live_report
-from inferrail.ap.store import RecoveryStore
+from inferrail.ap.store import AmbiguousRetryError, RecoveryStore
 
 DEFAULT_LEASE_SECONDS = 300.0
 
@@ -230,34 +230,87 @@ def create_app(data_dir: Path) -> FastAPI:
         """Records the result of a retry the caller already executed
         locally, and -- exactly like the local SDK's `RecoveryEngine.
         _execute_retry` -- transitions the decision's own status off
-        `retry_in_progress` accordingly: `retry_resolved` when the
-        attempt's status is not `ambiguous` and `validation_passed` is
-        `true`; `awaiting_human_review` otherwise (a failed/ambiguous
-        attempt, or one whose validation result isn't `true`). Applying
-        this consistently here (not just in the local engine) is what
-        lets `/v1/report`'s `observed_cost_complete` ever become `true`
-        on the hosted path -- a decision left at `retry_in_progress`
-        forever is never treated as cost-complete (see `report.
-        _observed_cost`)."""
+        `retry_in_progress` accordingly: `retry_resolved` only when the
+        attempt's own `status` is exactly `success` *and*
+        `validation_passed` is `true`; `awaiting_human_review` otherwise
+        (a failed/partial/ambiguous attempt, or one whose validation
+        result isn't `true`). Applying this consistently here (not just
+        in the local engine) is what lets `/v1/report`'s
+        `observed_cost_complete` ever become `true` on the hosted path
+        -- a decision left at `retry_in_progress` forever is never
+        treated as cost-complete (see `report._observed_cost`).
+
+        **Rejects a contradictory input explicitly (422)**: a caller
+        claiming `validation_passed=true` for an attempt whose own
+        `status` is not `success` (e.g. `failed` or `ambiguous`) is
+        nonsensical -- an attempt that failed or was interrupted cannot
+        also have "passed validation." The local SDK's own bundled
+        validator structurally cannot produce this combination (it
+        checks the attempt's status itself), but this endpoint accepts
+        raw, independently-supplied fields from an arbitrary caller and
+        must not let a contradictory pair silently become
+        `retry_resolved`.
+
+        **A late result -- one that arrives after this work_id's lease
+        was already reaped (a *different*, real attempt_id already
+        recorded) -- is durably recorded through a defined `409`
+        response, never an unhandled `500`**: see
+        `RecoveryStore.record_late_retry_result` and
+        `report.LiveReportRow.late_result_status`.
+        """
         _tenant_id, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
-        row, created = store.record_retry_attempt(
-            work_id=work_id,
-            attempt_id=body.attempt_id,
-            status=body.status,
-            cost_usd=body.cost_usd,
-            confidence=str(body.confidence) if body.confidence is not None else None,
-            provider=body.provider,
-            validation_passed=(
-                str(body.validation_passed) if body.validation_passed is not None else None
-            ),
-            validator_version=body.validator_version,
-            pre_flight_estimate_usd=body.pre_flight_estimate_usd,
-        )
+        if body.validation_passed is True and body.status != AttemptStatus.SUCCESS.value:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"contradictory input: validation_passed=true is not valid for "
+                    f"status={body.status!r} -- only a status={AttemptStatus.SUCCESS.value!r} "
+                    "attempt can have passed validation"
+                ),
+            )
+        try:
+            row, created = store.record_retry_attempt(
+                work_id=work_id,
+                attempt_id=body.attempt_id,
+                status=body.status,
+                cost_usd=body.cost_usd,
+                confidence=str(body.confidence) if body.confidence is not None else None,
+                provider=body.provider,
+                validation_passed=(
+                    str(body.validation_passed) if body.validation_passed is not None else None
+                ),
+                validator_version=body.validator_version,
+                pre_flight_estimate_usd=body.pre_flight_estimate_usd,
+            )
+        except AmbiguousRetryError:
+            # This work_id's lease was already reaped (or a real
+            # attempt already exists for another reason) -- the real
+            # result is never lost, but the decision's authoritative
+            # status is never silently flipped back, exactly like the
+            # local engine's own AmbiguousRetryError handling in
+            # `RecoveryEngine._execute_retry`.
+            store.record_late_retry_result(
+                work_id=work_id,
+                attempt_id=body.attempt_id,
+                status=body.status,
+                cost_usd=body.cost_usd,
+                provider=body.provider,
+                detail="arrived after this work_id's lease was already reaped",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"work_id={work_id!r} already has a recorded retry attempt -- this late "
+                    "result was durably recorded for audit (see GET /v1/report's "
+                    "late_result_status/late_result_cost_usd) but does not change the "
+                    "decision's own status"
+                ),
+            ) from None
         if created:
             resolved = (
-                body.status != AttemptStatus.AMBIGUOUS.value and body.validation_passed is True
+                body.status == AttemptStatus.SUCCESS.value and body.validation_passed is True
             )
             store.set_decision_status(
                 work_id,
@@ -308,12 +361,21 @@ def create_app(data_dir: Path) -> FastAPI:
         before calling back `/retry-attempts`. Tenant-scoped like every
         other route -- a tenant can only reap its own leases. Idempotent:
         returns `reaped: false` on a repeat call once the lease is no
-        longer stale (see `RecoveryStore.reap_stale_retry_lease`)."""
+        longer stale. `kind` distinguishes the two recovery cases (see
+        `RecoveryStore.reap_stale_retry_lease`): `"reaped"` (no real
+        attempt was ever recorded -- a synthetic ambiguous one is
+        inserted) or `"reconciled"` (a real attempt WAS already
+        recorded before the crash -- its own validation result decides
+        the terminal status, never re-guessed)."""
         _tenant_id, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
         result = store.reap_stale_retry_lease(work_id)
-        return {"work_id": work_id, "reaped": result is not None}
+        return {
+            "work_id": work_id,
+            "reaped": result is not None,
+            "kind": result["kind"] if result is not None else None,
+        }
 
     @app.post("/v1/reap-stale")
     async def reap_stale(
@@ -371,6 +433,12 @@ def create_app(data_dir: Path) -> FastAPI:
                         str(r.observed_cost_usd) if r.observed_cost_usd is not None else None
                     ),
                     "observed_cost_complete": r.observed_cost_complete,
+                    "late_result_status": r.late_result_status,
+                    "late_result_cost_usd": (
+                        str(r.late_result_cost_usd)
+                        if r.late_result_cost_usd is not None
+                        else None
+                    ),
                 }
                 for r in rows
             ],

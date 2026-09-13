@@ -288,14 +288,59 @@ def test_reap_endpoint_transitions_a_stale_decision(client):
     time.sleep(0.05)
     reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
     assert reap.status_code == 200
-    assert reap.json() == {"work_id": "WORK-8", "reaped": True}
+    assert reap.json() == {"work_id": "WORK-8", "reaped": True, "kind": "reaped"}
 
     after = client.get("/v1/decisions/WORK-8", headers=_auth())
     assert after.json()["status"] == "awaiting_human_review"
 
     # Idempotent: a repeat reap for the same work_id is a no-op.
     second_reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
-    assert second_reap.json() == {"work_id": "WORK-8", "reaped": False}
+    assert second_reap.json() == {"work_id": "WORK-8", "reaped": False, "kind": None}
+
+
+def test_reap_endpoint_reconciles_when_a_real_attempt_already_exists(app, tmp_path):
+    """The crash boundary this pass's review named: a real attempt was
+    already durably recorded before the process died, only the
+    decision's own status transition ever ran. /reap must reconcile
+    using that attempt's own recorded validation result, not insert a
+    second synthetic one, and not leave the decision stuck forever.
+
+    Simulates the crash precisely by writing directly to the same
+    tenant SQLite file the hosted service uses -- bypassing the
+    `/retry-attempts` endpoint's own (atomic, single-request)
+    status-transition step -- rather than trying to interrupt a real
+    HTTP request mid-flight."""
+    from fastapi.testclient import TestClient
+    from tenant_store import tenant_id_for_api_key
+
+    from inferrail.ap.store import RecoveryStore
+
+    tenant_id = tenant_id_for_api_key("key-a")
+    db_path = tmp_path / "data" / f"{tenant_id}.sqlite3"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_store = RecoveryStore(db_path)
+    raw_store.create_decision(
+        work_id="WORK-RECONCILE", decision_id="dec-reconcile", checkpoint_attempt_id="att-r1",
+        failure_type="low_confidence", confidence="0.6", cost_so_far_usd="0.10",
+        policy_name="candidate_policy", policy_version="ap.policy/v1",
+        recommended_action="retry", reason="test", status="retry_in_progress",
+        worker_id="crashed-worker", lease_expires_at=1.0,  # already expired
+    )
+    raw_store.record_retry_attempt(
+        work_id="WORK-RECONCILE", attempt_id="ret-real", status="success", cost_usd="0.06",
+        confidence="0.9", provider="fixture", validation_passed="True",
+        validator_version="ap.validator/v1",
+    )
+    # The decision is now stuck exactly as if the process had crashed
+    # between record_retry_attempt succeeding and the status transition
+    # that would normally follow it in the same request.
+    assert raw_store.get_decision("WORK-RECONCILE")["status"] == "retry_in_progress"
+
+    client = TestClient(app)
+    reap = client.post("/v1/decisions/WORK-RECONCILE/reap", headers=_auth())
+    assert reap.json()["kind"] == "reconciled"
+    after = client.get("/v1/decisions/WORK-RECONCILE", headers=_auth())
+    assert after.json()["status"] == "retry_resolved"
 
 
 def test_reap_endpoint_404s_for_unknown_work_id(client):
@@ -438,3 +483,204 @@ def test_hosted_client_example_review_path_records_handoff_and_outcome(client, t
     assert row["handoff_ref"] is not None
     assert row["observed_cost_complete"] is True
     assert receiver.path.exists()
+
+
+def test_retry_attempt_rejects_contradictory_validation_passed_true_with_failed_status(client):
+    """A failed (or ambiguous) attempt cannot become retry_resolved
+    merely because the caller also claims validation_passed=true --
+    this combination is contradictory and must be rejected explicitly,
+    not silently accepted as resolved."""
+    body = {
+        "work_id": "WORK-CONTRADICTORY",
+        "checkpoint_attempt_id": "att-c1",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+    resp = client.post(
+        "/v1/decisions/WORK-CONTRADICTORY/retry-attempts",
+        json={
+            "attempt_id": "ret-c1", "status": "failed", "cost_usd": "0.06",
+            "validation_passed": True, "validator_version": "ap.validator/v1",
+        },
+        headers=_auth(),
+    )
+    assert resp.status_code == 422
+
+    # The contradictory input must never have been recorded at all.
+    after = client.get("/v1/decisions/WORK-CONTRADICTORY", headers=_auth())
+    assert after.json()["status"] == "retry_in_progress"
+
+
+def test_retry_attempt_rejects_contradictory_validation_passed_true_with_ambiguous_status(
+    client,
+):
+    body = {
+        "work_id": "WORK-CONTRADICTORY-2",
+        "checkpoint_attempt_id": "att-c2",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+    resp = client.post(
+        "/v1/decisions/WORK-CONTRADICTORY-2/retry-attempts",
+        json={"attempt_id": "ret-c2", "status": "ambiguous", "validation_passed": True},
+        headers=_auth(),
+    )
+    assert resp.status_code == 422
+
+
+def test_late_retry_attempt_after_reap_returns_409_not_500_and_is_recorded(client):
+    body = {
+        "work_id": "WORK-LATE-HOSTED",
+        "checkpoint_attempt_id": "att-late",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+        "lease_seconds": 0.01,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+
+    import time
+
+    time.sleep(0.05)
+    reap = client.post("/v1/decisions/WORK-LATE-HOSTED/reap", headers=_auth())
+    assert reap.json()["kind"] == "reaped"
+
+    # The "dead" caller's real result now arrives -- a distinct
+    # attempt_id for a work_id that already has one recorded (the
+    # synthetic reaped one).
+    late = client.post(
+        "/v1/decisions/WORK-LATE-HOSTED/retry-attempts",
+        json={
+            "attempt_id": "ret-real-late", "status": "success", "cost_usd": "0.06",
+            "validation_passed": True, "validator_version": "ap.validator/v1",
+        },
+        headers=_auth(),
+    )
+    assert late.status_code == 409  # defined response, never an unhandled 500
+
+    report = client.get("/v1/report", headers=_auth())
+    row = next(r for r in report.json()["rows"] if r["work_id"] == "WORK-LATE-HOSTED")
+    assert row["late_result_status"] == "success"
+    assert row["late_result_cost_usd"] == "0.06"
+    # Never silently promoted -- the official record is unaffected.
+    assert row["status"] == "awaiting_human_review"
+    assert row["observed_cost_complete"] is False
+
+
+def test_hosted_client_example_second_run_never_reinvokes_adapter_or_bills_twice(
+    client, tmp_path
+):
+    """Run the hosted integration example twice with the same database
+    and work_id while counting adapter calls -- the second run must
+    not execute another retry or create another billable provider
+    call; it must inspect the stored decision and return the existing
+    result."""
+    example = _load_hosted_client_example()
+    receiver = example.ExampleReviewReceiver(path=tmp_path / "reviews.jsonl")
+
+    calls: list[str] = []
+
+    class CountingAdapter(example.LocalStandInAdapter):
+        def retry(self, case):  # type: ignore[no-untyped-def]
+            calls.append(case.work_id)
+            return super().retry(case)
+
+    adapter = CountingAdapter()
+    work_id = "HOSTED-REPEAT-1"
+
+    first_report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id=work_id, review_receiver=receiver, adapter=adapter,
+    )
+    assert len(calls) == 1
+    first_row = next(r for r in first_report["rows"] if r["work_id"] == work_id)
+    assert first_row["status"] == "retry_resolved"
+
+    second_report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id=work_id, review_receiver=receiver, adapter=adapter,
+    )
+    assert len(calls) == 1  # never invoked a second time -- no second billable call
+    second_row = next(r for r in second_report["rows"] if r["work_id"] == work_id)
+    assert second_row == first_row  # same, unchanged, safely re-inspected record
+
+
+def test_hosted_client_example_unknown_cost_never_invokes_adapter_routes_to_review(
+    client, tmp_path
+):
+    """An adapter that cannot bound its own next-attempt cost must
+    never be invoked -- the workflow routes to human review instead,
+    exactly like the local SDK engine's own authorize_retry_cost gate."""
+    example = _load_hosted_client_example()
+    receiver = example.ExampleReviewReceiver(path=tmp_path / "reviews.jsonl")
+
+    class NoEstimateAdapter:
+        name = "no_estimate_adapter"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def retry(self, case):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            raise AssertionError("must never be invoked when cost cannot be authorized")
+
+    adapter = NoEstimateAdapter()
+    work_id = "HOSTED-UNKNOWN-COST-1"
+    report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id=work_id, review_receiver=receiver, adapter=adapter,
+    )
+    assert adapter.calls == 0
+    row = next(r for r in report["rows"] if r["work_id"] == work_id)
+    assert row["status"] == "resolved"
+    assert row["handoff_ref"] is not None
+    assert row["retry_status"] is None  # no retry_attempts row at all
+
+
+def test_hosted_client_example_recovers_interrupted_prior_run_without_reinvoking(
+    client, tmp_path
+):
+    """Simulates a prior run of this exact workflow crashing right
+    after the decision was created but before it ever executed the
+    retry -- the next run of the same workflow, for the same work_id,
+    must recover via /reap and complete the review path, never
+    invoking the adapter for a work_id it doesn't know the true state
+    of."""
+    example = _load_hosted_client_example()
+    receiver = example.ExampleReviewReceiver(path=tmp_path / "reviews.jsonl")
+    work_id = "HOSTED-RESTART-1"
+
+    # The "interrupted prior run": only the decision gets created, with
+    # a short lease, then nothing else ever happens (as if the process
+    # died right there).
+    client.post(
+        "/v1/decisions",
+        json={
+            "work_id": work_id, "checkpoint_attempt_id": f"{work_id}-checkpoint",
+            "failure_type": "low_confidence", "confidence": 0.6, "cost_so_far_usd": "0.10",
+            "policy_config": _POLICY_CONFIG, "lease_seconds": 0.01,
+        },
+        headers=_auth("key-a"),
+    )
+    import time
+
+    time.sleep(0.05)  # let the lease expire
+
+    calls: list[str] = []
+
+    class CountingAdapter(example.LocalStandInAdapter):
+        def retry(self, case):  # type: ignore[no-untyped-def]
+            calls.append(case.work_id)
+            return super().retry(case)
+
+    report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id=work_id, review_receiver=receiver,
+        adapter=CountingAdapter(),
+    )
+    assert calls == []  # never invoked -- the prior run's true state was unknown
+    row = next(r for r in report["rows"] if r["work_id"] == work_id)
+    assert row["status"] == "resolved"
+    assert row["retry_status"] == "ambiguous"
+    assert row["established_outcome"] == "corrected"
+    assert row["handoff_ref"] is not None

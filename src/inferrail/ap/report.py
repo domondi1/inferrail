@@ -80,6 +80,22 @@ class LiveReportRow:
     """>1 means a later correction superseded an earlier recorded
     outcome -- both are preserved in the store's append-only outcome
     history; only the latest is authoritative here."""
+    late_result_status: str | None
+    """The status of a real retry result that arrived after this
+    work_id's lease was already reaped (see `engine.RecoveryEngine.
+    _execute_retry`'s `AmbiguousRetryError` handling and `store.
+    late_retry_results`) -- surfaced here for audit visibility, exactly
+    once (the latest late arrival, if more than one is ever recorded).
+    `None` when no late result exists. **Never folded into
+    `observed_cost_usd`/`observed_cost_complete`** -- the decision's
+    authoritative status (`status`, above) was never promoted by this
+    signal, and neither is the cost total; this field exists so a
+    reader can see what the late signal reported without the report
+    silently treating it as confirmed."""
+    late_result_cost_usd: Decimal | None
+    """The cost reported by that same late result, if known -- purely
+    informational, deliberately excluded from `observed_cost_usd`. See
+    `late_result_status`."""
 
 
 @dataclass(frozen=True)
@@ -126,6 +142,12 @@ class LiveAuditableReport:
                     ),
                     "observed_cost_complete": r.observed_cost_complete,
                     "outcome_revision_count": r.outcome_revision_count,
+                    "late_result_status": r.late_result_status,
+                    "late_result_cost_usd": (
+                        str(r.late_result_cost_usd)
+                        if r.late_result_cost_usd is not None
+                        else None
+                    ),
                 }
                 for r in self.rows
             ]
@@ -184,6 +206,9 @@ def build_live_report(store: RecoveryStore) -> LiveAuditableReport:
         outcome_history = store.get_outcome_history(work_id)
         latest_outcome = outcome_history[-1] if outcome_history else None
 
+        late_results = store.get_late_retry_results(work_id)
+        latest_late = late_results[-1] if late_results else None
+
         review_cost = _dec(latest_outcome["review_cost_usd"]) if latest_outcome else None
         retry_cost = _dec(attempt["cost_usd"]) if attempt else None
         pre_flight_estimate = (
@@ -233,6 +258,10 @@ def build_live_report(store: RecoveryStore) -> LiveAuditableReport:
                 observed_cost_usd=observed_cost,
                 observed_cost_complete=complete,
                 outcome_revision_count=len(outcome_history),
+                late_result_status=latest_late["status"] if latest_late else None,
+                late_result_cost_usd=(
+                    _dec(latest_late["cost_usd"]) if latest_late else None
+                ),
             )
         )
     return LiveAuditableReport(rows=tuple(rows))

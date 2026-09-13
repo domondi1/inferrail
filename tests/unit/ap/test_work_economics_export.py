@@ -17,7 +17,10 @@ import pytest
 
 from inferrail.ap.report import build_live_report
 from inferrail.ap.store import RecoveryStore
-from inferrail.ap.work_economics_export import export_work_economics_events
+from inferrail.ap.work_economics_export import (
+    export_unconfirmed_late_result,
+    export_work_economics_events,
+)
 
 HOSTED_DIR = Path(__file__).resolve().parents[3] / "hosted" / "work_economics"
 if str(HOSTED_DIR) not in sys.path:
@@ -111,3 +114,69 @@ def test_missing_work_id_raises_keyerror(tmp_path: Path) -> None:
     store = RecoveryStore(tmp_path / "ap.sqlite3")
     with pytest.raises(KeyError):
         export_work_economics_events(store, "NEVER-DECIDED")
+
+
+def test_late_result_is_never_included_in_the_summable_events_list(tmp_path: Path) -> None:
+    """A late arrival must never silently become part of the total
+    export_work_economics_events feeds into compute_work_economics."""
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _decision(store, "W5")
+    store.record_retry_attempt(
+        work_id="W5", attempt_id="ret_reaped_W5", status="ambiguous",
+        cost_usd=None, confidence=None, provider="lease_reaper",
+    )
+    store.set_decision_status("W5", "awaiting_human_review")
+    store.record_late_retry_result(
+        work_id="W5", attempt_id="ret-late", status="success",
+        cost_usd="0.09", provider="fixture", detail="arrived after reap",
+    )
+
+    events = export_work_economics_events(store, "W5")
+    assert len(events) == 1  # only the official ambiguous attempt
+    official_event = EconomicEvent.from_dict(events[0])
+    assert official_event.known_cost_usd is None  # the official record's cost stays unknown
+    assert official_event.status == "error"
+
+
+def test_export_unconfirmed_late_result_is_not_economic_event_shaped(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _decision(store, "W6")
+    store.record_retry_attempt(
+        work_id="W6", attempt_id="ret_reaped_W6", status="ambiguous",
+        cost_usd=None, confidence=None, provider="lease_reaper",
+    )
+    store.set_decision_status("W6", "awaiting_human_review")
+
+    assert export_unconfirmed_late_result(store, "W6") is None
+
+    store.record_late_retry_result(
+        work_id="W6", attempt_id="ret-late", status="success",
+        cost_usd="0.09", provider="fixture", detail="arrived after reap",
+    )
+    late = export_unconfirmed_late_result(store, "W6")
+    assert late is not None
+    assert late["confirmed"] is False
+    assert late["known_cost_usd"] == "0.09"
+    assert "price_basis" not in late  # deliberately not EconomicEvent-shaped
+    with pytest.raises(Exception):  # noqa: B017, PT011 -- any failure proves the point
+        EconomicEvent.from_dict(late)
+
+
+def test_export_unconfirmed_late_result_surfaces_only_the_latest(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _decision(store, "W7")
+    store.record_retry_attempt(
+        work_id="W7", attempt_id="ret_reaped_W7", status="ambiguous",
+        cost_usd=None, confidence=None, provider="lease_reaper",
+    )
+    store.set_decision_status("W7", "awaiting_human_review")
+    store.record_late_retry_result(
+        work_id="W7", attempt_id="ret-late-1", status="failed",
+        cost_usd="0.05", provider="fixture", detail="first",
+    )
+    store.record_late_retry_result(
+        work_id="W7", attempt_id="ret-late-2", status="success",
+        cost_usd="0.09", provider="fixture", detail="second",
+    )
+    late = export_unconfirmed_late_result(store, "W7")
+    assert late["attempt_id"] == "ret-late-2"

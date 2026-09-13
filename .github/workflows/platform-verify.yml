@@ -37,6 +37,13 @@ jobs:
           python-version: "3.12"
 
       - name: Build wheel
+        # Explicit shell: bash (Git Bash, available on windows-latest too)
+        # rather than the implicit per-OS default -- GitHub Actions
+        # defaults to pwsh on Windows runners when no shell is given, and
+        # pwsh does not treat a failing native command as a terminating
+        # error on its own (see the Windows steps below for the
+        # $LASTEXITCODE pattern this avoids needing here).
+        shell: bash
         run: |
           python -m pip install build
           python -m build --wheel
@@ -49,7 +56,10 @@ jobs:
       - name: Create a clean venv outside the checkout (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python -m venv "$env:RUNNER_TEMP\inferrail-platform-check"
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m venv "$env:RUNNER_TEMP\inferrail-platform-check"
+          if ($LASTEXITCODE -ne 0) { throw "venv creation failed with exit code $LASTEXITCODE" }
 
       - name: Install the built wheel + [ap,dev] extras (POSIX)
         if: runner.os != 'Windows'
@@ -63,10 +73,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          # PowerShell does NOT treat a non-zero exit code from a native
+          # .exe as a terminating error on its own -- $ErrorActionPreference
+          # only governs PowerShell's own cmdlet/script errors. Every
+          # native invocation in this workflow is followed by an explicit
+          # $LASTEXITCODE check so a failing command actually fails the step,
+          # instead of the script silently continuing (and the job passing
+          # even though e.g. `inferrail ap demo` errored).
+          function Assert-Success($label) {
+            if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
+          }
           $pip = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\pip.exe"
           $whl = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
           & $pip install "$whl[ap,dev]"
+          Assert-Success "pip install (wheel)"
           & $pip install -r hosted\ap_exceptions\requirements.txt
+          Assert-Success "pip install (hosted requirements)"
 
       - name: Confirm version and imports, from outside the checkout (POSIX)
         if: runner.os != 'Windows'
@@ -82,9 +105,15 @@ jobs:
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: |
+          $ErrorActionPreference = "Stop"
+          function Assert-Success($label) {
+            if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
+          }
           $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
           & $py -c "import inferrail; print('version:', inferrail.__version__)"
+          Assert-Success "import inferrail"
           & $py -c "import inferrail.ap; print('ap.__all__:', sorted(inferrail.ap.__all__))"
+          Assert-Success "import inferrail.ap"
 
       - name: Run the documented AP demo + report, from outside the checkout (POSIX)
         if: runner.os != 'Windows'
@@ -100,10 +129,17 @@ jobs:
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: |
+          $ErrorActionPreference = "Stop"
+          function Assert-Success($label) {
+            if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
+          }
           $bin = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts"
           & "$bin\inferrail.exe" ap demo
+          Assert-Success "inferrail ap demo"
           $reportJson = & "$bin\inferrail.exe" ap report --db inferrail-ap-demo.sqlite3 --json
+          Assert-Success "inferrail ap report"
           $reportJson | & "$bin\python.exe" -m json.tool
+          Assert-Success "json.tool"
 
       - name: Run the local integration example against the installed wheel (POSIX)
         if: runner.os != 'Windows'
@@ -118,9 +154,14 @@ jobs:
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: |
+          $ErrorActionPreference = "Stop"
+          function Assert-Success($label) {
+            if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
+          }
           $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
           $example = "$env:GITHUB_WORKSPACE\examples\ap_invoice_exception_recovery\custom_integration_example.py"
           & $py $example
+          Assert-Success "custom_integration_example.py"
 
       - name: Run the hosted API client against a locally started instance (POSIX)
         if: runner.os != 'Windows'
@@ -144,6 +185,10 @@ jobs:
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: |
+          $ErrorActionPreference = "Stop"
+          function Assert-Success($label) {
+            if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
+          }
           $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
           $service = "$env:GITHUB_WORKSPACE\hosted\ap_exceptions\service.py"
           $client = "$env:GITHUB_WORKSPACE\examples\ap_invoice_exception_recovery\hosted_client_example.py"
@@ -158,13 +203,20 @@ jobs:
               break
             } catch { Start-Sleep -Milliseconds 500 }
           }
-          if (-not $ready) { throw "hosted service never became healthy" }
+          if (-not $ready) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "hosted service never became healthy"
+          }
           $clientArgs = @(
             $client, "--base-url", "http://127.0.0.1:8422",
             "--api-key", "platform-verify-key", "--work-id", "PLATFORM-VERIFY-1"
           )
           & $py $clientArgs
-          Stop-Process -Id $proc.Id -Force
+          $clientExitCode = $LASTEXITCODE
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          if ($clientExitCode -ne 0) {
+            throw "hosted_client_example.py failed with exit code $clientExitCode"
+          }
 
       - name: Run persistence/crash-recovery tests against the installed wheel (POSIX)
         if: runner.os != 'Windows'
@@ -177,5 +229,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $pytest = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\pytest.exe"
           & $pytest tests\unit\ap\test_store.py tests\integration\test_ap_crash_recovery.py -v
+          if ($LASTEXITCODE -ne 0) { throw "pytest failed with exit code $LASTEXITCODE" }

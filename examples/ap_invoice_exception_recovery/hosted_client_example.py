@@ -37,11 +37,12 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from inferrail.ap import AttemptStatus, CostEstimate, ExceptionCase, RetryAttemptResult
+from inferrail.ap.adapters import RetryAdapter, get_cost_estimate
 from inferrail.ap.policy import authorize_retry_cost
 from inferrail.ap.validation import FieldPresenceAndConfidenceValidator
 
@@ -96,17 +97,61 @@ class ExampleReviewReceiver:
         return ref
 
 
+def _report_row(
+    client: httpx.Client, headers: dict[str, str], work_id: str
+) -> dict[str, Any] | None:
+    resp = client.get("/v1/report", headers=headers)
+    resp.raise_for_status()
+    rows: list[dict[str, Any]] = resp.json()["rows"]
+    return next((r for r in rows if r["work_id"] == work_id), None)
+
+
+def _send_handoff_and_outcome(
+    client: httpx.Client,
+    headers: dict[str, str],
+    work_id: str,
+    review_receiver: ExampleReviewReceiver,
+    *,
+    reason: str,
+) -> None:
+    handoff_ref = review_receiver.send(work_id, reason)
+    client.post(
+        f"/v1/decisions/{work_id}/handoff", json={"handoff_ref": handoff_ref}, headers=headers
+    ).raise_for_status()
+    print(f"handed off to the example review receiver as {handoff_ref!r}")
+    client.post(
+        f"/v1/decisions/{work_id}/outcome",
+        json={"outcome": "corrected", "correction_delta_usd": "15.00", "review_cost_usd": "3.00"},
+        headers=headers,
+    ).raise_for_status()
+    print("recorded the review receiver's resolution: outcome='corrected'")
+
+
 def run_hosted_client_walkthrough(
-    client: httpx.Client, *, api_key: str, work_id: str, review_receiver: ExampleReviewReceiver,
+    client: httpx.Client,
+    *,
+    api_key: str,
+    work_id: str,
+    review_receiver: ExampleReviewReceiver,
+    adapter: RetryAdapter | None = None,
 ) -> dict[str, Any]:
     """The full flow, against any httpx-compatible client (a real
     `httpx.Client` for a live/local server, or `fastapi.testclient.
     TestClient` in tests) -- returns the final `/v1/report` body.
-    Verifies repeated requests: calling `POST /v1/decisions` twice for
-    the same `work_id` is idempotent (`idempotent_replay: true` the
-    second time), matching the local SDK's own idempotency guarantee."""
+
+    **Safe to call more than once for the same `work_id` and store.**
+    Calling `POST /v1/decisions` twice is idempotent
+    (`idempotent_replay: true` the second time) -- but idempotency at
+    that one endpoint is not enough on its own: this function also
+    never re-invokes the local retry adapter, and never records a
+    second outcome, for a work_id a prior run already decided. A
+    repeat run instead inspects the existing state and, if a prior run
+    was interrupted before finishing (still `retry_in_progress`),
+    recovers safely via `/reap` -- it never re-executes, and therefore
+    never causes a second billable provider call.
+    """
+    adapter = adapter or cast("RetryAdapter", LocalStandInAdapter())
     headers = {"Authorization": f"Bearer {api_key}"}
-    adapter = LocalStandInAdapter()
 
     decision_body = {
         "work_id": work_id,
@@ -129,17 +174,27 @@ def run_hosted_client_walkthrough(
     assert second.json()["idempotent_replay"] is True
     assert second.json()["decision_id"] == decision["decision_id"]
 
+    already_decided = decision["idempotent_replay"]
+
+    if already_decided and decision["status"] == "retry_in_progress":
+        # A prior run of this exact workflow was interrupted before its
+        # retry attempt was durably recorded (or before its status was
+        # updated) -- never re-invoke the local adapter, whose real-world
+        # effect (if it ran at all) is unknown; recover safely instead.
+        client.post(f"/v1/decisions/{work_id}/reap", headers=headers).raise_for_status()
+        decision = client.get(f"/v1/decisions/{work_id}", headers=headers).json()
+        print(f"recovered an interrupted prior run via /reap -- now status={decision['status']!r}")
+
     case = ExceptionCase(
         work_id=work_id, checkpoint_attempt_id=f"{work_id}-checkpoint",
         failure_type="low_confidence", confidence=0.6, cost_so_far_usd=Decimal("0.10"),
     )
-    handoff_ref: str | None = None
-    outcome: str | None = None
 
-    if decision["recommended_action"] == "retry":
-        # Authorization happens locally -- the hosted service never
-        # invokes an adapter itself (see this module's docstring).
-        estimate = adapter.estimate_cost(case)
+    if decision["recommended_action"] == "retry" and not already_decided:
+        # Freshly decided just now -- authorize and execute locally.
+        # The hosted service never invokes an adapter itself (see this
+        # module's docstring).
+        estimate = get_cost_estimate(adapter, case)
         authorized, reason = authorize_retry_cost(
             estimate=estimate, max_retry_cost_usd=Decimal(_POLICY_CONFIG["max_retry_cost_usd"])
         )
@@ -163,24 +218,39 @@ def run_hosted_client_walkthrough(
             if validation.passed:
                 print(f"recovered fields (usable data, not just a status): {result.raw_fields}")
             else:
-                handoff_ref = review_receiver.send(work_id, "retry failed validation")
+                _send_handoff_and_outcome(
+                    client, headers, work_id, review_receiver, reason="retry failed validation"
+                )
         else:
-            handoff_ref = review_receiver.send(work_id, reason)
+            _send_handoff_and_outcome(client, headers, work_id, review_receiver, reason=reason)
+    elif decision["recommended_action"] != "retry" and not already_decided:
+        _send_handoff_and_outcome(
+            client, headers, work_id, review_receiver, reason=decision["reason"]
+        )
     else:
-        handoff_ref = review_receiver.send(work_id, decision["reason"])
-
-    if handoff_ref is not None:
-        client.post(
-            f"/v1/decisions/{work_id}/handoff", json={"handoff_ref": handoff_ref}, headers=headers
-        ).raise_for_status()
-        print(f"handed off to the example review receiver as {handoff_ref!r}")
-        outcome = "corrected"
-        client.post(
-            f"/v1/decisions/{work_id}/outcome",
-            json={"outcome": outcome, "correction_delta_usd": "15.00", "review_cost_usd": "3.00"},
-            headers=headers,
-        ).raise_for_status()
-        print(f"recorded the review receiver's resolution: outcome={outcome!r}")
+        # already_decided: either a retry already resolved (or was just
+        # recovered above), or human review was already decided in a
+        # prior run -- never re-invoke the adapter, and never record a
+        # second outcome for a resolution a prior run already completed.
+        print(
+            f"work_id={work_id!r} already processed by a prior run "
+            f"(status={decision['status']!r}) -- inspecting existing state, not re-executing"
+        )
+        existing_row = _report_row(client, headers, work_id)
+        needs_completion = (
+            decision["status"] == "awaiting_human_review"
+            and (existing_row is None or existing_row.get("established_outcome") is None)
+        )
+        if needs_completion:
+            # A prior run reached human review but was interrupted
+            # before its handoff/outcome completed -- finish it. Safe
+            # to call: the hosted handoff endpoint is idempotent on
+            # work_id, and this branch only runs when no outcome is
+            # recorded yet, so it can never append a second one.
+            _send_handoff_and_outcome(
+                client, headers, work_id, review_receiver,
+                reason="completing an interrupted prior run's review handoff",
+            )
 
     report_resp = client.get("/v1/report", headers=headers)
     report_resp.raise_for_status()

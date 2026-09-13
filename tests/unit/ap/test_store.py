@@ -191,21 +191,71 @@ def test_reap_is_idempotent_on_repeat_calls(tmp_path: Path) -> None:
     assert attempts is not None and attempts["attempt_id"] == "ret_reaped_W9"
 
 
-def test_reap_does_nothing_if_a_real_attempt_already_exists(tmp_path: Path) -> None:
-    """The race where the "dead" worker actually finished between the
-    staleness scan and the reap call -- the real result must never be
-    overwritten or duplicated."""
+def test_reap_reconciles_to_retry_resolved_when_a_real_validated_attempt_already_exists(
+    tmp_path: Path,
+) -> None:
+    """The crash boundary between `record_retry_attempt` succeeding and
+    the decision's own status transition: the real attempt is already
+    durably recorded (validation_passed="True"), but the process died
+    before `set_decision_status`/`clear_retry_lease` ran. Reaping must
+    never insert a second, synthetic attempt, and must never leave the
+    decision stuck at retry_in_progress forever -- it reconciles using
+    the real attempt's own recorded validation result."""
     store = RecoveryStore(tmp_path / "ap.sqlite3")
     _leased_decision(store, "W10", lease_expires_at=100.0)
     store.record_retry_attempt(
         work_id="W10", attempt_id="ret-real", status="success",
         cost_usd="0.06", confidence="0.9", provider="fixture",
+        validation_passed="True", validator_version="ap.validator/v1",
     )
 
     result = store.reap_stale_retry_lease("W10", now=200.0)
-    assert result is None
+    assert result is not None
+    assert result["kind"] == "reconciled"
+    assert result["attempt_id"] == "ret-real"  # never a second, synthetic attempt
+
+    decision = store.get_decision("W10")
+    assert decision["status"] == "retry_resolved"
+    assert decision["worker_id"] is None
+    assert decision["lease_expires_at"] is None
     attempts = store.get_retry_attempt("W10")
     assert attempts["attempt_id"] == "ret-real"
+    assert attempts["cost_usd"] == "0.06"  # the real, known cost is preserved exactly
+
+
+def test_reap_reconciles_to_awaiting_human_review_when_validation_failed(
+    tmp_path: Path,
+) -> None:
+    """Same crash boundary, but the real attempt's own validation did
+    not pass -- reconciliation must route to human review, never
+    retry_resolved, exactly matching what `_execute_retry` itself would
+    have done had it not crashed."""
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W11", lease_expires_at=100.0)
+    store.record_retry_attempt(
+        work_id="W11", attempt_id="ret-real-2", status="success",
+        cost_usd="0.06", confidence="0.4", provider="fixture",
+        validation_passed="False", validator_version="ap.validator/v1",
+    )
+
+    result = store.reap_stale_retry_lease("W11", now=200.0)
+    assert result["kind"] == "reconciled"
+    decision = store.get_decision("W11")
+    assert decision["status"] == "awaiting_human_review"
+
+
+def test_reap_reconcile_is_idempotent_on_repeat_calls(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W12b", lease_expires_at=100.0)
+    store.record_retry_attempt(
+        work_id="W12b", attempt_id="ret-real-3", status="success",
+        cost_usd="0.06", confidence="0.9", provider="fixture",
+        validation_passed="True", validator_version="ap.validator/v1",
+    )
+    first = store.reap_stale_retry_lease("W12b", now=200.0)
+    assert first["kind"] == "reconciled"
+    second = store.reap_stale_retry_lease("W12b", now=200.0)
+    assert second is None  # already resolved -- no-op, not re-reconciled
 
 
 def test_find_stale_retry_leases_only_returns_expired_ones(tmp_path: Path) -> None:

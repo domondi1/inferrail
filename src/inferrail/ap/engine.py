@@ -385,11 +385,19 @@ class RecoveryEngine:
     def reap_stale_retries(self, *, now: datetime | None = None) -> list[dict[str, str]]:
         """Durable crash recovery: finds every decision whose retry
         lease has expired (its worker is presumed dead -- never silently
-        retried, never assumed successful) and moves each to
-        `awaiting_human_review` with a synthetic `ambiguous` attempt
-        recorded. Idempotent -- a repeat call reaps nothing new for a
-        work_id already reaped or already resolved by its real worker
-        (see `store.reap_stale_retry_lease`).
+        retried, never assumed successful) and recovers each one of two
+        ways (see `store.reap_stale_retry_lease` for the full
+        distinction): **reaped** (no real attempt was ever durably
+        recorded -- inserts a synthetic `ambiguous` one and moves to
+        `awaiting_human_review`), or **reconciled** (a real attempt WAS
+        already durably recorded before the crash -- its own recorded
+        validation result decides the correct terminal status, exactly
+        as `_execute_retry`'s own success path would have, without
+        re-invoking anything or fabricating a second attempt). Each
+        result dict's `"kind"` says which happened, and `"status"` is
+        the decision's resulting status. Idempotent -- a repeat call
+        reaps/reconciles nothing new for a work_id already handled or
+        already resolved by its real worker.
 
         Deliberately does **not** send a handoff itself: the `decisions`
         table doesn't persist the `opened_at`/`source`/etc. fields needed
@@ -397,18 +405,24 @@ class RecoveryEngine:
         violate this codebase's "never guess" discipline. A caller (an
         operator's own recovery job, or `inferrail ap reap`) that
         re-supplies the original case can complete the handoff via
-        `ensure_handoff`.
+        `ensure_handoff` -- which correctly refuses to do so for a
+        work_id reconciled straight to `retry_resolved`, since no
+        handoff is needed then.
         """
         ts = now.timestamp() if now is not None else None
         reaped: list[dict[str, str]] = []
         for row in self._store.find_stale_retry_leases(now=ts):
             result = self._store.reap_stale_retry_lease(row["work_id"], now=ts)
             if result is not None:
+                decision = self._store.get_decision(row["work_id"])
+                assert decision is not None
                 reaped.append(
                     {
                         "work_id": row["work_id"],
                         "decision_id": row["decision_id"],
                         "reaped_attempt_id": result["attempt_id"],
+                        "kind": result["kind"],
+                        "status": decision["status"],
                     }
                 )
         return reaped
