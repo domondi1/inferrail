@@ -62,12 +62,8 @@ measured usage and a verified price are available. Otherwise it reports
 
 ## Gateway: 30-second demo
 
-**Current main / upcoming Work Economics release.** Work Economics was added
-after the current PyPI release. To try the current product before the next
-release, install from `main`:
-
 ```bash
-pip install "inferrail @ git+https://github.com/domondi1/inferrail.git@main"
+pip install inferrail
 inferrail demo
 ```
 
@@ -76,10 +72,9 @@ canned requests through Inferrail's real engine with made-up prices labeled
 `DEMO`, then shows receipts, attribution, work-level economics, and explicit
 unknown evidence.
 
-**Stable PyPI release.** `pip install inferrail` currently installs `0.1.2`.
-It includes the gateway, receipts, reports, and `TaskTransaction`, but not the
-new `work` commands. It remains the stable released install until the next
-package publication.
+As of `0.2.0`, the stable PyPI release includes the gateway, receipts,
+reports, `TaskTransaction`, and `work` commands (Work Economics), alongside
+AP invoice-exception recovery above.
 
 ## What just happened?
 
