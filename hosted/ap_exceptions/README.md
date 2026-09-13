@@ -7,6 +7,16 @@ for the public contract and
 [`docs/adr/0004-data-plane-control-plane-boundary.md`](../../docs/adr/0004-data-plane-control-plane-boundary.md)
 for why this lives outside `src/inferrail`.
 
+**Live demo (not a durable service):** `https://inferrail-ap-exceptions.onrender.com`
+runs on Render's free tier with no persistent disk — every record on
+it is synthetic and disposable, gone on the next restart or idle
+spin-down, and it is never used for real customer data. The free tier
+also spins down when idle, so the first request after a quiet period
+can take up to a minute. Only `GET /health` is open without
+authentication; every other route needs an `Authorization: Bearer
+<api-key>` header this demo does not distribute publicly. Deploy your
+own instance (below) for real, durable use.
+
 **This service never executes a retry itself.** It runs the same
 `inferrail.ap.policy.recommend` policy evaluation and
 `inferrail.ap.store.RecoveryStore` persistence the local SDK uses, over
