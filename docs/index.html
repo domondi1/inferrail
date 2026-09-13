@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Inferrail — payload-free cost attribution</title>
-  <meta name="description" content="Inferrail turns OpenAI-compatible requests into payload-free economic receipts attributed to the customer, workflow, or task that drove them.">
+  <title>Inferrail — AP invoice-exception recovery</title>
+  <meta name="description" content="Inferrail decides whether an eligible invoice-extraction exception gets one permitted machine retry or your established human-review path, executes it, and records the resulting cost and outcome.">
   <link rel="canonical" href="https://tryinferrail.com/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,7 +18,7 @@
     a:focus-visible,button:focus-visible { outline:2px solid var(--stamp); outline-offset:5px; }
     .wrap { width:100%; max-width:1240px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
     .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); }
-    .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp,.tier-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
+    .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
     .wordmark { font-size:clamp(16px,1.4vw,22px); }
     .nav { display:flex; gap:clamp(18px,2.8vw,42px); font-size:clamp(13px,1vw,16px); }
     .nav a { text-underline-offset:4px; }
@@ -56,18 +56,8 @@
     .button:disabled { cursor:default; opacity:.72; }
     .action-hint { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     .section-break { height:4px; margin:clamp(24px,4vw,60px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
-    .network { padding:clamp(64px,7vw,120px) 0 clamp(72px,8vw,140px); }
     h2 { font-size:clamp(30px,6.4vw,104px); line-height:.96; }
     .sub { max-width:58ch; margin:clamp(26px,3vw,44px) 0 clamp(30px,4vw,56px); color:var(--ink-2); font-size:clamp(15px,1.25vw,22px); }
-    .ladder { border-top:1px solid var(--ink); }
-    .tier { display:grid; grid-template-columns:minmax(100px,1fr) 2.3fr; align-items:center; min-height:clamp(92px,9vw,145px); padding:12px clamp(12px,2vw,28px); border-bottom:1px solid var(--rule); }
-    .tier:nth-child(even) { background:var(--bar); }
-    .tier-number { font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(26px,3.4vw,58px); font-weight:700; line-height:1; }
-    .tier-label { display:block; margin-top:5px; color:var(--ink-3); font-size:clamp(10px,.75vw,12px); }
-    .tier-reward { margin:0; font-size:clamp(14.5px,1.25vw,21px); line-height:1.3; }
-    .qualification { max-width:70ch; margin:clamp(26px,3vw,42px) 0 0; padding-left:16px; color:var(--ink-3); border-left:2px solid var(--stamp); font-size:clamp(12px,.9vw,14px); }
-    .network-action { margin-top:clamp(30px,4vw,54px); }
-    .network-status { margin:14px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     .agents { padding:0 0 clamp(56px,6vw,96px); }
     .agents-card { max-width:66ch; padding:clamp(22px,2.2vw,32px) clamp(24px,2.4vw,36px); margin-top:clamp(8px,1vw,16px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); }
     .agents-eyebrow { margin:0 0 10px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
@@ -76,38 +66,57 @@
     .agents-card .button { margin-top:clamp(18px,2vw,26px); padding:clamp(11px,1vw,15px) clamp(22px,2vw,30px); font-size:clamp(13px,1vw,15px); }
     footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     footer nav { display:flex; gap:18px; }
-    @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}.tier{grid-template-columns:88px 1fr}footer{display:block}footer nav{margin-top:10px} }
+    @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}footer{display:block}footer nav{margin-top:10px} }
     @media (prefers-reduced-motion:reduce) { html{scroll-behavior:auto}.receipt > *{opacity:1;animation:none} }
   </style>
 </head>
 <body>
-  <header class="masthead wrap"><a class="wordmark" href=".">Inferrail</a><nav class="nav" aria-label="Primary navigation"><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a></nav></header>
+  <header class="masthead wrap"><a class="wordmark" href=".">Inferrail</a><nav class="nav" aria-label="Primary navigation"><a href="#gateway">Gateway &amp; dev tools</a><a href="#ap-hosted">Hosted AP API</a><a href="#agents">For agents (testnet)</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">Docs</a></nav></header>
   <main>
     <section class="hero wrap" aria-labelledby="hero-title">
-      <h1 id="hero-title">Know what your AI work costs.<span>Without storing your prompt.</span></h1>
-      <p class="lede">See the cost behind your customers, workflows, and tasks. Inferrail turns supported OpenAI chat-completion traffic into local, attributable economic receipts.</p>
-      <article class="receipt" aria-label="Example attribution receipt">
-        <div class="receipt-header"><span class="receipt-label">Attribution receipt</span><span class="receipt-id">req_0a52973573d04acc874d</span></div>
+      <h1 id="hero-title">Retry it once, or send it to review.<span>Decided, executed, recorded.</span></h1>
+      <p class="lede">For one eligible invoice-extraction exception, Inferrail decides one permitted machine retry vs. your established human-review path, executes it, and records the resulting cost and outcome.</p>
+      <article class="receipt" aria-label="Example AP decision record">
+        <div class="receipt-header"><span class="receipt-label">Decision record</span><span class="receipt-id">dec_a5e9e3a2bca6</span></div>
         <div class="dash"></div>
-        <div class="receipt-row"><span>customer</span><span>acme</span></div><div class="receipt-row"><span>workflow</span><span>contract-review</span></div><div class="receipt-row"><span>tokens in / out</span><span>842 / 191</span></div><div class="receipt-row"><span>latency</span><span>15.96 ms</span></div><div class="receipt-row muted"><span>payload stored</span><span>none</span></div>
-        <div class="solid"></div><div class="receipt-total"><span>Known cost</span><span>$0.000241</span></div><div class="stamp receipt-stamp">Payload-free</div>
-        <p class="receipt-note">Inferrail's local records contain economics, not prompts or responses. Your configured provider still receives the request.</p><div class="dash"></div>
-        <div class="install-wrap"><div class="install"><code>$ pip install inferrail</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">runs locally · no account required · Apache-2.0</p></div>
+        <div class="receipt-row"><span>work_id</span><span>INV-90210</span></div><div class="receipt-row"><span>failure_type</span><span>low_confidence</span></div><div class="receipt-row"><span>recommended_action</span><span>retry</span></div><div class="receipt-row"><span>retry_status</span><span>success</span></div><div class="receipt-row muted"><span>invoice content stored</span><span>none</span></div>
+        <div class="solid"></div><div class="receipt-total"><span>Incremental cost</span><span>$0.06</span></div><div class="stamp receipt-stamp">Data stays in your process</div>
+        <p class="receipt-note">Invoice content and provider credentials never reach an Inferrail-operated service — only identifiers, confidence/validation results, and cost figures.</p><div class="dash"></div>
+        <div class="install-wrap"><div class="install"><code>$ pip install inferrail &amp;&amp; inferrail ap demo</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">fixture-based · zero-key · runs locally · Apache-2.0</p></div>
       </article>
-      <div class="primary-action"><a class="button button-dark" href="/join/">Get Early Access</a><a class="button button-ghost" href="/demo/">See 30-sec demo</a><button class="button button-ghost" id="try-button" type="button">Try Inferrail</button><p class="action-hint" id="action-hint">Then run: inferrail demo (optional) or inferrail try "Reply with one word: ready" --customer acme</p></div>
+      <div class="primary-action"><a class="button button-dark" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a><a class="button button-ghost" href="https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery">See the examples</a><button class="button button-ghost" id="try-button" type="button">Copy the local demo command</button><p class="action-hint" id="action-hint">Then run it locally: inferrail ap demo</p></div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="network wrap" aria-labelledby="network-title">
-      <h2 id="network-title">Attribute known AI spend<span>to the work that caused it.</span></h2>
-      <p class="sub">Early referral program — opening soon. Rewards activate on verified routed usage.</p>
-      <div class="ladder" aria-label="Inferrail referral program"><div class="tier"><div><span class="tier-number">01</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>+90 DAYS</strong><br>Both you and the team you introduce get 90 extra days of cost history.</p></div><div class="tier"><div><span class="tier-number">03</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PRO · 1 YEAR</strong><br>Pro for a year. Unlimited seats.</p></div><div class="tier"><div><span class="tier-number">10</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>FOUNDING OPERATOR</strong><br>Permanent Pro · logo on the site · roadmap vote · private channel.</p></div><div class="tier"><div><span class="tier-number">25</span><span class="tier-label">refer</span></div><p class="tier-reward"><strong>PARTNER</strong><br>Inferrail free for life + 20% recurring on every additional team you bring.</p></div></div>
-      <p class="qualification">A referral qualifies after real routed usage, not signup.</p><div class="network-action"><button class="button button-ghost" id="referral-button" type="button">Get my referral link</button><p class="network-status" id="network-status">Referral access is opening soon.</p></div>
+    <section class="agents wrap" id="gateway" aria-labelledby="gateway-title">
+      <div class="agents-card">
+        <p class="agents-eyebrow">Developer tools</p>
+        <h3 id="gateway-title">Know what your AI work costs</h3>
+        <p class="agents-copy">Inferrail's original product, unchanged: a self-hosted, OpenAI-compatible gateway that turns supported chat-completion traffic into local, attributable economic receipts — payload-free, without storing prompts or responses. This is the same receipt/cost substrate the AP product above builds on.</p>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/README.md">See the gateway README</a>
+      </div>
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="agents wrap" aria-labelledby="agents-title">
+    <section class="agents wrap" id="ap-hosted" aria-labelledby="ap-hosted-title">
+      <h2 id="ap-hosted-title">Self-hosted, when you don't want to run your own store by hand.<span>Not testnet — but no Inferrail-operated instance exists yet. Deploy it yourself.</span></h2>
+      <div class="agents-card">
+        <p class="agents-eyebrow">Self-hosted, optional</p>
+        <h3>AP Exceptions hosted API</h3>
+        <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service. There is no Inferrail-operated public endpoint for this today — deploy it on your own infrastructure with the instructions below.</p>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">Deploy your own instance</a>
+      </div>
+      <div class="agents-card">
+        <p class="agents-eyebrow">Reporting</p>
+        <h3>Connects to Work Economics — without sharing its ledger</h3>
+        <p class="agents-copy">AP's own retry and human-review costs can be exported in the same event shape Work Economics already uses for reporting — a same-process data export, not a shared database or a dependency on Work Economics' separate (testnet) payment flow below.</p>
+        <a class="button button-ghost" href="/work-economics/">See the Work Economics connector</a>
+      </div>
+    </section>
+    <div class="section-break wrap" aria-hidden="true"></div>
+    <section class="agents wrap" id="agents" aria-labelledby="agents-title">
+      <h2 id="agents-title">Experimental, testnet only<span>Secondary capabilities for autonomous agents.</span></h2>
       <div class="agents-card">
         <p class="agents-eyebrow">For autonomous agents</p>
-        <h3 id="agents-title">Buy Work Economics per call</h3>
+        <h3>Buy Work Economics per call</h3>
         <p class="agents-copy">Submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 — no subscription, no Inferrail account.</p>
         <a class="button button-ghost" href="/work-economics/">See the Work Economics capability</a>
       </div>
@@ -119,14 +128,13 @@
       </div>
     </section>
   </main>
-  <footer class="wrap"><span>Inferrail — payload-free cost attribution</span><nav aria-label="Footer navigation"><a href="/work-economics/">Work Economics</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">Economic Authority</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Docs</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
+  <footer class="wrap"><span>Inferrail — AP invoice-exception recovery</span><nav aria-label="Footer navigation"><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">AP Exceptions</a><a href="https://github.com/domondi1/inferrail/blob/main/README.md">Gateway</a><a href="/work-economics/">Work Economics</a><a href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">Economic Authority</a><a href="https://github.com/domondi1/inferrail">GitHub</a><a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">Privacy</a></nav></footer>
   <script>
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
-      const install = 'pip install inferrail'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
-      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied. Next: run inferrail demo'; hint.textContent='Optional demo, then: inferrail try "Reply with one word: ready" --customer acme (uses OPENAI_API_KEY)'; } catch { hint.textContent='Copy failed. Run: pip install inferrail'; } };
+      const install = 'pip install inferrail && inferrail ap demo'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
+      const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied — now run it in your own terminal'; hint.textContent='Fixture-based, zero-key. Then inspect it: inferrail ap report --db inferrail-ap-demo.sqlite3'; } catch { hint.textContent='Copy failed. Run this yourself: pip install inferrail && inferrail ap demo'; } };
       button.addEventListener('click', () => copyInstall(button)); copyButton.addEventListener('click', () => copyInstall(copyButton));
-      const referralButton = document.querySelector('#referral-button'); referralButton.addEventListener('click', () => { referralButton.textContent='Coming soon'; document.querySelector('#network-status').textContent='Referral links open soon.'; });
     })();
   </script>
 </body>

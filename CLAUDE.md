@@ -2,8 +2,19 @@
 
 Inferrail is an open inference control plane: an OpenAI-compatible
 gateway that sits between an application and the model providers it
-calls. **v0.1 today is the gateway only.** See `docs/PRODUCT.md` for
-exact current scope and `docs/ARCHITECTURE.md` for how it's built.
+calls, plus a self-hosted local receipt/cost-attribution substrate. **As
+of v0.2.0, Inferrail also ships a second, separate product on that same
+substrate: AP invoice-exception recovery** — for one eligible
+invoice-extraction exception, decide whether it gets one permitted
+machine retry (with its own prospective cost authorization) or the
+customer's established human-review path, execute it, and record the
+resulting cost and outcome. AP is fully isolated from the gateway and
+from the hosted, testnet-only Work Economics/Economic Authority
+capabilities (own module, own storage, no shared code path) — see
+`docs/capabilities/ap-invoice-exception-recovery.md` for its full
+contract. See `docs/PRODUCT.md` for exact current scope (the single
+authoritative source — do not restate scope claims here that could
+drift from it) and `docs/ARCHITECTURE.md` for how the gateway is built.
 
 ## Before major feature work, read
 

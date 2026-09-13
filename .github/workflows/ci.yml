@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    # Lets publish.yml gate a release on this exact workflow succeeding
+    # for the tagged commit, instead of just bumping a version number.
 
 jobs:
   test:
@@ -78,3 +81,45 @@ jobs:
 
       - name: Boundary check (belt-and-suspenders alongside the dedicated job)
         run: bash scripts/check_no_internal_content.sh
+
+  ap-exceptions:
+    # Dedicated job for AP invoice-exception recovery: the main `test` job
+    # only installs `[dev,mcp]`, so OpenAIRetryAdapter's `openai` import is
+    # exercised only via the mypy override (see pyproject.toml), never
+    # actually installed there. This job installs `[dev,ap]` so the real
+    # `openai` package is present for both mypy and pytest, and also
+    # lints/type-checks hosted/ap_exceptions/, which -- like
+    # hosted/a2a_economic_authority -- is deliberately excluded from the
+    # main `mypy` invocation's package list.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev and ap dependencies
+        run: pip install -e ".[dev,mcp,ap]"
+
+      - name: Install hosted/ap_exceptions dependencies
+        run: pip install -r hosted/ap_exceptions/requirements.txt
+
+      - name: Lint (ruff) -- inferrail.ap, hosted/ap_exceptions, examples, tests
+        run: |
+          ruff check src/inferrail/ap hosted/ap_exceptions \
+            examples/ap_invoice_exception_recovery tests/unit/ap \
+            tests/unit/hosted/test_ap_exceptions_service.py \
+            tests/integration/test_ap_openai_live.py \
+            tests/integration/test_ap_crash_recovery.py
+
+      - name: Type-check (mypy) -- inferrail.ap (with openai installed)
+        run: mypy src/inferrail/ap --strict
+
+      - name: Type-check (mypy) -- hosted/ap_exceptions
+        run: mypy hosted/ap_exceptions --strict --ignore-missing-imports
+
+      - name: Test -- AP unit, hosted-service, and crash-recovery tests
+        run: |
+          pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
+            tests/integration/test_ap_crash_recovery.py -v

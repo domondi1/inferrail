@@ -26,6 +26,40 @@ pricing, tied to business context the caller attaches. The long-term
 thesis this is the first step of: measure → attribute → connect to
 outcome → govern → optimize.
 
+**v0.2.0 adds a second, separate product on top of that same substrate:
+AP invoice-exception recovery** — see the next section. It is a bounded
+decision-and-execution engine for one specific operational question
+(retry vs. human review), not a general invoice-processing product, and
+it is fully isolated from the gateway and from Work Economics/Economic
+Authority below (own module, own storage, no shared code path).
+
+## AP invoice-exception recovery (v0.2.0)
+
+For teams operating an invoice-extraction workflow: decide whether one
+eligible extraction exception gets one permitted machine retry or your
+established human-review path, execute the retry through a supported
+integration, and record the resulting cost and outcome.
+
+- **Package:** `inferrail.ap` (part of the `inferrail` PyPI package, no
+  new install for the fixture path; `pip install "inferrail[ap]"` for the
+  bundled OpenAI retry adapter).
+- **CLI:** `inferrail ap demo|report|outcome|batch`.
+- **Hosted API (optional):** `hosted/ap_exceptions/` — decision,
+  persistence, and reporting only; retry execution always happens in
+  your own process.
+- **Full contract:** `docs/capabilities/ap-invoice-exception-recovery.md`
+  — supported failure types, retry method, validation contract,
+  human-review handoff, versioned policy config, identifiers,
+  idempotency/ambiguous-execution handling, and the data boundary.
+- **Get started:** `docs/PRODUCT.md` doesn't restate this scope a second
+  time — see the capability doc and
+  `examples/ap_invoice_exception_recovery/`.
+
+Zero customer adoption or savings claims are made about this capability
+— see the capability doc's "Pricing and performance assumptions"
+section, which labels every dollar figure as an assumption, not a
+validated result.
+
 ## Who it's for
 
 Developers and small teams running LLM-backed applications who want:
