@@ -7,15 +7,21 @@ for the public contract and
 [`docs/adr/0004-data-plane-control-plane-boundary.md`](../../docs/adr/0004-data-plane-control-plane-boundary.md)
 for why this lives outside `src/inferrail`.
 
-**Live demo (not a durable service):** `https://inferrail-ap-exceptions.onrender.com`
+**Hosted demonstration, not a durable service and not a usable public
+demo of the workflow itself:** `https://inferrail-ap-exceptions.onrender.com`
 runs on Render's free tier with no persistent disk — every record on
 it is synthetic and disposable, gone on the next restart or idle
-spin-down, and it is never used for real customer data. The free tier
-also spins down when idle, so the first request after a quiet period
-can take up to a minute. Only `GET /health` is open without
-authentication; every other route needs an `Authorization: Bearer
-<api-key>` header this demo does not distribute publicly. Deploy your
-own instance (below) for real, durable use.
+spin-down, and it is never used for real customer data. Without a key,
+`GET /health` is the only reachable route — that confirms the process
+is up, nothing more; every other route needs an `Authorization: Bearer
+<api-key>` header this demo does not distribute publicly. The free
+tier also spins down when idle, so the first request after a quiet
+period may take a minute or longer to wake it (no guaranteed upper
+bound). **To actually try the decide → retry → validate →
+recover-or-review → report workflow, run `inferrail ap demo`** (see
+the package README) — it exercises the real decision engine locally,
+no key or network call required. Deploy your own hosted instance
+(below) for real, durable, authenticated use.
 
 **This service never executes a retry itself.** It runs the same
 `inferrail.ap.policy.recommend` policy evaluation and
