@@ -97,11 +97,17 @@
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="agents wrap" id="ap-hosted" aria-labelledby="ap-hosted-title">
-      <h2 id="ap-hosted-title">Self-hosted, when you don't want to run your own store by hand.<span>Not testnet — but no Inferrail-operated instance exists yet. Deploy it yourself.</span></h2>
+      <h2 id="ap-hosted-title">A hosted demonstration instance exists, plus deploy-your-own instructions.<span>Not testnet — but the demo is Render's free tier: no persistent disk, synthetic data only.</span></h2>
+      <div class="agents-card">
+        <p class="agents-eyebrow">Hosted demonstration</p>
+        <h3>Proof the hosted API is real and reachable</h3>
+        <p class="agents-copy">A demo instance runs at <code>inferrail-ap-exceptions.onrender.com</code> — Render's free tier, with no persistent disk: every record on it is synthetic and disposable, gone on the next restart or idle spin-down. Not a durable service and never used for real customer data. Visitors without a key can only reach <code>GET /health</code> — that confirms the service is up, not the product workflow. Every other route requires an <code>Authorization: Bearer &lt;api-key&gt;</code> header this demo does not hand out publicly; self-host your own instance (below) for real access. <strong>To actually try the decide → retry → validate → recover-or-review → report workflow yourself, run the local demo above</strong> (<code>pip install inferrail &amp;&amp; inferrail ap demo</code>) — it exercises the real decision engine, no key or network call required.</p>
+        <div class="install-wrap"><div class="install"><code>$ curl https://inferrail-ap-exceptions.onrender.com/health</code></div><p class="install-note">unauthenticated liveness check only · the instance may take a minute or longer to wake if it's been idle</p></div>
+      </div>
       <div class="agents-card">
         <p class="agents-eyebrow">Self-hosted, optional</p>
-        <h3>AP Exceptions hosted API</h3>
-        <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service. There is no Inferrail-operated public endpoint for this today — deploy it on your own infrastructure with the instructions below.</p>
+        <h3>Deploy your own AP Exceptions instance</h3>
+        <p class="agents-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service.</p>
         <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">Deploy your own instance</a>
       </div>
       <div class="agents-card">
