@@ -128,9 +128,16 @@ def test_repeat_reap_request_is_idempotent(tmp_path):
 
 def test_sigkill_mid_sleep_still_recovers_via_reap(tmp_path):
     """The literal "kill -9 mid-retry" scenario: a subprocess claims the
-    lease and is then actually SIGKILLed by the parent while it is still
-    "running" (sleeping, standing in for a slow adapter call), not
-    exiting on its own schedule."""
+    lease and is then actually hard-killed by the parent while it is
+    still "running" (sleeping, standing in for a slow adapter call), not
+    exiting on its own schedule.
+
+    `Popen.kill()` is used rather than a raw `os.kill`/`signal.SIGKILL`
+    specifically because `signal.SIGKILL` does not exist on Windows --
+    `Popen.kill()` sends SIGKILL on POSIX and calls `TerminateProcess` on
+    Windows, so this test (and the crash-recovery guarantee it verifies)
+    is exercised natively on all three supported platforms, not skipped
+    on Windows."""
     db_path = tmp_path / "ap.sqlite3"
     proc = subprocess.Popen(
         [
@@ -145,11 +152,15 @@ def test_sigkill_mid_sleep_still_recovers_via_reap(tmp_path):
             proc.kill()
             raise AssertionError("helper never claimed the lease within 10s")
         time.sleep(0.02)
-    proc.send_signal(signal.SIGKILL)
+    proc.kill()
     proc.wait(timeout=10)
-    assert proc.returncode == -signal.SIGKILL, (
-        f"expected a real SIGKILL (-9), got returncode={proc.returncode}"
+    assert proc.returncode != 0, (
+        f"expected a real hard kill, got a clean exit (code {proc.returncode})"
     )
+    if sys.platform != "win32":
+        assert proc.returncode == -signal.SIGKILL, (
+            f"expected a real SIGKILL (-9) on POSIX, got returncode={proc.returncode}"
+        )
 
     store = RecoveryStore(db_path)
     stuck = store.get_decision("CRASH-3")

@@ -316,6 +316,48 @@ is not a claim that AP and Work Economics already share one ledger.
   Work Economics connector above is a same-process data export, not a
   shared database, shared ledger, or dependency between the services.
 
+## Platform notes
+
+Verified natively on Windows, macOS, and Linux —
+[`.github/workflows/platform-verify.yml`](../../.github/workflows/platform-verify.yml)
+builds the wheel and installs it into a clean venv on each OS
+(`windows-latest`, `macos-latest`, `ubuntu-latest`, not an emulated
+container), then runs the documented demo/report commands, the local
+integration example, the hosted-API client against a locally started
+instance, and the persistence/crash-recovery test suite (including a
+real concurrent-writer race and real process-kill tests) against that
+installed package specifically — not an editable checkout.
+
+Tested command sequences — install, run the demo, find its output, stop
+it:
+
+**macOS / Linux (bash):**
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install "inferrail[ap]"
+inferrail ap demo
+cat ./inferrail-ap-demo-handoffs.jsonl   # the demo's own output files
+inferrail ap report --db inferrail-ap-demo.sqlite3
+```
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install "inferrail[ap]"
+inferrail ap demo
+Get-Content .\inferrail-ap-demo-handoffs.jsonl
+inferrail ap report --db inferrail-ap-demo.sqlite3
+```
+
+The CLI commands above are one-shot — there is nothing to "stop." The
+only long-running process this release ships is the hosted service
+(`hosted/ap_exceptions/service.py`, run locally for
+`hosted_client_example.py` or self-hosted for real); stop it the normal
+way for a foreground process (`Ctrl-C` on macOS/Linux/Windows), or
+`Stop-Process` on Windows / your process manager's stop command if you
+ran it in the background or under a supervisor.
+
 ## Getting started
 
 ```bash

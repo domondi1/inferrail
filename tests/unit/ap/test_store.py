@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -223,6 +224,41 @@ def test_clear_retry_lease_removes_worker_and_expiry(tmp_path: Path) -> None:
     decision = store.get_decision("W11")
     assert decision["worker_id"] is None
     assert decision["lease_expires_at"] is None
+
+
+def test_concurrent_create_decision_for_the_same_work_id_serializes_to_one_winner(
+    tmp_path: Path,
+) -> None:
+    """Two real OS threads race to create a decision for the same
+    work_id. `BEGIN IMMEDIATE` (plus `PRAGMA busy_timeout`) must
+    serialize them via real SQLite file-locking -- exactly one call
+    creates the row, the other sees it already exists -- rather than
+    both racing an in-memory check. Exercised on every supported
+    platform's own SQLite/filesystem locking semantics, not just POSIX's
+    (see `.github/workflows/platform-verify.yml`)."""
+    db_path = tmp_path / "ap.sqlite3"
+
+    def try_create(decision_id: str) -> bool:
+        # Each thread uses its own RecoveryStore (and therefore its own
+        # SQLite connection) against the same db file, matching how
+        # independent concurrent callers would behave.
+        _row, created = RecoveryStore(db_path).create_decision(
+            work_id="RACE-1", decision_id=decision_id, checkpoint_attempt_id="A1",
+            failure_type="low_confidence", confidence="0.6", cost_so_far_usd="0.10",
+            policy_name="candidate_policy", policy_version="ap.policy/v1",
+            recommended_action="retry", reason="test", status="retry_in_progress",
+        )
+        return created
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(try_create, ["dec-a", "dec-b"]))
+
+    assert sorted(results) == [False, True]  # exactly one winner, never both, never neither
+
+    store = RecoveryStore(db_path)
+    decision = store.get_decision("RACE-1")
+    assert decision is not None
+    assert decision["decision_id"] in ("dec-a", "dec-b")  # whichever won, only one row exists
 
 
 def test_record_and_get_late_retry_results(tmp_path: Path) -> None:

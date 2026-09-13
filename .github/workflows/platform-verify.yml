@@ -1,0 +1,181 @@
+name: Platform Verify
+
+# Native Windows/macOS/Linux verification of the built, installed
+# package -- an Ubuntu container proves nothing about Windows or macOS
+# support (different filesystem/locking semantics, different shells,
+# different executable layout in a venv). This workflow builds the wheel
+# once per OS and installs it into a clean venv *outside* the checkout,
+# then runs the documented AP quickstart, the local integration example,
+# and the persistence/crash-recovery test suite against that installed
+# package -- not against an editable `src/` checkout.
+#
+# PR-gating (not just release-gating like publish.yml's own verify-wheel
+# job): catching a platform-specific break (e.g. SQLite `BEGIN IMMEDIATE`
+# locking behaving differently on Windows, or a PowerShell quoting
+# issue in the documented commands) before a release is tagged is the
+# whole point -- discovering it only at tag-push time is too late to fix
+# without re-tagging.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  wheel-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel
+
+      - name: Create a clean venv outside the checkout (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 -m venv "$RUNNER_TEMP/inferrail-platform-check"
+
+      - name: Create a clean venv outside the checkout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python -m venv "$env:RUNNER_TEMP\inferrail-platform-check"
+
+      - name: Install the built wheel + [ap,dev] extras (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          "$RUNNER_TEMP/inferrail-platform-check/bin/pip" install "${whl}[ap,dev]"
+          "$RUNNER_TEMP/inferrail-platform-check/bin/pip" install -r hosted/ap_exceptions/requirements.txt
+
+      - name: Install the built wheel + [ap,dev] extras (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pip = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\pip.exe"
+          $whl = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          & $pip install "$whl[ap,dev]"
+          & $pip install -r hosted\ap_exceptions\requirements.txt
+
+      - name: Confirm version and imports, from outside the checkout (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          py="$RUNNER_TEMP/inferrail-platform-check/bin/python3"
+          "$py" -c "import inferrail; print('version:', inferrail.__version__)"
+          "$py" -c "import inferrail.ap; print('ap.__all__:', sorted(inferrail.ap.__all__))"
+
+      - name: Confirm version and imports, from outside the checkout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
+          & $py -c "import inferrail; print('version:', inferrail.__version__)"
+          & $py -c "import inferrail.ap; print('ap.__all__:', sorted(inferrail.ap.__all__))"
+
+      - name: Run the documented AP demo + report, from outside the checkout (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          bin="$RUNNER_TEMP/inferrail-platform-check/bin"
+          "$bin/inferrail" ap demo
+          "$bin/inferrail" ap report --db inferrail-ap-demo.sqlite3 --json | "$bin/python3" -m json.tool
+
+      - name: Run the documented AP demo + report, from outside the checkout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $bin = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts"
+          & "$bin\inferrail.exe" ap demo
+          $reportJson = & "$bin\inferrail.exe" ap report --db inferrail-ap-demo.sqlite3 --json
+          $reportJson | & "$bin\python.exe" -m json.tool
+
+      - name: Run the local integration example against the installed wheel (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/inferrail-platform-check/bin/python3" \
+            "$GITHUB_WORKSPACE/examples/ap_invoice_exception_recovery/custom_integration_example.py"
+
+      - name: Run the local integration example against the installed wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
+          $example = "$env:GITHUB_WORKSPACE\examples\ap_invoice_exception_recovery\custom_integration_example.py"
+          & $py $example
+
+      - name: Run the hosted API client against a locally started instance (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          bin="$RUNNER_TEMP/inferrail-platform-check/bin"
+          AP_API_KEYS=platform-verify-key "$bin/python3" \
+            "$GITHUB_WORKSPACE/hosted/ap_exceptions/service.py" ./ap-data 8422 &
+          server_pid=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8422/health > /dev/null && break
+            sleep 0.5
+          done
+          "$bin/python3" "$GITHUB_WORKSPACE/examples/ap_invoice_exception_recovery/hosted_client_example.py" \
+            --base-url http://127.0.0.1:8422 --api-key platform-verify-key --work-id PLATFORM-VERIFY-1
+          kill "$server_pid"
+
+      - name: Run the hosted API client against a locally started instance (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $py = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\python.exe"
+          $service = "$env:GITHUB_WORKSPACE\hosted\ap_exceptions\service.py"
+          $client = "$env:GITHUB_WORKSPACE\examples\ap_invoice_exception_recovery\hosted_client_example.py"
+          $env:AP_API_KEYS = "platform-verify-key"
+          $serviceArgs = @($service, ".\ap-data", "8422")
+          $proc = Start-Process -FilePath $py -ArgumentList $serviceArgs -PassThru -NoNewWindow
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              Invoke-WebRequest -Uri http://127.0.0.1:8422/health -UseBasicParsing | Out-Null
+              $ready = $true
+              break
+            } catch { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $ready) { throw "hosted service never became healthy" }
+          $clientArgs = @(
+            $client, "--base-url", "http://127.0.0.1:8422",
+            "--api-key", "platform-verify-key", "--work-id", "PLATFORM-VERIFY-1"
+          )
+          & $py $clientArgs
+          Stop-Process -Id $proc.Id -Force
+
+      - name: Run persistence/crash-recovery tests against the installed wheel (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/inferrail-platform-check/bin/pytest" \
+            tests/unit/ap/test_store.py tests/integration/test_ap_crash_recovery.py -v
+
+      - name: Run persistence/crash-recovery tests against the installed wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pytest = "$env:RUNNER_TEMP\inferrail-platform-check\Scripts\pytest.exe"
+          & $pytest tests\unit\ap\test_store.py tests\integration\test_ap_crash_recovery.py -v
