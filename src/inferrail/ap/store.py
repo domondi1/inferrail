@@ -347,3 +347,25 @@ class RecoveryStore:
             return [r[0] for r in rows]
         finally:
             conn.close()
+
+    def delete_work_id(self, work_id: str) -> bool:
+        """Retention/deletion: permanently removes every record (decision,
+        retry attempt, handoff, outcome history) for one `work_id`. Returns
+        `True` if a decision existed and was deleted, `False` if there was
+        nothing to delete. Irreversible -- there is no soft-delete or undo
+        at this layer; a caller wanting an audit trail of the deletion
+        itself must keep that outside this store."""
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existed = conn.execute(
+                "SELECT 1 FROM decisions WHERE work_id = ?", (work_id,)
+            ).fetchone() is not None
+            conn.execute("DELETE FROM review_outcomes WHERE work_id = ?", (work_id,))
+            conn.execute("DELETE FROM handoffs WHERE work_id = ?", (work_id,))
+            conn.execute("DELETE FROM retry_attempts WHERE work_id = ?", (work_id,))
+            conn.execute("DELETE FROM decisions WHERE work_id = ?", (work_id,))
+            conn.commit()
+            return existed
+        finally:
+            conn.close()

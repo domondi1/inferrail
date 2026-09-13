@@ -102,6 +102,37 @@ def test_outcome_history_is_append_only_and_ordered(tmp_path: Path) -> None:
     assert [h["outcome"] for h in history] == ["accepted", "corrected"]
 
 
+def test_delete_work_id_removes_every_related_record(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    store.create_decision(
+        work_id="W6", decision_id="dec-1", checkpoint_attempt_id="A1",
+        failure_type="low_confidence", confidence="0.6", cost_so_far_usd=None,
+        policy_name="p", policy_version="v1", recommended_action="retry",
+        reason="r", status="retry_in_progress",
+    )
+    store.record_retry_attempt(
+        work_id="W6", attempt_id="ret-1", status="success",
+        cost_usd="0.05", confidence="0.9", provider="fixture",
+    )
+    store.record_handoff(work_id="W6", handoff_ref="ref-1")
+    store.record_outcome(
+        work_id="W6", outcome="accepted", timestamp=1.0, source="s",
+        correction_delta_usd=None, review_cost_usd=None,
+    )
+
+    deleted = store.delete_work_id("W6")
+    assert deleted is True
+    assert store.get_decision("W6") is None
+    assert store.get_retry_attempt("W6") is None
+    assert store.get_handoff("W6") is None
+    assert store.get_outcome_history("W6") == []
+
+
+def test_delete_work_id_returns_false_when_nothing_to_delete(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    assert store.delete_work_id("NEVER-EXISTED") is False
+
+
 def test_record_outcome_without_a_decision_raises_keyerror(tmp_path: Path) -> None:
     store = RecoveryStore(tmp_path / "ap.sqlite3")
     with pytest.raises(KeyError):

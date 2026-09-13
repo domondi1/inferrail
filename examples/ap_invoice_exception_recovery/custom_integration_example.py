@@ -27,9 +27,9 @@ from inferrail.ap import (
     ExceptionCase,
     FailureType,
     PolicyConfig,
+    Recommendation,
     RecoveryEngine,
     RecoveryStore,
-    Recommendation,
     RetryAttemptResult,
 )
 from inferrail.ap.validation import FieldPresenceAndConfidenceValidator

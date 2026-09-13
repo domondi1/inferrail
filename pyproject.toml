@@ -102,3 +102,11 @@ mypy_path = "src:inferrail-mcp/src"
 strict = true
 disallow_untyped_defs = true
 warn_unused_ignores = true
+
+# `openai` is an optional dependency (the `ap` extra, for
+# inferrail.ap.adapters.OpenAIRetryAdapter only) -- this override lets
+# mypy pass whether or not it happens to be installed, without an inline
+# ignore comment that would be "unused" in one of the two states.
+[[tool.mypy.overrides]]
+module = "openai.*"
+ignore_missing_imports = true

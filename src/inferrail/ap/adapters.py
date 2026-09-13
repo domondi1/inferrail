@@ -107,7 +107,7 @@ class OpenAIRetryAdapter:
             return self._client
         import os
 
-        from openai import OpenAI  # type: ignore[import-not-found]
+        from openai import OpenAI
 
         api_key = self._api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
