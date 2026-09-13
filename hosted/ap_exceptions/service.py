@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -40,10 +41,12 @@ from pydantic import BaseModel, Field
 from tenant_store import TenantStoreRegistry
 
 from inferrail.ap import Action, PolicyConfig
-from inferrail.ap.models import ExceptionCase
+from inferrail.ap.models import AttemptStatus, DecisionStatus, ExceptionCase
 from inferrail.ap.policy import recommend
 from inferrail.ap.report import build_live_report
 from inferrail.ap.store import RecoveryStore
+
+DEFAULT_LEASE_SECONDS = 300.0
 
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("AP_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_REPORT_ROWS = int(os.environ.get("AP_MAX_REPORT_ROWS", "500"))
@@ -87,6 +90,12 @@ class DecisionRequest(BaseModel):
     opened_at: datetime | None = None
     source: str = "unknown"
     policy_config: PolicyConfigPayload
+    lease_seconds: float = DEFAULT_LEASE_SECONDS
+    """How long a `retry_in_progress` decision's lease lasts before it
+    becomes eligible for `/v1/reap-stale` -- the durable crash-recovery
+    path for a caller whose own process dies after receiving this
+    decision but before calling back `/retry-attempts` (see
+    `inferrail.ap.store.RecoveryStore.find_stale_retry_leases`)."""
 
 
 class RetryAttemptRequest(BaseModel):
@@ -97,6 +106,15 @@ class RetryAttemptRequest(BaseModel):
     provider: str = "unknown"
     validation_passed: bool | None = None
     validator_version: str | None = None
+    pre_flight_estimate_usd: str | None = None
+    """The caller's own `inferrail.ap.policy.authorize_retry_cost`
+    pre-flight bound for this attempt, if it made one -- recorded so the
+    hosted report can show an honest overrun (see
+    `inferrail.ap.report.LiveReportRow.retry_cost_overrun_usd`) the same
+    way the local SDK engine does. The hosted service never computes
+    this itself: it never invokes the caller's retry adapter (see this
+    module's own docstring), so authorization must happen in the
+    caller's own process before this endpoint is called."""
 
 
 class HandoffRequest(BaseModel):
@@ -151,7 +169,7 @@ def create_app(data_dir: Path) -> FastAPI:
     async def create_decision(
         body: DecisionRequest, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
     ) -> dict[str, Any]:
-        _tenant_id, store = ctx
+        tenant_id, store = ctx
         config = body.policy_config.to_policy_config()
         try:
             cost_so_far = Decimal(body.cost_so_far_usd) if body.cost_so_far_usd else None
@@ -169,9 +187,10 @@ def create_app(data_dir: Path) -> FastAPI:
             source=body.source,
         )
         recommendation = recommend(case, config)
+        is_retry = recommendation.action == Action.RETRY
         initial_status = (
-            "retry_in_progress" if recommendation.action == Action.RETRY
-            else "awaiting_human_review"
+            DecisionStatus.RETRY_IN_PROGRESS.value if is_retry
+            else DecisionStatus.AWAITING_HUMAN_REVIEW.value
         )
         row, created = store.create_decision(
             work_id=case.work_id,
@@ -185,6 +204,8 @@ def create_app(data_dir: Path) -> FastAPI:
             recommended_action=recommendation.action.value,
             reason=recommendation.reason,
             status=initial_status,
+            worker_id=f"tenant:{tenant_id}" if is_retry else None,
+            lease_expires_at=time.time() + body.lease_seconds if is_retry else None,
         )
         response = _decision_response(row)
         response["idempotent_replay"] = not created
@@ -206,6 +227,18 @@ def create_app(data_dir: Path) -> FastAPI:
         body: RetryAttemptRequest,
         ctx: tuple[str, RecoveryStore] = Depends(_tenant_store),
     ) -> dict[str, Any]:
+        """Records the result of a retry the caller already executed
+        locally, and -- exactly like the local SDK's `RecoveryEngine.
+        _execute_retry` -- transitions the decision's own status off
+        `retry_in_progress` accordingly: `retry_resolved` when the
+        attempt's status is not `ambiguous` and `validation_passed` is
+        `true`; `awaiting_human_review` otherwise (a failed/ambiguous
+        attempt, or one whose validation result isn't `true`). Applying
+        this consistently here (not just in the local engine) is what
+        lets `/v1/report`'s `observed_cost_complete` ever become `true`
+        on the hosted path -- a decision left at `retry_in_progress`
+        forever is never treated as cost-complete (see `report.
+        _observed_cost`)."""
         _tenant_id, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
@@ -220,7 +253,19 @@ def create_app(data_dir: Path) -> FastAPI:
                 str(body.validation_passed) if body.validation_passed is not None else None
             ),
             validator_version=body.validator_version,
+            pre_flight_estimate_usd=body.pre_flight_estimate_usd,
         )
+        if created:
+            resolved = (
+                body.status != AttemptStatus.AMBIGUOUS.value and body.validation_passed is True
+            )
+            store.set_decision_status(
+                work_id,
+                DecisionStatus.RETRY_RESOLVED.value
+                if resolved
+                else DecisionStatus.AWAITING_HUMAN_REVIEW.value,
+            )
+            store.clear_retry_lease(work_id)
         return {**row, "newly_recorded": created}
 
     @app.post("/v1/decisions/{work_id}/handoff")
@@ -252,6 +297,39 @@ def create_app(data_dir: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return row
 
+    @app.post("/v1/decisions/{work_id}/reap")
+    async def reap_one(
+        work_id: str, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+    ) -> dict[str, Any]:
+        """Operator recovery for one work_id whose retry lease has
+        expired -- the hosted-service analog of `inferrail ap reap` /
+        `RecoveryEngine.reap_stale_retries` for a caller whose own
+        process died after receiving a `retry_in_progress` decision but
+        before calling back `/retry-attempts`. Tenant-scoped like every
+        other route -- a tenant can only reap its own leases. Idempotent:
+        returns `reaped: false` on a repeat call once the lease is no
+        longer stale (see `RecoveryStore.reap_stale_retry_lease`)."""
+        _tenant_id, store = ctx
+        if store.get_decision(work_id) is None:
+            raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
+        result = store.reap_stale_retry_lease(work_id)
+        return {"work_id": work_id, "reaped": result is not None}
+
+    @app.post("/v1/reap-stale")
+    async def reap_stale(
+        ctx: tuple[str, RecoveryStore] = Depends(_tenant_store),
+    ) -> dict[str, Any]:
+        """Sweeps every stale retry lease for the calling tenant only.
+        Safe to call on a schedule (an operator's own cron/health job) --
+        a repeat call reaps nothing new for a work_id already reaped or
+        resolved by its real worker."""
+        _tenant_id, store = ctx
+        reaped_work_ids = []
+        for row in store.find_stale_retry_leases():
+            if store.reap_stale_retry_lease(row["work_id"]) is not None:
+                reaped_work_ids.append(row["work_id"])
+        return {"reaped_count": len(reaped_work_ids), "reaped_work_ids": reaped_work_ids}
+
     @app.delete("/v1/decisions/{work_id}")
     async def delete_decision(
         work_id: str, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
@@ -281,6 +359,14 @@ def create_app(data_dir: Path) -> FastAPI:
                     "validation_passed": r.validation_passed,
                     "handoff_ref": r.handoff_ref,
                     "established_outcome": r.established_outcome,
+                    "review_cost_usd": (
+                        str(r.review_cost_usd) if r.review_cost_usd is not None else None
+                    ),
+                    "retry_cost_overrun_usd": (
+                        str(r.retry_cost_overrun_usd)
+                        if r.retry_cost_overrun_usd is not None
+                        else None
+                    ),
                     "observed_cost_usd": (
                         str(r.observed_cost_usd) if r.observed_cost_usd is not None else None
                     ),

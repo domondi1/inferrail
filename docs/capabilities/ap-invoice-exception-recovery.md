@@ -55,7 +55,40 @@ Two reference implementations ship with the SDK:
 - `OpenAIRetryAdapter` — a working, real-provider adapter that re-runs
   structured-field extraction via one OpenAI chat-completions call.
   **Live-provider execution** — requires `OPENAI_API_KEY` and makes a
-  real, billed call; never silently substituted with a fixture.
+  real, billed call; never silently substituted with a fixture. Its
+  client is constructed with `max_retries=0` and an explicit timeout —
+  the `openai` SDK's own default retry behavior would otherwise risk
+  more than one real HTTP request per logical `retry()` call.
+
+### Prospective retry-cost authorization
+
+Before the adapter is invoked, the engine asks it for a `CostEstimate` —
+a defensible upper bound on what the call is about to cost, with its
+basis — via an **optional** `estimate_cost(case) -> CostEstimate | None`
+method (detected at runtime, not required by the `RetryAdapter`
+protocol itself: an adapter that cannot bound its own cost should not
+implement it). `policy.authorize_retry_cost` then checks that estimate
+against `max_retry_cost_usd` — separately from, and never confused with,
+`recommend`'s own sunk-cost check (`case.cost_so_far_usd` vs. the same
+limit, already spent, unaffected by what happens next):
+
+- **Unknown estimate** (adapter has no `estimate_cost`, or it returns
+  `None`) → **never authorized**. The adapter is not invoked; the case
+  routes to human review with no `retry_attempts` row at all, so the
+  report honestly shows no retry was ever attempted.
+- **Estimate exceeds `max_retry_cost_usd`** → same: not authorized, not
+  invoked.
+- **Estimate within budget** → the adapter is called, and its estimate
+  is recorded (`pre_flight_estimate_usd`) alongside the attempt.
+
+**Never a hard billing guarantee.** A provider's real, metered charge
+can still exceed the estimate that authorized it — this cannot be
+undone after the fact. When it happens, the report records the honest
+delta as `retry_cost_overrun_usd`, never clamped or hidden. `Fixture
+RetryAdapter.estimated_costs_by_work_id` and `OpenAIRetryAdapter`'s
+built-in-catalog-based estimate (see `inferrail.pricing.builtin`, the
+same sourced, dated rates the OSS gateway uses) are the two shipped
+implementations of `estimate_cost`.
 
 ## Validation contract
 
@@ -113,17 +146,52 @@ not caller-configurable in this release.
 attempt), `decision_id` (assigned once per `work_id`). All three appear
 on every record.
 
-## Persistence, idempotency, and ambiguous execution
+## Persistence, idempotency, and crash recovery
 
 SQLite-backed, transactional (`inferrail.ap.store.RecoveryStore`).
 Calling `decide()` again for a `work_id` that already has a decision
 returns the stored result — the policy is not re-evaluated and the
 retry adapter/handoff callback is not invoked again. If the retry
-adapter itself is interrupted (raises, times out, crashes) after being
-called but before its result is durably recorded, the case is marked
-`retry_status: ambiguous` and routed to human review — never silently
-retried again (which could re-invoke a real paid provider) and never
-assumed successful.
+adapter itself raises (times out, errors) after being called but before
+its result is durably recorded, the case is marked `retry_status:
+ambiguous` and routed to human review — never silently retried again
+(which could re-invoke a real paid provider) and never assumed
+successful.
+
+**Real process death is handled durably, not just an in-process
+exception.** A `retry_in_progress` decision carries a lease
+(`worker_id`, `lease_expires_at`, set only for that window). If the
+process making the retry call is killed outright — not an exception,
+an actual crash — the case is left `retry_in_progress` with no one able
+to act on it, until the lease expires. At that point:
+
+- `RecoveryEngine.reap_stale_retries()` (or the CLI's `inferrail ap
+  reap`, or the hosted API's `POST /v1/reap-stale`) finds every expired
+  lease, records a synthetic `ambiguous` retry attempt (`provider:
+  lease_reaper`), and moves the decision to `awaiting_human_review` —
+  the same terminal, non-guessed state a raised exception produces.
+  **Idempotent**: a repeat reap call for an already-reaped or
+  already-resolved work_id is a no-op, never a duplicate attempt.
+- **Abandoned vs. still-running is checked, not assumed**: reaping
+  re-verifies the lease is still expired and that no real attempt has
+  been recorded in the meantime before acting — a "dead" worker that
+  was actually still running is never overwritten.
+- **A late-arriving real result is never silently lost.** If the
+  supposedly-dead worker's retry call does eventually complete after
+  its lease was reaped, the real result (status, cost) is preserved in
+  an audit-only `late_retry_results` record — but the decision's
+  authoritative status is never silently flipped back to
+  `retry_resolved`, because no receiving system ever acknowledged
+  anything about it after the reap.
+- **A handoff is never fabricated during a sweep.** `reap_stale_retries`
+  deliberately does not send a handoff itself — the store doesn't
+  persist enough of the original `ExceptionCase` to reconstruct one
+  without guessing. `RecoveryEngine.ensure_handoff(case)` (idempotent,
+  safe to call repeatedly) completes the handoff once a caller
+  re-supplies the case — the same method also recovers from a handoff
+  callback that itself raised (`HandoffSendFailed`), since a stored
+  status must never claim a handoff succeeded when no receiving system
+  acknowledged it.
 
 ## Explicit handling
 
@@ -162,9 +230,66 @@ GET    /v1/decisions/{work_id}
 POST   /v1/decisions/{work_id}/retry-attempts
 POST   /v1/decisions/{work_id}/handoff
 POST   /v1/decisions/{work_id}/outcome
+POST   /v1/decisions/{work_id}/reap
+POST   /v1/reap-stale
 DELETE /v1/decisions/{work_id}
 GET    /v1/report
 ```
+
+`/reap` and `/reap-stale` are the hosted-service analog of `inferrail ap
+reap` (see "Persistence, idempotency, and crash recovery," above) —
+tenant-scoped, safe to call on a schedule, and idempotent. Because the
+hosted service never executes your retry adapter itself (see "Data
+boundary," below), a caller using the hosted API is responsible for
+running `estimate_cost`/`authorize_retry_cost` locally, before calling
+`.../retry-attempts` — see
+[`examples/ap_invoice_exception_recovery/hosted_client_example.py`](../../examples/ap_invoice_exception_recovery/hosted_client_example.py)
+for the full pattern.
+
+A running instance auto-serves its own OpenAPI schema at
+`GET /openapi.json` — the authoritative, always-current machine-readable
+reference for this service (the repo's committed `openapi.json` at the
+root covers only the OSS gateway's contract, generated by
+`scripts/generate_openapi.py`; forcing a second service's routes into
+that file would make it drift from whichever is actually deployed).
+
+## Work Economics connector
+
+The smallest useful connection between this module's own records and
+Inferrail's separate Work Economics reporting:
+[`inferrail.ap.work_economics_export.export_work_economics_events`](../../src/inferrail/ap/work_economics_export.py)
+reads one `work_id`'s recorded retry attempt and/or review outcome from
+`RecoveryStore` and returns 0–2 plain dicts shaped exactly like
+`hosted/work_economics/capability.py`'s `EconomicEvent.from_dict()`
+expects — tested by round-tripping through the real contract, not a
+guessed shape.
+
+**What this is, precisely — and what it is not:**
+
+- It exports the two cost components AP already tracks: the retry
+  attempt's own cost (`resource_class="ap_invoice_extraction_retry"`)
+  and a recorded human review's own cost
+  (`resource_class="human_review"`) — a documented convention on
+  `EconomicEvent`'s free-text `resource_class` field, not a schema
+  change to it.
+- It is **not** a shared ledger. AP's `RecoveryStore` (SQLite, per
+  tenant) and Work Economics' `DurablePurchaseStore` remain fully
+  separate storage and service contracts — this function reads AP's own
+  store and returns plain dicts; it does not call, import, or depend on
+  any hosted service.
+- **Never double-counted**: call it only on one `work_id`'s raw store
+  rows, never on `report.LiveReportRow.observed_cost_usd` (the
+  aggregate) — the sum of what it exports equals that aggregate exactly
+  when both are known, by construction (they're the same two numbers).
+- **A human review's cost is a real cost Work Economics' own event
+  contract has no dedicated field for** — a genuinely unknown review
+  cost is exported with `price_basis="UNKNOWN"`, never silently dropped
+  and never folded into the machine-cost resource class where it could
+  be misread as part of the retry's own cost.
+
+This is a supported connection for a caller who already has a Work
+Economics consumer and wants AP's costs represented the same way — it
+is not a claim that AP and Work Economics already share one ledger.
 
 ## Pricing and performance assumptions — explicitly labeled, not validated
 
@@ -187,7 +312,9 @@ GET    /v1/report
 - Does not compute or imply a calibrated probability, an economic
   optimum, or an ROI figure.
 - Does not touch Inferrail's OSS gateway, Work Economics, or Economic
-  Authority code paths or storage — fully isolated from all three.
+  Authority code paths or storage — fully isolated from all three. The
+  Work Economics connector above is a same-process data export, not a
+  shared database, shared ledger, or dependency between the services.
 
 ## Getting started
 

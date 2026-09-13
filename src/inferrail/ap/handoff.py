@@ -16,6 +16,15 @@ from typing import Any, Protocol
 from .models import Action, ExceptionCase, Recommendation
 
 
+class HandoffSendFailed(RuntimeError):
+    """Raised by `engine.RecoveryEngine._do_handoff` when the customer's
+    `HumanReviewHandoff.send` callback itself raises -- distinguishable
+    from other errors so a caller knows specifically that no handoff row
+    was recorded (the receiving system never acknowledged anything) and
+    can retry later via `RecoveryEngine.ensure_handoff`, which is safe to
+    call repeatedly."""
+
+
 class HumanReviewHandoff(Protocol):
     def send(
         self,

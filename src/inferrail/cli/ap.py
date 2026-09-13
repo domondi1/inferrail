@@ -9,6 +9,11 @@
   key, no network access, and no money spent.
 - `inferrail ap report` -- print the auditable report for a given store.
 - `inferrail ap outcome` -- record a real human-review outcome.
+- `inferrail ap reap` -- operator recovery: finds every decision whose
+  retry lease has expired (its worker is presumed dead -- see
+  `inferrail.ap.engine.RecoveryEngine.reap_stale_retries`) and moves each
+  to `awaiting_human_review`, never re-invoking the customer's retry
+  adapter. Safe to run on a schedule.
 - `inferrail ap batch` -- historical/shadow-mode analysis over an already-
   exported vendor dataset (see `inferrail.ap.batch`); never executes
   anything.
@@ -93,6 +98,11 @@ def run_ap_demo() -> int:
                 cost_usd=Decimal("0.06"),
                 confidence=0.97,
                 provider="fixture",
+                raw_fields={
+                    "invoice_number": "INV-10482",
+                    "vendor": "Acme Supply Co",
+                    "total": "1420.00",
+                },
             ),
             "demo-retry-fails": RetryAttemptResult(
                 attempt_id="demo-retry-fails-retry",
@@ -101,7 +111,11 @@ def run_ap_demo() -> int:
                 confidence=0.35,
                 provider="fixture",
             ),
-        }
+        },
+        estimated_costs_by_work_id={
+            "demo-retry-succeeds": Decimal("0.06"),
+            "demo-retry-fails": Decimal("0.06"),
+        },
     )
     engine = RecoveryEngine(
         store=store,
@@ -116,6 +130,7 @@ def run_ap_demo() -> int:
     result = engine.decide(case, now=now)
     print(f"   recommended={result.recommended_action.value} status={result.status} "
           f"retry_status={result.retry_status.value if result.retry_status else None}")
+    print(f"   recovered fields (usable data, not just a status): {result.raw_fields}")
 
     print("\n2. Eligible exception, retry does not resolve it -> established human review:")
     case = _demo_case("demo-retry-fails", confidence=0.60, opened_at=now)
@@ -207,6 +222,34 @@ def run_ap_outcome(
     return 0
 
 
+def run_ap_reap(db_path: Path, *, as_json: bool) -> int:
+    """Operator recovery: reaps every decision whose retry lease has
+    expired. Talks to the store directly (like `run_ap_outcome`) rather
+    than constructing a full `RecoveryEngine` -- reaping is a pure
+    store-level status transition that never invokes a retry adapter or
+    sends a handoff (see `inferrail.ap.store.RecoveryStore.
+    reap_stale_retry_lease`); a caller wanting a handoff sent for a
+    reaped work_id uses `RecoveryEngine.ensure_handoff` with its own
+    re-supplied `ExceptionCase`."""
+    if not db_path.exists():
+        print(f"error: no store found at {db_path}", file=sys.stderr)
+        return 1
+    store = RecoveryStore(db_path)
+    reaped: list[dict[str, str]] = []
+    for row in store.find_stale_retry_leases():
+        result = store.reap_stale_retry_lease(row["work_id"])
+        if result is not None:
+            reaped.append({"work_id": row["work_id"], "reaped_attempt_id": result["attempt_id"]})
+    if as_json:
+        print(json.dumps({"reaped": reaped}, indent=2))
+    else:
+        if not reaped:
+            print("no stale retry leases found")
+        for item in reaped:
+            print(f"reaped work_id={item['work_id']} attempt_id={item['reaped_attempt_id']}")
+    return 0
+
+
 def run_ap_batch(
     attempts_path: Path,
     reviews_path: Path,
@@ -257,5 +300,6 @@ __all__ = [
     "run_ap_batch",
     "run_ap_demo",
     "run_ap_outcome",
+    "run_ap_reap",
     "run_ap_report",
 ]

@@ -22,12 +22,20 @@ Two reference implementations ship with this release:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .models import AttemptStatus, ExceptionCase, RetryAttemptResult
+from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
+
+from .models import AttemptStatus, CostEstimate, ExceptionCase, RetryAttemptResult
+
+# The output-token ceiling `OpenAIRetryAdapter.estimate_cost` assumes when
+# projecting a worst-case cost, and the actual `max_completion_tokens` the
+# real API call is capped at -- these must stay equal, or the estimate
+# would not be a real bound on what the call can cost.
+_MAX_COMPLETION_TOKENS = 500
 
 
 class RetryAdapter(Protocol):
@@ -36,11 +44,33 @@ class RetryAdapter(Protocol):
     `engine.RecoveryEngine`. Must never be called more than once for the
     same checkpoint -- the engine enforces this via its idempotency
     store, not this protocol.
+
+    `estimate_cost` (see below) is **not** part of this required
+    interface -- an adapter implements it only if it can genuinely bound
+    its next call's cost. `Protocol` cannot express "optional method" at
+    runtime, so declaring it here would force every adapter to implement
+    it (or be cast past the check); instead, `get_cost_estimate` detects
+    support via `getattr`.
     """
 
     name: str
 
     def retry(self, case: ExceptionCase) -> RetryAttemptResult: ...
+
+
+def get_cost_estimate(adapter: RetryAdapter, case: ExceptionCase) -> CostEstimate | None:
+    """Calls `adapter.estimate_cost(case)` if the adapter implements it,
+    else returns `None`. Used by `engine.RecoveryEngine._execute_retry`
+    (via `policy.authorize_retry_cost`) to decide whether the next paid
+    attempt may proceed at all. `None` is never treated as "free" -- it
+    means "this adapter cannot bound the cost," which `authorize_retry_cost`
+    always treats as not-authorized, routing to human review instead of
+    invoking an unbounded action."""
+    estimate_fn = getattr(adapter, "estimate_cost", None)
+    if estimate_fn is None:
+        return None
+    result = estimate_fn(case)
+    return result if isinstance(result, CostEstimate) else None
 
 
 @dataclass(frozen=True)
@@ -56,6 +86,11 @@ class FixtureRetryAdapter:
 
     results_by_work_id: dict[str, RetryAttemptResult]
     name: str = "fixture_retry_adapter"
+    estimated_costs_by_work_id: dict[str, Decimal] = field(default_factory=dict)
+    """Declared pre-flight cost estimate per work_id, for exercising
+    `policy.authorize_retry_cost` in tests/demos. A work_id with no entry
+    here has no estimate (`estimate_cost` returns `None`) -- never a
+    fabricated one."""
 
     def retry(self, case: ExceptionCase) -> RetryAttemptResult:
         result = self.results_by_work_id.get(case.work_id)
@@ -65,6 +100,12 @@ class FixtureRetryAdapter:
                 "-- add one to results_by_work_id; this adapter never fabricates a result"
             )
         return result
+
+    def estimate_cost(self, case: ExceptionCase) -> CostEstimate | None:
+        amount = self.estimated_costs_by_work_id.get(case.work_id)
+        if amount is None:
+            return None
+        return CostEstimate(amount_usd=amount, basis="fixture_declared")
 
 
 class OpenAIRetryAdapter:
@@ -115,7 +156,45 @@ class OpenAIRetryAdapter:
                 "OpenAIRetryAdapter requires OPENAI_API_KEY (or an explicit api_key) -- "
                 "this is live-provider execution, never silently substituted with a fixture"
             )
-        return OpenAI(api_key=api_key)
+        # max_retries=0: the openai SDK defaults to retrying transient
+        # errors itself (commonly up to 2 extra HTTP requests per call),
+        # which would silently violate this adapter's "called at most
+        # once" promise -- Inferrail's own retry-vs-review decision, not
+        # the HTTP client's, governs whether a second attempt happens.
+        # An explicit timeout keeps one call from hanging past the
+        # decision deadline instead of failing fast into the ambiguous
+        # path (see engine.RecoveryEngine._execute_retry).
+        return OpenAI(api_key=api_key, max_retries=0, timeout=30.0)
+
+    def estimate_cost(self, case: ExceptionCase) -> CostEstimate | None:
+        """A defensible upper bound, not a hard billing guarantee -- see
+        `models.CostEstimate`. Projects input tokens from the invoice
+        text's character length (~4 chars/token, a standard rough
+        estimator) and assumes the worst case of `_MAX_COMPLETION_TOKENS`
+        output tokens, the same ceiling the real call in `retry()` is
+        capped at via `max_completion_tokens` -- without that cap, this
+        estimate would not actually bound the call it authorizes."""
+        invoice_text = self._invoice_text_by_work_id.get(case.work_id)
+        if invoice_text is None:
+            return None
+        price = BUILTIN_OPENAI_PRICING.get(self._model)
+        if price is None:
+            return None
+        projected_input_tokens = max(1, len(invoice_text) // 4)
+        amount = (
+            Decimal(projected_input_tokens) * price.input_usd_per_million / Decimal(1_000_000)
+            + Decimal(_MAX_COMPLETION_TOKENS)
+            * price.output_usd_per_million
+            / Decimal(1_000_000)
+        )
+        return CostEstimate(
+            amount_usd=amount,
+            basis=(
+                f"{self._model} builtin catalog rate ({price.source}, "
+                f"verified {price.verified_date}), ~4 chars/token input "
+                f"projection, {_MAX_COMPLETION_TOKENS}-token output ceiling"
+            ),
+        )
 
     def retry(self, case: ExceptionCase) -> RetryAttemptResult:
         invoice_text = self._invoice_text_by_work_id.get(case.work_id)
@@ -138,6 +217,7 @@ class OpenAIRetryAdapter:
             model=self._model,
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=_MAX_COMPLETION_TOKENS,
         )
         usage = getattr(response, "usage", None)
         cost_usd = _estimate_cost_usd(self._model, usage)
@@ -172,21 +252,20 @@ class OpenAIRetryAdapter:
 
 
 def _estimate_cost_usd(model: str, usage: object) -> Decimal | None:
-    """Best-effort cost estimate from response usage; `None` (never a
-    fabricated zero) if usage isn't reported or the model isn't priced
-    here. This is deliberately not wired into Inferrail's own gateway
-    pricing catalog (`src/inferrail/pricing`) -- this adapter may run
-    against a model the catalog doesn't carry, and this module must not
-    silently assume one."""
+    """Actual cost from response usage, using the same sourced, dated
+    `BUILTIN_OPENAI_PRICING` catalog `estimate_cost` uses for its
+    pre-flight bound (`src/inferrail/pricing/builtin.py` -- each entry
+    carries its own `source`/`verified_date`, never an unsourced guess).
+    `None` (never a fabricated zero) if usage isn't reported or the
+    model isn't in that catalog."""
     prompt_tokens = getattr(usage, "prompt_tokens", None)
     completion_tokens = getattr(usage, "completion_tokens", None)
     if prompt_tokens is None or completion_tokens is None:
         return None
-    # Labeled placeholder rates for gpt-4o-mini only -- an assumption for
-    # demo cost estimation, not a verified, sourced price. Any other model
-    # returns None rather than an invented rate.
-    if model != "gpt-4o-mini":
+    price = BUILTIN_OPENAI_PRICING.get(model)
+    if price is None:
         return None
-    input_rate = Decimal("0.15") / Decimal(1_000_000)
-    output_rate = Decimal("0.60") / Decimal(1_000_000)
-    return (Decimal(prompt_tokens) * input_rate) + (Decimal(completion_tokens) * output_rate)
+    return (
+        Decimal(prompt_tokens) * price.input_usd_per_million / Decimal(1_000_000)
+        + Decimal(completion_tokens) * price.output_usd_per_million / Decimal(1_000_000)
+    )

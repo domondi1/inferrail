@@ -140,3 +140,101 @@ def test_record_outcome_without_a_decision_raises_keyerror(tmp_path: Path) -> No
             work_id="NEVER", outcome="accepted", timestamp=1.0, source="s",
             correction_delta_usd=None, review_cost_usd=None,
         )
+
+
+def _leased_decision(store: RecoveryStore, work_id: str, *, lease_expires_at: float) -> None:
+    store.create_decision(
+        work_id=work_id, decision_id=f"dec-{work_id}", checkpoint_attempt_id="A1",
+        failure_type="low_confidence", confidence="0.6", cost_so_far_usd="0.10",
+        policy_name="candidate_policy", policy_version="ap.policy/v1",
+        recommended_action="retry", reason="test", status="retry_in_progress",
+        worker_id="dead-worker", lease_expires_at=lease_expires_at,
+    )
+
+
+def test_reap_stale_retry_lease_transitions_to_awaiting_human_review(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W7", lease_expires_at=100.0)
+
+    result = store.reap_stale_retry_lease("W7", now=200.0)
+    assert result is not None
+    assert result["status"] == "ambiguous"
+    assert result["provider"] == "lease_reaper"
+
+    decision = store.get_decision("W7")
+    assert decision is not None
+    assert decision["status"] == "awaiting_human_review"
+    assert decision["worker_id"] is None
+    assert decision["lease_expires_at"] is None
+
+
+def test_reap_does_nothing_if_lease_not_yet_stale(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W8", lease_expires_at=500.0)
+
+    result = store.reap_stale_retry_lease("W8", now=200.0)
+    assert result is None
+    assert store.get_decision("W8")["status"] == "retry_in_progress"
+
+
+def test_reap_is_idempotent_on_repeat_calls(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W9", lease_expires_at=100.0)
+
+    first = store.reap_stale_retry_lease("W9", now=200.0)
+    assert first is not None
+    second = store.reap_stale_retry_lease("W9", now=200.0)
+    assert second is None  # already reaped -- no-op, not a duplicate attempt row
+
+    attempts = store.get_retry_attempt("W9")
+    assert attempts is not None and attempts["attempt_id"] == "ret_reaped_W9"
+
+
+def test_reap_does_nothing_if_a_real_attempt_already_exists(tmp_path: Path) -> None:
+    """The race where the "dead" worker actually finished between the
+    staleness scan and the reap call -- the real result must never be
+    overwritten or duplicated."""
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W10", lease_expires_at=100.0)
+    store.record_retry_attempt(
+        work_id="W10", attempt_id="ret-real", status="success",
+        cost_usd="0.06", confidence="0.9", provider="fixture",
+    )
+
+    result = store.reap_stale_retry_lease("W10", now=200.0)
+    assert result is None
+    attempts = store.get_retry_attempt("W10")
+    assert attempts["attempt_id"] == "ret-real"
+
+
+def test_find_stale_retry_leases_only_returns_expired_ones(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "STALE", lease_expires_at=100.0)
+    _leased_decision(store, "FRESH", lease_expires_at=9999.0)
+
+    stale = store.find_stale_retry_leases(now=200.0)
+    assert [row["work_id"] for row in stale] == ["STALE"]
+
+
+def test_clear_retry_lease_removes_worker_and_expiry(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W11", lease_expires_at=9999.0)
+    store.clear_retry_lease("W11")
+    decision = store.get_decision("W11")
+    assert decision["worker_id"] is None
+    assert decision["lease_expires_at"] is None
+
+
+def test_record_and_get_late_retry_results(tmp_path: Path) -> None:
+    store = RecoveryStore(tmp_path / "ap.sqlite3")
+    _leased_decision(store, "W12", lease_expires_at=100.0)
+    store.reap_stale_retry_lease("W12", now=200.0)
+
+    store.record_late_retry_result(
+        work_id="W12", attempt_id="ret-late", status="success",
+        cost_usd="0.06", provider="fixture", detail="arrived late",
+    )
+    late = store.get_late_retry_results("W12")
+    assert len(late) == 1
+    assert late[0]["attempt_id"] == "ret-late"
+    assert late[0]["status"] == "success"

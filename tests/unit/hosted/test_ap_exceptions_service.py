@@ -222,3 +222,219 @@ def test_malformed_policy_config_is_422(client):
     }
     resp = client.post("/v1/decisions", json=body, headers=_auth())
     assert resp.status_code == 422
+
+
+def test_report_marks_incomplete_when_retry_succeeded_but_validation_failed(client):
+    """Hosted regression for the reproduced cost-completeness defect: a
+    retry attempt recorded as status="success" but validation_passed=false
+    must not be reported as cost-complete."""
+    body = {
+        "work_id": "WORK-6",
+        "checkpoint_attempt_id": "att-6",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+    client.post(
+        "/v1/decisions/WORK-6/retry-attempts",
+        json={
+            "attempt_id": "ret-6", "status": "success", "cost_usd": "0.06",
+            "validation_passed": False, "validator_version": "ap.validator/v1",
+        },
+        headers=_auth(),
+    )
+    report = client.get("/v1/report", headers=_auth())
+    row = next(r for r in report.json()["rows"] if r["work_id"] == "WORK-6")
+    assert row["retry_status"] == "success"
+    assert row["validation_passed"] is False
+    assert row["observed_cost_complete"] is False
+
+
+def test_report_marks_incomplete_when_outcome_recorded_without_review_cost(client):
+    body = {
+        "work_id": "WORK-7",
+        "checkpoint_attempt_id": "att-7",
+        "failure_type": "low_confidence",
+        "confidence": 0.95,  # outside retry band -> human_review
+        "policy_config": _POLICY_CONFIG,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+    client.post(
+        "/v1/decisions/WORK-7/outcome",
+        json={"outcome": "corrected"},  # no review_cost_usd
+        headers=_auth(),
+    )
+    report = client.get("/v1/report", headers=_auth())
+    row = next(r for r in report.json()["rows"] if r["work_id"] == "WORK-7")
+    assert row["established_outcome"] == "corrected"
+    assert row["observed_cost_complete"] is False
+
+
+def test_reap_endpoint_transitions_a_stale_decision(client):
+    body = {
+        "work_id": "WORK-8",
+        "checkpoint_attempt_id": "att-8",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,  # in retry band -> retry_in_progress
+        "policy_config": _POLICY_CONFIG,
+        "lease_seconds": 0.01,
+    }
+    created = client.post("/v1/decisions", json=body, headers=_auth())
+    assert created.json()["status"] == "retry_in_progress"
+
+    import time
+
+    time.sleep(0.05)
+    reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
+    assert reap.status_code == 200
+    assert reap.json() == {"work_id": "WORK-8", "reaped": True}
+
+    after = client.get("/v1/decisions/WORK-8", headers=_auth())
+    assert after.json()["status"] == "awaiting_human_review"
+
+    # Idempotent: a repeat reap for the same work_id is a no-op.
+    second_reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
+    assert second_reap.json() == {"work_id": "WORK-8", "reaped": False}
+
+
+def test_reap_endpoint_404s_for_unknown_work_id(client):
+    resp = client.post("/v1/decisions/NEVER-EXISTED/reap", headers=_auth())
+    assert resp.status_code == 404
+
+
+def test_reap_stale_sweep_endpoint_returns_count_and_is_tenant_isolated(client):
+    import time
+
+    for i, key in enumerate(["key-a", "key-a", "key-b"]):
+        client.post(
+            "/v1/decisions",
+            json={
+                "work_id": f"SWEEP-{i}", "checkpoint_attempt_id": f"att-sweep-{i}",
+                "failure_type": "low_confidence", "confidence": 0.6,
+                "policy_config": _POLICY_CONFIG, "lease_seconds": 0.01,
+            },
+            headers=_auth(key),
+        )
+    time.sleep(0.05)
+
+    swept_a = client.post("/v1/reap-stale", headers=_auth("key-a"))
+    assert swept_a.json()["reaped_count"] == 2
+    assert set(swept_a.json()["reaped_work_ids"]) == {"SWEEP-0", "SWEEP-1"}
+
+    # Tenant key-b's own stale lease is untouched by key-a's sweep.
+    still_in_progress = client.get("/v1/decisions/SWEEP-2", headers=_auth("key-b"))
+    assert still_in_progress.json()["status"] == "retry_in_progress"
+
+    swept_b = client.post("/v1/reap-stale", headers=_auth("key-b"))
+    assert swept_b.json()["reaped_count"] == 1
+    assert swept_b.json()["reaped_work_ids"] == ["SWEEP-2"]
+
+
+def test_retry_attempt_transitions_decision_status_off_retry_in_progress(client):
+    """Regression: recording a retry attempt used to leave the decision
+    stuck at retry_in_progress forever, so /v1/report's
+    observed_cost_complete could never become true on the hosted path.
+    Now it mirrors the local SDK engine's own transition."""
+    body = {
+        "work_id": "WORK-9",
+        "checkpoint_attempt_id": "att-9",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    created = client.post("/v1/decisions", json=body, headers=_auth())
+    assert created.json()["status"] == "retry_in_progress"
+
+    client.post(
+        "/v1/decisions/WORK-9/retry-attempts",
+        json={
+            "attempt_id": "ret-9", "status": "success", "cost_usd": "0.06",
+            "validation_passed": True, "validator_version": "ap.validator/v1",
+        },
+        headers=_auth(),
+    )
+    after = client.get("/v1/decisions/WORK-9", headers=_auth())
+    assert after.json()["status"] == "retry_resolved"
+
+    report = client.get("/v1/report", headers=_auth())
+    row = next(r for r in report.json()["rows"] if r["work_id"] == "WORK-9")
+    assert row["observed_cost_complete"] is True
+
+
+def test_retry_attempt_failed_validation_transitions_to_awaiting_human_review(client):
+    body = {
+        "work_id": "WORK-10",
+        "checkpoint_attempt_id": "att-10",
+        "failure_type": "low_confidence",
+        "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    client.post("/v1/decisions", json=body, headers=_auth())
+    client.post(
+        "/v1/decisions/WORK-10/retry-attempts",
+        json={
+            "attempt_id": "ret-10", "status": "success", "cost_usd": "0.06",
+            "validation_passed": False, "validator_version": "ap.validator/v1",
+        },
+        headers=_auth(),
+    )
+    after = client.get("/v1/decisions/WORK-10", headers=_auth())
+    assert after.json()["status"] == "awaiting_human_review"
+
+
+def _load_hosted_client_example():
+    example_path = (
+        Path(__file__).resolve().parents[3]
+        / "examples" / "ap_invoice_exception_recovery" / "hosted_client_example.py"
+    )
+    spec = importlib.util.spec_from_file_location("hosted_client_example", example_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # needed for dataclass field resolution under PEP 563
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_hosted_client_example_end_to_end_retry_path(client, tmp_path):
+    """Runs the example's real walkthrough function against the FastAPI
+    TestClient fixture -- one coherent flow, not separately-exercised
+    endpoints -- and asserts real field-level values in the final
+    report, not just HTTP 200s."""
+    example = _load_hosted_client_example()
+    receiver = example.ExampleReviewReceiver(path=tmp_path / "reviews.jsonl")
+
+    report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id="HOSTED-EXAMPLE-1", review_receiver=receiver,
+    )
+    row = next(r for r in report["rows"] if r["work_id"] == "HOSTED-EXAMPLE-1")
+    assert row["status"] == "retry_resolved"
+    assert row["retry_status"] == "success"
+    assert row["observed_cost_usd"] == "0.07"
+    assert row["observed_cost_complete"] is True
+    assert row["handoff_ref"] is None  # resolved by retry -- no review needed
+
+
+def test_hosted_client_example_review_path_records_handoff_and_outcome(client, tmp_path):
+    example = _load_hosted_client_example()
+    receiver = example.ExampleReviewReceiver(path=tmp_path / "reviews.jsonl")
+
+    # Force the review path directly via the decisions endpoint first,
+    # then let the walkthrough's own idempotent replay pick it up.
+    client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "HOSTED-EXAMPLE-2", "checkpoint_attempt_id": "att-1",
+            "failure_type": "low_confidence", "confidence": 0.95,  # outside retry band
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=_auth("key-a"),
+    )
+    report = example.run_hosted_client_walkthrough(
+        client, api_key="key-a", work_id="HOSTED-EXAMPLE-2", review_receiver=receiver,
+    )
+    row = next(r for r in report["rows"] if r["work_id"] == "HOSTED-EXAMPLE-2")
+    assert row["established_outcome"] == "corrected"
+    assert row["handoff_ref"] is not None
+    assert row["observed_cost_complete"] is True
+    assert receiver.path.exists()

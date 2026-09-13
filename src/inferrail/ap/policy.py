@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from .models import Action, ExceptionCase, FailureType, Recommendation
+from .models import Action, CostEstimate, ExceptionCase, FailureType, Recommendation
 
 CONFIG_VERSION = "ap.policy/v1"
 
@@ -161,4 +161,47 @@ def recommend(
         Action.HUMAN_REVIEW,
         f"confidence {case.confidence:.2f} outside the retry band -- "
         f"route to {config.fallback_action.value}",
+    )
+
+
+def authorize_retry_cost(
+    *, estimate: CostEstimate | None, max_retry_cost_usd: Decimal
+) -> tuple[bool, str]:
+    """Authorizes (or refuses) the *next* retry attempt's own cost --
+    distinct from, and checked separately from, `recommend`'s sunk-cost
+    check above (`case.cost_so_far_usd` vs. `max_retry_cost_usd`, already
+    spent, unaffected by what happens next). This function instead gates
+    an attempt that hasn't happened yet, using the adapter's own
+    `CostEstimate` (see `adapters.get_cost_estimate`).
+
+    Deliberately reuses `max_retry_cost_usd` for both checks -- one
+    configured number, two different comparisons (already-spent vs.
+    about-to-spend) -- rather than adding a second config field; a future
+    `config_version` may split them if that reuse proves confusing in
+    practice, but this release keeps one number.
+
+    An unknown estimate (`None`) is never authorized: "the adapter cannot
+    bound this attempt's cost" is treated the same as "the bound is too
+    high" -- both route to human review instead of an unbounded paid
+    action. Never a hard billing guarantee: see `models.CostEstimate`
+    and the honest-overrun recording in `report.LiveReportRow.
+    retry_cost_overrun_usd` for what happens if the real charge exceeds
+    this authorization anyway.
+    """
+    if estimate is None:
+        return (
+            False,
+            "no cost estimate available for the next attempt -- "
+            "this adapter cannot bound it, so it is not authorized",
+        )
+    if estimate.amount_usd > max_retry_cost_usd:
+        return (
+            False,
+            f"estimated cost ${estimate.amount_usd} for the next attempt exceeds "
+            f"max_retry_cost_usd ${max_retry_cost_usd}",
+        )
+    return (
+        True,
+        f"estimated cost ${estimate.amount_usd} for the next attempt is within "
+        f"max_retry_cost_usd ${max_retry_cost_usd} ({estimate.basis})",
     )

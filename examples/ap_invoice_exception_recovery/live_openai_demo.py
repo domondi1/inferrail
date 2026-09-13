@@ -34,6 +34,7 @@ from inferrail.ap import (
     PolicyConfig,
     RecoveryEngine,
     RecoveryStore,
+    authorize_retry_cost,
 )
 
 INVOICE_TEXT = (
@@ -88,13 +89,34 @@ def main() -> int:
         source="live_openai_demo_example",
     )
 
-    print("Making one real OpenAI call to re-extract this invoice's fields...")
+    # Surfaced explicitly, before the real call: the same pre-flight
+    # authorization RecoveryEngine._execute_retry performs internally --
+    # see docs/capabilities/ap-invoice-exception-recovery.md's
+    # "Prospective retry-cost authorization." A defensible upper bound,
+    # never a hard OpenAI billing guarantee.
+    estimate = adapter.estimate_cost(case)
+    authorized, reason = authorize_retry_cost(
+        estimate=estimate, max_retry_cost_usd=config.max_retry_cost_usd
+    )
+    print(f"pre-flight cost authorization: authorized={authorized} ({reason})")
+    if not authorized:
+        print("not authorized -- the engine will route to human review without calling OpenAI.")
+
+    print("\nMaking one real OpenAI call to re-extract this invoice's fields...")
     result = engine.decide(case)
     print(f"\ndecision_id={result.decision_id}")
     print(f"recommended_action={result.recommended_action.value}")
     print(f"status={result.status}")
     print(f"retry_status={result.retry_status.value if result.retry_status else None}")
     print(f"retry_cost_usd={result.retry_cost_usd}")
+    if result.status == "retry_resolved":
+        print(f"recovered fields (usable data, not just a status): {result.raw_fields}")
+        # Tolerant to real model variance -- checks the known invoice
+        # number actually made it back, not an exact-match on every
+        # field (a live model call is not deterministic).
+        assert result.raw_fields.get("invoice_number", "").strip("# ") == "7734", (
+            f"expected the real invoice_number back from the live call, got {result.raw_fields!r}"
+        )
     if result.handoff_ref:
         print(f"handed off to human review: {result.handoff_ref}")
     return 0

@@ -25,13 +25,14 @@ See `docs/capabilities/ap-invoice-exception-recovery.md` and
 
 from __future__ import annotations
 
-from .adapters import FixtureRetryAdapter, OpenAIRetryAdapter, RetryAdapter
+from .adapters import FixtureRetryAdapter, OpenAIRetryAdapter, RetryAdapter, get_cost_estimate
 from .engine import DecisionResult, RecoveryEngine
-from .handoff import HumanReviewHandoff, LoggingHandoff
+from .handoff import HandoffSendFailed, HumanReviewHandoff, LoggingHandoff
 from .models import (
     Action,
     AttemptStatus,
     CheckResult,
+    CostEstimate,
     DecisionStatus,
     Eligibility,
     ExceptionCase,
@@ -42,15 +43,17 @@ from .models import (
     ReviewOutcomeRecord,
     ValidationResult,
 )
-from .policy import PolicyConfig, recommend
+from .policy import PolicyConfig, authorize_retry_cost, recommend
 from .store import AmbiguousRetryError, RecoveryStore
 from .validation import FieldPresenceAndConfidenceValidator, Validator
+from .work_economics_export import export_work_economics_events
 
 __all__ = [
     "Action",
     "AmbiguousRetryError",
     "AttemptStatus",
     "CheckResult",
+    "CostEstimate",
     "DecisionResult",
     "DecisionStatus",
     "Eligibility",
@@ -58,6 +61,7 @@ __all__ = [
     "FailureType",
     "FieldPresenceAndConfidenceValidator",
     "FixtureRetryAdapter",
+    "HandoffSendFailed",
     "HumanReviewHandoff",
     "LoggingHandoff",
     "OpenAIRetryAdapter",
@@ -71,5 +75,8 @@ __all__ = [
     "ReviewOutcomeRecord",
     "ValidationResult",
     "Validator",
+    "authorize_retry_cost",
+    "export_work_economics_events",
+    "get_cost_estimate",
     "recommend",
 ]

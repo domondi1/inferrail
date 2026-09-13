@@ -21,7 +21,13 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-from inferrail.cli.ap import run_ap_batch, run_ap_demo, run_ap_outcome, run_ap_report
+from inferrail.cli.ap import (
+    run_ap_batch,
+    run_ap_demo,
+    run_ap_outcome,
+    run_ap_reap,
+    run_ap_report,
+)
 from inferrail.cli.demo import run_demo
 from inferrail.cli.report import run_report
 from inferrail.cli.transaction import run_transaction
@@ -210,6 +216,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_outcome.add_argument("--review-cost-usd", default=None)
     ap_outcome.add_argument("--source", default="cli")
 
+    ap_reap = ap_sub.add_parser(
+        "reap",
+        help=(
+            "Operator recovery: move any decision whose retry lease has expired to "
+            "awaiting_human_review, without re-invoking the retry adapter."
+        ),
+    )
+    ap_reap.add_argument("--db", required=True, help="Path to the AP RecoveryStore sqlite3 file.")
+    ap_reap.add_argument("--json", action="store_true", help="Print the reaped work_ids as JSON.")
+
     ap_batch = ap_sub.add_parser(
         "batch",
         help=(
@@ -358,6 +374,8 @@ def _cmd_ap(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             review_cost_usd=args.review_cost_usd,
             source=args.source,
         )
+    if args.ap_command == "reap":
+        return run_ap_reap(Path(args.db), as_json=args.json)
     if args.ap_command == "batch":
         return run_ap_batch(
             Path(args.attempts),

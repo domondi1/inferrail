@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from inferrail.ap.models import Action, ExceptionCase, FailureType
-from inferrail.ap.policy import CONFIG_VERSION, PolicyConfig, recommend
+from inferrail.ap.models import Action, CostEstimate, ExceptionCase, FailureType
+from inferrail.ap.policy import CONFIG_VERSION, PolicyConfig, authorize_retry_cost, recommend
 
 NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -129,3 +129,34 @@ def test_no_opened_at_never_triggers_deadline_check() -> None:
 def test_invalid_config_is_rejected_at_construction(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         _config(**kwargs)
+
+
+def test_authorize_retry_cost_below_limit() -> None:
+    authorized, reason = authorize_retry_cost(
+        estimate=CostEstimate(amount_usd=Decimal("0.50"), basis="test"),
+        max_retry_cost_usd=Decimal("1.00"),
+    )
+    assert authorized is True
+    assert "0.50" in reason
+
+
+def test_authorize_retry_cost_above_limit() -> None:
+    """Reproduced defect: max_retry_cost_usd=$1, prior spend $0.10, but a
+    fixture adapter reporting a $10 retry was still invoked and accepted
+    -- the old check only compared sunk cost, never the next attempt's
+    own cost. This function is the fix: it authorizes (or refuses) the
+    next attempt's cost directly."""
+    authorized, reason = authorize_retry_cost(
+        estimate=CostEstimate(amount_usd=Decimal("10.00"), basis="test"),
+        max_retry_cost_usd=Decimal("1.00"),
+    )
+    assert authorized is False
+    assert "10.00" in reason and "1.00" in reason
+
+
+def test_authorize_retry_cost_unknown_estimate_is_not_authorized() -> None:
+    authorized, reason = authorize_retry_cost(
+        estimate=None, max_retry_cost_usd=Decimal("1.00")
+    )
+    assert authorized is False
+    assert "cannot bound" in reason

@@ -170,6 +170,31 @@ class ValidationResult:
 
 
 @dataclass(frozen=True)
+class CostEstimate:
+    """A `RetryAdapter`'s own pre-flight bound on what its next `retry()`
+    call will cost, used to authorize (or refuse) that attempt *before*
+    it is made -- see `policy.authorize_retry_cost`.
+
+    **Never a hard provider-billing guarantee.** A provider's real,
+    metered charge can still exceed `amount_usd` (see the honest-overrun
+    recording in `report.LiveReportRow.retry_cost_overrun_usd`) -- this
+    is a defensible upper bound the adapter is willing to stand behind
+    for authorization purposes, not a price lock.
+    """
+
+    amount_usd: Decimal
+    basis: str
+    """Free text describing how `amount_usd` was derived (e.g. "gpt-4o-mini
+    builtin catalog rate, ~4 chars/token input projection, 500-token
+    output ceiling") -- kept so a report can always explain why an
+    attempt was or wasn't authorized, not just that it was."""
+
+    def __post_init__(self) -> None:
+        if self.amount_usd < 0:
+            raise ValueError(f"amount_usd cannot be negative: {self.amount_usd!r}")
+
+
+@dataclass(frozen=True)
 class Recommendation:
     """One policy's answer for one case, plus why."""
 

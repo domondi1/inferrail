@@ -64,16 +64,58 @@ All routes except `/health` require `Authorization: Bearer <api-key>`.
   original decision (`idempotent_replay: true`), never re-evaluated.
 - `GET /v1/decisions/{work_id}` — fetch one decision.
 - `POST /v1/decisions/{work_id}/retry-attempts` — record the result of a
-  retry your own `RetryAdapter` already executed locally.
+  retry your own `RetryAdapter` already executed locally. Transitions
+  the decision's status off `retry_in_progress` (to `retry_resolved` or
+  `awaiting_human_review`, mirroring the local SDK engine's own
+  transition) so `/v1/report`'s `observed_cost_complete` can become
+  `true`. **This service never invokes your adapter itself** — before
+  calling this endpoint, run `inferrail.ap.adapters.get_cost_estimate`
+  and `inferrail.ap.policy.authorize_retry_cost` locally to decide
+  whether to invoke your adapter at all, and pass the resulting
+  `pre_flight_estimate_usd` here for an honest overrun to be recorded if
+  the real cost exceeds it. See
+  [`examples/ap_invoice_exception_recovery/hosted_client_example.py`](../../examples/ap_invoice_exception_recovery/hosted_client_example.py)
+  for the full pattern.
 - `POST /v1/decisions/{work_id}/handoff` — record a human-review
   handoff reference your own system already generated.
 - `POST /v1/decisions/{work_id}/outcome` — record a real human-review
   outcome (independently establishes correctness for that work_id).
+- `POST /v1/decisions/{work_id}/reap` — operator recovery for one
+  work_id whose retry lease has expired (your own caller's process died
+  after receiving a `retry_in_progress` decision but before calling back
+  `/retry-attempts`). Idempotent: a repeat call once the lease is no
+  longer stale returns `reaped: false`.
+- `POST /v1/reap-stale` — sweeps every stale retry lease for your
+  tenant. Safe to call on a schedule (a cron job, a health-check
+  companion task).
 - `GET /v1/report` — the joined, auditable report for your tenant
   (capped at `AP_MAX_REPORT_ROWS`, default 500 — paginate your own data
   client-side above that by deleting/archiving resolved work_ids).
 - `DELETE /v1/decisions/{work_id}` — retention/deletion: irreversibly
   removes every record for one `work_id`.
+
+A running instance also auto-serves `GET /openapi.json` (FastAPI's
+built-in schema) — the authoritative, always-current machine-readable
+reference for this exact service.
+
+### Recovering interrupted work (crash recovery)
+
+If your own process dies after `POST /v1/decisions` returns a
+`retry_in_progress` decision but before you call back
+`/retry-attempts`, that decision's lease (`lease_seconds` in the
+request body, default 300s) eventually expires. Recover it with:
+
+```bash
+curl -X POST http://127.0.0.1:8422/v1/reap-stale -H "Authorization: Bearer dev-key-1"
+# {"reaped_count": 1, "reaped_work_ids": ["INV-1001"]}
+```
+
+This moves the decision to `awaiting_human_review` with a synthetic
+`ambiguous` retry attempt recorded — it never re-invokes your adapter
+(this service never had it to begin with), and never assumes the
+interrupted attempt succeeded. Run this on a schedule (a cron job or a
+periodic health-check companion task) so interrupted work doesn't sit
+stuck indefinitely.
 
 ## Environment variables
 
@@ -120,8 +162,11 @@ provide and SQLite-on-a-disk does not.
 ## Rollback
 
 This service keeps no server-side migration state beyond the SQLite
-schema (additive `CREATE TABLE IF NOT EXISTS`, safe to run against an
-older data directory). To roll back: redeploy the previous image/commit
+schema (additive `CREATE TABLE IF NOT EXISTS` plus a small number of
+`ALTER TABLE ADD COLUMN` migrations for columns introduced after a
+tenant's database file was first created — both safe to run against an
+older data directory, and skipped automatically if already applied). To
+roll back: redeploy the previous image/commit
 against the same `AP_DATA_DIR` persistent disk — older code never
 deletes columns or tables newer code added, so a rollback only loses
 access to fields the newer code introduced, never data. Verify with
