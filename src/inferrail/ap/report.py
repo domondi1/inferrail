@@ -1,0 +1,183 @@
+"""The inspectable report for the live decision path: joins every
+persisted decision, retry attempt, handoff, and recorded outcome from a
+`RecoveryStore` into one auditable view.
+
+Same cost-boundary discipline as `batch.py` (ported from the superseded
+prototype): `sunk_cost_usd` is the checkpoint's already-spent cost,
+identical no matter what was decided; `observed_cost_usd` is the
+incremental cost actually caused by what happened (the retry's own cost,
+plus a subsequent human review's cost when the retry still needed one).
+`validation_result` and `established_outcome` are kept as distinct
+fields -- a passed validation is never presented as, or merged with,
+independently established correctness (see `validation.py`).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+from .store import RecoveryStore
+
+
+def _dec(value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        return None
+
+
+@dataclass(frozen=True)
+class LiveReportRow:
+    work_id: str
+    decision_id: str
+    checkpoint_attempt_id: str
+    failure_type: str
+    recommended_action: str
+    reason: str
+    policy_version: str
+    status: str
+    sunk_cost_usd: Decimal | None
+    retry_attempt_id: str | None
+    retry_status: str | None
+    retry_cost_usd: Decimal | None
+    validation_passed: bool | None
+    validator_version: str | None
+    handoff_ref: str | None
+    established_outcome: str | None
+    """From a recorded `ReviewOutcomeRecord` -- independently established
+    correctness. `None` until a real human-review result is recorded, no
+    matter what `validation_passed` says."""
+    observed_cost_usd: Decimal | None
+    observed_cost_complete: bool
+    outcome_revision_count: int
+    """>1 means a later correction superseded an earlier recorded
+    outcome -- both are preserved in the store's append-only outcome
+    history; only the latest is authoritative here."""
+
+
+@dataclass(frozen=True)
+class LiveAuditableReport:
+    rows: tuple[LiveReportRow, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rows": [
+                {
+                    "work_id": r.work_id,
+                    "decision_id": r.decision_id,
+                    "checkpoint_attempt_id": r.checkpoint_attempt_id,
+                    "failure_type": r.failure_type,
+                    "recommended_action": r.recommended_action,
+                    "reason": r.reason,
+                    "policy_version": r.policy_version,
+                    "status": r.status,
+                    "sunk_cost_usd": str(r.sunk_cost_usd) if r.sunk_cost_usd is not None else None,
+                    "retry_attempt_id": r.retry_attempt_id,
+                    "retry_status": r.retry_status,
+                    "retry_cost_usd": (
+                        str(r.retry_cost_usd) if r.retry_cost_usd is not None else None
+                    ),
+                    "validation_passed": r.validation_passed,
+                    "validator_version": r.validator_version,
+                    "handoff_ref": r.handoff_ref,
+                    "established_outcome": r.established_outcome,
+                    "observed_cost_usd": (
+                        str(r.observed_cost_usd) if r.observed_cost_usd is not None else None
+                    ),
+                    "observed_cost_complete": r.observed_cost_complete,
+                    "outcome_revision_count": r.outcome_revision_count,
+                }
+                for r in self.rows
+            ]
+        }
+
+
+def _observed_cost(
+    *,
+    recommended_action: str,
+    retry_status: str | None,
+    retry_cost_usd: Decimal | None,
+    review_cost_usd: Decimal | None,
+    has_outcome: bool,
+) -> tuple[Decimal | None, bool]:
+    components: list[Decimal] = []
+    complete = True
+
+    if recommended_action == "retry":
+        if retry_status is None:
+            return (None, False)
+        if retry_cost_usd is None:
+            complete = False
+        else:
+            components.append(retry_cost_usd)
+        if retry_status != "success" and not has_outcome:
+            # Retry did not resolve the exception and nothing further has
+            # been recorded yet -- may still need a review; incomplete
+            # regardless of whether every number seen so far is known.
+            complete = False
+
+    if has_outcome:
+        if review_cost_usd is None and recommended_action != "retry":
+            complete = False
+        elif review_cost_usd is not None:
+            components.append(review_cost_usd)
+
+    if not components:
+        return (None, complete)
+    total = Decimal(0)
+    for c in components:
+        total += c
+    return (total, complete)
+
+
+def build_live_report(store: RecoveryStore) -> LiveAuditableReport:
+    rows: list[LiveReportRow] = []
+    for work_id in store.all_work_ids():
+        decision = store.get_decision(work_id)
+        assert decision is not None
+        attempt = store.get_retry_attempt(work_id)
+        handoff = store.get_handoff(work_id)
+        outcome_history = store.get_outcome_history(work_id)
+        latest_outcome = outcome_history[-1] if outcome_history else None
+
+        review_cost = _dec(latest_outcome["review_cost_usd"]) if latest_outcome else None
+        observed_cost, complete = _observed_cost(
+            recommended_action=decision["recommended_action"],
+            retry_status=attempt["status"] if attempt else None,
+            retry_cost_usd=_dec(attempt["cost_usd"]) if attempt else None,
+            review_cost_usd=review_cost,
+            has_outcome=latest_outcome is not None,
+        )
+
+        rows.append(
+            LiveReportRow(
+                work_id=work_id,
+                decision_id=decision["decision_id"],
+                checkpoint_attempt_id=decision["checkpoint_attempt_id"],
+                failure_type=decision["failure_type"],
+                recommended_action=decision["recommended_action"],
+                reason=decision["reason"],
+                policy_version=decision["policy_version"],
+                status=decision["status"],
+                sunk_cost_usd=_dec(decision["cost_so_far_usd"]),
+                retry_attempt_id=attempt["attempt_id"] if attempt else None,
+                retry_status=attempt["status"] if attempt else None,
+                retry_cost_usd=_dec(attempt["cost_usd"]) if attempt else None,
+                validation_passed=(
+                    attempt["validation_passed"] == "True"
+                    if attempt and attempt["validation_passed"] is not None
+                    else None
+                ),
+                validator_version=attempt["validator_version"] if attempt else None,
+                handoff_ref=handoff["handoff_ref"] if handoff else None,
+                established_outcome=latest_outcome["outcome"] if latest_outcome else None,
+                observed_cost_usd=observed_cost,
+                observed_cost_complete=complete,
+                outcome_revision_count=len(outcome_history),
+            )
+        )
+    return LiveAuditableReport(rows=tuple(rows))

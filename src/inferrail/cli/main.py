@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
+from inferrail.cli.ap import run_ap_batch, run_ap_demo, run_ap_outcome, run_ap_report
 from inferrail.cli.demo import run_demo
 from inferrail.cli.report import run_report
 from inferrail.cli.transaction import run_transaction
@@ -184,6 +185,46 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     work.add_argument("--json", action="store_true", help="Print derived work data as JSON.")
 
+    ap = subparsers.add_parser(
+        "ap", help="AP invoice-exception recovery: decide, execute, and record retry vs. review."
+    )
+    ap_sub = ap.add_subparsers(dest="ap_command", required=True)
+
+    ap_sub.add_parser(
+        "demo", help="Fixture-based, zero-key walkthrough of the AP recovery engine."
+    )
+
+    ap_report = ap_sub.add_parser("report", help="Print the auditable report for a store.")
+    ap_report.add_argument("--db", required=True, help="Path to the AP RecoveryStore sqlite3 file.")
+    ap_report.add_argument("--json", action="store_true", help="Print the report as JSON.")
+
+    ap_outcome = ap_sub.add_parser(
+        "outcome", help="Record a real human-review outcome for a work_id."
+    )
+    ap_outcome.add_argument("--db", required=True, help="Path to the AP RecoveryStore file.")
+    ap_outcome.add_argument("work_id")
+    ap_outcome.add_argument(
+        "--outcome", required=True, choices=["accepted", "corrected", "rejected", "escalated"]
+    )
+    ap_outcome.add_argument("--correction-delta-usd", default=None)
+    ap_outcome.add_argument("--review-cost-usd", default=None)
+    ap_outcome.add_argument("--source", default="cli")
+
+    ap_batch = ap_sub.add_parser(
+        "batch",
+        help=(
+            "Historical/shadow-mode analysis over an already-exported vendor dataset "
+            "(never executes anything)."
+        ),
+    )
+    ap_batch.add_argument("--attempts", required=True, help="Path to a JSON array of attempt rows.")
+    ap_batch.add_argument("--reviews", required=True, help="Path to a JSON array of review rows.")
+    ap_batch.add_argument("--out", required=True, help="Path to write the auditable report (JSON).")
+    ap_batch.add_argument("--vendor-confidence-threshold", required=True, type=float)
+    ap_batch.add_argument("--candidate-human-review-threshold", required=True, type=float)
+    ap_batch.add_argument("--candidate-retry-floor", required=True, type=float)
+    ap_batch.add_argument("--candidate-max-prior-attempts", type=int, default=1)
+
     return parser
 
 
@@ -303,6 +344,34 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return run_demo()
 
 
+def _cmd_ap(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.ap_command == "demo":
+        return run_ap_demo()
+    if args.ap_command == "report":
+        return run_ap_report(Path(args.db), as_json=args.json)
+    if args.ap_command == "outcome":
+        return run_ap_outcome(
+            Path(args.db),
+            args.work_id,
+            args.outcome,
+            correction_delta_usd=args.correction_delta_usd,
+            review_cost_usd=args.review_cost_usd,
+            source=args.source,
+        )
+    if args.ap_command == "batch":
+        return run_ap_batch(
+            Path(args.attempts),
+            Path(args.reviews),
+            Path(args.out),
+            vendor_confidence_threshold=args.vendor_confidence_threshold,
+            candidate_human_review_threshold=args.candidate_human_review_threshold,
+            candidate_retry_floor=args.candidate_retry_floor,
+            candidate_max_prior_attempts=args.candidate_max_prior_attempts,
+        )
+    parser.error(f"unknown ap subcommand: {args.ap_command}")
+    return 1
+
+
 def _cmd_try(args: argparse.Namespace) -> int:
     return run_try(
         args.prompt,
@@ -342,6 +411,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_demo(args)
     if args.command == "try":
         return _cmd_try(args)
+    if args.command == "ap":
+        return _cmd_ap(args, parser)
 
     parser.print_help()
     return 1

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.1.2"
-description = "A self-hosted gateway that sits between your app and OpenAI, turning every request into an attributable cost receipt — without persisting prompts or responses in its own local records."
+version = "0.2.0"
+description = "Decides whether an invoice-extraction exception gets one machine retry or human review, executes it, and records the cost and outcome -- built on Inferrail's self-hosted, attributable-cost LLM gateway."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -22,6 +22,10 @@ keywords = [
     "self-hosted",
     "developer-tools",
     "mcp",
+    "accounts-payable",
+    "invoice-processing",
+    "exception-handling",
+    "ap-automation",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -52,6 +56,12 @@ dev = [
 ]
 mcp = [
     "mcp>=1.0",
+]
+# Only needed for inferrail.ap.adapters.OpenAIRetryAdapter -- the AP
+# decision engine, SDK, and CLI have no dependency on this by default
+# (see src/inferrail/ap/adapters.py's module docstring).
+ap = [
+    "openai>=1.0",
 ]
 # Only needed to run/test hosted/work_economics/ and
 # hosted/a2a_economic_authority/ locally -- not part of the `inferrail`
