@@ -83,11 +83,18 @@ class ReceiptsConfig(BaseModel):
     file: the whole point of a receipt is to be aggregated later by
     ``inferrail report``, and console-only receipts can't be read back. See
     docs/adr/0005-privacy-preserving-economic-receipts.md.
+
+    ``sqlite`` (see docs/adr/0013-sqlite-receipts-store.md) is a first-class
+    alternative to ``jsonl``, not a replacement for it — indexed queries and
+    a bounded file per receipt (vs. an ever-growing text file) at the cost
+    of needing ``inferrail receipts export`` to get a plain-text copy back.
+    ``inferrail report``/``transaction``/``work`` work unchanged against
+    either: they detect which one a given path actually is.
     """
 
     model_config = {"extra": "forbid"}
 
-    sink: Literal["jsonl", "none"] = "jsonl"
+    sink: Literal["jsonl", "sqlite", "none"] = "jsonl"
     path: str = "./inferrail-receipts.jsonl"
 
 

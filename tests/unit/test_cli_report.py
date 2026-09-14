@@ -335,3 +335,34 @@ def test_run_report_prints_table_and_skip_warning(
     captured = capsys.readouterr()
     assert "acme" in captured.out
     assert "Skipped 1 malformed" in captured.err
+
+
+def test_load_receipts_detects_a_sqlite_store_by_content_not_extension(tmp_path: Path) -> None:
+    """`report`/`transaction`/`work` all share `load_receipts` -- proving
+    the dispatch works here is sufficient for all three (see
+    docs/adr/0013-sqlite-receipts-store.md)."""
+    from inferrail.receipts.sqlite_store import ReceiptsStore
+
+    db_path = tmp_path / "receipts.sqlite3"
+    store = ReceiptsStore(db_path)
+    store.emit(_receipt(receipt_id="ir_1", attributes={"customer": "acme"}))
+
+    receipts, skipped = load_receipts(db_path)
+
+    assert skipped == 0
+    assert [r.receipt_id for r in receipts] == ["ir_1"]
+
+
+def test_run_report_works_against_a_sqlite_receipts_store(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inferrail.receipts.sqlite_store import ReceiptsStore
+
+    db_path = tmp_path / "receipts.sqlite3"
+    store = ReceiptsStore(db_path)
+    store.emit(_receipt(receipt_id="ir_1", attributes={"customer": "acme"}))
+
+    result = run_report(db_path, "customer")
+
+    assert result == 0
+    assert "acme" in capsys.readouterr().out
