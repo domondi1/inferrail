@@ -674,10 +674,20 @@ string, since the acceptance bar is "zero terminal use after startup").
 
 ## HUMAN ACTION NEEDED
 
-- **This session's unit needs to be pushed and opened as a PR** — exact
-  commands given directly to the founder at the end of this session (not
-  duplicated here since the branch name/commit hash weren't fixed until
-  the commit was actually made).
+- **This session's unit needs to be pushed and opened as a PR** — same
+  push-permission gap as every prior milestone (`git push` from this
+  session returns `403: Permission to domondi1/inferrail.git denied to
+  domondi1`, confirmed again this session, not assumed from history).
+  Committed locally as `03a83b3` on branch
+  `feat/dashboard-scaffold-live-feed`, based on `main` at `33f3e3e`
+  (post-PR-#28, the current `origin/main` tip as of this session). Exact
+  commands:
+  ```
+  git push -u origin feat/dashboard-scaffold-live-feed
+  gh pr create --title "feat: dashboard scaffold + Live Feed screen (v0.4.0 unit 1)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section for the full record. Records docs/adr/0017 (dashboard lives in app/ in this repo, per your instruction) and ships unit 1: real serving/auth through inferrail serve --app-mode, plus the Live Feed screen streaming real receipts. 868 tests pass (860 + 8 new), ruff/mypy/npm run build/vitest all clean, boundary check clean. Work/Budgets/Recover/Connect/Settings screens are separate later units (shown as disabled nav tabs)." \
+    --base main
+  ```
 - Everything below remains deferred per `MISSION.md`'s standing
   ledger, untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
