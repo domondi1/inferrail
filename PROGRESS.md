@@ -724,32 +724,48 @@ unit is frontend-only.
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether this unit's PR
-   (branch name and exact push/PR-create commands given to the founder
-   at the end of this session) has been pushed/merged; if the founder
-   reports it was, verify with `gh pr view <n> --json state,mergedAt`
-   before trusting it, same discipline as every prior milestone.
-2. **Pick v0.4.0's next unit.** The Work screen is the natural next
-   one — it needs only `GET /v1/local/work` (already built, unit 4 of
-   v0.3.0) and can reuse Live Feed's styling/patterns directly. Budgets
-   and Recover are larger (they need real POST/DELETE interactions, not
-   just a read-only view) and are better split into their own units
-   after Work, matching how v0.3.0 sequenced its four units by real
-   dependency order rather than MISSION.md's listed order alone.
+   changed underneath since this session — check whether unit 2's PR
+   (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
+   been pushed/merged; if the founder reports it was, verify with
+   `gh pr view <n> --json state,mergedAt` before trusting it, same
+   discipline as every prior milestone.
+2. **Pick v0.4.0's next unit: Budgets.** It needs real POST/DELETE
+   interactions (create/edit/remove a budget via `POST`/`DELETE
+   /v1/local/budgets*`, already built in v0.3.0 unit 4) plus a way to
+   show a burn bar and the blocked-request log (query
+   `GET /v1/local/receipts` filtered to `budget_exceeded`-category
+   failures, or add a small dedicated view if that proves awkward —
+   check `budgets/enforcement.py`'s `augment_overrun`/`_emit_failure`
+   paths for exactly what's queryable before deciding). Recover comes
+   after Budgets — it's independent of it, but Budgets is smaller and
+   completes the "set a budget, see a block" half of MISSION.md's
+   v0.4.0 acceptance criterion first.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
-   before opening a PR, commit locally, then hand the founder the exact
-   `git push`/`gh pr create` commands (this agent cannot push to this
-   repo). Do not self-merge.
+   before opening a PR if any backend file changes, commit locally, then
+   hand the founder the exact `git push`/`gh pr create` commands (this
+   agent cannot push to this repo). Do not self-merge.
 4. Update this file's "Status summary" and the "v0.4.0" section above
-   to reflect wherever the next unit lands, the same way each v0.3.0
-   unit's checklist was filled in as it merged.
+   to reflect wherever the next unit lands, the same way each unit's
+   checklist was filled in as it merged.
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding as of this update** — unit 1 of v0.4.0 is pushed,
-  reviewed, and merged (PR #29). Everything below remains deferred per
-  `MISSION.md`'s standing ledger, untouched and not yet due:
+- **Unit 2 needs to be pushed and opened as a PR** — same
+  push-permission gap as every prior unit (`git push` from this session
+  returns `403: Permission to domondi1/inferrail.git denied to
+  domondi1`, confirmed again this session). Committed locally as
+  `a5b28d9` on branch `feat/dashboard-work-screen`, based on `main` at
+  `b900a59` (PR #29's merge commit, the current `origin/main` tip as of
+  this session). Exact commands:
+  ```
+  git push -u origin feat/dashboard-work-screen
+  gh pr create --title "feat: dashboard Work screen (v0.4.0 unit 2)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 2's checklist, for the full record. Frontend-only -- GET /v1/local/work and /v1/local/work/{id} already existed. Adds the dashboard's hash-based router, a Work list + drill-down screen, and honest partial-cost rendering (\$0.0007 (+2 unknown), never a single misleading total). 15 vitest cases pass, ruff/boundary-check clean, live-smoke-tested against a running inferrail serve --app-mode instance. Budgets/Recover/Connect/Settings remain separate later units." \
+    --base main
+  ```
+- Everything below remains deferred per `MISSION.md`'s standing ledger,
+  untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
   tier.
 - Signing accounts, stopwatch tests, demo video/screenshots, HN post
