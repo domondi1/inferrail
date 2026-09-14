@@ -18,11 +18,23 @@ providers:
     # base_url: https://api.openai.com/v1   # override to point at any
                                              # OpenAI-compatible endpoint
 
+  # Optional: only needed to use POST /v1/messages (Anthropic-compatible
+  # passthrough — see docs/adr/0014-anthropic-messages-passthrough.md).
+  # Point Claude Code (or any Anthropic SDK client) at
+  # http://127.0.0.1:8000 with this configured and ANTHROPIC_API_KEY set.
+  # anthropic:
+  #   type: anthropic
+  #   api_key_env: ANTHROPIC_API_KEY
+  #   # base_url: https://api.anthropic.com/v1   # override to point at any
+  #                                               # Anthropic-compatible endpoint
+
 routes:
   # A route is what clients select via the "model" field of a
-  # /v1/chat/completions request, e.g. {"model": "default", ...}.
-  # Multiple routes can exist side by side, pointing at the same or
-  # different providers/models/retry policies.
+  # /v1/chat/completions (or /v1/messages) request, e.g.
+  # {"model": "default", ...}. Multiple routes can exist side by side,
+  # pointing at the same or different providers/models/retry policies —
+  # one routes: section serves both wire formats; which one a given route
+  # is reachable from just depends on which provider it names.
   default:
     provider: openai
     model: gpt-4o-mini
@@ -34,6 +46,12 @@ routes:
     model: gpt-4o-mini
     max_retries: 0
     timeout_seconds: 10
+
+  # claude:
+  #   provider: anthropic
+  #   model: claude-sonnet-5
+  #   max_retries: 1
+  #   timeout_seconds: 30
 
 # Optional: if set, a request whose "model" matches no route above is not
 # rejected — it's forwarded to this provider with "model" passed through

@@ -12,6 +12,10 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
 
+from inferrail.providers.anthropic_base import (
+    AnthropicNormalizedRequest,
+    AnthropicNormalizedResponse,
+)
 from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse
 
 
@@ -62,6 +66,56 @@ class FakeProvider:
 
     async def stream(
         self, request: NormalizedChatRequest, *, timeout: float
+    ) -> AsyncGenerator[bytes, None]:
+        self.stream_calls.append(request)
+        script = self._stream_outcomes.pop(0)
+        try:
+            for chunk in script.chunks:
+                yield chunk
+            if script.error is not None:
+                raise script.error
+        finally:
+            self.stream_closed_count += 1
+
+
+class AnthropicFakeProvider:
+    """An `AnthropicMessagesProvider` test double — same scriptable-outcome
+    shape as `FakeProvider`, for `gateway.anthropic_execution.
+    AnthropicInferenceEngine` tests. Reuses `StreamScript` as-is (it was
+    never OpenAI-specific)."""
+
+    name = "anthropic"
+
+    def __init__(
+        self,
+        outcomes: list[Any] | None = None,
+        stream_outcomes: list[StreamScript] | None = None,
+    ) -> None:
+        self._outcomes = outcomes or [
+            AnthropicNormalizedResponse(
+                content=[{"type": "text", "text": "ok"}],
+                stop_reason="end_turn",
+                stop_sequence=None,
+                input_tokens=3,
+                output_tokens=2,
+            )
+        ]
+        self._stream_outcomes = stream_outcomes or []
+        self.calls: list[AnthropicNormalizedRequest] = []
+        self.stream_calls: list[AnthropicNormalizedRequest] = []
+        self.stream_closed_count = 0
+
+    async def complete(
+        self, request: AnthropicNormalizedRequest, *, timeout: float
+    ) -> AnthropicNormalizedResponse:
+        self.calls.append(request)
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def stream(
+        self, request: AnthropicNormalizedRequest, *, timeout: float
     ) -> AsyncGenerator[bytes, None]:
         self.stream_calls.append(request)
         script = self._stream_outcomes.pop(0)

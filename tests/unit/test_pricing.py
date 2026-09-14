@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from inferrail.config.models import PriceEntry, ProviderConfig
 from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
+from inferrail.pricing.builtin_anthropic import BUILTIN_ANTHROPIC_PRICING
 from inferrail.pricing.resolver import PricingResolver
 
 
@@ -124,3 +125,65 @@ def test_operator_override_applies_even_for_openai_compatible_provider() -> None
 def test_price_entry_requires_source_and_verified_date() -> None:
     with pytest.raises(ValidationError):
         PriceEntry(input_usd_per_million=Decimal("1"), output_usd_per_million=Decimal("2"))  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Anthropic catalog (docs/adr/0014-anthropic-messages-passthrough.md)
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_pricing_applies_to_real_anthropic_provider() -> None:
+    providers = {"anthropic": ProviderConfig(type="anthropic", api_key_env="KEY")}
+    resolver = PricingResolver(providers, overrides={})
+
+    price = resolver.resolve("anthropic", "claude-sonnet-5")
+
+    assert price is not None
+    assert price.input_usd_per_million == Decimal("2.00")
+    assert price.output_usd_per_million == Decimal("10.00")
+
+
+def test_every_builtin_anthropic_price_carries_verifiable_provenance() -> None:
+    for model, price in BUILTIN_ANTHROPIC_PRICING.items():
+        assert price.source.startswith("https://"), model
+        assert price.input_usd_per_million > 0, model
+        assert price.output_usd_per_million > 0, model
+
+
+def test_builtin_anthropic_pricing_does_not_apply_to_anthropic_compatible_provider() -> None:
+    providers = {
+        "local": ProviderConfig(
+            type="anthropic_compatible", api_key_env="KEY", base_url="http://localhost:8002/v1"
+        )
+    }
+    resolver = PricingResolver(providers, overrides={})
+
+    assert resolver.resolve("local", "claude-sonnet-5") is None
+
+
+def test_builtin_anthropic_pricing_does_not_apply_when_base_url_overridden() -> None:
+    providers = {
+        "anthropic": ProviderConfig(
+            type="anthropic", api_key_env="KEY", base_url="https://my-proxy.example.com/v1"
+        )
+    }
+    resolver = PricingResolver(providers, overrides={})
+
+    assert resolver.resolve("anthropic", "claude-sonnet-5") is None
+
+
+def test_builtin_catalogs_never_cross_contaminate_between_providers() -> None:
+    # An anthropic-typed provider must never resolve an OpenAI model name
+    # (or vice versa) just because both catalogs are consulted generically.
+    providers = {"anthropic": ProviderConfig(type="anthropic", api_key_env="KEY")}
+    resolver = PricingResolver(providers, overrides={})
+
+    assert resolver.resolve("anthropic", "gpt-4o-mini") is None
+
+
+def test_operator_override_wins_over_anthropic_builtin() -> None:
+    providers = {"anthropic": ProviderConfig(type="anthropic", api_key_env="KEY")}
+    override = _fixture_price("9.99", "8.88")
+    resolver = PricingResolver(providers, overrides={"anthropic": {"claude-sonnet-5": override}})
+
+    assert resolver.resolve("anthropic", "claude-sonnet-5") == override

@@ -6,6 +6,28 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.3.0 — in progress
+
+### Added
+
+- WAL-mode SQLite receipts store (`receipts.sink: sqlite`), opt-in
+  alongside the existing JSONL sink, indexed on
+  `ts`/`work_id`/`project`/`model`. `inferrail report`/`transaction`/
+  `work` work unchanged against either sink (auto-detected). New
+  `inferrail receipts import|export` moves history between them. See
+  `docs/adr/0013-sqlite-receipts-store.md`.
+- Anthropic-compatible `POST /v1/messages` passthrough — a genuinely
+  separate, wire-native pipeline (not a translation of
+  `/v1/chat/completions`), with real streaming, tool use, and pricing
+  via a new, independently-verified Anthropic catalog. This is what
+  makes pointing Claude Code (or any Anthropic SDK client) at Inferrail
+  work. See `docs/adr/0014-anthropic-messages-passthrough.md`.
+
+### Notes
+
+- v0.3.0 also includes budget enforcement and a local control API, not
+  yet built as of this entry — see `PROGRESS.md` for current status.
+
 ## v0.2.1 — 2026-09-14
 
 ### Added

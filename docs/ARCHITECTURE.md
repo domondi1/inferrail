@@ -7,12 +7,16 @@ src/inferrail/
 ├── config/      YAML + env -> validated InferrailConfig (pydantic), plus
 │                an in-memory quickstart config builder (same type/validation)
 ├── errors/      Small internal exception hierarchy
-├── providers/   Provider protocol + OpenAI-compatible adapter + registry
+├── providers/   Provider protocols + OpenAI-compatible and
+│                Anthropic-compatible adapters (parallel, not shared —
+│                see docs/adr/0014) + registry
 ├── routing/     RoutingContext -> RoutingDecision (static v0.1)
 ├── telemetry/   InferenceEvent schema + pluggable sinks
-├── pricing/     Built-in + operator-override price catalog, PricingResolver
+├── pricing/     Built-in (OpenAI + Anthropic) + operator-override price
+│                catalogs, PricingResolver
 ├── receipts/    InferenceReceipt schema, Decimal cost calculator, sinks
-├── gateway/     FastAPI app: HTTP schemas, execution engine, routes,
+├── gateway/     FastAPI app: HTTP schemas + execution engine for both
+│                /v1/chat/completions and /v1/messages, routes,
 │                attribution header parsing
 ├── transactions/ TaskTransaction schema + read-side builder over receipts
 ├── tracking.py  Client-side helper: ambient task_id propagation
@@ -175,15 +179,12 @@ discovered before the first byte/chunk; a `stream()` failure discovered
 exception out of the generator, which the engine treats as terminal
 (never retried).
 
-`OpenAIProvider` is the only implementation in v0.1, but it's generic over
-`base_url`: any endpoint that speaks the OpenAI `/chat/completions` shape
-(OpenAI itself, Azure OpenAI's compatible surface, vLLM, local
-llama.cpp-server, etc.) is usable today just by adding a `providers:` entry
-in `inferrail.yaml` with a different `base_url` — no code change. A
-provider with a genuinely different wire protocol (e.g. a native
-Anthropic or Bedrock client) would get its own module implementing the
-same `Provider` protocol; `providers/registry.py` is the one place that
-would need a new branch to construct it from config.
+`OpenAIProvider` is the only implementation of `Provider` for `/v1/chat/
+completions`, but it's generic over `base_url`: any endpoint that speaks
+the OpenAI `/chat/completions` shape (OpenAI itself, Azure OpenAI's
+compatible surface, vLLM, local llama.cpp-server, etc.) is usable today
+just by adding a `providers:` entry in `inferrail.yaml` with a different
+`base_url` — no code change.
 
 `OpenAIProvider.stream()` auto-injects `stream_options: {"include_usage":
 true}` when the caller didn't already set it, but only for a provider
@@ -193,6 +194,38 @@ since an `openai_compatible` endpoint is never assumed to support an
 OpenAI-specific extension it never advertised. Without that final usage
 chunk, a streaming receipt simply leaves cost `null`, exactly like any
 other unresolvable-usage case; it never blocks the stream itself.
+
+A provider with a genuinely different wire protocol does **not** get
+squeezed into `Provider`/`NormalizedChatRequest` — see the Anthropic
+boundary below, and docs/adr/0014-anthropic-messages-passthrough.md for
+why a real wire-format difference gets its own parallel `Protocol`
+instead.
+
+## The Anthropic Messages boundary
+
+`providers.anthropic_base.AnthropicMessagesProvider` is the `/v1/messages`
+analog of `Provider` — same two-method shape
+(`complete`/`stream`), same `ProviderError` failure contract — but over
+`AnthropicNormalizedRequest`/`AnthropicNormalizedResponse`, which are not
+interchangeable with the OpenAI-shaped types: `system` is a top-level
+field, message `content` is a passthrough string-or-block-array (never a
+typed block hierarchy — a `tool_use` block's `input` is a JSON *object*,
+unlike OpenAI's string-typed `FunctionCall.arguments`), and there is no
+`tool_calls` field to reconstruct, since content blocks (including
+`tool_use`) already flow through as part of `content`.
+
+`AnthropicProvider` is the only implementation, generic over `base_url`
+the same way `OpenAIProvider` is (`type: anthropic`/`anthropic_compatible`)
+— it authenticates with `x-api-key`/`anthropic-version` instead of
+`Authorization: Bearer`, the one real difference at the HTTP layer.
+`gateway.anthropic_execution.AnthropicInferenceEngine` is a second,
+parallel `InferenceEngine` — deliberately not unified with it — reading
+usage from Anthropic's own SSE event sequence
+(`message_start`/`message_delta`, cumulative `output_tokens`) instead of
+OpenAI's single trailing usage chunk. Both engines share the same
+`Router`, `PricingResolver`, `ReceiptSink`, and `TelemetrySink` instances
+(see `gateway/app.py:create_app`) — routing, pricing, and the receipt
+ledger were already provider/format-agnostic.
 
 ## The routing boundary
 

@@ -9,6 +9,16 @@ from __future__ import annotations
 
 from inferrail.config.models import PriceEntry, ProviderConfig
 from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
+from inferrail.pricing.builtin_anthropic import BUILTIN_ANTHROPIC_PRICING
+
+# Keyed by a provider's own verified `type` — deliberately *not* including
+# "openai_compatible"/"anthropic_compatible" as keys, since those types
+# may be a completely different backend that merely speaks the same wire
+# format (see `resolve`'s docstring).
+_BUILTIN_CATALOGS: dict[str, dict[str, PriceEntry]] = {
+    "openai": BUILTIN_OPENAI_PRICING,
+    "anthropic": BUILTIN_ANTHROPIC_PRICING,
+}
 
 
 class PricingResolver:
@@ -19,9 +29,10 @@ class PricingResolver:
     1. An operator override in `inferrail.yaml`'s `pricing:` section for
        this exact (provider name, model) — always wins, regardless of
        provider type, since the operator has explicitly declared it.
-    2. The built-in catalog, but *only* if the provider is configured as
-       `type: openai` with no custom `base_url` — i.e. it's verifiably
-       OpenAI's own API, not an `openai_compatible` endpoint (vLLM, a
+    2. The built-in catalog matching the provider's own verified `type`
+       (`openai` or `anthropic`), but *only* with no custom `base_url` —
+       i.e. it's verifiably that vendor's own API, not an
+       `openai_compatible`/`anthropic_compatible` endpoint (vLLM, a
        proxy, a local server) that merely speaks the same wire format and
        could be serving a completely different, differently-priced model
        under a name that happens to collide (e.g. a self-hosted model
@@ -45,11 +56,9 @@ class PricingResolver:
             return override
 
         provider_config = self._providers.get(provider_name)
-        if (
-            provider_config is not None
-            and provider_config.type == "openai"
-            and provider_config.base_url is None
-        ):
-            return BUILTIN_OPENAI_PRICING.get(model)
+        if provider_config is not None and provider_config.base_url is None:
+            catalog = _BUILTIN_CATALOGS.get(provider_config.type)
+            if catalog is not None:
+                return catalog.get(model)
 
         return None

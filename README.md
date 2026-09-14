@@ -257,6 +257,47 @@ human aggregate, `inferrail transaction <task-id>` for receipt-only task
 grouping, and `inferrail work <work-id>` for work-attributed inference
 economics plus a customer-declared outcome.
 
+### Point Claude Code (or any Anthropic SDK client) at Inferrail
+
+`POST /v1/messages` is a genuinely separate, Anthropic-compatible
+passthrough — not a translation of `/v1/chat/completions` — with real
+streaming and tool use, priced via the catalog. See
+[docs/adr/0014](docs/adr/0014-anthropic-messages-passthrough.md).
+`--quickstart` doesn't configure a provider for it (it's OpenAI-only);
+add one to `inferrail.yaml` (see `inferrail.example.yaml`'s commented
+`anthropic:`/`claude:` entries):
+
+```yaml
+providers:
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+routes:
+  claude:
+    provider: anthropic
+    model: claude-sonnet-5
+```
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+inferrail serve
+```
+
+```bash
+curl http://127.0.0.1:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Say hello in five words."}]
+  }'
+```
+
+Point Claude Code itself at it by setting `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
+before launching it (the Anthropic SDKs' own env-var convention, same
+idea as `OPENAI_BASE_URL` above) — every call it makes is now measured
+and receipted locally, payload-free.
+
 <details>
 <summary>Framework examples (LangChain, LlamaIndex, CrewAI)</summary>
 
@@ -483,8 +524,14 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - `POST /v1/chat/completions`: streaming (`stream: true`, real SSE
   passthrough) and tool/function calling, single string message content,
   no `n != 1`
+- `POST /v1/messages`: a genuinely separate Anthropic-compatible
+  passthrough (real streaming, tool use, priced via the catalog) — not a
+  translation of `/v1/chat/completions`. See
+  [docs/adr/0014](docs/adr/0014-anthropic-messages-passthrough.md).
 - `GET /health`
-- One provider adapter, generic over any OpenAI-compatible HTTP endpoint
+- One provider adapter per wire format, each generic over any endpoint
+  sharing that format (`type: openai`/`openai_compatible` and
+  `type: anthropic`/`anthropic_compatible`)
 - Named-route + optional passthrough model routing (above)
 - Per-route retry with backoff on transient provider errors
 - Local structured telemetry and payload-free cost receipts for supported
@@ -504,10 +551,11 @@ Honest edges, not silent gaps — full list in
 - Cost- or latency-aware routing, or automatic failover to a different
   provider/model on error — routing is a static config lookup
 - Budgets, spend limits, or blocking a request based on cost
-- Any provider whose wire protocol isn't OpenAI-compatible (native
-  Anthropic, Gemini, Bedrock, ...)
-- The full OpenAI API surface — only `/v1/chat/completions` and
-  `/health` exist; no embeddings, assistants, batch, images, or audio
+- Any provider wire format other than OpenAI-compatible or
+  Anthropic-compatible (Gemini, Bedrock's native API, ...)
+- The full OpenAI/Anthropic API surface — only `/v1/chat/completions`,
+  `/v1/messages`, and `/health` exist; no embeddings, assistants, batch,
+  images, audio, or the Anthropic Files/Batches APIs
 - Multi-user auth or role-based access control —
   `INFERRAIL_GATEWAY_TOKEN` is one shared secret, not a user system
 - Any hosted or cloud-operated component

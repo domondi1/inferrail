@@ -1,8 +1,9 @@
 # Inferrail — Agent Context
 
-Inferrail is an open inference control plane: an OpenAI-compatible
-gateway that sits between an application and the model providers it
-calls, plus a self-hosted local receipt/cost-attribution substrate. **As
+Inferrail is an open inference control plane: an OpenAI- and
+Anthropic-compatible gateway that sits between an application and the
+model providers it calls, plus a self-hosted local
+receipt/cost-attribution substrate. **As
 of v0.2.0, Inferrail also ships a second, separate product on that same
 substrate: AP invoice-exception recovery** — for one eligible
 invoice-extraction exception, decide whether it gets one permitted

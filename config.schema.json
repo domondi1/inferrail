@@ -51,7 +51,7 @@
     },
     "ProviderConfig": {
       "additionalProperties": false,
-      "description": "A named upstream inference provider.\n\n``type: openai`` and ``type: openai_compatible`` currently resolve to\nthe same adapter (:class:`inferrail.providers.openai.OpenAIProvider`);\nthe distinction exists so config reads clearly and so a future\nnon-OpenAI-shaped provider can be added as a new ``type`` without\ntouching this schema's shape.",
+      "description": "A named upstream inference provider.\n\n``type: openai`` and ``type: openai_compatible`` currently resolve to\nthe same adapter (:class:`inferrail.providers.openai.OpenAIProvider`);\nlikewise ``type: anthropic``/``anthropic_compatible`` both resolve to\n:class:`inferrail.providers.anthropic.AnthropicProvider` (see\ndocs/adr/0014-anthropic-messages-passthrough.md). The ``_compatible``\nvariants exist so config reads clearly and so a self-hosted or\nthird-party endpoint that merely shares a wire format is never\nconflated with the real, verifiably-operated vendor API for pricing\npurposes (see ``pricing.resolver.PricingResolver``).",
       "properties": {
         "api_key_env": {
           "title": "Api Key Env",
@@ -72,7 +72,9 @@
         "type": {
           "enum": [
             "openai",
-            "openai_compatible"
+            "openai_compatible",
+            "anthropic",
+            "anthropic_compatible"
           ],
           "title": "Type",
           "type": "string"

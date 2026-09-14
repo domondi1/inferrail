@@ -41,7 +41,7 @@ from inferrail.config.quickstart import (
     build_quickstart_config,
 )
 from inferrail.errors import ConfigurationError
-from inferrail.providers.registry import build_providers
+from inferrail.providers.registry import build_anthropic_providers, build_providers
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -324,6 +324,7 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
         build_providers(config)
+        build_anthropic_providers(config)
     except ConfigurationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
