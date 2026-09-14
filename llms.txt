@@ -18,7 +18,11 @@
 > receipt/telemetry records. Point your app's OpenAI client at Inferrail
 > instead of directly at your provider, and every call produces a
 > payload-free economic receipt: verified pricing, measured token usage,
-> and whatever business attribution you attach. Receipts sharing one
+> and whatever business attribution you attach. A separate,
+> Anthropic-compatible `/v1/messages` passthrough (real streaming, tool
+> use, priced via the catalog — see
+> [docs/adr/0014](https://github.com/domondi1/inferrail/blob/main/docs/adr/0014-anthropic-messages-passthrough.md))
+> does the same for Claude Code or any Anthropic SDK client. Receipts sharing one
 > attribution tag can be rolled up into a single task-level transaction
 > (`inferrail transaction <task-id>`), including via an ambient
 > `inferrail.track_task(...)` helper that tags nested agent calls
@@ -39,7 +43,7 @@
 
 ## API
 
-- [OpenAPI 3.1 specification](https://github.com/domondi1/inferrail/blob/main/openapi.json): the full `/v1/chat/completions` and `/health` contract, generated from the live app
+- [OpenAPI 3.1 specification](https://github.com/domondi1/inferrail/blob/main/openapi.json): the full `/v1/chat/completions`, `/v1/messages`, and `/health` contract, generated from the live app
 - [Config JSON Schema](https://github.com/domondi1/inferrail/blob/main/config.schema.json): generate a valid `inferrail.yaml` without guessing
 - [Error codes](https://github.com/domondi1/inferrail/blob/main/ERRORS.md): every stable `INFERRAIL_E###` code with a remediation hint
 

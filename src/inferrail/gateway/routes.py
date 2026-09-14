@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from inferrail.errors import GatewayAuthenticationError
+from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
+from inferrail.gateway.anthropic_schemas import MessagesRequest, MessagesResponse
 from inferrail.gateway.attribution import extract_attributes
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
@@ -80,6 +82,48 @@ async def chat_completions(
     payload: ChatCompletionRequest, request: Request
 ) -> ChatCompletionResponse | StreamingResponse:
     engine: InferenceEngine = request.app.state.engine
+    attributes = extract_attributes(request.headers)
+    if payload.stream:
+        body = await engine.prepare_stream(payload, attributes=attributes)
+        return StreamingResponse(body, media_type="text/event-stream")
+    return await engine.execute(payload, attributes=attributes)
+
+
+@router.post(
+    "/v1/messages",
+    operation_id="createMessage",
+    summary="Create a message (Anthropic-compatible)",
+    description="Anthropic-compatible `/v1/messages` — a genuine wire-native passthrough "
+    "(see docs/adr/0014), not a translation of the OpenAI-shaped `/v1/chat/completions` "
+    "contract: `system`, message content blocks, `tools`/`tool_choice`, and `stream: true` "
+    "(real SSE passthrough) are all forwarded as sent/received, byte-for-byte while "
+    "streaming. `model` selects a named route from `inferrail.yaml`, not a provider model "
+    "id directly (docs/adr/0002), same convention as `/v1/chat/completions`. Optional "
+    "`X-Inferrail-Attribute-<Name>` headers attach business attribution, persisted on the "
+    "resulting payload-free receipt and never forwarded upstream. The non-streaming "
+    "response is Anthropic-shaped plus a non-standard `inferrail` metadata block; standard "
+    "Anthropic clients ignore it. A streaming response has no such metadata injected, to "
+    "preserve exact protocol fidelity.",
+    response_model=MessagesResponse,
+    dependencies=[Depends(_require_gateway_token)],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "model": "claude",
+                        "max_tokens": 1024,
+                        "messages": [{"role": "user", "content": "Say hello in five words."}],
+                    }
+                }
+            }
+        }
+    },
+)
+async def messages(
+    payload: MessagesRequest, request: Request
+) -> MessagesResponse | StreamingResponse:
+    engine: AnthropicInferenceEngine = request.app.state.anthropic_engine
     attributes = extract_attributes(request.headers)
     if payload.stream:
         body = await engine.prepare_stream(payload, attributes=attributes)

@@ -134,6 +134,13 @@ inspectable config file and gives you a telemetry record for every request
 - One provider adapter (`OpenAIProvider`) that speaks the OpenAI
   `/chat/completions` wire format — usable against `api.openai.com` or any
   other endpoint that implements the same shape, via `base_url`
+- `POST /v1/messages` — a genuinely separate, Anthropic-compatible
+  passthrough (real streaming, tool use via passthrough content blocks,
+  priced via the catalog) for `type: anthropic`/`anthropic_compatible`
+  providers, backed by its own `AnthropicProvider` adapter and execution
+  engine — not a translation of `/v1/chat/completions`. See
+  docs/adr/0014-anthropic-messages-passthrough.md. This is what makes
+  pointing Claude Code (or any Anthropic-SDK client) at Inferrail work.
 - Static routing: the request's `model` field selects a named route in
   `inferrail.yaml`, which maps to a provider + underlying model
   deterministically. No cost/latency/capability-aware selection.
@@ -234,16 +241,20 @@ inspectable config file and gives you a telemetry record for every request
 
 ### Cost and receipts
 
-- Pricing comes from a small built-in catalog of prices independently
-  verified against OpenAI's own published pricing page, plus an optional
-  `pricing:` section in `inferrail.yaml` for operator-declared overrides
-  or additions — both forms require an explicit `source` and
+- Pricing comes from small built-in catalogs — one per verified vendor
+  (OpenAI, Anthropic) — of prices independently checked against that
+  vendor's own published pricing page, plus an optional `pricing:`
+  section in `inferrail.yaml` for operator-declared overrides or
+  additions — all forms require an explicit `source` and
   `verified_date`, so a price's provenance is never lost. The exact,
-  authoritative list is `BUILTIN_OPENAI_PRICING` in
-  `src/inferrail/pricing/builtin.py`; as of the last verification
-  (2026-08-22) it covers `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
-  `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5.1`, `gpt-5-mini`,
-  `gpt-5-nano`, `o3`, and `o4-mini`.
+  authoritative lists are `BUILTIN_OPENAI_PRICING` in
+  `src/inferrail/pricing/builtin.py` (as of the last verification,
+  2026-08-22: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`,
+  `gpt-4.1-nano`, `gpt-5`, `gpt-5.1`, `gpt-5-mini`, `gpt-5-nano`, `o3`,
+  and `o4-mini`) and `BUILTIN_ANTHROPIC_PRICING` in
+  `src/inferrail/pricing/builtin_anthropic.py` (as of the last
+  verification, 2026-09-14: `claude-fable-5-1`, `claude-opus-5`,
+  `claude-sonnet-5`, `claude-haiku-4-5`).
 - **Models with context-tiered pricing are deliberately absent**, even
   when they're current flagships (`gpt-5.6-sol`, `gpt-5.6-terra`,
   `gpt-5.6-luna`, and the `-pro` variants). Those bill at a higher rate
@@ -252,16 +263,20 @@ inspectable config file and gives you a telemetry record for every request
   would silently under-report a long-context request. They resolve to
   `null` until either the schema models context tiers or an operator
   declares a `pricing:` override they've chosen themselves. Batch, flex,
-  fast, and cached-input tiers are excluded for the same reason.
-- The built-in catalog only applies to a provider configured as
-  `type: openai` with the default `base_url` (i.e. verifiably OpenAI's own
-  API) — never guessed onto an `openai_compatible` endpoint that merely
+  fast, and cached-input tiers are excluded for the same reason. (No
+  current Claude model has context-tiered pricing.)
+- Each built-in catalog only applies to a provider configured as
+  `type: openai`/`type: anthropic` (respectively) with the default
+  `base_url` (i.e. verifiably that vendor's own API) — never guessed onto
+  an `openai_compatible`/`anthropic_compatible` endpoint that merely
   shares the wire format, since that could be serving a completely
   different, differently-priced model under a colliding name. See
-  `docs/adr/0005-privacy-preserving-economic-receipts.md`.
-- Unresolvable pricing (unknown model, or an `openai_compatible` provider
-  with no override configured) leaves `pricing`/`estimated_cost_usd`
-  explicitly `null` on the receipt — never a fabricated `$0`.
+  `docs/adr/0005-privacy-preserving-economic-receipts.md` and
+  `docs/adr/0014-anthropic-messages-passthrough.md`.
+- Unresolvable pricing (unknown model, or an
+  `openai_compatible`/`anthropic_compatible` provider with no override
+  configured) leaves `pricing`/`estimated_cost_usd` explicitly `null` on
+  the receipt — never a fabricated `$0`.
 - All money arithmetic uses `Decimal`, never `float`.
 
 ### Explicit non-goals / not yet supported
@@ -278,7 +293,10 @@ Not a hidden limitation — these are the honest edges of v0.1:
   observed internally), but Inferrail doesn't populate it yet — a
   natural, low-risk follow-up once there's a reason to, not silently
   guessed in the meantime
-- Any provider other than an OpenAI-compatible HTTP API
+- Any provider wire format other than OpenAI-compatible
+  (`/v1/chat/completions`) or Anthropic-compatible (`/v1/messages`, see
+  docs/adr/0014-anthropic-messages-passthrough.md) — Gemini, Bedrock's
+  native API, etc. are still not supported
 - Intelligent/adaptive routing of any kind
 - Budgets, spend limits, or blocking a request based on cost
 - Historical price versioning (a receipt embeds the price snapshot used at

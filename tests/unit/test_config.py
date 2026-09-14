@@ -9,9 +9,11 @@ import yaml
 from pydantic import ValidationError
 
 from inferrail.config.loader import load_config
-from inferrail.config.models import InferrailConfig, TelemetryConfig
+from inferrail.config.models import InferrailConfig, ProviderConfig, TelemetryConfig
 from inferrail.errors import ConfigurationError
-from inferrail.providers.registry import build_providers
+from inferrail.providers.anthropic import AnthropicProvider
+from inferrail.providers.openai import OpenAIProvider
+from inferrail.providers.registry import build_anthropic_providers, build_providers
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> Path:
@@ -150,6 +152,98 @@ def test_build_providers_require_keys_false_tolerates_missing_key(
     providers = build_providers(base_config, require_keys=False)
 
     assert set(providers) == {"openai"}
+
+
+# ---------------------------------------------------------------------------
+# Anthropic providers (docs/adr/0014-anthropic-messages-passthrough.md)
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_config() -> InferrailConfig:
+    return InferrailConfig.model_validate(
+        {
+            "providers": {
+                "anthropic": {"type": "anthropic", "api_key_env": "TEST_ANTHROPIC_API_KEY"},
+            },
+            "routes": {"claude": {"provider": "anthropic", "model": "claude-sonnet-5"}},
+        }
+    )
+
+
+def test_build_anthropic_providers_fails_loudly_when_api_key_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TEST_ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ConfigurationError, match="TEST_ANTHROPIC_API_KEY"):
+        build_anthropic_providers(_anthropic_config())
+
+
+def test_build_anthropic_providers_succeeds_when_api_key_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TEST_ANTHROPIC_API_KEY", "test-key")
+
+    providers = build_anthropic_providers(_anthropic_config())
+
+    assert set(providers) == {"anthropic"}
+    assert isinstance(providers["anthropic"], AnthropicProvider)
+
+
+def test_build_anthropic_providers_require_keys_false_tolerates_missing_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TEST_ANTHROPIC_API_KEY", raising=False)
+
+    providers = build_anthropic_providers(_anthropic_config(), require_keys=False)
+
+    assert set(providers) == {"anthropic"}
+
+
+def test_build_providers_never_builds_an_anthropic_typed_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An anthropic-typed provider is simply invisible to build_providers
+    # (the OpenAI-shaped /v1/chat/completions pipeline) -- never an error
+    # for "having the wrong kind" of provider configured. See ADR-0014.
+    monkeypatch.setenv("TEST_ANTHROPIC_API_KEY", "test-key")
+
+    providers = build_providers(_anthropic_config())
+
+    assert providers == {}
+
+
+def test_build_anthropic_providers_never_builds_an_openai_typed_entry(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("TEST_OPENAI_API_KEY", "test-key")
+
+    providers = build_anthropic_providers(base_config)
+
+    assert providers == {}
+
+
+def test_anthropic_compatible_requires_explicit_base_url() -> None:
+    config = ProviderConfig(type="anthropic_compatible", api_key_env="KEY")
+
+    with pytest.raises(ValueError, match="requires an explicit base_url"):
+        config.resolved_base_url()
+
+
+def test_anthropic_defaults_to_the_real_api_base_url() -> None:
+    config = ProviderConfig(type="anthropic", api_key_env="KEY")
+
+    assert config.resolved_base_url() == "https://api.anthropic.com/v1"
+
+
+def test_openai_provider_class_still_returned_for_openai_types(
+    monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
+) -> None:
+    monkeypatch.setenv("TEST_OPENAI_API_KEY", "test-key")
+
+    providers = build_providers(base_config)
+
+    assert isinstance(providers["openai"], OpenAIProvider)
 
 
 def test_receipts_defaults_to_jsonl_when_omitted(base_config_dict: dict[str, Any]) -> None:

@@ -14,9 +14,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-ProviderType = Literal["openai", "openai_compatible"]
+ProviderType = Literal["openai", "openai_compatible", "anthropic", "anthropic_compatible"]
 
 _DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+_DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 
 
 class ProviderConfig(BaseModel):
@@ -24,9 +25,13 @@ class ProviderConfig(BaseModel):
 
     ``type: openai`` and ``type: openai_compatible`` currently resolve to
     the same adapter (:class:`inferrail.providers.openai.OpenAIProvider`);
-    the distinction exists so config reads clearly and so a future
-    non-OpenAI-shaped provider can be added as a new ``type`` without
-    touching this schema's shape.
+    likewise ``type: anthropic``/``anthropic_compatible`` both resolve to
+    :class:`inferrail.providers.anthropic.AnthropicProvider` (see
+    docs/adr/0014-anthropic-messages-passthrough.md). The ``_compatible``
+    variants exist so config reads clearly and so a self-hosted or
+    third-party endpoint that merely shares a wire format is never
+    conflated with the real, verifiably-operated vendor API for pricing
+    purposes (see ``pricing.resolver.PricingResolver``).
     """
 
     model_config = {"extra": "forbid"}
@@ -40,6 +45,8 @@ class ProviderConfig(BaseModel):
             return self.base_url
         if self.type == "openai":
             return _DEFAULT_OPENAI_BASE_URL
+        if self.type == "anthropic":
+            return _DEFAULT_ANTHROPIC_BASE_URL
         raise ValueError(
             f"provider type '{self.type}' requires an explicit base_url"
         )

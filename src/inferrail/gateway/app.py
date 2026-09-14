@@ -35,12 +35,14 @@ from inferrail.errors import (
     UnsupportedFeatureError,
 )
 from inferrail.errors.codes import code_for, docs_url_for
+from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.routes import router as api_router
 from inferrail.gateway.schemas import ErrorDetail, ErrorResponse
 from inferrail.pricing.resolver import PricingResolver
+from inferrail.providers.anthropic_base import AnthropicMessagesProvider
 from inferrail.providers.base import Provider
-from inferrail.providers.registry import build_providers
+from inferrail.providers.registry import build_anthropic_providers, build_providers
 from inferrail.receipts.sinks import build_receipt_sink
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import build_telemetry_sink
@@ -77,16 +79,26 @@ def create_app(config: InferrailConfig) -> FastAPI:
     # OpenAIProvider.complete. `inferrail config check` still validates
     # keys eagerly via build_providers' default.
     providers: dict[str, Provider] = build_providers(config, require_keys=False)
+    anthropic_providers: dict[str, AnthropicMessagesProvider] = build_anthropic_providers(
+        config, require_keys=False
+    )
+    # Shared across both wire-format pipelines (docs/adr/0014): routing,
+    # pricing, receipts, and telemetry are all already provider/format-
+    # agnostic — one routes: section and one ledger serve /v1/chat/completions
+    # and /v1/messages alike.
     router = Router(config.routes, default_provider=config.default_provider)
     telemetry = build_telemetry_sink(config.telemetry)
     pricing_resolver = PricingResolver(config.providers, config.pricing)
     receipts = build_receipt_sink(config.receipts)
     engine = InferenceEngine(router, providers, telemetry, pricing_resolver, receipts)
+    anthropic_engine = AnthropicInferenceEngine(
+        router, anthropic_providers, telemetry, pricing_resolver, receipts
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
-        for provider in providers.values():
+        for provider in (*providers.values(), *anthropic_providers.values()):
             aclose = getattr(provider, "aclose", None)
             if aclose is not None:
                 await aclose()
@@ -94,6 +106,7 @@ def create_app(config: InferrailConfig) -> FastAPI:
     app = FastAPI(title="Inferrail", version=__version__, lifespan=lifespan)
     app.state.config = config
     app.state.engine = engine
+    app.state.anthropic_engine = anthropic_engine
     # Optional shared-secret gateway auth: unset by default (localhost dev
     # mode). If set, gateway/routes.py rejects requests to inference
     # endpoints that don't present a matching bearer token. See
