@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attrSummary, formatCost, formatTime } from "./format";
+import { attrSummary, formatCost, formatTime, formatWorkCost } from "./format";
 
 describe("formatCost", () => {
   it("renders a null cost as unknown, never as $0", () => {
@@ -22,6 +22,23 @@ describe("formatTime", () => {
 
   it("falls back to the raw string for an unparseable timestamp", () => {
     expect(formatTime("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("formatWorkCost", () => {
+  it("renders a fully-known cost plainly when there are no unknowns", () => {
+    expect(formatWorkCost("1.5000", 0)).toEqual({ text: "$1.5000", hasUnknown: false });
+  });
+
+  it("renders a fully-unknown work as just the unknown-count suffix", () => {
+    expect(formatWorkCost(null, 3)).toEqual({ text: "+3 unknown", hasUnknown: true });
+  });
+
+  it("renders a partially-known work with both the known total and the count", () => {
+    expect(formatWorkCost("0.5000", 2)).toEqual({
+      text: "$0.5000 (+2 unknown)",
+      hasUnknown: true,
+    });
   });
 });
 

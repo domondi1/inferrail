@@ -334,7 +334,7 @@ fleet "control plane" `docs/adr/0004` anticipates):
   directly — `inferrail report`/`work`/`budget` remain the CLI's own
   read/write surface either way.
 
-### Dashboard (v0.4.0, in progress) — Live Feed only so far
+### Dashboard (v0.4.0, in progress) — Live Feed and Work built so far
 
 A static, local web SPA in `app/`, served by the same process as the
 local control API when `--app-mode` is on — see
@@ -348,9 +348,17 @@ local control API when `--app-mode` is on — see
   in as it happens over `GET /v1/local/stream`. An unknown cost renders
   as the word "unknown", styled distinctly from a real, known `$0.0000`
   — never collapsed into the same thing.
-- **Not yet built**: Work, Budgets, Recover, Connect, Settings — the
+- **Work** (built): cost per `work_id`, over `GET /v1/local/work`;
+  clicking a row drills into `GET /v1/local/work/{work_id}` for its full
+  rollup (receipt count, status, outcome, started/ended timestamps). A
+  `work_id` with some priced receipts and some unpriceable ones shows
+  both — e.g. `$0.0007 (+2 unknown)` — never a single misleading total.
+  Client-side routing is hash-based (`#/work`, `#/work/<id>`), so the
+  drill-down is a real, bookmarkable/back-button-able URL without the
+  server needing a SPA catch-all route.
+- **Not yet built**: Budgets, Recover, Connect, Settings — the
   remaining `MISSION.md` v0.4.0 screens. The nav shows all six tabs; the
-  five not yet built are visibly disabled rather than omitted, so the
+  four not yet built are visibly disabled rather than omitted, so the
   eventual shape of the dashboard is honest from the first screen
   onward.
 - Known gap: the built dashboard is not yet bundled into the PyPI

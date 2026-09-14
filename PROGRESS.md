@@ -6,19 +6,31 @@ session; `MISSION.md` almost never does.
 ## Status summary
 
 **v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
-**v0.4.0 (the dashboard) is now started — unit 1 of N done this
-session, not yet merged.**
+**v0.4.0 (the dashboard) is in progress — unit 1 (scaffold + real
+serving/auth + Live Feed) is merged.** [PR #29](https://github.com/domondi1/inferrail/pull/29),
+merge commit `b900a59` — confirmed `MERGED` via `gh pr list --head
+feat/dashboard-scaffold-live-feed --json state,mergedAt` before trusting
+the founder's report, same discipline as every prior milestone; all 9
+CI checks (including the new `dashboard` job) green on that exact
+commit via `gh pr checks 29`; merge-commit tree confirmed byte-identical
+to what was authored locally (`git diff a332e23^{tree} b900a59^{tree}`
+→ empty) — no drift. `main` is synced through `b900a59`.
 
-**Architectural decision made and recorded, per explicit founder
-instruction this session: the dashboard lives in `app/` in this
-repository**, not a sibling repo — `docs/adr/0017-dashboard-in-app-directory.md`.
-See "v0.4.0 — IN PROGRESS" below for the full record of what's built
-(Live Feed screen, real serving/auth) vs. not yet (five more screens,
-wheel packaging).
+**Architectural decision recorded, per explicit founder instruction:
+the dashboard lives in `app/` in this repository**, not a sibling
+repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 
-**Next session's job:** pick v0.4.0's next unit (Work screen is the
-natural next one — see "Next session starts here" below), once this
-unit's PR is pushed/merged.
+**Unit 2 (Work screen) is also done this session, committed locally,
+not yet pushed/merged.** Frontend-only — no backend change needed, the
+API it uses already existed. See "v0.4.0 — IN PROGRESS" below for the
+full record of what's built (Live Feed, Work) vs. not yet (Budgets,
+Recover, Connect, Settings; wheel packaging).
+
+**Next session's job:** once unit 2 is pushed/merged (see "HUMAN ACTION
+NEEDED"), pick v0.4.0's next unit — Budgets is next in dependency order
+(Recover's "clear a review item" doesn't need Budgets, but Budgets is
+smaller and unblocks demonstrating MISSION.md's "set a budget, see a
+block" half of the acceptance criterion first).
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -541,7 +553,7 @@ it's served (a static SPA mounted at `/dashboard` by `inferrail serve
 per-install local-API token travels in the printed dashboard URL's query
 string, since the acceptance bar is "zero terminal use after startup").
 
-### Checklist for unit 1: scaffold, real serving/auth, Live Feed screen — DONE, not yet pushed/merged
+### Checklist for unit 1: scaffold, real serving/auth, Live Feed screen — DONE, merged (PR #29, `b900a59`)
 
 - [x] `app/` scaffolded: Vite + React + TypeScript, `npm run build` ->
       `app/dist` (a static SPA, no server-side rendering, no Node
@@ -622,13 +634,74 @@ string, since the acceptance bar is "zero terminal use after startup").
 - [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — same rule v0.3.0's
       own in-progress units followed (only the unit that *closes* a
       milestone bumps the version); v0.4.0 is not closed yet.
-- [ ] **Not done yet, this unit's own honest gap:** committed locally on
-      a new branch, but **not pushed** — this agent has no push access to
-      `domondi1/inferrail` (confirmed repeatedly across v0.2.1/v0.3.0,
-      see "Process note" above; unchanged this session). Exact handoff
-      commands are in "Next session starts here" below — actually, since
-      this is a same-session handoff, see the end-of-turn message to the
-      founder instead.
+- [x] **Pushed and merged.** [PR #29](https://github.com/domondi1/inferrail/pull/29)
+      merged by the founder, merge commit `b900a59` — confirmed `MERGED`
+      via `gh pr list --json state,mergedAt` and all 9 CI checks
+      (including the new `dashboard` job) green via `gh pr checks 29`,
+      before trusting the founder's report. Merge-commit tree confirmed
+      byte-identical to what was authored locally (no squash drift).
+
+### Checklist for unit 2: Work screen — DONE, not yet pushed/merged
+
+No backend changes needed — `GET /v1/local/work` and
+`GET /v1/local/work/{work_id}` already existed (v0.3.0 unit 4). This
+unit is frontend-only.
+
+- [x] `app/src/useHashRoute.ts` — the dashboard's one router: parses
+      `#/screen/param`, defaults to `live` on an empty/unrecognized hash,
+      `navigateTo(screen, param?)` writes it. Permanent per ADR-0017, not
+      a placeholder — this is what lets `#/work/<id>` be a real,
+      bookmarkable/back-button-able URL without the server ever needing
+      a SPA catch-all.
+- [x] `app/src/api.ts` gained `WorkSummary`, `listWork()`, `getWork(id)`,
+      and a shared `fetchLocal()` helper (Authorization-header auth —
+      the ordinary case; only the SSE stream needs the `?token=`
+      exception). A `LocalApiError` carries the HTTP status so the
+      detail view can distinguish 404 ("not found") from any other
+      failure.
+- [x] `app/src/screens/Work.tsx`: a list view (click a row to drill in)
+      and a detail view (receipt count, cost, status, outcome,
+      started/ended). Both are real screens against real endpoints, not
+      a stub — smoke-tested live against a running
+      `inferrail serve --app-mode` instance with a receipt actually
+      inserted into its SQLite store (not just through the test suite).
+- [x] `format.ts` gained `formatWorkCost(known, unknownCount)` — the
+      work-rollup-level version of the "unknown is never $0" rule:
+      renders a fully-known cost plainly, a fully-unknown work_id as
+      just `+N unknown`, and a partially-known one as both (`$0.0007
+      (+2 unknown)`) — never collapses a partial total into a single,
+      misleadingly-precise-looking number.
+- [x] Nav tabs are now real: Live Feed and Work are both clickable and
+      reflect the current route (`aria-current="page"`); Budgets/
+      Recover/Connect/Settings remain visibly disabled.
+- [x] Tests: `app/src/useHashRoute.test.ts` (4 cases — default screen,
+      bare screen, screen+param, URL-decoding a param), 3 new cases in
+      `format.test.ts` for `formatWorkCost` (fully-known, fully-unknown,
+      partial). `npm run lint`/`npm run build`/`npm test` all clean — 15
+      vitest cases total across 2 files (up from 8 at unit 1: +3
+      `formatWorkCost` cases, +4 `parseHash` cases).
+- [x] Live end-to-end smoke test (not just unit tests): started a real
+      `inferrail serve --app-mode`, confirmed `GET /v1/local/work`
+      returns `[]` before any evidence exists, inserted one real receipt
+      directly into the SQLite store with `attributes.work_id` set,
+      confirmed both `GET /v1/local/work` and
+      `GET /v1/local/work/WORK-SMOKE-1` return the exact shape
+      `app/src/api.ts`'s `WorkSummary` interface expects.
+- [x] Local verification: `ruff check .` clean (no Python changed, but
+      re-run anyway per protocol), `bash scripts/check_no_internal_content.sh`
+      clean, `cd app && npm run lint && npm run build && npm test` —
+      2 files, 15 tests, all passed. No backend tests to add (no backend
+      change); full-repo `pytest -q` unaffected (not re-run this unit —
+      zero Python files touched, confirmed via `git status`).
+- [x] Docs: `docs/PRODUCT.md`'s dashboard subsection retitled and
+      extended, `README.md`'s dashboard bullet updated, `CHANGELOG.md`'s
+      `## v0.4.0` entry gained the Work bullet.
+- [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — same rule as
+      unit 1; v0.4.0 is still not closed (Budgets/Recover/Connect/
+      Settings remain).
+- [ ] **Not done yet, this unit's own honest gap:** committed locally,
+      **not pushed** — same push-permission gap as every prior unit.
+      Exact handoff commands: see "HUMAN ACTION NEEDED" below.
 
 ### Known gaps, explicitly deferred (not hidden) — see ADR-0017's "Consequences"
 
@@ -643,53 +716,56 @@ string, since the acceptance bar is "zero terminal use after startup").
   server, not the built static output this unit actually ships); fixing
   requires a breaking major-version bump (`vite@8`, `vitest@5`) not
   attempted in this unit. Tracked, not silently ignored.
-- Work, Budgets, Recover, Connect, Settings screens: not built. Budgets
-  and Recover in particular are what MISSION.md's full v0.4.0 acceptance
+- Budgets, Recover, Connect, Settings screens: not built. Budgets and
+  Recover in particular are what MISSION.md's full v0.4.0 acceptance
   criterion needs ("set a budget, see a block, clear a review item") —
   this unit alone does not close the milestone.
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether this unit's PR
-   (branch name and exact push/PR-create commands given to the founder
-   at the end of this session) has been pushed/merged; if the founder
-   reports it was, verify with `gh pr view <n> --json state,mergedAt`
-   before trusting it, same discipline as every prior milestone.
-2. **Pick v0.4.0's next unit.** The Work screen is the natural next
-   one — it needs only `GET /v1/local/work` (already built, unit 4 of
-   v0.3.0) and can reuse Live Feed's styling/patterns directly. Budgets
-   and Recover are larger (they need real POST/DELETE interactions, not
-   just a read-only view) and are better split into their own units
-   after Work, matching how v0.3.0 sequenced its four units by real
-   dependency order rather than MISSION.md's listed order alone.
+   changed underneath since this session — check whether unit 2's PR
+   (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
+   been pushed/merged; if the founder reports it was, verify with
+   `gh pr view <n> --json state,mergedAt` before trusting it, same
+   discipline as every prior milestone.
+2. **Pick v0.4.0's next unit: Budgets.** It needs real POST/DELETE
+   interactions (create/edit/remove a budget via `POST`/`DELETE
+   /v1/local/budgets*`, already built in v0.3.0 unit 4) plus a way to
+   show a burn bar and the blocked-request log (query
+   `GET /v1/local/receipts` filtered to `budget_exceeded`-category
+   failures, or add a small dedicated view if that proves awkward —
+   check `budgets/enforcement.py`'s `augment_overrun`/`_emit_failure`
+   paths for exactly what's queryable before deciding). Recover comes
+   after Budgets — it's independent of it, but Budgets is smaller and
+   completes the "set a budget, see a block" half of MISSION.md's
+   v0.4.0 acceptance criterion first.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
-   before opening a PR, commit locally, then hand the founder the exact
-   `git push`/`gh pr create` commands (this agent cannot push to this
-   repo). Do not self-merge.
+   before opening a PR if any backend file changes, commit locally, then
+   hand the founder the exact `git push`/`gh pr create` commands (this
+   agent cannot push to this repo). Do not self-merge.
 4. Update this file's "Status summary" and the "v0.4.0" section above
-   to reflect wherever the next unit lands, the same way each v0.3.0
-   unit's checklist was filled in as it merged.
+   to reflect wherever the next unit lands, the same way each unit's
+   checklist was filled in as it merged.
 
 ## HUMAN ACTION NEEDED
 
-- **This session's unit needs to be pushed and opened as a PR** — same
-  push-permission gap as every prior milestone (`git push` from this
-  session returns `403: Permission to domondi1/inferrail.git denied to
-  domondi1`, confirmed again this session, not assumed from history).
-  Committed locally as `03a83b3` on branch
-  `feat/dashboard-scaffold-live-feed`, based on `main` at `33f3e3e`
-  (post-PR-#28, the current `origin/main` tip as of this session). Exact
-  commands:
+- **Unit 2 needs to be pushed and opened as a PR** — same
+  push-permission gap as every prior unit (`git push` from this session
+  returns `403: Permission to domondi1/inferrail.git denied to
+  domondi1`, confirmed again this session). Committed locally as
+  `a5b28d9` on branch `feat/dashboard-work-screen`, based on `main` at
+  `b900a59` (PR #29's merge commit, the current `origin/main` tip as of
+  this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-scaffold-live-feed
-  gh pr create --title "feat: dashboard scaffold + Live Feed screen (v0.4.0 unit 1)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section for the full record. Records docs/adr/0017 (dashboard lives in app/ in this repo, per your instruction) and ships unit 1: real serving/auth through inferrail serve --app-mode, plus the Live Feed screen streaming real receipts. 868 tests pass (860 + 8 new), ruff/mypy/npm run build/vitest all clean, boundary check clean. Work/Budgets/Recover/Connect/Settings screens are separate later units (shown as disabled nav tabs)." \
+  git push -u origin feat/dashboard-work-screen
+  gh pr create --title "feat: dashboard Work screen (v0.4.0 unit 2)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 2's checklist, for the full record. Frontend-only -- GET /v1/local/work and /v1/local/work/{id} already existed. Adds the dashboard's hash-based router, a Work list + drill-down screen, and honest partial-cost rendering (\$0.0007 (+2 unknown), never a single misleading total). 15 vitest cases pass, ruff/boundary-check clean, live-smoke-tested against a running inferrail serve --app-mode instance. Budgets/Recover/Connect/Settings remain separate later units." \
     --base main
   ```
-- Everything below remains deferred per `MISSION.md`'s standing
-  ledger, untouched and not yet due:
+- Everything below remains deferred per `MISSION.md`'s standing ledger,
+  untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
   tier.
 - Signing accounts, stopwatch tests, demo video/screenshots, HN post
