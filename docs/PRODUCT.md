@@ -310,6 +310,42 @@ here:
 - Shared as-is between `/v1/chat/completions` and `/v1/messages` — a
   budget applies regardless of which wire format a request arrives on.
 
+### Local control API and `--app-mode`
+
+See `docs/adr/0016-local-control-api.md` for the full design; summary
+here — this is a *local*, single-process API (not the hosted, cross-
+fleet "control plane" `docs/adr/0004` anticipates):
+
+- `inferrail serve --app-mode` loads `inferrail.yaml` as normal
+  (providers/routes/telemetry untouched), then relocates receipts and
+  budgets under the OS-conventional per-user app-data directory,
+  forcing `receipts.sink: sqlite` and `budgets.enabled: true`
+  regardless of what the file says, and mounts a second HTTP surface —
+  `/v1/local/*` — guarded by a mandatory per-install token (printed on
+  startup, also saved under the app-data directory). Not combinable
+  with `--quickstart`.
+- `GET /v1/local/receipts` (paginated, filterable by
+  work_id/project/model), `GET /v1/local/work` / `GET
+  /v1/local/work/{work_id}` (rollups), `GET /v1/local/budgets` / `POST
+  /v1/local/budgets` / `DELETE /v1/local/budgets/{id}` (CRUD, shared
+  live with `BudgetEnforcer` — no second view of the same data), and
+  `GET /v1/local/stream` (SSE tail of newly-emitted receipts).
+- Meant to be consumed by the not-yet-built desktop dashboard (v0.4.0),
+  not by a human directly — `inferrail report`/`work`/`budget` remain
+  the CLI's own read/write surface either way.
+
+### Diagnostics: `inferrail pricing update` and `inferrail doctor`
+
+- `inferrail pricing update` never fetches anything over the network —
+  there's no way to do that and still meet this project's own bar for a
+  verified price (checked by hand against the vendor's own pricing
+  page, `docs/adr/0005`). It reports each built-in catalog's age and
+  states the real fix: `pip install --upgrade inferrail`, or an
+  explicit `pricing:` override.
+- `inferrail doctor` checks port availability, pricing-catalog
+  freshness, and provider reachability (a bare TCP connect — never an
+  HTTP request, never using a real API key), each with a one-line fix.
+
 ### Explicit non-goals / not yet supported
 
 Not a hidden limitation — these are the honest edges of v0.1:
@@ -331,7 +367,10 @@ Not a hidden limitation — these are the honest edges of v0.1:
 - Intelligent/adaptive routing of any kind
 - Historical price versioning (a receipt embeds the price snapshot used at
   the time, but there is no queryable price-history store)
-- A web dashboard — `inferrail report` is a local CLI table, deliberately
+- A web dashboard — `inferrail report` is a local CLI table,
+  deliberately. (The local control API a future dashboard would consume
+  now exists — see "Local control API and `--app-mode`" above — but no
+  UI is built against it yet.)
 - Any hosted/cloud component — see "OSS vs. hosted" below
 - Non-LLM economic events (browser, search, compute/sandbox, MCP tool
   cost) in `TaskTransaction` — its only event type today is `inference`;

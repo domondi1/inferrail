@@ -109,6 +109,66 @@ receipts:
     assert len(_no_real_server) == 1
 
 
+def _write_serve_config(path: Path, *, env_var: str = "TEST_SERVE_KEY") -> Path:
+    config_path = path / "inferrail.yaml"
+    config_path.write_text(
+        f"""
+providers:
+  openai:
+    type: openai
+    api_key_env: {env_var}
+routes:
+  default:
+    provider: openai
+    model: gpt-4o-mini
+telemetry:
+  sink: none
+receipts:
+  sink: none
+"""
+    )
+    return config_path
+
+
+def test_serve_app_mode_relocates_receipts_and_budgets_and_prints_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    config_path = _write_serve_config(tmp_path)
+    monkeypatch.setenv("TEST_SERVE_KEY", "sk-test-not-a-real-key")
+    app_data = tmp_path / "appdata"
+    monkeypatch.setenv("XDG_DATA_HOME", str(app_data))
+    monkeypatch.setattr("sys.platform", "linux")
+
+    result = main(["serve", "--config", str(config_path), "--app-mode"])
+
+    assert result == 0
+    assert len(_no_real_server) == 1
+    app = _no_real_server[0]["app"]
+    assert (app_data / "inferrail" / "receipts.db").exists()
+    assert (app_data / "inferrail" / "local-api-token").exists()
+    out = capsys.readouterr().out
+    assert "App-mode data directory" in out
+    assert app.state.local_api_token in out
+
+
+def test_serve_quickstart_and_app_mode_together_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = main(["serve", "--quickstart", "--app-mode"])
+
+    assert result == 1
+    assert _no_real_server == []
+    assert "not combinable" in capsys.readouterr().err
+
+
 def test_report_falls_back_to_quickstart_receipts_path_without_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

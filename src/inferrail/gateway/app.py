@@ -14,6 +14,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -31,6 +32,7 @@ from inferrail.errors import (
     GatewayAuthenticationError,
     InferrailError,
     InvalidRequestError,
+    LocalApiAuthenticationError,
     ProviderError,
     ProviderTimeoutError,
     RateLimitError,
@@ -42,6 +44,8 @@ from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.routes import router as api_router
 from inferrail.gateway.schemas import ErrorDetail, ErrorResponse
+from inferrail.localapi.routes import router as local_api_router
+from inferrail.localapi.token import ensure_local_api_token
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.anthropic_base import AnthropicMessagesProvider
 from inferrail.providers.base import Provider
@@ -58,6 +62,7 @@ _logger = logging.getLogger("inferrail.gateway")
 # InferrailError subclass forces a conscious choice of HTTP status here.
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (GatewayAuthenticationError, 401),
+    (LocalApiAuthenticationError, 401),
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
     (RateLimitError, 429),
@@ -98,7 +103,23 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
     return None
 
 
-def create_app(config: InferrailConfig) -> FastAPI:
+def create_app(
+    config: InferrailConfig,
+    *,
+    app_mode: bool = False,
+    local_outcomes_path: Path | None = None,
+) -> FastAPI:
+    """`app_mode` mounts the local control API (`/v1/local/*` — see
+    docs/adr/0016-local-control-api.md), guarded by a mandatory
+    per-install token. Only `inferrail serve --app-mode` sets this;
+    every other caller of `create_app` (including every existing test)
+    is completely unaffected — no new route, no new state, no new file
+    touched on disk. When `app_mode` is true, `config` must already have
+    `receipts.sink: sqlite` and `budgets.enabled: true` (the CLI's
+    `--app-mode` setup guarantees both); `local_outcomes_path` is where
+    `inferrail work outcome` records live for the `/v1/local/work*`
+    routes to read back.
+    """
     # require_keys=False: the server (and /health) must be able to start
     # even before a provider's secret is configured. A missing key only
     # becomes an error when a request actually reaches that provider — see
@@ -122,6 +143,7 @@ def create_app(config: InferrailConfig) -> FastAPI:
     # enforcer never has to defend against a mismatched sink at request
     # time. See docs/adr/0015-budget-enforcement.md.
     budget_enforcer: BudgetEnforcer | None = None
+    budget_store: BudgetStore | None = None
     if config.budgets.enabled:
         assert isinstance(receipts, ReceiptsStore)  # guaranteed by config validation above
         budget_store = BudgetStore(config.budgets.path)
@@ -152,6 +174,20 @@ def create_app(config: InferrailConfig) -> FastAPI:
     # docs/PRODUCT.md's security section for why this exists.
     app.state.gateway_token = os.environ.get("INFERRAIL_GATEWAY_TOKEN") or None
     app.include_router(api_router)
+
+    if app_mode:
+        if not isinstance(receipts, ReceiptsStore) or budget_store is None:
+            raise ConfigurationError(
+                "--app-mode requires receipts.sink: sqlite and budgets.enabled: true — "
+                "the CLI's own --app-mode setup should have guaranteed both; see "
+                "docs/adr/0016-local-control-api.md"
+            )
+        app_data = Path(config.budgets.path).parent
+        app.state.local_api_token = ensure_local_api_token(app_data / "local-api-token")
+        app.state.local_receipts_store = receipts
+        app.state.local_budget_store = budget_store
+        app.state.local_outcomes_path = local_outcomes_path or (app_data / "work-outcomes.jsonl")
+        app.include_router(local_api_router)
 
     @app.exception_handler(InferrailError)
     async def handle_inferrail_error(_: Request, exc: InferrailError) -> JSONResponse:

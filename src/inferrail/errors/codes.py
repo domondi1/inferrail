@@ -18,6 +18,7 @@ from inferrail.errors.exceptions import (
     GatewayAuthenticationError,
     InferrailError,
     InvalidRequestError,
+    LocalApiAuthenticationError,
     ProviderError,
     ProviderTimeoutError,
     RateLimitError,
@@ -126,6 +127,15 @@ _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
             summary="A block-mode budget would be exceeded by this request.",
             remediation="Raise the budget's limit_usd ('inferrail budget set'), narrow "
             "its scope, or wait for its window to reset. Not retryable as-is.",
+        ),
+    ),
+    (
+        LocalApiAuthenticationError,
+        ErrorCode(
+            code="INFERRAIL_E011",
+            summary="Missing or invalid local control API credentials.",
+            remediation="Set the 'Authorization: Bearer <token>' header to match the "
+            "per-install token printed by 'inferrail serve --app-mode'.",
         ),
     ),
 ]

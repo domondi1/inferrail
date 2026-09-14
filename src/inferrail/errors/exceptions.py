@@ -54,6 +54,17 @@ class GatewayAuthenticationError(InferrailError):
     """
 
 
+class LocalApiAuthenticationError(InferrailError):
+    """The caller did not present a valid local-control-API bearer token.
+
+    Distinct from :class:`GatewayAuthenticationError`: that one is
+    optional and guards inference-cost routes; this one is mandatory
+    whenever `inferrail serve --app-mode` is used (see
+    docs/adr/0016-local-control-api.md) and guards routes that read back
+    a caller's own local receipts/work/budgets data.
+    """
+
+
 class UnsupportedFeatureError(InferrailError):
     """The request asked for something Inferrail does not yet support."""
 

@@ -150,21 +150,39 @@ class ReceiptsStore:
         work_id: str | None = None,
         project: str | None = None,
         model: str | None = None,
+        since: float | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[InferenceReceipt]:
         """Indexed lookup by any combination of `work_id`/`project`/
-        `model` — the three non-`ts` indexed columns. Omit all three for
-        the same result as `read_all` minus the skip count."""
+        `model` (the three non-`ts` indexed columns) and/or `since` (a
+        `ts` lower bound, exclusive — also indexed). Omit all four for
+        the same result as `read_all` minus the skip count.
+
+        `limit`/`offset` page through the (still `ts`-ordered) result —
+        added for `localapi.routes`'s paginated receipts endpoint and
+        its SSE tail (`since` polling), so both build on this one query
+        path rather than each re-deriving their own SQL."""
         clauses: list[str] = []
-        params: list[str] = []
+        params: list[object] = []
         for column, value in (("work_id", work_id), ("project", project), ("model", model)):
             if value is not None:
                 clauses.append(f"{column} = ?")
                 params.append(value)
+        if since is not None:
+            clauses.append("ts > ?")
+            params.append(since)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
         conn = self._connect()
         try:
             rows = conn.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM receipts{where} ORDER BY ts", params
+                f"SELECT {', '.join(_COLUMNS)} FROM receipts{where} "
+                f"ORDER BY ts{limit_sql}",
+                params,
             ).fetchall()
         finally:
             conn.close()
@@ -175,6 +193,31 @@ class ReceiptsStore:
             except (json.JSONDecodeError, ValueError, ValidationError, InvalidOperation):
                 continue
         return results
+
+    def count(
+        self,
+        *,
+        work_id: str | None = None,
+        project: str | None = None,
+        model: str | None = None,
+    ) -> int:
+        """Total matching rows for the same filters `query()` accepts
+        (minus `since`/`limit`/`offset`, which don't affect a total) —
+        lets a paginated caller report `total` without fetching every
+        row just to `len()` it."""
+        clauses: list[str] = []
+        params: list[object] = []
+        for column, value in (("work_id", work_id), ("project", project), ("model", model)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        conn = self._connect()
+        try:
+            row = conn.execute(f"SELECT COUNT(*) FROM receipts{where}", params).fetchone()
+        finally:
+            conn.close()
+        return int(row[0])
 
     def export_jsonl(self, path: str | Path) -> int:
         """Writes every stored receipt to `path` as JSONL, via the same
