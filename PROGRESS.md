@@ -851,17 +851,17 @@ from any other failure.
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 2 needs to be pushed and opened as a PR** — same
+- **Unit 3 needs to be pushed and opened as a PR** — same
   push-permission gap as every prior unit (`git push` from this session
   returns `403: Permission to domondi1/inferrail.git denied to
   domondi1`, confirmed again this session). Committed locally as
-  `a5b28d9` on branch `feat/dashboard-work-screen`, based on `main` at
-  `b900a59` (PR #29's merge commit, the current `origin/main` tip as of
-  this session). Exact commands:
+  `1ea10f1` on branch `feat/dashboard-budgets-screen`, based on `main`
+  at `217000b` (PR #30's merge commit, the current `origin/main` tip as
+  of this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-work-screen
-  gh pr create --title "feat: dashboard Work screen (v0.4.0 unit 2)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 2's checklist, for the full record. Frontend-only -- GET /v1/local/work and /v1/local/work/{id} already existed. Adds the dashboard's hash-based router, a Work list + drill-down screen, and honest partial-cost rendering (\$0.0007 (+2 unknown), never a single misleading total). 15 vitest cases pass, ruff/boundary-check clean, live-smoke-tested against a running inferrail serve --app-mode instance. Budgets/Recover/Connect/Settings remain separate later units." \
+  git push -u origin feat/dashboard-budgets-screen
+  gh pr create --title "feat: dashboard Budgets screen (v0.4.0 unit 3)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 3's checklist, for the full record. Real backend work this time: budgets/enforcement.py gains augment_attributes_with_block (same pattern as the existing augment_attributes_with_overrun), a new status filter on GET /v1/local/receipts, and a new GET /v1/local/budgets/spend that reuses spent_so_far_usd directly. Frontend: a Budgets screen with create/remove, burn bars, and a blocked-request log built from real evidence. 874 tests pass (868 + 6 new backend), 18 vitest cases pass, ruff/mypy/boundary-check clean, live-smoke-tested end-to-end against a running inferrail serve --app-mode instance (real budget created, real 402 block, confirmed the resulting receipt). Recover/Connect/Settings remain separate later units." \
     --base main
   ```
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
