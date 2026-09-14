@@ -5,11 +5,23 @@ session; `MISSION.md` almost never does.
 
 ## Status summary
 
-**v0.2.1 is fully closed — [PR #20](https://github.com/domondi1/inferrail/pull/20)
-and [PR #21](https://github.com/domondi1/inferrail/pull/21) both
-squash-merged by the founder 2026-09-14. Now working v0.3.0.** See
-"v0.2.1 — CLOSED" below for the full record, and "Current milestone:
-v0.3.0" further down for what's being worked now.
+**v0.2.1 is fully closed** — PR #20/#21 merged. **v0.3.0 unit (1)
+(SQLite receipts store) is fully closed** — PR #22/#23 merged. **v0.3.0
+unit (2) (Anthropic `/v1/messages` passthrough) is built, tested, CI
+green, but — as of this update — [PR #24](https://github.com/domondi1/inferrail/pull/24)
+is still OPEN, not merged.** The founder believed it had been merged;
+checking `gh pr view 24 --json state,mergedAt` and `git log origin/main`
+directly showed otherwise twice in a row. **Next session: re-check PR
+#24's actual state before doing anything else** — don't trust a verbal
+"I merged it" without confirming against GitHub, the same way this
+session learned to. If it's merged, sync `main`, update this file's unit
+(2) checklist to DONE (mirroring how unit (1) was marked below), and
+move to unit (3). If it's still open, surface that to the founder again
+plainly and wait — don't start unit (3) on top of unmerged unit (2), and
+don't merge #24 yourself.
+
+See "v0.2.1 — CLOSED" and "Current milestone: v0.3.0" below for the full
+record of what's actually in each unit.
 
 **Founder decisions that closed out the two remaining open items:**
 - *Expired-key live verification:* test coverage (short-TTL, same
@@ -207,14 +219,70 @@ in retroactively rather than describing planned work:
 - [x] CI green on PR #23 (all 8 checks) before merge; full local
       `pytest -q` — 726 passed, 19 skipped, 0 failed.
 
-### Remaining units: (2)-(4)
+### Checklist for unit (2): Anthropic `/v1/messages` passthrough — BUILT, PR NOT YET MERGED
+
+Built on branch `feat/anthropic-messages-passthrough`, opened as
+[PR #24](https://github.com/domondi1/inferrail/pull/24), all 8 CI checks
+green. **As of this update, `gh pr view 24` still reports
+`state: OPEN, mergedAt: null`** despite the founder believing it had been
+merged — confirmed twice, a few minutes apart, directly against GitHub
+(not cached). **Next session's first action: re-check this before
+anything else** (`gh pr view 24 --json state,mergedAt`). If merged by
+then, flip this heading to DONE (mirroring unit (1) above), `git pull`
+`main`, and delete the local/remote feature branch. If still open, tell
+the founder plainly and wait — do not build unit (3) on top of an
+unmerged unit (2), and do not merge #24 yourself (the harness's
+"Merge Without Review" classifier will likely refuse it anyway, per the
+v0.2.1 precedent above).
+
+What's in it, once it lands:
+
+- [x] `POST /v1/messages` — a genuinely separate, wire-native pipeline
+      (own `AnthropicMessagesProvider` protocol + `AnthropicProvider`
+      adapter in `providers/anthropic*.py`, own
+      `AnthropicInferenceEngine` in `gateway/anthropic_execution.py`),
+      not a translation of `/v1/chat/completions` — see
+      `docs/adr/0014-anthropic-messages-passthrough.md` for the full
+      rationale (byte-fidelity for streaming; Anthropic's content-block/
+      tool_use shape doesn't fit the OpenAI-shaped normalized types).
+- [x] Real streaming (byte-for-byte proxy, usage recovered from
+      Anthropic's own `message_start`/`message_delta` SSE events) and
+      tool use (passthrough content blocks — no special-case code
+      needed for `tool_use`/`tool_result`).
+- [x] Priced via a new, independently-verified
+      `pricing/builtin_anthropic.py` catalog (checked against
+      `platform.claude.com/docs/en/about-claude/models/overview` on
+      2026-09-14: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`,
+      `claude-haiku-4-5`). `PricingResolver.resolve` generalized from a
+      hardcoded `"openai"` check to a small per-verified-type catalog
+      table.
+- [x] `Router`, `PricingResolver`, `ReceiptSink`, `TelemetrySink` shared
+      as-is between both engines — one `routes:` section, one receipt
+      ledger. `providers/registry.py` gained `build_anthropic_providers`
+      alongside the unchanged `build_providers`; each silently skips the
+      other wire format's provider entries (never an error for "wrong
+      kind" of provider configured — see ADR-0014).
+- [x] Tests: 13 in `test_provider_anthropic.py`, 15 in
+      `test_gateway_anthropic.py` (including the same ADR-0003
+      payload-privacy guarantees the OpenAI route is tested for, for
+      both plain-text and tool-input content), plus registry/config/
+      pricing tests confirming the two engines' provider sets and
+      catalogs never cross-contaminate.
+- [x] Docs: `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `README.md`
+      (full point-Claude-Code-at-Inferrail walkthrough, verified
+      `ANTHROPIC_BASE_URL` is the real Anthropic SDK/Claude Code env var
+      via a live docs fetch, not assumed), `CLAUDE.md`, `llms.txt`, the
+      website's gateway blurb, `inferrail.example.yaml`,
+      `config.schema.json`/`openapi.json` regenerated, new
+      `examples/anthropic_messages_request.py`.
+- [x] CI green on PR #24 (all 8 checks); full local `pytest -q` — 768
+      passed, 19 skipped, 0 failed.
+
+### Remaining units: (3)-(4)
 
 Per `MISSION.md`, in the order the mission lists them (not yet
 prioritized against each other beyond that):
 
-- **(2) Anthropic `/v1/messages` passthrough** — streaming + tool use,
-  priced via the catalog. This is what makes "point Claude Code at
-  Inferrail" true.
 - **(3) Budgets with real enforcement** — global/project/work_id scope,
   window (per-work/daily/monthly), mode (warn/block); pre-flight
   catalog-based estimate + spent-so-far check in the gateway; honest
@@ -229,24 +297,35 @@ prioritized against each other beyond that):
 v0.3.0's own acceptance criteria (a $0.01 hard cap blocks before the
 provider is called; a Claude Code session pointed at the gateway
 produces attributed receipts; crash/idempotency tests for budgets pass)
-depend on units (2) and (3) both existing — pick (2) or (3) next, not
-(4), since (4)'s control API is meant to expose budgets that need to
-exist first.
+need unit (3) built — pick that next, not (4), since (4)'s control API
+is meant to expose budgets that need to exist first. This only applies
+once unit (2)/PR #24 is actually confirmed merged (see the checklist
+above) — don't start (3) on top of unmerged (2).
 
 ## Next session starts here
 
-Start v0.3.0 unit (2) or (3) — recommend (2), the Anthropic passthrough,
-since it's the smaller, more self-contained of the two (mirrors the
-existing OpenAI provider adapter shape; see `src/inferrail/providers/`
-and `docs/adr/0007-model-passthrough-routing.md`) and unblocks "point
-Claude Code at Inferrail" sooner. Follow the same protocol as v0.2.1 and
-v0.3.0 unit (1): build with tests at the existing rigor, open a PR
-(never push directly to `main`), get CI green, and update this file
-before ending the session. Do not self-merge — the founder reviews and
-merges promptly. If two units end up in flight on separate PRs at once,
-remember what happened this round: whichever PR merges second must
-re-check this file for staleness before merging, since the first PR's
-merge may have already made its own checklist claims outdated.
+1. **First action, before reading further or writing any code:** run
+   `gh pr view 24 --json state,mergedAt` and `git log origin/main --oneline -5`.
+   Don't trust a prior session's belief (including this one's) that #24
+   was merged — confirm directly. This exact check was wrong twice in a
+   row late in this session.
+2. If #24 is merged: `git checkout main && git pull`, delete the local
+   `feat/anthropic-messages-passthrough` branch if it still exists, flip
+   this file's unit (2) heading to DONE, and start v0.3.0 unit (3)
+   (budgets with real enforcement — see "Remaining units" above for the
+   full scope). Follow the same protocol as every prior unit: build with
+   tests at the existing rigor, open a PR (never push directly to
+   `main`), get CI green, and update this file before ending the
+   session. Do not self-merge.
+3. If #24 is still open: tell the founder plainly and stop there for
+   this concern — don't start unit (3), don't attempt to merge #24
+   yourself. If there's independent, safe work to do while waiting
+   (e.g. more live-verification, doc polish), fine, but don't build new
+   product code on an unconfirmed foundation.
+4. If two units end up in flight on separate PRs at once again,
+   remember what happened this round: whichever PR merges second must
+   re-check this file for staleness before merging, since the first
+   PR's merge may have already made its own checklist claims outdated.
 
 ## HUMAN ACTION NEEDED
 
