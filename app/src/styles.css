@@ -192,6 +192,16 @@ main {
   font-style: italic;
 }
 
+.work-row {
+  cursor: pointer;
+}
+
+.work-row:hover,
+.work-row:focus-visible {
+  background: var(--bar);
+  outline: none;
+}
+
 .empty-state {
   color: var(--ink-2);
   padding: 32px 0;

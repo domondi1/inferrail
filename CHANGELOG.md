@@ -21,11 +21,16 @@ PyPI release (the hosted service and website ship independently of the
 - The local control API's auth dependency now also accepts `?token=` as
   an alternative to the `Authorization` header, since browser
   `EventSource` cannot set custom headers.
+- **Work** screen: cost per `work_id` over `GET /v1/local/work`, with a
+  drill-down (`GET /v1/local/work/{work_id}`) at a real, hash-routed URL
+  (`#/work/<id>`). A partially-priced work_id shows both its known total
+  and how many receipts contributed nothing knowable (e.g. `$0.0007
+  (+2 unknown)`), never a single misleading number.
 
 ### Not yet in this milestone
 
-- The Work, Budgets, Recover, Connect, and Settings screens (visible in
-  the nav as disabled tabs, not omitted).
+- The Budgets, Recover, Connect, and Settings screens (visible in the
+  nav as disabled tabs, not omitted).
 - Bundling the built dashboard into the PyPI wheel — build it from a
   checkout (`cd app && npm install && npm run build`) until a packaging
   unit lands.
