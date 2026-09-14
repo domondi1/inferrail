@@ -150,47 +150,103 @@ same rule that applied to v0.2.1.
 v0.3.0 bundles four units: (1) SQLite receipts store, (2) Anthropic
 `/v1/messages` passthrough, (3) budgets with real enforcement, (4)
 local control API + `inferrail doctor`/`pricing update`. Per the
-session protocol, work the smallest first unit, not the whole
-milestone at once — this session (or the next) starts with **(1) the
-SQLite receipts store**, since (3) and (4) both depend on querying
-receipts, and doing them before a real store exists would mean
-building throwaway plumbing.
+session protocol, work the smallest first unit, not the whole milestone
+at once — (1) went first since (3) and (4) both depend on querying
+receipts, and doing them before a real store exists would mean building
+throwaway plumbing.
 
-### Checklist for unit (1): SQLite receipts store
+### Checklist for unit (1): SQLite receipts store — DONE
 
-- [ ] WAL-mode SQLite sink alongside the existing JSONL sink in
-      `src/inferrail/receipts/sinks.py` (see that file + `schema.py`
-      for the current `InferenceReceipt`/JSONL shape before designing
-      the table).
-- [ ] JSONL import/export so existing JSONL receipt files aren't
-      stranded.
-- [ ] Indices on `ts`, `work_id`, `project`, `model`.
-- [ ] Existing `inferrail report`/`work`/`transaction` CLI commands
-      work unchanged over the SQLite store (check `src/inferrail/cli`
-      and `src/inferrail/work` for what "existing reports" currently
-      read from).
-- [ ] Tests at the existing rigor: idempotency, crash-recovery,
-      concurrency (this repo's `inferrail.ap.store.RecoveryStore` is
-      the house style to match — WAL, `busy_timeout`, one connection
-      per call, `BEGIN IMMEDIATE` for writes).
-- [ ] ADR continuing the `docs/adr` numbering (next is `0013`) if this
-      changes a structural boundary (e.g. whether SQLite becomes the
-      default sink or stays opt-in).
-- [ ] `docs/PRODUCT.md` updated if default/opt-in scope changes.
+Built and merged as [PR #23](https://github.com/domondi1/inferrail/pull/23)
+(2026-09-14) while this PR was still open, so this checklist is filled
+in retroactively rather than describing planned work:
 
-Not started yet as of this update — see "Next session starts here."
+- [x] WAL-mode SQLite sink alongside the existing JSONL sink:
+      `src/inferrail/receipts/sqlite_store.py`'s `ReceiptsStore`,
+      implementing the same `ReceiptSink` protocol as
+      `sinks.JSONLReceiptSink` — `sinks.build_receipt_sink` is the only
+      dispatch point, so the gateway/`InferenceEngine` never know which
+      sink is active. `receipts.sink: sqlite` in `inferrail.yaml`
+      selects it; `jsonl` remains the default.
+- [x] JSONL import/export: `inferrail receipts import --jsonl <path>
+      --db <path>` / `inferrail receipts export --db <path> --jsonl
+      <path>` (`src/inferrail/cli/receipts_io.py`). Import is
+      idempotent (`ReceiptsStore.emit` is `INSERT OR IGNORE` on
+      `receipt_id`); export only ever appends.
+- [x] Indices on `ts`, `work_id`, `project`, `model` — `work_id`/
+      `project` are extracted from the receipt's open-ended
+      `attributes` dict into their own columns purely for indexing;
+      `attributes` itself is still stored in full.
+- [x] Existing `inferrail report`/`transaction`/`work` CLI commands
+      work unchanged over the SQLite store: they all share
+      `cli.report.load_receipts`, which now detects which sink
+      produced a given file by its own SQLite magic bytes
+      (`sqlite_store.looks_like_sqlite`) rather than a new flag — zero
+      new CLI surface for those three commands, and their pure
+      aggregation functions (`aggregate`, `build_work_summary`,
+      `build_transaction`) are completely unchanged.
+- [x] Tests at the existing rigor: idempotent emit, indexed `query()`
+      by work_id/project/model, an 8-thread concurrent-writer test
+      (mirrors `JSONLReceiptSink`'s own), tolerant `read_all` (skips a
+      row with corrupted `attributes_json` rather than crashing),
+      `export_jsonl`, `import_jsonl` (+ idempotent re-import, +
+      malformed-row skip count), magic-byte detection (incl. a
+      misnamed-extension case), `build_receipt_sink` dispatch,
+      `load_receipts` auto-detection, `run_report` against a live
+      store, and the full `receipts import`/`export` CLI surface via
+      `main()`. All in `tests/unit/test_receipts.py`,
+      `tests/unit/test_cli_report.py`,
+      `tests/unit/test_cli_receipts_io.py`.
+- [x] `docs/adr/0013-sqlite-receipts-store.md` — records that this is a
+      new opt-in sink, not a replacement (JSONL stays the default), and
+      why (real indexed columns over JSON1 expressions, detection over
+      a new flag).
+- [x] `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `README.md`,
+      `inferrail.example.yaml`, `config.schema.json` all updated to
+      describe the new sink option.
+- [x] CI green on PR #23 (all 8 checks) before merge; full local
+      `pytest -q` — 726 passed, 19 skipped, 0 failed.
+
+### Remaining units: (2)-(4)
+
+Per `MISSION.md`, in the order the mission lists them (not yet
+prioritized against each other beyond that):
+
+- **(2) Anthropic `/v1/messages` passthrough** — streaming + tool use,
+  priced via the catalog. This is what makes "point Claude Code at
+  Inferrail" true.
+- **(3) Budgets with real enforcement** — global/project/work_id scope,
+  window (per-work/daily/monthly), mode (warn/block); pre-flight
+  catalog-based estimate + spent-so-far check in the gateway; honest
+  `budget_overrun_usd` on reconciliation. `inferrail budget
+  set|list|rm`. Now has `ReceiptsStore.query()` to build the
+  spent-so-far check on, rather than re-deriving its own SQLite access.
+- **(4) Local control API on `127.0.0.1`** with a per-install token:
+  paginated receipts query, work rollups, budgets CRUD,
+  `GET /v1/local/stream` (SSE of new receipts); `inferrail serve
+  --app-mode`; `inferrail pricing update`; `inferrail doctor`.
+
+v0.3.0's own acceptance criteria (a $0.01 hard cap blocks before the
+provider is called; a Claude Code session pointed at the gateway
+produces attributed receipts; crash/idempotency tests for budgets pass)
+depend on units (2) and (3) both existing — pick (2) or (3) next, not
+(4), since (4)'s control API is meant to expose budgets that need to
+exist first.
 
 ## Next session starts here
 
-Start (or continue) v0.3.0 unit (1), the SQLite receipts store. Read
-`src/inferrail/receipts/sinks.py`, `schema.py`, `aggregation.py`,
-`builder.py`, and `src/inferrail/work/` before writing code — this
-repo's `docs/PRODUCT.md` "Current scope" section is the authoritative
-description of what the JSONL sink and existing reports do today; do
-not assume, read it. Follow the same protocol as v0.2.1: build with
-tests at the existing rigor, open a PR (never push directly to `main`),
-get CI green, and update this file before ending the session. Do not
-self-merge — the founder reviews and merges promptly.
+Start v0.3.0 unit (2) or (3) — recommend (2), the Anthropic passthrough,
+since it's the smaller, more self-contained of the two (mirrors the
+existing OpenAI provider adapter shape; see `src/inferrail/providers/`
+and `docs/adr/0007-model-passthrough-routing.md`) and unblocks "point
+Claude Code at Inferrail" sooner. Follow the same protocol as v0.2.1 and
+v0.3.0 unit (1): build with tests at the existing rigor, open a PR
+(never push directly to `main`), get CI green, and update this file
+before ending the session. Do not self-merge — the founder reviews and
+merges promptly. If two units end up in flight on separate PRs at once,
+remember what happened this round: whichever PR merges second must
+re-check this file for staleness before merging, since the first PR's
+merge may have already made its own checklist claims outdated.
 
 ## HUMAN ACTION NEEDED
 
