@@ -22,11 +22,21 @@ PyPI release (the hosted service and website ship independently of the
   via a new, independently-verified Anthropic catalog. This is what
   makes pointing Claude Code (or any Anthropic SDK client) at Inferrail
   work. See `docs/adr/0014-anthropic-messages-passthrough.md`.
+- Real budget enforcement (opt-in, `budgets.enabled: true`, requires
+  `receipts.sink: sqlite`): `global`/`project`/`work_id`-scoped spend
+  caps over a `per_work`/`daily`/`monthly` window, in `warn` or `block`
+  mode. A `block` budget rejects a request with HTTP 402 (machine-
+  readable `error.details`) before any provider is contacted, using a
+  catalog-based upper-bound estimate; the block is still recorded as a
+  normal receipt. A `warn` budget never blocks, but a real overrun is
+  recorded on the receipt as `budget_overrun_usd`. New CLI: `inferrail
+  budget set|list|rm`. Shared between `/v1/chat/completions` and
+  `/v1/messages`. See `docs/adr/0015-budget-enforcement.md`.
 
 ### Notes
 
-- v0.3.0 also includes budget enforcement and a local control API, not
-  yet built as of this entry — see `PROGRESS.md` for current status.
+- v0.3.0 also includes a local control API, not yet built as of this
+  entry — see `PROGRESS.md` for current status.
 
 ## v0.2.1 — 2026-09-14
 

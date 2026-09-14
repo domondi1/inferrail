@@ -279,6 +279,37 @@ inspectable config file and gives you a telemetry record for every request
   the receipt — never a fabricated `$0`.
 - All money arithmetic uses `Decimal`, never `float`.
 
+### Budgets and enforcement
+
+See `docs/adr/0015-budget-enforcement.md` for the full design; summary
+here:
+
+- Off by default (`budgets.enabled: false` in `inferrail.yaml`).
+  Turning it on requires `receipts.sink: sqlite` — enforcement computes
+  spend-so-far from the indexed receipts store (docs/adr/0013), and
+  Inferrail refuses to load a config that claims enforcement without
+  that store to check against.
+- A budget is scoped `global`, `project`, or `work_id` (matched against
+  the request's `X-Inferrail-Attribute-*` headers — see "Attribution"
+  below), over a window (`per_work`, `daily`, `monthly`), in `warn` or
+  `block` mode, with a `limit_usd`. Manage them with `inferrail budget
+  set|list|rm`.
+- `block` mode rejects a request with HTTP 402 *before any provider is
+  contacted*, using a catalog-based upper-bound cost estimate (never a
+  real token count — Inferrail has no tokenizer dependency) — the
+  response body's `error.details` carries `budget_id`/`limit_usd`/
+  `spent_so_far_usd`/`estimated_request_usd` so a caller can react
+  programmatically, not just read a message. The block itself still
+  produces a normal (costless) receipt, so it's visible in
+  `inferrail report` like any other rejected request.
+- `warn` mode never blocks. If a request's *actual* cost (known only
+  after completion) pushes a matching budget over its limit, the
+  receipt gains a `budget_overrun_usd` attribute — the same generic
+  attribution mechanism customer/project/work_id already use, not a new
+  field — so the overrun is honestly recorded, never silently absorbed.
+- Shared as-is between `/v1/chat/completions` and `/v1/messages` — a
+  budget applies regardless of which wire format a request arrives on.
+
 ### Explicit non-goals / not yet supported
 
 Not a hidden limitation — these are the honest edges of v0.1:
@@ -298,7 +329,6 @@ Not a hidden limitation — these are the honest edges of v0.1:
   docs/adr/0014-anthropic-messages-passthrough.md) — Gemini, Bedrock's
   native API, etc. are still not supported
 - Intelligent/adaptive routing of any kind
-- Budgets, spend limits, or blocking a request based on cost
 - Historical price versioning (a receipt embeds the price snapshot used at
   the time, but there is no queryable price-history store)
 - A web dashboard — `inferrail report` is a local CLI table, deliberately
@@ -310,8 +340,11 @@ Not a hidden limitation — these are the honest edges of v0.1:
   margin) on a `TaskTransaction` — it aggregates cost only. The separate
   `work` command accepts only a minimal caller-declared status; it does not
   model revenue, margin, business payloads, or a work lifecycle.
-- Budget enforcement or any policy decision at the transaction level —
-  `inferrail transaction` only reports, it never blocks a request
+- Any policy decision at the *transaction* level — `inferrail
+  transaction` only reports, it never blocks a request. (Budget
+  enforcement itself now exists, at the gateway — see "Budgets and
+  enforcement" above — this bullet is about the separate, reporting-only
+  `transaction` command specifically.)
 
 ## Verifying privacy claims yourself
 

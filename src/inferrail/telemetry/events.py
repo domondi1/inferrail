@@ -29,6 +29,10 @@ ErrorCategory = Literal[
     # The client disconnected/cancelled a stream — not a provider or
     # routing failure, so it doesn't fit any category above.
     "cancelled",
+    # A block-mode budget rejected the request pre-flight, before any
+    # provider was contacted — see
+    # inferrail.budgets.enforcement.BudgetEnforcer.check.
+    "budget_exceeded",
 ]
 
 

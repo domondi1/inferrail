@@ -8,6 +8,8 @@ specific provider's error shapes.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 
 class InferrailError(Exception):
     """Base class for all errors raised by Inferrail."""
@@ -125,3 +127,47 @@ class ProviderTimeoutError(ProviderError):
     """
 
     retryable = True
+
+
+class BudgetExceededError(InferrailError):
+    """A "block"-mode budget would be exceeded by this request — raised
+    before the provider is ever contacted (see
+    ``inferrail.budgets.enforcement.BudgetEnforcer.check``). Every field
+    here is structurally incapable of carrying prompt/response content
+    (all of it is numbers, or config the operator themselves wrote), so
+    unlike ``ProviderError`` no separate ``safe_summary`` override is
+    needed — the default (``str(self)``) is already telemetry-safe.
+
+    Never raised for a "warn"-mode budget — see
+    ``docs/adr/0015-budget-enforcement.md``.
+    """
+
+    def __init__(
+        self,
+        *,
+        budget_id: str,
+        scope: str,
+        scope_value: str | None,
+        window: str,
+        mode: str,
+        limit_usd: Decimal,
+        spent_so_far_usd: Decimal,
+        estimated_request_usd: Decimal,
+        projected_total_usd: Decimal,
+    ) -> None:
+        scoped = f"{scope}={scope_value}" if scope_value is not None else scope
+        message = (
+            f"budget '{budget_id}' ({scoped}, window={window}, mode={mode}) would be "
+            f"exceeded: spent ${spent_so_far_usd} + estimated ${estimated_request_usd} "
+            f"= ${projected_total_usd} > limit ${limit_usd}"
+        )
+        super().__init__(message)
+        self.budget_id = budget_id
+        self.scope = scope
+        self.scope_value = scope_value
+        self.window = window
+        self.mode = mode
+        self.limit_usd = limit_usd
+        self.spent_so_far_usd = spent_so_far_usd
+        self.estimated_request_usd = estimated_request_usd
+        self.projected_total_usd = projected_total_usd

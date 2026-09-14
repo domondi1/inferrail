@@ -92,6 +92,14 @@ receipts:
 #       source: "https://developers.openai.com/api/docs/pricing"
 #       verified_date: "2026-08-16"
 
+# Optional: real, pre-flight-enforced spend caps. Off by default. See
+# docs/adr/0015-budget-enforcement.md. Manage the actual budgets (scope,
+# window, mode, limit) with `inferrail budget set|list|rm` — this
+# section only says where that store lives and whether it's enforced.
+# budgets:
+#   enabled: true       # requires receipts.sink: sqlite above
+#   path: ./inferrail-budgets.db
+
 server:
   host: 127.0.0.1
   port: 8000

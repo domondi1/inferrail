@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from inferrail.errors.exceptions import (
     AuthenticationError,
+    BudgetExceededError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -116,6 +117,15 @@ _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
             summary="The upstream provider request failed for an unrecognized reason.",
             remediation="Check provider status; Inferrail retries automatically if the "
             "failure looks transient (5xx).",
+        ),
+    ),
+    (
+        BudgetExceededError,
+        ErrorCode(
+            code="INFERRAIL_E010",
+            summary="A block-mode budget would be exceeded by this request.",
+            remediation="Raise the budget's limit_usd ('inferrail budget set'), narrow "
+            "its scope, or wait for its window to reset. Not retryable as-is.",
         ),
     ),
 ]

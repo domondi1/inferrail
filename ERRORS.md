@@ -30,3 +30,4 @@ about it) and `error.docs_url` (this file, anchored to the code):
 | <a id="inferrail_e007"></a>`INFERRAIL_E007` | `RoutingError` | The request's model field didn't match a configured route. | Use one of the route names under inferrail.yaml's routes: section, not a provider model id. |
 | <a id="inferrail_e008"></a>`INFERRAIL_E008` | `ConfigurationError` | Inferrail's own configuration is missing, invalid, or unusable. | Run 'inferrail config check' for the specific validation error. |
 | <a id="inferrail_e009"></a>`INFERRAIL_E009` | `ProviderError` | The upstream provider request failed for an unrecognized reason. | Check provider status; Inferrail retries automatically if the failure looks transient (5xx). |
+| <a id="inferrail_e010"></a>`INFERRAIL_E010` | `BudgetExceededError` | A block-mode budget would be exceeded by this request. | Raise the budget's limit_usd ('inferrail budget set'), narrow its scope, or wait for its window to reset. Not retryable as-is. |

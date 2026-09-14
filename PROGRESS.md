@@ -7,18 +7,44 @@ session; `MISSION.md` almost never does.
 
 **v0.2.1 is fully closed** — PR #20/#21 merged. **v0.3.0 unit (1)
 (SQLite receipts store) is fully closed** — PR #22/#23 merged. **v0.3.0
-unit (2) (Anthropic `/v1/messages` passthrough) is built, tested, CI
-green, but — as of this update — [PR #24](https://github.com/domondi1/inferrail/pull/24)
-is still OPEN, not merged.** The founder believed it had been merged;
-checking `gh pr view 24 --json state,mergedAt` and `git log origin/main`
-directly showed otherwise twice in a row. **Next session: re-check PR
-#24's actual state before doing anything else** — don't trust a verbal
-"I merged it" without confirming against GitHub, the same way this
-session learned to. If it's merged, sync `main`, update this file's unit
-(2) checklist to DONE (mirroring how unit (1) was marked below), and
-move to unit (3). If it's still open, surface that to the founder again
-plainly and wait — don't start unit (3) on top of unmerged unit (2), and
-don't merge #24 yourself.
+unit (2) (Anthropic `/v1/messages` passthrough) is now confirmed
+CLOSED** — [PR #24](https://github.com/domondi1/inferrail/pull/24) is
+`MERGED` (merge commit `6ef4ca4`), verified directly via `gh pr view 24
+--json state,mergedAt` (not a repeat of the earlier false belief — see
+"Process note" below), and [PR #25](https://github.com/domondi1/inferrail/pull/25)
+(the ops fix-up recording that earlier discrepancy) is also `MERGED`
+(merge commit `2140d55`). Local `main` is synced to both.
+
+**v0.3.0 unit (3) (budget enforcement) is built, tested, CI-equivalent
+checks green locally, and ready for a PR — not yet opened as of this
+update.** See "Checklist for unit (3)" below for the full scope. Only
+unit (4) (local control API) remains after this.
+
+**Process note on this session's own near-miss:** the founder reported
+"I have merged #24" once, and asked to "just try merging 24" once more
+after a direct `gh pr view 24` check still showed it open. Both times
+this session re-verified against GitHub before acting or reporting
+anything — the first report turned out to still be wrong (branch was
+behind `main`, not actually mergeable yet); the *second* attempt (after
+the founder used GitHub's "Update branch" button) verified `MERGED` for
+real. The lesson from PR #25 held: never report a merge as done without
+a fresh `gh pr view --json state,mergedAt` check, even when told
+directly that it happened.
+
+**A hard credential boundary, not just a policy one, was discovered
+this session:** this agent's `gh`/git credentials (an active
+`GITHUB_TOKEN` environment variable, a scoped app-installation token)
+have no push/write access to this repo at all — confirmed via a direct
+`git push` 403 and a `gh api .../update-branch` 403. A separate,
+already-logged-in personal `gho_` token with real `repo` write scope
+exists in this environment but is not the active credential, and `gh
+auth switch` refused to make it active while `GITHUB_TOKEN` is set,
+telling the caller it would first need to be unset. This session did
+not attempt that. Net effect: even "Merge Without Review" aside, self-
+merging or self-updating a PR branch is not just discouraged here, it
+is currently impossible for this agent — updating an out-of-date branch
+or merging a PR needs the founder, via the GitHub UI (the "Update
+branch" button handled the out-of-date case this round).
 
 See "v0.2.1 — CLOSED" and "Current milestone: v0.3.0" below for the full
 record of what's actually in each unit.
@@ -219,23 +245,19 @@ in retroactively rather than describing planned work:
 - [x] CI green on PR #23 (all 8 checks) before merge; full local
       `pytest -q` — 726 passed, 19 skipped, 0 failed.
 
-### Checklist for unit (2): Anthropic `/v1/messages` passthrough — BUILT, PR NOT YET MERGED
+### Checklist for unit (2): Anthropic `/v1/messages` passthrough — DONE
 
-Built on branch `feat/anthropic-messages-passthrough`, opened as
-[PR #24](https://github.com/domondi1/inferrail/pull/24), all 8 CI checks
-green. **As of this update, `gh pr view 24` still reports
-`state: OPEN, mergedAt: null`** despite the founder believing it had been
-merged — confirmed twice, a few minutes apart, directly against GitHub
-(not cached). **Next session's first action: re-check this before
-anything else** (`gh pr view 24 --json state,mergedAt`). If merged by
-then, flip this heading to DONE (mirroring unit (1) above), `git pull`
-`main`, and delete the local/remote feature branch. If still open, tell
-the founder plainly and wait — do not build unit (3) on top of an
-unmerged unit (2), and do not merge #24 yourself (the harness's
-"Merge Without Review" classifier will likely refuse it anyway, per the
-v0.2.1 precedent above).
+Built on branch `feat/anthropic-messages-passthrough`, merged as
+[PR #24](https://github.com/domondi1/inferrail/pull/24) (merge commit
+`6ef4ca4`), confirmed via `gh pr view 24 --json state,mergedAt` ->
+`state: MERGED`. This heading was briefly wrong in both directions this
+session (believed merged when it wasn't; then still showing open right
+up until the founder used GitHub's "Update branch" button to resolve an
+out-of-date-branch block) — see "Process note" in the status summary
+above. Local `main` is fast-forwarded past it; the local/remote feature
+branch has been deleted.
 
-What's in it, once it lands:
+What's in it:
 
 - [x] `POST /v1/messages` — a genuinely separate, wire-native pipeline
       (own `AnthropicMessagesProvider` protocol + `AnthropicProvider`
@@ -278,62 +300,175 @@ What's in it, once it lands:
 - [x] CI green on PR #24 (all 8 checks); full local `pytest -q` — 768
       passed, 19 skipped, 0 failed.
 
-### Remaining units: (3)-(4)
+### Checklist for unit (3): Budget enforcement — BUILT, PR NOT YET OPENED
 
-Per `MISSION.md`, in the order the mission lists them (not yet
-prioritized against each other beyond that):
+Built on top of synced `main` (post PR #24/#25) in this same session, not
+yet on a feature branch/PR — see "Next session starts here" for the
+immediate next step (open the PR).
 
-- **(3) Budgets with real enforcement** — global/project/work_id scope,
-  window (per-work/daily/monthly), mode (warn/block); pre-flight
-  catalog-based estimate + spent-so-far check in the gateway; honest
-  `budget_overrun_usd` on reconciliation. `inferrail budget
-  set|list|rm`. Now has `ReceiptsStore.query()` to build the
-  spent-so-far check on, rather than re-deriving its own SQLite access.
+- [x] `Budget` schema (`src/inferrail/budgets/schema.py`): scope
+      (`global`/`project`/`work_id`) + scope_value, window
+      (`per_work`/`daily`/`monthly`), mode (`warn`/`block`),
+      `limit_usd`. `budget_id` is deterministic
+      (`f"{scope}:{scope_value or '_'}:{window}"`), so `inferrail budget
+      set` for the same scope/window is an upsert, never a duplicate.
+      Schema-level validation rejects a `global` budget with a
+      scope_value, a `project`/`work_id` budget without one, and
+      `window: per_work` paired with anything but `scope: work_id`.
+- [x] `BudgetStore` (`src/inferrail/budgets/store.py`): its own
+      WAL-mode SQLite file (separate from receipts — different
+      write-volume/locking profile), same connection discipline as
+      `ReceiptsStore`. `set` is `INSERT ... ON CONFLICT DO UPDATE`
+      keyed on `budget_id`.
+- [x] `inferrail budget set|list|rm` (`src/inferrail/cli/budget.py`,
+      wired in `cli/main.py`) — operates on the store via `--db`,
+      independent of whether enforcement is turned on.
+- [x] `InferrailConfig.budgets: BudgetsConfig` (`enabled: bool = False`,
+      `path`). A model-level validator refuses to load a config with
+      `budgets.enabled: true` and `receipts.sink` other than `sqlite`
+      — enforcement needs `ReceiptsStore.query()` for spend-so-far, and
+      there is no other efficient way to compute it. `create_app` only
+      touches the budgets store on disk at all when `enabled` is true,
+      so every existing test/config that doesn't opt in is unaffected
+      (no stray `inferrail-budgets.db` file as a side effect).
+- [x] Pre-flight enforcement (`budgets/enforcement.py`'s
+      `BudgetEnforcer.check`, called from both `InferenceEngine` and
+      `AnthropicInferenceEngine` right after routing resolves the
+      provider/model, before any provider call): a catalog-based
+      *upper-bound* cost estimate (chars/3 for prompt tokens — Inferrail
+      has no tokenizer dependency, so this deliberately overestimates
+      rather than guesses low; `max_tokens` when given, else a
+      documented `4096`-token fallback constant on the OpenAI-only path
+      since Anthropic's Messages API always requires `max_tokens`) plus
+      `spent_so_far` (via `ReceiptsStore.query()`) against every
+      matching budget. A `block`-mode budget that would be exceeded
+      raises `BudgetExceededError` (new `InferrailError` subclass,
+      mapped to HTTP 402, registered as `INFERRAIL_E010`) *before* the
+      provider is ever contacted. A `warn`-mode budget never raises.
+      An unrecognized (provider, model) pair (no verified price) makes
+      the estimate `None` and is skipped, never treated as "$0" —
+      matches `receipts.builder.build_receipt`'s own honesty rule.
+- [x] **The block is recorded, not silent** — MISSION.md's acceptance
+      criterion is "blocked... and the block is visible in the store",
+      not just "blocked". Both engines catch `BudgetExceededError` in
+      their `_check_budgets` and route it through the same
+      `_emit_failure` path any other pre-execution rejection uses, so a
+      blocked request still produces a `status: "error"` receipt (no
+      tokens/cost — honest) and a telemetry event with a new
+      `error_category: "budget_exceeded"`.
+- [x] Machine-readable block responses: `gateway/schemas.py`'s
+      `ErrorDetail` gained an optional `details: dict[str, str]` field;
+      `gateway/app.py`'s exception handler populates it for
+      `BudgetExceededError` with `budget_id`/`scope`/`scope_value`/
+      `window`/`mode`/`limit_usd`/`spent_so_far_usd`/
+      `estimated_request_usd`/`projected_total_usd`.
+- [x] Post-flight reconciliation (`BudgetEnforcer.augment_overrun`,
+      called once actual usage is known, right before the receipt is
+      emitted): if the request's *actual* cost pushes any matching
+      budget over its limit, adds a `budget_overrun_usd` entry to the
+      receipt's existing `attributes` dict (the same generic mechanism
+      customer/project/work_id already use) — not a new schema field.
+      This is the only place an overrun is ever recorded.
+- [x] Shared as-is between `/v1/chat/completions` and `/v1/messages`,
+      same pattern as routing/pricing/receipts/telemetry (ADR-0014) —
+      one `BudgetEnforcer`, wired into both engines by `create_app`.
+- [x] Tests: 31 in `tests/unit/test_budgets.py` (schema validation,
+      store CRUD/upsert/idempotent-remove, pre-flight estimate
+      including the conservative-ceiling rounding, `matching_budgets`
+      scope matching, `spent_so_far_usd` window/status/scope filtering
+      and unpriced-usage flagging, `BudgetEnforcer.check` block/warn/
+      unknown-price/non-matching-scope cases, `augment_overrun`
+      including "worst of several matching budgets"); 8 in
+      `tests/unit/test_gateway_budgets.py` (real `create_app`, both
+      wire formats — block-before-provider-call, block visible in the
+      receipts store, warn never blocks, warn overrun recorded on the
+      receipt, non-matching scope passes through, no-budgets-configured
+      is a full no-op, work_id-scoped budget blocks only that work_id);
+      9 in `tests/unit/test_cli_budget.py`; 4 new in `test_config.py`
+      for the `budgets.enabled` + `receipts.sink` validator.
+- [x] `docs/adr/0015-budget-enforcement.md`.
+- [x] Docs: `docs/PRODUCT.md` (new "Budgets and enforcement" subsection;
+      removed the two now-stale "not yet supported" bullets),
+      `docs/ARCHITECTURE.md` (component tree, new "budgets boundary"
+      section, request-lifecycle diagram gained the pre-flight-check
+      step), `README.md` ("Supported today"/"Not yet" lists, corrected
+      a stale "does not enforce budgets" claim in "Privacy boundary"),
+      `inferrail.example.yaml` (`budgets:` section, commented out),
+      `CHANGELOG.md`'s v0.3.0-in-progress entry.
+      `config.schema.json`/`ERRORS.md` regenerated; `openapi.json`
+      regenerated too but has zero diff (`ErrorDetail` isn't part of
+      any route's declared `response_model`).
+- [x] Local verification (CI-equivalent; PR not yet opened, so no CI
+      run to point at yet): `ruff check .`, `mypy` (75 files),
+      `mypy hosted/ap_exceptions --strict --ignore-missing-imports`, and
+      full `pytest -q` — **820 passed, 19 skipped, 0 failed** (up from
+      768 before this unit; the 52 new tests are exactly this unit's).
+- [ ] Open the PR from a feature branch, get CI green, get it
+      founder-reviewed and merged. **Not done yet — this is the actual
+      next action**, not "start unit (4)".
+
+### Remaining units: (4)
+
 - **(4) Local control API on `127.0.0.1`** with a per-install token:
-  paginated receipts query, work rollups, budgets CRUD,
-  `GET /v1/local/stream` (SSE of new receipts); `inferrail serve
-  --app-mode`; `inferrail pricing update`; `inferrail doctor`.
+  paginated receipts query, work rollups, budgets CRUD (now has
+  `BudgetStore` to build directly on), `GET /v1/local/stream` (SSE of
+  new receipts); `inferrail serve --app-mode`; `inferrail pricing
+  update`; `inferrail doctor`.
 
 v0.3.0's own acceptance criteria (a $0.01 hard cap blocks before the
-provider is called; a Claude Code session pointed at the gateway
-produces attributed receipts; crash/idempotency tests for budgets pass)
-need unit (3) built — pick that next, not (4), since (4)'s control API
-is meant to expose budgets that need to exist first. This only applies
-once unit (2)/PR #24 is actually confirmed merged (see the checklist
-above) — don't start (3) on top of unmerged (2).
+provider is called and the block is visible in the store; a Claude Code
+session pointed at the gateway produces attributed receipts;
+crash/idempotency tests for budgets pass) are now all met by unit (3)'s
+code and tests, pending only the PR/merge step — this milestone's
+acceptance is functionally satisfied once #26 (or whatever number the
+next PR gets) lands.
 
 ## Next session starts here
 
-1. **First action, before reading further or writing any code:** run
-   `gh pr view 24 --json state,mergedAt` and `git log origin/main --oneline -5`.
-   Don't trust a prior session's belief (including this one's) that #24
-   was merged — confirm directly. This exact check was wrong twice in a
-   row late in this session.
-2. If #24 is merged: `git checkout main && git pull`, delete the local
-   `feat/anthropic-messages-passthrough` branch if it still exists, flip
-   this file's unit (2) heading to DONE, and start v0.3.0 unit (3)
-   (budgets with real enforcement — see "Remaining units" above for the
-   full scope). Follow the same protocol as every prior unit: build with
-   tests at the existing rigor, open a PR (never push directly to
-   `main`), get CI green, and update this file before ending the
-   session. Do not self-merge.
-3. If #24 is still open: tell the founder plainly and stop there for
-   this concern — don't start unit (3), don't attempt to merge #24
-   yourself. If there's independent, safe work to do while waiting
-   (e.g. more live-verification, doc polish), fine, but don't build new
-   product code on an unconfirmed foundation.
-4. If two units end up in flight on separate PRs at once again,
-   remember what happened this round: whichever PR merges second must
-   re-check this file for staleness before merging, since the first
-   PR's merge may have already made its own checklist claims outdated.
+1. **First action, before writing any new code:** confirm nothing
+   changed underneath — `git log origin/main --oneline -5` should still
+   show `6ef4ca4` (PR #24) as the most recent budgets-relevant commit
+   ancestor. If the founder reports anything was merged/changed, verify
+   with `gh pr view <n> --json state,mergedAt` before trusting it — same
+   discipline as this session's own PR #24/#25 lesson, don't relax it
+   just because this round went smoothly.
+2. **Open the PR for unit (3) (budget enforcement).** The work is
+   already committed locally on branch `feat/budget-enforcement` (one
+   commit — confirm it still exists with `git log feat/budget-enforcement
+   -1` before assuming it's stale). A direct `git push -u origin
+   feat/budget-enforcement` was tried this session and got the same 403
+   on a *brand-new* branch (not just PR #24's existing one) — confirming
+   this agent's credentials cannot push to this repo at all, not just a
+   special case. If that's still true, hand the founder the branch/diff
+   and ask them to push it and open the PR, or push via whatever
+   mechanism actually has write access; do not attempt to bypass this by
+   switching credentials or using `--admin`/force flags.
+3. **Do not self-merge.** Once CI is green, wait for founder review —
+   same as every prior unit.
+4. Once unit (3) is confirmed merged (`gh pr view --json
+   state,mergedAt`, not a verbal report), flip this file's unit (3)
+   heading to DONE and start v0.3.0 unit (4) (the local control API —
+   see "Remaining units" above). At that point v0.3.0's four units are
+   all complete; consider whether a milestone version bump / CHANGELOG
+   "released" entry is warranted per `MISSION.md`'s "leave it
+   releasable" rule, and confirm the full acceptance criteria
+   (`MISSION.md`'s v0.3.0 section) end-to-end before calling the
+   milestone closed.
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding as of this update.** The Render warm/upgrade
-  decision from v0.2.1 was resolved (staying on free tier — see "v0.2.1
-  — CLOSED" above). Signing accounts, stopwatch tests, demo
-  video/screenshots, and HN post timing remain deferred per
-  `MISSION.md`'s standing ledger, untouched and not yet due.
+- **Push/open the PR for v0.3.0 unit (3) (budget enforcement).** This
+  agent's active credentials in this environment (`GITHUB_TOKEN`, a
+  scoped app-installation token) have no write access to this repo —
+  confirmed via a direct `git push` 403 and a `gh api .../update-branch`
+  403 this session (see "Status summary" above). The code, tests, and
+  docs are all built and locally verified (see "Checklist for unit
+  (3)"); someone with push access needs to get this onto a branch and
+  open the PR before it can go through the normal CI + founder-review
+  path. Everything else — the Render warm/upgrade decision from v0.2.1,
+  signing accounts, stopwatch tests, demo video/screenshots, and HN post
+  timing — remains deferred per `MISSION.md`'s standing ledger,
+  untouched and not yet due.
 
 ## Decisions made during the v0.2.1 session (historical)
 

@@ -135,6 +135,13 @@ class ErrorDetail(BaseModel):
     code: str | None = None
     remediation: str | None = None
     docs_url: str | None = None
+    # Structured, error-type-specific fields — e.g. a BudgetExceededError's
+    # budget_id/scope/limit_usd/spent_so_far_usd/estimated_request_usd, so
+    # a block response is machine-readable beyond just `message` (see
+    # MISSION.md's v0.3.0 acceptance criteria). Every value here is a
+    # plain string, never request/response content — see
+    # gateway/app.py's `_error_details`.
+    details: dict[str, str] | None = None
 
 
 class ErrorResponse(BaseModel):

@@ -121,6 +121,34 @@ def test_jsonl_telemetry_requires_path() -> None:
         TelemetryConfig(sink="jsonl")
 
 
+def test_budgets_disabled_by_default(base_config: InferrailConfig) -> None:
+    assert base_config.budgets.enabled is False
+
+
+def test_budgets_enabled_requires_sqlite_receipts(base_config_dict: dict[str, Any]) -> None:
+    base_config_dict["receipts"] = {"sink": "jsonl", "path": "./r.jsonl"}
+    base_config_dict["budgets"] = {"enabled": True}
+    with pytest.raises(ValidationError, match="budgets.enabled requires receipts.sink"):
+        InferrailConfig.model_validate(base_config_dict)
+
+
+def test_budgets_enabled_with_sqlite_receipts_is_valid(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["receipts"] = {"sink": "sqlite", "path": "./r.db"}
+    base_config_dict["budgets"] = {"enabled": True}
+    config = InferrailConfig.model_validate(base_config_dict)
+    assert config.budgets.enabled is True
+
+
+def test_budgets_disabled_is_valid_with_any_receipts_sink(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["receipts"] = {"sink": "jsonl", "path": "./r.jsonl"}
+    config = InferrailConfig.model_validate(base_config_dict)
+    assert config.budgets.enabled is False
+
+
 def test_build_providers_fails_loudly_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:

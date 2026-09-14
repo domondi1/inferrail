@@ -28,6 +28,7 @@ from inferrail.cli.ap import (
     run_ap_reap,
     run_ap_report,
 )
+from inferrail.cli.budget import run_budget_list, run_budget_rm, run_budget_set
 from inferrail.cli.demo import run_demo
 from inferrail.cli.receipts_io import run_receipts_export, run_receipts_import
 from inferrail.cli.report import run_report
@@ -265,6 +266,49 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_batch.add_argument("--candidate-retry-floor", required=True, type=float)
     ap_batch.add_argument("--candidate-max-prior-attempts", type=int, default=1)
 
+    budget = subparsers.add_parser(
+        "budget",
+        help="Manage spend budgets (see docs/adr/0015-budget-enforcement.md).",
+    )
+    budget_sub = budget.add_subparsers(dest="budget_command", required=True)
+
+    budget_set = budget_sub.add_parser(
+        "set", help="Create or update a budget (upsert, keyed on scope/scope-value/window)."
+    )
+    budget_set.add_argument(
+        "--scope", required=True, choices=["global", "project", "work_id"]
+    )
+    budget_set.add_argument(
+        "--scope-value",
+        default=None,
+        help="Required for --scope project/work_id; must be omitted for --scope global.",
+    )
+    budget_set.add_argument(
+        "--window", required=True, choices=["per_work", "daily", "monthly"]
+    )
+    budget_set.add_argument("--mode", required=True, choices=["warn", "block"])
+    budget_set.add_argument("--limit-usd", required=True, help="e.g. 0.01, 500")
+    budget_set.add_argument(
+        "--db", default="./inferrail-budgets.db",
+        help="Path to the budget store (default: %(default)s).",
+    )
+
+    budget_list = budget_sub.add_parser("list", help="List every configured budget.")
+    budget_list.add_argument(
+        "--db", default="./inferrail-budgets.db",
+        help="Path to the budget store (default: %(default)s).",
+    )
+    budget_list.add_argument("--json", action="store_true", help="Print budgets as JSON.")
+
+    budget_rm = budget_sub.add_parser(
+        "rm", help="Remove a budget by id (as shown by 'budget list')."
+    )
+    budget_rm.add_argument("budget_id")
+    budget_rm.add_argument(
+        "--db", default="./inferrail-budgets.db",
+        help="Path to the budget store (default: %(default)s).",
+    )
+
     return parser
 
 
@@ -336,6 +380,7 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
         print(f"  default_provider: {config.default_provider} (unmatched models pass through)")
     print(f"  telemetry:        {config.telemetry.sink}")
     print(f"  receipts:         {config.receipts.sink}")
+    print(f"  budgets:          {'enabled' if config.budgets.enabled else 'disabled'}")
     print(f"  server:           {config.server.host}:{config.server.port}")
     return 0
 
@@ -424,6 +469,24 @@ def _cmd_ap(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 1
 
 
+def _cmd_budget(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.budget_command == "set":
+        return run_budget_set(
+            Path(args.db),
+            scope=args.scope,
+            scope_value=args.scope_value,
+            window=args.window,
+            mode=args.mode,
+            limit_usd=args.limit_usd,
+        )
+    if args.budget_command == "list":
+        return run_budget_list(Path(args.db), as_json=args.json)
+    if args.budget_command == "rm":
+        return run_budget_rm(Path(args.db), args.budget_id)
+    parser.error(f"unknown budget subcommand: {args.budget_command}")
+    return 1
+
+
 def _cmd_try(args: argparse.Namespace) -> int:
     return run_try(
         args.prompt,
@@ -467,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ap(args, parser)
     if args.command == "receipts":
         return _cmd_receipts(args, parser)
+    if args.command == "budget":
+        return _cmd_budget(args, parser)
 
     parser.print_help()
     return 1

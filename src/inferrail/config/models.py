@@ -105,6 +105,26 @@ class ReceiptsConfig(BaseModel):
     path: str = "./inferrail-receipts.jsonl"
 
 
+class BudgetsConfig(BaseModel):
+    """Where the `Budget` store (`inferrail.budgets.store.BudgetStore`)
+    lives, and whether the gateway actually enforces it.
+
+    `enabled` defaults to `False` so an operator who hasn't configured
+    any budgets never pays for the enforcement path (and, more
+    importantly, so `inferrail serve`/`create_app` never touches
+    `path` on disk at all unless budgets are explicitly turned on — see
+    docs/adr/0015-budget-enforcement.md). `inferrail budget set|list|rm`
+    manage the store's contents independently of this flag (via their
+    own `--db`), so budgets can be authored before enforcement is
+    switched on.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    path: str = "./inferrail-budgets.db"
+
+
 class PriceEntry(BaseModel):
     """A verified per-model price, with the provenance to audit it later.
 
@@ -136,9 +156,28 @@ class InferrailConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
+    budgets: BudgetsConfig = Field(default_factory=BudgetsConfig)
     # provider name -> model -> price override. Always wins over the
     # built-in catalog; see inferrail.pricing.resolver.PricingResolver.
     pricing: dict[str, dict[str, PriceEntry]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _budgets_require_sqlite_receipts(self) -> InferrailConfig:
+        # Budget enforcement computes spend-so-far via
+        # `ReceiptsStore.query()` (inferrail.budgets.enforcement) — there
+        # is no other efficient way to answer "how much has this
+        # project/work_id spent so far" without re-deriving the same
+        # indexed SQLite access receipts.sink: sqlite already provides.
+        # Refusing to load rather than silently enforcing against an
+        # empty/wrong view of spend is the same fail-fast honesty
+        # TelemetryConfig's jsonl-path check already applies.
+        if self.budgets.enabled and self.receipts.sink != "sqlite":
+            raise ValueError(
+                "budgets.enabled requires receipts.sink: sqlite — budget enforcement "
+                "computes spend-so-far from an indexed receipts store; see "
+                "docs/adr/0015-budget-enforcement.md"
+            )
+        return self
 
     @model_validator(mode="after")
     def _routes_reference_known_providers(self) -> InferrailConfig:
