@@ -6,9 +6,19 @@ session; `MISSION.md` almost never does.
 ## Current milestone
 
 **v0.2.1 — "Visitors can run the hosted workflow themselves"** (see
-`MISSION.md`). Status: **built and tested locally on branch
-`feat/hosted-ap-self-serve-sandbox`; PR not yet opened/merged — see
-"Next session starts here."**
+`MISSION.md`). Status: **[PR #20](https://github.com/domondi1/inferrail/pull/20)
+open, all 8 CI checks green (test 3.11/3.12, wheel-smoke x3,
+ap-exceptions, hosted-economic-authority, boundary-check) — blocked on
+a human merging it. See "Next session starts here."**
+
+**Why not merged already:** the agent attempted `gh pr merge --squash`
+and the harness itself (not GitHub, not this repo's own branch
+protection) refused with "Permission for this action was denied by the
+Claude Code auto mode classifier ... [Merge Without Review]." This is a
+session-level safety gate on the tool, separate from `CONTRIBUTING.md`
+or any repo policy — the fix is a human clicking merge on the PR (or
+explicitly re-authorizing squash-merges for this session), not a retry
+by the agent. Do not try to route around it with another tool.
 
 ### Checklist
 
@@ -80,35 +90,36 @@ ruff check src/inferrail/ap hosted/ap_exceptions examples \
 pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py  # 129 passed (matches CI job)
 ```
 
-Full-repo `pytest -q` was also kicked off (includes the slower
-`a2a_economic_authority` subprocess-server integration tests) — see
-"Next session starts here" for its result once it finished.
+Full-repo `pytest -q` was also run to completion this session: **708
+passed, 19 skipped, 0 failed** (the 19 skips are the pre-existing
+credential-gated integration tests, unrelated to this change).
+
+PR #20 opened from `feat/hosted-ap-self-serve-sandbox` to `main`; all 8
+CI checks (`test` 3.11/3.12, `wheel-smoke` macos/ubuntu/windows,
+`ap-exceptions`, `hosted-economic-authority`, `boundary-check`) came
+back green. **Merge itself was refused by the coding harness's own
+safety classifier** ("Merge Without Review"), not by GitHub or this
+repo's branch protection — see "Why not merged already" above.
 
 ## Next session starts here
 
-1. Check the full-repo `pytest -q` result (was still running in the
-   background when this session ended — a2a's integration tests spawn
-   real subprocess servers and are slow, not related to this session's
-   changes). If it's clean, proceed; if it surfaces a real failure,
-   triage it before opening the PR (don't assume it's pre-existing
-   without checking against `main`).
-2. Open a PR from `feat/hosted-ap-self-serve-sandbox` to `main` titled
-   something like "feat: self-serve hosted AP sandbox (v0.2.1)". Body
-   should reference `MISSION.md`'s v0.2.1 acceptance criteria and this
-   file's checklist.
-3. Once CI is green on that exact PR (not "would obviously pass" —
-   actually green), merge it. This repo's established practice (see
-   `git log` — PRs #1 through #19 were all opened and merged this way)
-   is for the agent session to do this autonomously; nothing here
-   touches positioning, pricing, auth/payments, or removes a safeguard.
-4. After merge, confirm Render has redeployed `hosted/ap_exceptions`
-   from the new `main` (check `GET /health` and, ideally,
-   `POST /v1/sandbox` against the live URL) before declaring v0.2.1's
-   "from a machine with only curl" acceptance criterion actually met —
-   local tests prove the logic, not the live deployment.
-5. Update this file's checklist once the PR is merged and live-verified,
-   then mark v0.2.1 fully done and move to v0.3.0's first unit (SQLite
+1. **First, check whether a human has merged PR #20 in the meantime.**
+   If merged: confirm Render has redeployed `hosted/ap_exceptions` from
+   the new `main` (check `GET /health` and, ideally, `POST /v1/sandbox`
+   against the live URL) before declaring v0.2.1's "from a machine with
+   only curl" acceptance criterion actually met — local tests prove the
+   logic, not the live deployment. Then update this file's checklist,
+   mark v0.2.1 fully done, and move to v0.3.0's first unit (SQLite
    receipts store — see `MISSION.md`).
+2. If PR #20 is still open and unmerged: do not repeatedly retry
+   `gh pr merge` — the harness's classifier denial isn't a flaky error,
+   it's a deliberate gate requiring a human. Leave it for the founder
+   and, if nothing else is actionable in this milestone, move on to
+   scoping v0.3.0's first unit in the meantime (see `MISSION.md`) rather
+   than blocking on this.
+3. If CI has since gone red on PR #20 for an unrelated reason (a flaky
+   external dependency, a new commit to `main` that conflicts), triage
+   that before assuming the PR is still mergeable as-is.
 
 ## HUMAN ACTION NEEDED
 
