@@ -1,5 +1,6 @@
-"""`inferrail report`: turn a local receipts JSONL file into a business-level
-answer to "what is each <dimension> costing me".
+"""`inferrail report`: turn local receipts (JSONL or SQLite, see
+`load_receipts` and docs/adr/0013-sqlite-receipts-store.md) into a
+business-level answer to "what is each <dimension> costing me".
 
 Kept independent of `argparse`/stdout so the aggregation logic is testable
 directly (see docs/PRINCIPLES.md's "deterministic, testable behavior") —
@@ -8,15 +9,14 @@ mirrors how `InferenceEngine` stays independent of FastAPI.
 
 from __future__ import annotations
 
-import json
 import sys
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import ValidationError
-
+from inferrail.receipts.jsonl_io import read_jsonl_receipts
 from inferrail.receipts.schema import InferenceReceipt
+from inferrail.receipts.sqlite_store import ReceiptsStore, looks_like_sqlite
 
 _UNATTRIBUTED = "(unattributed)"
 _FIELD_DIMENSIONS = {"provider", "model", "route"}
@@ -40,26 +40,21 @@ def _group_key(receipt: InferenceReceipt, by: str) -> str:
 
 
 def load_receipts(path: Path) -> tuple[list[InferenceReceipt], int]:
-    """Read a receipts JSONL file, tolerating malformed/older-schema rows.
+    """Read a receipts file, tolerating malformed/older-schema rows,
+    whichever sink (`receipts.sink: jsonl` or `sqlite`) actually produced
+    it — detected by sniffing the file's own magic bytes
+    (`sqlite_store.looks_like_sqlite`), not its extension or a separate
+    flag, so `report`/`transaction`/`work` all "just work" against either
+    with zero new CLI surface (see docs/adr/0013).
 
-    Returns `(receipts, skipped_count)`. A row that fails to parse as JSON
-    or fails schema validation is skipped, not fatal — one corrupt line
-    (a truncated write, a receipt from a future schema version) should
-    never prevent reporting on everything else in the file.
+    Returns `(receipts, skipped_count)`. A row that fails to parse (bad
+    JSON, a receipt from a future schema version, a hand-edited SQLite
+    row) is skipped, not fatal — one corrupt row should never prevent
+    reporting on everything else in the file.
     """
-    receipts: list[InferenceReceipt] = []
-    skipped = 0
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-                receipts.append(InferenceReceipt.model_validate(data))
-            except (json.JSONDecodeError, ValidationError):
-                skipped += 1
-    return receipts, skipped
+    if looks_like_sqlite(path):
+        return ReceiptsStore(path).read_all()
+    return read_jsonl_receipts(path)
 
 
 def aggregate(receipts: list[InferenceReceipt], by: str) -> list[ReportGroup]:

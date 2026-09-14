@@ -88,6 +88,15 @@ class NullReceiptSink:
 def build_receipt_sink(config: ReceiptsConfig) -> ReceiptSink:
     if config.sink == "jsonl":
         return JSONLReceiptSink(config.path)
+    if config.sink == "sqlite":
+        # Imported here, not at module top level: keeps this module's own
+        # dependency surface (just JSONL/no-op) unchanged for callers that
+        # never touch the sqlite sink, and avoids a circular import — see
+        # inferrail.receipts.sqlite_store's own docstring for why it in
+        # turn imports JSONLReceiptSink from this module.
+        from inferrail.receipts.sqlite_store import ReceiptsStore
+
+        return ReceiptsStore(config.path)
     if config.sink == "none":
         return NullReceiptSink()
     raise ValueError(f"unknown receipts sink: {config.sink}")  # unreachable: config validated

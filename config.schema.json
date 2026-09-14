@@ -87,7 +87,7 @@
     },
     "ReceiptsConfig": {
       "additionalProperties": false,
-      "description": "Where :class:`inferrail.receipts.schema.InferenceReceipt` records go.\n\nUnlike telemetry (default: console), receipts default to a local JSONL\nfile: the whole point of a receipt is to be aggregated later by\n``inferrail report``, and console-only receipts can't be read back. See\ndocs/adr/0005-privacy-preserving-economic-receipts.md.",
+      "description": "Where :class:`inferrail.receipts.schema.InferenceReceipt` records go.\n\nUnlike telemetry (default: console), receipts default to a local JSONL\nfile: the whole point of a receipt is to be aggregated later by\n``inferrail report``, and console-only receipts can't be read back. See\ndocs/adr/0005-privacy-preserving-economic-receipts.md.\n\n``sqlite`` (see docs/adr/0013-sqlite-receipts-store.md) is a first-class\nalternative to ``jsonl``, not a replacement for it \u2014 indexed queries and\na bounded file per receipt (vs. an ever-growing text file) at the cost\nof needing ``inferrail receipts export`` to get a plain-text copy back.\n``inferrail report``/``transaction``/``work`` work unchanged against\neither: they detect which one a given path actually is.",
       "properties": {
         "path": {
           "default": "./inferrail-receipts.jsonl",
@@ -98,6 +98,7 @@
           "default": "jsonl",
           "enum": [
             "jsonl",
+            "sqlite",
             "none"
           ],
           "title": "Sink",

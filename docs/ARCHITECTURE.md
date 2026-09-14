@@ -252,14 +252,17 @@ content (`test_inference_receipt_has_no_payload_fields`), and one
 additional intentional exception: caller-supplied `attributes` **are**
 persisted, since they're business metadata the caller explicitly declared,
 not extracted from the prompt. `ReceiptSink` (`receipts/sinks.py`) is a
-one-method `Protocol`, same shape as `TelemetrySink`, with a JSONL and a
-null implementation in v0.1 — nothing here transmits data off the machine
-either.
+one-method `Protocol`, same shape as `TelemetrySink`, with JSONL, a
+WAL-mode SQLite store (`receipts/sqlite_store.py`, indexed on
+`ts`/`work_id`/`project`/`model` — see docs/adr/0013), and a null
+implementation — nothing here transmits data off the machine either.
 
-`inferrail report` (`cli/report.py`) reads that JSONL file back, tolerant
-of malformed or older-schema rows (skipped, not fatal), and aggregates by
-provider, model, route, or any attribution attribute name — pure functions
-independent of `argparse`, mirroring how `InferenceEngine` stays
+`inferrail report` (`cli/report.py`) reads receipts back — from whichever
+sink produced the target file, detected by content rather than a flag —
+tolerant of malformed or older-schema rows (skipped, not fatal), and
+aggregates by provider, model, route, or any attribution attribute name —
+pure functions independent of `argparse`, mirroring how `InferenceEngine`
+stays
 independent of FastAPI.
 
 ## OSS data plane vs. future hosted control plane
