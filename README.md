@@ -556,9 +556,15 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - `inferrail serve --app-mode`: relocates receipts/budgets under the OS
   app-data directory and mounts a local control API (`/v1/local/*` —
   paginated receipts, work rollups, budgets CRUD, an SSE receipt tail)
-  guarded by a mandatory per-install token — for the not-yet-built
-  desktop dashboard, not for humans directly. See
+  guarded by a mandatory per-install token, plus (when built — see
+  below) the local dashboard. See
   [docs/adr/0016](docs/adr/0016-local-control-api.md).
+- A local web dashboard (`app/`, `docs/adr/0017`) — **Live Feed only so
+  far**, the rest of the v0.4.0 screens (Work, Budgets, Recover, Connect,
+  Settings) are not yet built. `inferrail serve --app-mode` prints a
+  ready-to-open URL with the local API token already embedded; not yet
+  bundled into the PyPI wheel, so build it from a checkout first:
+  `cd app && npm install && npm run build`.
 - `inferrail doctor` (port, pricing-catalog freshness, provider
   reachability) and `inferrail pricing update` (reports built-in
   catalog age; never fetches prices over the network).

@@ -1,0 +1,207 @@
+/* Paper-receipt design language, matching docs/index.html's tokens
+   (docs/adr/0017). Font stacks intentionally do NOT depend on a network
+   font fetch (unlike the marketing site) -- this is a local, offline-
+   capable tool; "IBM Plex Mono"/"IBM Plex Sans Condensed" are used when
+   already installed, with system stacks as the real fallback for
+   everyone else. */
+:root {
+  --paper: #efefe9;
+  --bar: #dce7d8;
+  --ink: #14201b;
+  --ink-2: #5e6d64;
+  --ink-3: #8b978e;
+  --rule: #c3c7be;
+  --stamp: #a8352a;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+  --font-label: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 58px;
+  border-bottom: 1px solid var(--ink);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.wordmark {
+  font-family: var(--font-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 15px;
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+}
+
+.nav-tab {
+  font-family: var(--font-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.nav-tab[aria-current="page"] {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.nav-tab:disabled {
+  cursor: default;
+  color: var(--ink-3);
+  opacity: 0.6;
+}
+
+main {
+  flex: 1;
+  padding: 24px 0 40px;
+}
+
+.screen-title {
+  margin: 0 0 4px;
+  font-family: var(--font-label);
+  font-size: 28px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+}
+
+.screen-subtitle {
+  margin: 0 0 20px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-2);
+  margin-bottom: 16px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.status-dot.connected {
+  background: var(--bar);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.status-dot.error {
+  background: var(--stamp);
+}
+
+.receipt-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ink);
+}
+
+.receipt-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--rule);
+  font-size: 13px;
+}
+
+.receipt-row.status-error {
+  color: var(--stamp);
+}
+
+.receipt-time {
+  color: var(--ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.receipt-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receipt-attrs {
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.receipt-cost {
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.receipt-cost.unknown {
+  color: var(--ink-3);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.empty-state {
+  color: var(--ink-2);
+  padding: 32px 0;
+  font-size: 13px;
+}
+
+.token-warning {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 12px 16px;
+  font-size: 13px;
+  margin-bottom: 20px;
+}

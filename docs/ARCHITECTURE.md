@@ -24,10 +24,18 @@ src/inferrail/
 │                docs/adr/0016), mounted only under `--app-mode`;
 │                depends on receipts, budgets, and work (all read-only
 │                or CRUD reuse of those packages' own domain models)
+├── dashboard.py Locates a built `app/dist` (see docs/adr/0017); no
+│                dependency on anything else in this package
 ├── gateway/     FastAPI app: HTTP schemas + execution engine for both
 │                /v1/chat/completions and /v1/messages, routes,
 │                attribution header parsing; mounts `localapi.routes`
-│                when `create_app(..., app_mode=True)`
+│                and the dashboard static build when
+│                `create_app(..., app_mode=True)`
+
+app/             Dashboard SPA (React + Vite + TypeScript, docs/adr/0017)
+│                — a separate Node/npm project, built to `app/dist`;
+│                zero dependency in either direction from `src/inferrail`
+│                except the runtime discovery above
 ├── transactions/ TaskTransaction schema + read-side builder over receipts
 ├── tracking.py  Client-side helper: ambient task_id propagation
 │                (contextvars + an httpx event hook) for callers of the
@@ -356,6 +364,27 @@ truth for the same file. `/v1/local/stream` is a poll loop over
 `ReceiptsStore.query(since=...)` (SQLite has no pub-sub), stopping on
 `Request.is_disconnected()`, the same discipline the inference
 engines' own streaming already follows.
+
+## The dashboard boundary
+
+See `docs/adr/0017-dashboard-in-app-directory.md`. `app/` is a
+self-contained React + Vite + TypeScript SPA, built to `app/dist` — a
+static bundle with no server-side rendering and no Node runtime needed
+to serve it. `inferrail.dashboard.find_dashboard_dist()` locates a build
+(an env override, a future bundled `dashboard_static/`, or `app/dist`
+found by walking up from the source tree) and `gateway.app.create_app`
+mounts it at `/dashboard` via `StaticFiles(html=True)`, only when
+`app_mode=True` and only when a build is actually found — no new route,
+no new failure mode for a normal `inferrail serve`. Routing between
+dashboard screens is hash-based (`/dashboard/#/live`, ...) specifically
+so the server-side mount never needs a SPA catch-all. The dashboard
+authenticates to `/v1/local/*` using the same per-install token as any
+other local-API caller, but reads it from the page's own URL query
+string rather than an `Authorization` header — the CLI prints the token
+already embedded in the URL
+(`http://host:port/dashboard/?token=...`), and `localapi.routes`'s auth
+dependency accepts either form, since browser `EventSource` (used by the
+Live Feed screen) cannot set custom headers at all.
 
 ## OSS data plane vs. future hosted control plane
 

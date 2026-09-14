@@ -431,6 +431,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    host = args.host or config.server.host
+    port = args.port or config.server.port
+
     if app_mode_paths is not None:
         print(f"App-mode data directory: {app_mode_paths.app_data_dir}")
         print(f"  receipts: {app_mode_paths.receipts}")
@@ -438,10 +441,18 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"  outcomes: {app_mode_paths.outcomes}")
         print(f"Local control API token (also saved at {app_mode_paths.token_file}):")
         print(f"  {app.state.local_api_token}")
+        # See docs/adr/0017-dashboard-in-app-directory.md for why the
+        # token travels in this URL (Jupyter-style: "zero terminal use
+        # after startup" means the printed link alone must be enough).
+        if app.state.dashboard_dist is not None:
+            print(f"Dashboard: http://{host}:{port}/dashboard/?token={app.state.local_api_token}")
+        else:
+            print(
+                "Dashboard: not built yet -- run 'cd app && npm install && npm run build', "
+                "then restart 'inferrail serve --app-mode'"
+            )
         print()
 
-    host = args.host or config.server.host
-    port = args.port or config.server.port
     uvicorn.run(app, host=host, port=port)
     return 0
 

@@ -20,11 +20,13 @@ from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from inferrail import __version__
 from inferrail.budgets.enforcement import BudgetEnforcer
 from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import InferrailConfig
+from inferrail.dashboard import find_dashboard_dist
 from inferrail.errors import (
     AuthenticationError,
     BudgetExceededError,
@@ -188,6 +190,19 @@ def create_app(
         app.state.local_budget_store = budget_store
         app.state.local_outcomes_path = local_outcomes_path or (app_data / "work-outcomes.jsonl")
         app.include_router(local_api_router)
+
+        # The dashboard (docs/adr/0017) is a static SPA -- mounted only
+        # when a build is actually found; a missing/unbuilt dashboard is
+        # not an error (see find_dashboard_dist's docstring). `html=True`
+        # serves index.html for `/dashboard` and `/dashboard/`; no SPA
+        # catch-all route is needed because the dashboard uses hash-based
+        # routing exclusively (the server never sees `#/...`).
+        dashboard_dist = find_dashboard_dist()
+        app.state.dashboard_dist = dashboard_dist
+        if dashboard_dist is not None:
+            app.mount(
+                "/dashboard", StaticFiles(directory=dashboard_dist, html=True), name="dashboard"
+            )
 
     @app.exception_handler(InferrailError)
     async def handle_inferrail_error(_: Request, exc: InferrailError) -> JSONResponse:
