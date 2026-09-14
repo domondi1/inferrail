@@ -5,66 +5,58 @@ session; `MISSION.md` almost never does.
 
 ## Status summary
 
-**v0.2.1 is fully closed** — PR #20/#21 merged. **v0.3.0 unit (1)
-(SQLite receipts store) is fully closed** — PR #22/#23 merged. **v0.3.0
-unit (2) (Anthropic `/v1/messages` passthrough) is now confirmed
-CLOSED** — [PR #24](https://github.com/domondi1/inferrail/pull/24) is
-`MERGED` (merge commit `6ef4ca4`), verified directly via `gh pr view 24
---json state,mergedAt` (not a repeat of the earlier false belief — see
-"Process note" below), and [PR #25](https://github.com/domondi1/inferrail/pull/25)
-(the ops fix-up recording that earlier discrepancy) is also `MERGED`
-(merge commit `2140d55`). Local `main` is synced to both.
+**v0.2.1 is fully closed** — PR #20/#21 merged. **v0.3.0 is now fully
+closed — all four units merged, `pyproject.toml` is `0.3.0`.** PR
+#22/#23 (unit 1, SQLite receipts), #24/#25 (unit 2, Anthropic
+passthrough), #26 (unit 3, budget enforcement), and #27 (unit 4, local
+control API/`--app-mode`/`pricing update`/`doctor`) are all `MERGED` —
+every one confirmed directly via `gh pr view <n> --json
+state,mergedAt`, never taken on a verbal report alone (see "Process
+note" below for why that discipline mattered this session). `main` is
+synced through `7d66719` (PR #27's squash-merge commit). Full
+`pytest -q` on synced `main`: **860 passed, 19 skipped, 0 failed**.
 
-**v0.3.0 unit (3) (budget enforcement) is fully closed** —
-[PR #26](https://github.com/domondi1/inferrail/pull/26) is `MERGED`
-(merge commit `48e733f`), verified via `gh pr view 26 --json
-state,mergedAt` before syncing `main`. **v0.3.0 unit (4) (local control
-API + `--app-mode` + `pricing update` + `doctor`) is built, tested, and
-locally verified — not yet on a PR as of this update.** See "Checklist
-for unit (4)" below. **All four v0.3.0 units are now built**; `pyproject.toml`
-was bumped to `0.3.0` and `CHANGELOG.md` dated as part of unit (4)'s own
-change, on the theory that the PR completing the last unit is the right
-place to close the milestone out — flag this for founder review
-specifically, since bumping the version is exactly the kind of change
-`CLAUDE.md`-equivalent policy would want a second look at even though
-this repo's own merge policy is "founder reviews every PR" already.
+**Next session's job: pick the next thing to work, starting with
+`MISSION.md`'s v0.4.0 (the dashboard)** — see "Next session starts
+here" below before doing anything else; v0.4.0 has an explicit
+architectural decision (same repo vs. sibling repo for the React app)
+that MISSION.md says to make via ADR, not assume.
 
-**Process note on how PR #24/#25/#26 actually got merged this
-session:** the founder reported "I have merged #24" once, and asked to
-"just try merging 24" once more after a direct `gh pr view 24` check
-still showed it open. Both times this session re-verified against
-GitHub before acting or reporting anything — the first report turned
-out to still be wrong (branch was behind `main`, not actually mergeable
-yet); the *second* attempt (after the founder used GitHub's "Update
-branch" button) verified `MERGED` for real. PR #26 (unit 3) was opened
-by the founder directly (this agent gave them the exact `git push` +
-`gh pr create` commands to run, since it cannot push itself — see
-below) and merged cleanly with all 8 CI checks green, confirmed the
-same way. The lesson from PR #25 held throughout: never report or act
-on a merge without a fresh `gh pr view --json state,mergedAt` check,
-even when told directly that it happened.
+**Process note on PR #27's own near-miss:** CI failed
+(`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
+error code (`INFERRAIL_E011`, added late in unit (4)'s work) was never
+run through `scripts/generate_errors_md.py`. Caught from the CI log
+(`gh run view <id> --log-failed`), fixed with a follow-up commit pushed
+to the same branch before merge — the fix landed and CI went green
+before the founder squash-merged, confirmed by reading `ERRORS.md` back
+off `origin/main` after the merge, not by assuming the push order
+worked out. Lesson for future units: always re-run *all three*
+generator scripts (`generate_errors_md.py`, `generate_config_schema.py`,
+`generate_openapi.py`) as a final step before opening a PR, not just
+whichever ones seemed relevant while writing the code — a new error
+code is easy to add without remembering it has a generated-doc
+consequence.
 
-**A hard credential boundary, not just a policy one, was confirmed
-this session:** this agent's `gh`/git credentials (an active
-`GITHUB_TOKEN` environment variable, a scoped app-installation token)
-have no push/write access to this repo at all — confirmed via a direct
-`git push` 403 on an *existing* branch (PR #24's) and, to rule out that
-being branch-specific, a second 403 pushing a brand-new branch
-(`feat/budget-enforcement`, unit 3). A separate, already-logged-in
-personal `gho_` token with real `repo` write scope exists in this
-environment but is not the active credential, and `gh auth switch`
-refused to make it active while `GITHUB_TOKEN` is set. This session did
-not try to force that switch. **Working handoff pattern established this
-session:** this agent commits the finished work locally, then hands the
-founder the exact `git push -u origin <branch>` + `gh pr create ...`
-commands to paste into their own terminal — this worked cleanly for
-unit (3)/PR #26. The next session should use the same pattern for
-unit (4) rather than re-discovering it.
+**Process note on how PR #24 through #27 actually got merged this
+session (the durable pattern, not just history):** this agent cannot
+push to this repository — confirmed on three separate occasions (an
+existing branch, a brand-new branch, and via `gh api .../update-branch`),
+all 403, with a scoped `GITHUB_TOKEN` that has no write access and a
+separate personal `gho_` token present but not switchable while
+`GITHUB_TOKEN` is set. **The working handoff, used successfully for
+PR #26 and #27: commit the finished work locally, then hand the founder
+the exact `git push -u origin <branch>` + `gh pr create ...` commands
+to paste into their own terminal.** Do not attempt to bypass the push
+restriction (switching credentials, `--admin`, force flags) — ask for
+the push instead, every time. Separately: never report or act on a
+merge without a fresh `gh pr view --json state,mergedAt` check, even
+when told directly that it happened — this was wrong twice in a row
+earlier in the PR #24 saga specifically because it was taken on trust.
 
-See "v0.2.1 — CLOSED" and "Current milestone: v0.3.0" below for the full
-record of what's actually in each unit.
+See "v0.2.1 — CLOSED" and "v0.3.0 — CLOSED" below for the full record of
+what's actually in each unit.
 
-**Founder decisions that closed out the two remaining open items:**
+**Founder decisions that closed out the two remaining open items (v0.2.1):**
 - *Expired-key live verification:* test coverage (short-TTL, same
   `_authenticate` code path already exercised live for the golden path)
   accepted as sufficient — no 30-minute real-time wait against
@@ -194,19 +186,27 @@ back green. **Merge itself was refused by the coding harness's own
 safety classifier** ("Merge Without Review"), not by GitHub or this
 repo's branch protection — see "Why not merged already" above.
 
-## Current milestone: v0.3.0 — "Core engine: measure better, and enforce"
+## v0.3.0 — CLOSED ("Core engine: measure better, and enforce")
 
-Per `MISSION.md`. Never skip ahead to v0.4.0+ while this has unmet
-acceptance criteria, unless a blocker is logged here with a reason —
-same rule that applied to v0.2.1.
+All four units merged: [PR #22](https://github.com/domondi1/inferrail/pull/22)/[#23](https://github.com/domondi1/inferrail/pull/23)
+(unit 1), [PR #24](https://github.com/domondi1/inferrail/pull/24)/[#25](https://github.com/domondi1/inferrail/pull/25)
+(unit 2), [PR #26](https://github.com/domondi1/inferrail/pull/26)
+(unit 3), [PR #27](https://github.com/domondi1/inferrail/pull/27) (unit
+4, merge commit `7d66719`). `pyproject.toml` -> `0.3.0`,
+`CHANGELOG.md`'s `## v0.3.0` entry dated 2026-09-14. MISSION.md's
+acceptance criteria (a $0.01 hard cap blocks before the provider is
+called and the block is visible in the store; a Claude Code session
+pointed at the gateway produces attributed receipts; crash/idempotency
+tests for budgets pass) are all met — see unit (3)'s checklist below
+for exactly which tests cover each.
 
-v0.3.0 bundles four units: (1) SQLite receipts store, (2) Anthropic
+v0.3.0 bundled four units: (1) SQLite receipts store, (2) Anthropic
 `/v1/messages` passthrough, (3) budgets with real enforcement, (4)
 local control API + `inferrail doctor`/`pricing update`. Per the
-session protocol, work the smallest first unit, not the whole milestone
-at once — (1) went first since (3) and (4) both depend on querying
-receipts, and doing them before a real store exists would mean building
-throwaway plumbing.
+session protocol, the smallest first unit was worked first, not the
+whole milestone at once — (1) went first since (3) and (4) both depend
+on querying receipts, and doing them before a real store exists would
+have meant building throwaway plumbing.
 
 ### Checklist for unit (1): SQLite receipts store — DONE
 
@@ -417,12 +417,15 @@ Merged as [PR #26](https://github.com/domondi1/inferrail/pull/26)
       files), full `pytest -q` — **820 passed, 19 skipped, 0 failed**
       (see PR #26's own description for the exact command output).
 
-### Checklist for unit (4): Local control API, `--app-mode`, `pricing update`, `doctor` — BUILT, PR NOT YET OPENED
+### Checklist for unit (4): Local control API, `--app-mode`, `pricing update`, `doctor` — DONE
 
-Built on top of synced `main` (post PR #26) in this same session, not
-yet on a feature branch/PR — see "Next session starts here" for the
-immediate next step (open the PR). This is the **last** v0.3.0 unit —
-all four are now built.
+Merged as [PR #27](https://github.com/domondi1/inferrail/pull/27)
+(merge commit `7d66719`), confirmed `MERGED` via `gh pr view 27 --json
+state,mergedAt`. CI initially failed (`test (3.11)`/`test (3.12)`) on a
+stale `ERRORS.md` — fixed with a follow-up commit pushed to the same
+branch before the founder merged; all 8 checks were green on the exact
+commit that got merged, confirmed via `gh pr checks 27` before trusting
+it. This was the **last** v0.3.0 unit — the milestone is now closed.
 
 - [x] `appdata.app_data_dir()`/`ensure_app_data_dir()`
       (`src/inferrail/appdata.py`) — stdlib-only OS-conventional
@@ -511,70 +514,69 @@ all four are now built.
       `test_cli_doctor.py`, plus additions to `test_cli_main.py` and
       `test_receipts.py` — are exactly this unit's). `scripts/
       check_no_internal_content.sh` (boundary check) passes.
-- [ ] Open the PR from a feature branch, get CI green, get it
-      founder-reviewed and merged. **Not done yet — this is the actual
-      next action.**
+- [x] **PR opened, CI failure fixed, merged.** [PR #27](https://github.com/domondi1/inferrail/pull/27)
+      initially failed `test (3.11)`/`test (3.12)` on a stale
+      `ERRORS.md` (a new error code, `INFERRAIL_E011`, was never run
+      through `scripts/generate_errors_md.py`) — diagnosed from
+      `gh run view <id> --log-failed`, fixed with a follow-up commit
+      pushed to the same branch (`git push origin
+      feat/local-control-api-app-mode`, no new PR needed), confirmed
+      all 8 checks green via `gh pr checks 27` before the founder
+      squash-merged. Merge confirmed via `gh pr view 27 --json
+      state,mergedAt` -> `MERGED`, merge commit `7d66719`; `ERRORS.md`
+      on `origin/main` re-read afterward to confirm the fix actually
+      landed (not assumed from push order).
 
 v0.3.0's own acceptance criteria (a $0.01 hard cap blocks before the
 provider is called and the block is visible in the store; a Claude Code
 session pointed at the gateway produces attributed receipts;
-crash/idempotency tests for budgets pass) were already met by unit (3).
-All four v0.3.0 units are now built; the milestone is functionally
-complete pending only this last PR/merge.
+crash/idempotency tests for budgets pass) were met by unit (3). **All
+four v0.3.0 units are merged. The milestone is closed.**
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
    changed underneath — `git log origin/main --oneline -5` should show
-   `48e733f` (PR #26) as the most recent ancestor. If the founder
-   reports anything was merged/changed, verify with `gh pr view <n>
-   --json state,mergedAt` before trusting it — same discipline as this
-   session's own PR #24/#25/#26 lessons; don't relax it just because
-   recent rounds went smoothly.
-2. **Open the PR for unit (4).** The work is committed locally (check
-   `git log --oneline -1` and `git status` — if this session ended
-   before committing, do that first, following the same conventional-
-   commit + attribution style as prior units). This agent cannot push
-   to this repo directly (confirmed twice now, on two different
-   branches — see "Status summary" above). The working handoff: create
-   the branch, commit, then give the founder the exact `git push -u
-   origin <branch>` and `gh pr create ...` commands to run themselves
-   (this worked cleanly for PR #26) — don't try to push it yourself
-   first "just to check"; go straight to handing over the commands.
-3. **Do not self-merge.** Once CI is green, wait for founder review —
-   same as every prior unit. Founder review is doubly warranted here
-   since this PR also carries the `pyproject.toml` version bump and the
-   `CHANGELOG.md` release-dating — flag that explicitly when handing
-   over the PR, don't let it slide through as "just more budget-unit
-   code."
-4. Once unit (4) is confirmed merged (`gh pr view --json
-   state,mergedAt`, not a verbal report), flip this file's unit (4)
-   heading to DONE, sync `main`, and re-read `MISSION.md`'s v0.4.0
-   section (the dashboard) — v0.3.0 will be fully closed at that point,
-   so the "never skip ahead" rule that applied throughout v0.3.0 no
-   longer blocks starting it. Update the "Status summary" at the top of
-   this file to declare v0.3.0 closed before starting v0.4.0 work, the
-   same way v0.2.1's closure was recorded before v0.3.0 began.
+   `7d66719` (PR #27) as the most recent ancestor, and `pyproject.toml`
+   should read `0.3.0`. If the founder reports anything was
+   merged/changed, verify with `gh pr view <n> --json state,mergedAt`
+   before trusting it — same discipline that mattered repeatedly this
+   session; don't relax it just because recent rounds went smoothly.
+2. **Read `MISSION.md`'s v0.4.0 section (the dashboard) before writing
+   any code.** It requires an explicit architectural decision this
+   session did not make: React + Vite in a new `app/` directory in
+   *this* repo, or a sibling repo (`inferrail-app`) — MISSION.md says
+   "decide via ADR." Don't default to one silently; if it's genuinely
+   ambiguous, that's a case for asking the founder directly rather than
+   guessing, since it affects repo structure, CI, and release tooling
+   going forward.
+3. Once that's decided and recorded (a new ADR, same numbering
+   sequence — next is `0017`), scope v0.4.0's own smallest first unit
+   the same way each v0.3.0 unit was scoped, and follow the same
+   protocol throughout: build with tests at the existing rigor, run
+   *all three* generator scripts (`generate_errors_md.py`,
+   `generate_config_schema.py`, `generate_openapi.py`) before opening a
+   PR — not just the ones that seem relevant, per this session's own
+   `ERRORS.md` near-miss — commit locally, then hand the founder the
+   exact `git push`/`gh pr create` commands (this agent cannot push to
+   this repo — confirmed repeatedly, see "Status summary" above). Do
+   not self-merge.
+4. Update this file's "Status summary" to reflect wherever v0.4.0 work
+   lands, the same way v0.2.1's and v0.3.0's closures were recorded
+   before the next milestone began.
 
 ## HUMAN ACTION NEEDED
 
-- **Push/open the PR for v0.3.0 unit (4) (local control API,
-  `--app-mode`, `pricing update`, `doctor`) — the last unit of the
-  milestone.** This agent's active credentials in this environment
-  (`GITHUB_TOKEN`, a scoped app-installation token) have no write
-  access to this repo — confirmed twice now, on two different branches
-  (see "Status summary" above). The code, tests, and docs are all built
-  and locally verified (see "Checklist for unit (4)"); someone with
-  push access needs to run the branch/push/`gh pr create` commands (the
-  next session should hand these over explicitly, the same way it
-  worked for PR #26) before this can go through the normal CI +
-  founder-review path. **This PR also carries a `pyproject.toml`
-  version bump (`0.2.0` -> `0.3.0`) and a `CHANGELOG.md` release-dating
-  edit** — call that out explicitly during review, it's not "just more
-  code." Everything else — the Render warm/upgrade decision from
-  v0.2.1, signing accounts, stopwatch tests, demo video/screenshots, and
-  HN post timing — remains deferred per `MISSION.md`'s standing ledger,
-  untouched and not yet due.
+- **None outstanding as of this update** — v0.3.0 is fully merged and
+  closed. Everything below remains deferred per `MISSION.md`'s standing
+  ledger, untouched and not yet due:
+- Render warm/upgrade decision (v0.2.1) — resolved, staying on free
+  tier.
+- Signing accounts, stopwatch tests, demo video/screenshots, HN post
+  timing — all deferred to their respective `MISSION.md` milestones.
+- The v0.4.0 architectural decision noted above (repo structure for the
+  dashboard) will need the founder's input when the next session gets
+  there — not urgent yet, flagged here so it isn't a surprise.
 
 ## Decisions made during the v0.2.1 session (historical)
 
