@@ -158,7 +158,12 @@ inspectable config file and gives you a telemetry record for every request
   measured usage and a verified price, the price's provenance (source +
   verified date), caller-supplied business attribution, latency, retries,
   status. Local JSONL sink by default (`receipts.path`, default
-  `./inferrail-receipts.jsonl`). See "Cost and receipts" below.
+  `./inferrail-receipts.jsonl`); `receipts.sink: sqlite` is a first-class
+  alternative (WAL-mode, indexed on `ts`/`work_id`/`project`/`model`) for
+  larger installs — `inferrail report`/`transaction`/`work` work
+  unchanged against either, and `inferrail receipts import|export` moves
+  history between them (see docs/adr/0013-sqlite-receipts-store.md). See
+  "Cost and receipts" below.
 - Caller-supplied business attribution: `X-Inferrail-Attribute-<Name>` HTTP
   headers (e.g. `X-Inferrail-Attribute-Customer: acme`) are collected into
   a generic `dict[str, str]` and persisted on the receipt. Never forwarded

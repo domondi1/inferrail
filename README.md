@@ -494,7 +494,7 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
   and derived Work Economics via `inferrail work outcome`, `inferrail work
   <work-id>`, and `inferrail work --all`
 - CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
-  `report`, `transaction`, `work`
+  `report`, `transaction`, `work`, `receipts import|export`
 
 ## Not yet
 
@@ -518,14 +518,16 @@ Honest edges, not silent gaps — full list in
 
 ## Deployment boundary
 
-**Single node.** The receipt ledger is a local append-only JSONL file, so
-every process that should appear in one report must write to one file on
-one filesystem.
+**Single node.** The receipt ledger is a local file — JSONL by default,
+or a WAL-mode SQLite file (`receipts.sink: sqlite`, see
+[docs/adr/0013](docs/adr/0013-sqlite-receipts-store.md) for indexed
+queries at larger scale) — so every process that should appear in one
+report must write to one file on one filesystem.
 
-- Concurrent writers to the same file are safe: each receipt is written
-  as a single atomic `O_APPEND` write, so threads *and* multiple
-  processes on the same host can share one ledger without interleaving or
-  losing records.
+- Concurrent writers to the same file are safe either way: JSONL uses a
+  single atomic `O_APPEND` write per receipt; SQLite uses WAL journaling
+  plus a busy-timeout. Threads *and* multiple processes on the same host
+  can share one ledger without interleaving or losing records.
 - Not supported: several hosts writing to one ledger, aggregating ledgers
   across machines, or anything resembling a shared/hosted control plane.
   Running Inferrail on N hosts gives you N separate ledgers, and nothing

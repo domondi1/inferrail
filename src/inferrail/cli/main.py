@@ -29,6 +29,7 @@ from inferrail.cli.ap import (
     run_ap_report,
 )
 from inferrail.cli.demo import run_demo
+from inferrail.cli.receipts_io import run_receipts_export, run_receipts_import
 from inferrail.cli.report import run_report
 from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
@@ -116,7 +117,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--receipts",
         default=None,
-        help="Path to the receipts JSONL file. Defaults to receipts.path from --config.",
+        help="Path to the receipts file (JSONL or SQLite). Default: receipts.path from --config.",
     )
     report.add_argument(
         "--config",
@@ -147,7 +148,7 @@ def _build_parser() -> argparse.ArgumentParser:
     transaction.add_argument(
         "--receipts",
         default=None,
-        help="Path to the receipts JSONL file. Defaults to receipts.path from --config.",
+        help="Path to the receipts file (JSONL or SQLite). Default: receipts.path from --config.",
     )
     transaction.add_argument(
         "--config",
@@ -181,7 +182,7 @@ def _build_parser() -> argparse.ArgumentParser:
     work.add_argument(
         "--receipts",
         default=None,
-        help="Path to receipts JSONL (defaults to --config / quickstart path).",
+        help="Path to the receipts file (JSONL or SQLite; defaults to --config / quickstart path).",
     )
     work.add_argument(
         "--outcomes", default=str(DEFAULT_OUTCOMES_PATH), help="Path to append-only outcome JSONL."
@@ -190,6 +191,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", default=None, help="Path to inferrail.yaml for the receipts path."
     )
     work.add_argument("--json", action="store_true", help="Print derived work data as JSON.")
+
+    receipts = subparsers.add_parser(
+        "receipts", help="Move receipts between the JSONL and SQLite sinks."
+    )
+    receipts_sub = receipts.add_subparsers(dest="receipts_command", required=True)
+
+    receipts_import = receipts_sub.add_parser(
+        "import", help="Import a receipts JSONL file into a SQLite receipts store."
+    )
+    receipts_import.add_argument("--jsonl", required=True, help="Path to the source JSONL file.")
+    receipts_import.add_argument(
+        "--db", required=True, help="Path to the destination SQLite receipts store."
+    )
+
+    receipts_export = receipts_sub.add_parser(
+        "export", help="Export a SQLite receipts store to a JSONL file."
+    )
+    receipts_export.add_argument(
+        "--db", required=True, help="Path to the source SQLite receipts store."
+    )
+    receipts_export.add_argument(
+        "--jsonl", required=True, help="Path to the destination JSONL file."
+    )
 
     ap = subparsers.add_parser(
         "ap", help="AP invoice-exception recovery: decide, execute, and record retry vs. review."
@@ -360,6 +384,15 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return run_demo()
 
 
+def _cmd_receipts(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.receipts_command == "import":
+        return run_receipts_import(Path(args.jsonl), Path(args.db))
+    if args.receipts_command == "export":
+        return run_receipts_export(Path(args.db), Path(args.jsonl))
+    parser.error(f"unknown receipts subcommand: {args.receipts_command}")
+    return 1
+
+
 def _cmd_ap(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.ap_command == "demo":
         return run_ap_demo()
@@ -431,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_try(args)
     if args.command == "ap":
         return _cmd_ap(args, parser)
+    if args.command == "receipts":
+        return _cmd_receipts(args, parser)
 
     parser.print_help()
     return 1
