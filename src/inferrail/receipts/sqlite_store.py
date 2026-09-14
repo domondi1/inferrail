@@ -150,14 +150,19 @@ class ReceiptsStore:
         work_id: str | None = None,
         project: str | None = None,
         model: str | None = None,
+        status: str | None = None,
         since: float | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[InferenceReceipt]:
-        """Indexed lookup by any combination of `work_id`/`project`/
-        `model` (the three non-`ts` indexed columns) and/or `since` (a
-        `ts` lower bound, exclusive — also indexed). Omit all four for
-        the same result as `read_all` minus the skip count.
+        """Lookup by any combination of `work_id`/`project`/`model`
+        (indexed) and/or `status`/`since` (`status` is a real column but
+        deliberately not indexed -- a local single-install receipts
+        table is small enough that a full scan on it is fine, and adding
+        an index purely for one dashboard filter isn't worth the write-
+        path cost; `since` is a `ts` lower bound, exclusive, and *is*
+        indexed). Omit all five for the same result as `read_all` minus
+        the skip count.
 
         `limit`/`offset` page through the (still `ts`-ordered) result —
         added for `localapi.routes`'s paginated receipts endpoint and
@@ -165,7 +170,12 @@ class ReceiptsStore:
         path rather than each re-deriving their own SQL."""
         clauses: list[str] = []
         params: list[object] = []
-        for column, value in (("work_id", work_id), ("project", project), ("model", model)):
+        for column, value in (
+            ("work_id", work_id),
+            ("project", project),
+            ("model", model),
+            ("status", status),
+        ):
             if value is not None:
                 clauses.append(f"{column} = ?")
                 params.append(value)
@@ -200,6 +210,7 @@ class ReceiptsStore:
         work_id: str | None = None,
         project: str | None = None,
         model: str | None = None,
+        status: str | None = None,
     ) -> int:
         """Total matching rows for the same filters `query()` accepts
         (minus `since`/`limit`/`offset`, which don't affect a total) —
@@ -207,7 +218,12 @@ class ReceiptsStore:
         row just to `len()` it."""
         clauses: list[str] = []
         params: list[object] = []
-        for column, value in (("work_id", work_id), ("project", project), ("model", model)):
+        for column, value in (
+            ("work_id", work_id),
+            ("project", project),
+            ("model", model),
+            ("status", status),
+        ):
             if value is not None:
                 clauses.append(f"{column} = ?")
                 params.append(value)

@@ -378,6 +378,21 @@ def test_sqlite_store_query_filters_by_work_id_project_and_model(tmp_path: Path)
     assert store.query(work_id="does-not-exist") == []
 
 
+def test_sqlite_store_query_and_count_filter_by_status(tmp_path: Path) -> None:
+    # Not an indexed column (see the store's own docstring), but a real
+    # filter -- what the dashboard's Budgets screen uses to build its
+    # blocked-request log (status="error") without pulling in every
+    # successful receipt too.
+    store = ReceiptsStore(tmp_path / "receipts.sqlite3")
+    store.emit(_receipt(receipt_id="ir_ok", status="success"))
+    store.emit(_receipt(receipt_id="ir_bad1", status="error"))
+    store.emit(_receipt(receipt_id="ir_bad2", status="error"))
+
+    assert {r.receipt_id for r in store.query(status="error")} == {"ir_bad1", "ir_bad2"}
+    assert store.count(status="error") == 2
+    assert [r.receipt_id for r in store.query(status="success")] == ["ir_ok"]
+
+
 def test_sqlite_store_query_limit_and_offset_page_in_ts_order(tmp_path: Path) -> None:
     store = ReceiptsStore(tmp_path / "receipts.sqlite3")
     for i in range(5):

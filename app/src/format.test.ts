@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attrSummary, formatCost, formatTime, formatWorkCost } from "./format";
+import { attrSummary, burnFraction, formatCost, formatTime, formatWorkCost } from "./format";
 
 describe("formatCost", () => {
   it("renders a null cost as unknown, never as $0", () => {
@@ -22,6 +22,20 @@ describe("formatTime", () => {
 
   it("falls back to the raw string for an unparseable timestamp", () => {
     expect(formatTime("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("burnFraction", () => {
+  it("computes a plain fraction under the limit", () => {
+    expect(burnFraction("2.5", "10")).toBeCloseTo(0.25);
+  });
+
+  it("clamps at 1 when spend exceeds the limit", () => {
+    expect(burnFraction("15", "10")).toBe(1);
+  });
+
+  it("returns 0 for a non-positive limit rather than dividing by zero", () => {
+    expect(burnFraction("5", "0")).toBe(0);
   });
 });
 

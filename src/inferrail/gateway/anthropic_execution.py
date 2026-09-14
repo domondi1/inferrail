@@ -26,7 +26,11 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from typing import Literal
 
-from inferrail.budgets.enforcement import BudgetEnforcer, approx_char_count
+from inferrail.budgets.enforcement import (
+    BudgetEnforcer,
+    approx_char_count,
+    augment_attributes_with_block,
+)
 from inferrail.errors import (
     AuthenticationError,
     BudgetExceededError,
@@ -226,7 +230,8 @@ class AnthropicInferenceEngine:
         except BudgetExceededError as exc:
             self._emit_failure(
                 request_id, decision.route_name, decision.provider_name,
-                decision.model, 0, started, exc, attributes,
+                decision.model, 0, started, exc,
+                augment_attributes_with_block(attributes, exc),
             )
             raise
 

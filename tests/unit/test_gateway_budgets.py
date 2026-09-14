@@ -128,6 +128,10 @@ def test_blocked_request_is_visible_in_the_receipts_store(
     assert receipts[0].status == "error"
     assert receipts[0].prompt_tokens is None
     assert receipts[0].estimated_cost_usd is None
+    # The dashboard's Budgets screen (docs/adr/0017) filters on this to
+    # build an honest blocked-request log -- distinguishing a real budget
+    # block from any other status="error" receipt.
+    assert receipts[0].attributes["budget_id"] == "global:_:daily"
 
 
 def test_warn_mode_budget_never_blocks_chat_completion(
@@ -223,6 +227,8 @@ def test_block_mode_budget_blocks_messages_before_provider_is_called(
     assert response.status_code == 402
     assert response.json()["error"]["code"] == "INFERRAIL_E010"
     assert provider.calls == []
+    receipts = ReceiptsStore(config.receipts.path).read_all()[0]
+    assert receipts[0].attributes["budget_id"] == "global:_:daily"
 
 
 def test_work_id_scoped_budget_blocks_only_that_work_id(

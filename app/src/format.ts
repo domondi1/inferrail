@@ -23,6 +23,19 @@ export function attrSummary(attrs: Record<string, string>): string {
   return parts.join(" · ");
 }
 
+/** A burn-bar fraction, clamped to [0, 1] for rendering -- the raw
+ * spent/limit ratio can exceed 1 (a "warn" budget can be over its limit
+ * by design; even a "block" budget can be pushed over post-flight by a
+ * real cost exceeding its pre-flight estimate), but the bar itself
+ * should never render wider than its track. Callers that need to know
+ * "is this actually over" should compare spent > limit directly, not
+ * infer it from this fraction. */
+export function burnFraction(spentUsd: string, limitUsd: string): number {
+  const limit = Number(limitUsd);
+  if (limit <= 0) return 0;
+  return Math.min(1, Math.max(0, Number(spentUsd) / limit));
+}
+
 /** A work_id's cost, honestly: a known partial total plus how many
  * receipts contributed nothing knowable, never collapsed into one
  * number. Mirrors `formatCost`'s "unknown is never $0" rule at the

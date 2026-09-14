@@ -23,10 +23,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from inferrail.budgets.enforcement import spent_so_far_usd
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.errors import LocalApiAuthenticationError
-from inferrail.localapi.schemas import BudgetCreate, ReceiptsPage
+from inferrail.localapi.schemas import BudgetCreate, BudgetSpend, ReceiptsPage
 from inferrail.receipts.sqlite_store import ReceiptsStore
 from inferrail.work.builder import aggregate_work_summaries, build_work_summary, load_outcomes
 from inferrail.work.schema import WorkSummary
@@ -84,14 +85,15 @@ async def list_receipts(
     work_id: str | None = None,
     project: str | None = None,
     model: str | None = None,
+    status: str | None = None,
     limit: int = Query(default=50, gt=0, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> ReceiptsPage:
     store = _receipts_store(request)
     receipts = store.query(
-        work_id=work_id, project=project, model=model, limit=limit, offset=offset
+        work_id=work_id, project=project, model=model, status=status, limit=limit, offset=offset
     )
-    total = store.count(work_id=work_id, project=project, model=model)
+    total = store.count(work_id=work_id, project=project, model=model, status=status)
     return ReceiptsPage(receipts=receipts, total=total, limit=limit, offset=offset)
 
 
@@ -132,6 +134,28 @@ async def get_work(request: Request, work_id: str) -> WorkSummary:
 )
 async def list_budgets(request: Request) -> list[Budget]:
     return _budget_store(request).list()
+
+
+@router.get(
+    "/budgets/spend",
+    dependencies=[Depends(_require_local_api_token)],
+    response_model=list[BudgetSpend],
+    summary="Current spend for every configured budget, for the dashboard's burn bar",
+)
+async def list_budget_spend(request: Request) -> list[BudgetSpend]:
+    receipts = _receipts_store(request)
+    results = []
+    for budget in _budget_store(request).list():
+        spent = spent_so_far_usd(receipts, budget)
+        results.append(
+            BudgetSpend(
+                budget_id=budget.budget_id,
+                limit_usd=budget.limit_usd,
+                spent_usd=spent.spent_usd,
+                has_unpriced_usage=spent.has_unpriced_usage,
+            )
+        )
+    return results
 
 
 @router.post(

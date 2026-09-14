@@ -285,3 +285,18 @@ def augment_attributes_with_overrun(
     if worst_overrun is None:
         return attributes
     return {**attributes, "budget_overrun_usd": str(worst_overrun)}
+
+
+def augment_attributes_with_block(
+    attributes: dict[str, str], exc: BudgetExceededError
+) -> dict[str, str]:
+    """Marks a receipt as a real pre-flight budget block, not just any
+    other request failure -- both are `status: "error"` receipts
+    otherwise, with nothing on the receipt itself to tell them apart.
+    The dashboard's Budgets screen (docs/PRODUCT.md's "Dashboard"
+    section) filters on this `budget_id` attribute to build its
+    blocked-request log honestly, rather than guessing from error text.
+    Same pattern as `augment_attributes_with_overrun`: a system-computed
+    key added into the receipt's own generic attributes dict, not a new
+    schema field."""
+    return {**attributes, "budget_id": exc.budget_id}

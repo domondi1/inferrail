@@ -559,8 +559,8 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
   guarded by a mandatory per-install token, plus (when built — see
   below) the local dashboard. See
   [docs/adr/0016](docs/adr/0016-local-control-api.md).
-- A local web dashboard (`app/`, `docs/adr/0017`) — **Live Feed and Work
-  built so far**, the rest of the v0.4.0 screens (Budgets, Recover,
+- A local web dashboard (`app/`, `docs/adr/0017`) — **Live Feed, Work,
+  and Budgets built so far**, the rest of the v0.4.0 screens (Recover,
   Connect, Settings) are not yet built. `inferrail serve --app-mode`
   prints a ready-to-open URL with the local API token already embedded;
   not yet bundled into the PyPI wheel, so build it from a checkout

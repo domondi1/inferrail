@@ -343,6 +343,14 @@ receipt is emitted) adds a `budget_overrun_usd` attribute when the
 architectural layer between the engines and receipts/pricing — both take
 the same `ReceiptsStore`/`PricingResolver` the engines already hold, so
 there's exactly one code path that resolves a price or queries spend.
+A pre-flight block similarly gains a `budget_id` attribute
+(`augment_attributes_with_block`, same pattern as the overrun case) so a
+real budget block is distinguishable from any other `status: "error"`
+receipt — this is what the dashboard's Budgets screen's blocked-request
+log filters on, via `GET /v1/local/receipts?status=error`.
+`budgets.enforcement.spent_so_far_usd` is public and reused verbatim by
+`GET /v1/local/budgets/spend` (below), so the dashboard's burn bar can
+never compute a different number than enforcement itself did.
 
 ## The local control API boundary
 

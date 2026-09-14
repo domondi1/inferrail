@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from inferrail.budgets.enforcement import (
     BudgetEnforcer,
     approx_char_count,
+    augment_attributes_with_block,
     estimate_upper_bound_usd,
     matching_budgets,
     spent_so_far_usd,
@@ -459,3 +460,28 @@ def test_augment_overrun_reports_the_worst_of_several_matching_budgets(tmp_path:
 
     # actual cost = $3.0; global overrun = 3 - 1 = 2; project overrun = 3 - 2.5 = 0.5
     assert Decimal(result["budget_overrun_usd"]) == Decimal("2.000000")
+
+
+def test_augment_attributes_with_block_adds_budget_id_only() -> None:
+    exc = BudgetExceededError(
+        budget_id="global:_:daily", scope="global", scope_value=None, window="daily",
+        mode="block", limit_usd=Decimal("1"), spent_so_far_usd=Decimal("0.5"),
+        estimated_request_usd=Decimal("0.6"), projected_total_usd=Decimal("1.1"),
+    )
+
+    result = augment_attributes_with_block({"work_id": "w1"}, exc)
+
+    assert result == {"work_id": "w1", "budget_id": "global:_:daily"}
+
+
+def test_augment_attributes_with_block_does_not_mutate_the_original() -> None:
+    exc = BudgetExceededError(
+        budget_id="global:_:daily", scope="global", scope_value=None, window="daily",
+        mode="block", limit_usd=Decimal("1"), spent_so_far_usd=Decimal("0.5"),
+        estimated_request_usd=Decimal("0.6"), projected_total_usd=Decimal("1.1"),
+    )
+    original: dict[str, str] = {}
+
+    augment_attributes_with_block(original, exc)
+
+    assert original == {}

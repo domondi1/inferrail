@@ -25,6 +25,22 @@ class ReceiptsPage(BaseModel):
     offset: int
 
 
+class BudgetSpend(BaseModel):
+    """Response body for `GET /v1/local/budgets/spend` -- one entry per
+    configured budget, reusing `budgets.enforcement.spent_so_far_usd`
+    directly (the same function `BudgetEnforcer.check` itself uses) so
+    the dashboard's burn bar can never drift from what enforcement
+    actually computes. `has_unpriced_usage=true` means this budget's
+    spend is a floor, not the true total -- rendered distinctly, never
+    silently treated as complete (docs/PRODUCT.md's honest-numbers
+    rule)."""
+
+    budget_id: str
+    limit_usd: Decimal
+    spent_usd: Decimal
+    has_unpriced_usage: bool
+
+
 class BudgetCreate(BaseModel):
     """Request body for `POST /v1/local/budgets`. No `budget_id` field —
     it's computed server-side from scope/scope_value/window
@@ -40,4 +56,4 @@ class BudgetCreate(BaseModel):
     limit_usd: Decimal
 
 
-__all__ = ["Budget", "BudgetCreate", "ReceiptsPage"]
+__all__ = ["Budget", "BudgetCreate", "BudgetSpend", "ReceiptsPage"]

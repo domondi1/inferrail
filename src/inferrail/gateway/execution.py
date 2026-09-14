@@ -63,7 +63,11 @@ from typing import Literal
 from inferrail.budgets.enforcement import (
     DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE as _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE,
 )
-from inferrail.budgets.enforcement import BudgetEnforcer, approx_char_count
+from inferrail.budgets.enforcement import (
+    BudgetEnforcer,
+    approx_char_count,
+    augment_attributes_with_block,
+)
 from inferrail.errors import (
     AuthenticationError,
     BudgetExceededError,
@@ -265,7 +269,8 @@ class InferenceEngine:
         except BudgetExceededError as exc:
             self._emit_failure(
                 request_id, decision.route_name, decision.provider_name,
-                decision.model, 0, started, exc, attributes,
+                decision.model, 0, started, exc,
+                augment_attributes_with_block(attributes, exc),
             )
             raise
 
