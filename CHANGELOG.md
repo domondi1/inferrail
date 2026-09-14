@@ -26,11 +26,19 @@ PyPI release (the hosted service and website ship independently of the
   (`#/work/<id>`). A partially-priced work_id shows both its known total
   and how many receipts contributed nothing knowable (e.g. `$0.0007
   (+2 unknown)`), never a single misleading number.
+- **Budgets** screen: create/remove budgets, a burn bar per budget over
+  the new `GET /v1/local/budgets/spend` (reuses
+  `budgets.enforcement.spent_so_far_usd` directly, the same computation
+  `BudgetEnforcer.check` itself uses), and a blocked-request log. A
+  pre-flight budget block now stamps the receipt's `attributes.budget_id`
+  (`augment_attributes_with_block`), so the log is built from real
+  evidence, not inferred from error text. `GET /v1/local/receipts` gained
+  an optional `status` filter to support this.
 
 ### Not yet in this milestone
 
-- The Budgets, Recover, Connect, and Settings screens (visible in the
-  nav as disabled tabs, not omitted).
+- The Recover, Connect, and Settings screens (visible in the nav as
+  disabled tabs, not omitted).
 - Bundling the built dashboard into the PyPI wheel — build it from a
   checkout (`cd app && npm install && npm run build`) until a packaging
   unit lands.

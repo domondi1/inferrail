@@ -300,8 +300,11 @@ here:
   response body's `error.details` carries `budget_id`/`limit_usd`/
   `spent_so_far_usd`/`estimated_request_usd` so a caller can react
   programmatically, not just read a message. The block itself still
-  produces a normal (costless) receipt, so it's visible in
-  `inferrail report` like any other rejected request.
+  produces a normal (costless) receipt carrying a `budget_id` attribute
+  (`budgets.enforcement.augment_attributes_with_block`), so it's visible
+  in `inferrail report` like any other rejected request, *and*
+  distinguishable from an unrelated failure — this is what the dashboard's
+  Budgets screen (below) uses to build an honest blocked-request log.
 - `warn` mode never blocks. If a request's *actual* cost (known only
   after completion) pushes a matching budget over its limit, the
   receipt gains a `budget_overrun_usd` attribute — the same generic
@@ -334,7 +337,7 @@ fleet "control plane" `docs/adr/0004` anticipates):
   directly — `inferrail report`/`work`/`budget` remain the CLI's own
   read/write surface either way.
 
-### Dashboard (v0.4.0, in progress) — Live Feed and Work built so far
+### Dashboard (v0.4.0, in progress) — Live Feed, Work, and Budgets built so far
 
 A static, local web SPA in `app/`, served by the same process as the
 local control API when `--app-mode` is on — see
@@ -356,11 +359,22 @@ local control API when `--app-mode` is on — see
   Client-side routing is hash-based (`#/work`, `#/work/<id>`), so the
   drill-down is a real, bookmarkable/back-button-able URL without the
   server needing a SPA catch-all route.
-- **Not yet built**: Budgets, Recover, Connect, Settings — the
-  remaining `MISSION.md` v0.4.0 screens. The nav shows all six tabs; the
-  four not yet built are visibly disabled rather than omitted, so the
-  eventual shape of the dashboard is honest from the first screen
-  onward.
+- **Budgets** (built): create/remove budgets (`POST`/`DELETE
+  /v1/local/budgets`), a burn bar per budget over `GET
+  /v1/local/budgets/spend` (reuses `budgets.enforcement.spent_so_far_usd`
+  directly — the exact function `BudgetEnforcer.check` itself uses, so
+  the bar can never drift from what enforcement actually computed), and
+  a blocked-request log. The log is real, not inferred from error text:
+  a pre-flight block now stamps the receipt's `attributes.budget_id`
+  (`budgets.enforcement.augment_attributes_with_block`, the same pattern
+  `augment_attributes_with_overrun` already used) so the dashboard can
+  tell a genuine budget block apart from any other `status: "error"`
+  receipt. `GET /v1/local/receipts` gained an optional `status` filter
+  to support this.
+- **Not yet built**: Recover, Connect, Settings — the remaining
+  `MISSION.md` v0.4.0 screens. The nav shows all six tabs; the three not
+  yet built are visibly disabled rather than omitted, so the eventual
+  shape of the dashboard is honest from the first screen onward.
 - Known gap: the built dashboard is not yet bundled into the PyPI
   wheel — `pip install inferrail` alone does not currently ship a
   dashboard. Build it from a checkout: `cd app && npm install && npm run

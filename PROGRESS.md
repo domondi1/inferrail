@@ -20,17 +20,24 @@ to what was authored locally (`git diff a332e23^{tree} b900a59^{tree}`
 the dashboard lives in `app/` in this repository**, not a sibling
 repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 
-**Unit 2 (Work screen) is also done this session, committed locally,
-not yet pushed/merged.** Frontend-only — no backend change needed, the
-API it uses already existed. See "v0.4.0 — IN PROGRESS" below for the
-full record of what's built (Live Feed, Work) vs. not yet (Budgets,
-Recover, Connect, Settings; wheel packaging).
+**Unit 2 (Work screen) is merged.** [PR #30](https://github.com/domondi1/inferrail/pull/30),
+merge commit `217000b` — confirmed `MERGED` via `gh pr list` before
+trusting the founder's report, all 9 CI checks green via `gh pr checks
+30`, merge-commit tree byte-identical to what was authored locally
+(`git diff ee9c86a^{tree} 217000b^{tree}` → empty). `main` synced
+through `217000b`.
 
-**Next session's job:** once unit 2 is pushed/merged (see "HUMAN ACTION
-NEEDED"), pick v0.4.0's next unit — Budgets is next in dependency order
-(Recover's "clear a review item" doesn't need Budgets, but Budgets is
-smaller and unblocks demonstrating MISSION.md's "set a budget, see a
-block" half of the acceptance criterion first).
+**Unit 3 (Budgets screen) is also done this session, committed locally,
+not yet pushed/merged.** Unlike unit 2, this one needed real backend
+work, not just frontend — see "v0.4.0 — IN PROGRESS" below for the full
+record of what's built (Live Feed, Work, Budgets) vs. not yet (Recover,
+Connect, Settings; wheel packaging).
+
+**Next session's job:** once unit 3 is pushed/merged (see "HUMAN ACTION
+NEEDED"), pick v0.4.0's next unit — Recover (approve/record-outcome for
+the human-review queue). That completes MISSION.md's full v0.4.0
+acceptance criterion ("watch a live request appear, set a budget, see a
+block, and clear a review item").
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -641,7 +648,7 @@ string, since the acceptance bar is "zero terminal use after startup").
       before trusting the founder's report. Merge-commit tree confirmed
       byte-identical to what was authored locally (no squash drift).
 
-### Checklist for unit 2: Work screen — DONE, not yet pushed/merged
+### Checklist for unit 2: Work screen — DONE, merged (PR #30, `217000b`)
 
 No backend changes needed — `GET /v1/local/work` and
 `GET /v1/local/work/{work_id}` already existed (v0.3.0 unit 4). This
@@ -699,6 +706,97 @@ unit is frontend-only.
 - [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — same rule as
       unit 1; v0.4.0 is still not closed (Budgets/Recover/Connect/
       Settings remain).
+- [x] **Pushed and merged.** [PR #30](https://github.com/domondi1/inferrail/pull/30)
+      merged, merge commit `217000b` — confirmed `MERGED` and all 9 CI
+      checks green before trusting the founder's report; merge-commit
+      tree byte-identical to the local commit (no squash drift).
+
+### Checklist for unit 3: Budgets screen — DONE, not yet pushed/merged
+
+Unlike unit 2, this one needed real backend work: the endpoints
+`GET /v1/local/budgets/spend` and receipts' `status` filter didn't exist
+yet, and a pre-flight block's receipt carried nothing to distinguish it
+from any other failure.
+
+- [x] **`budgets/enforcement.py`** gained
+      `augment_attributes_with_block(attributes, exc)` — same pattern as
+      the existing `augment_attributes_with_overrun`: a pure function
+      that adds one system-computed key (`budget_id`) into the receipt's
+      generic `attributes` dict. Wired into both `_check_budgets` except-
+      blocks (`gateway/execution.py` and `gateway/anthropic_execution.py`)
+      — the only two call sites that know the exception is a
+      `BudgetExceededError`, not `_emit_failure` itself (which handles
+      many other exception types generically).
+- [x] **`receipts/sqlite_store.py`**: `ReceiptsStore.query()`/`count()`
+      gained an optional `status` filter — `status` was already a real
+      column, just not one `query()` exposed; deliberately left
+      unindexed (documented why: a local single-install table is small
+      enough that a full scan is fine, not worth an index just for one
+      dashboard filter). `localapi/routes.py`'s `list_receipts` threads
+      it through as a new optional query param — fully additive, every
+      existing caller/test unaffected.
+- [x] **New `GET /v1/local/budgets/spend`** (`localapi/routes.py` +
+      `localapi/schemas.py`'s new `BudgetSpend`): one entry per
+      configured budget, reusing `budgets.enforcement.spent_so_far_usd`
+      directly — the exact function `BudgetEnforcer.check` itself calls
+      — so the dashboard's burn bar can never compute a different number
+      than enforcement did. `has_unpriced_usage` surfaces honestly rather
+      than under-reporting spend when a receipt has real usage but no
+      known price.
+- [x] `app/src/screens/Budgets.tsx`: a create-budget form (scope/window/
+      mode/limit, with window choices constrained per scope — `per_work`
+      only offered for `scope: work_id`, matching the schema's own
+      validator), a list of existing budgets each with a burn bar (green/
+      red at 100%+) and a Remove button, and a blocked-request log below.
+- [x] `app/src/api.ts` gained `Budget`/`BudgetCreate`/`BudgetSpend`
+      types, `listBudgets`/`createBudget`/`deleteBudget`/
+      `listBudgetSpend`, and `listBlockedReceipts()` (fetches
+      `status=error` receipts and filters client-side for a `budget_id`
+      attribute — not every error receipt is a budget block, so this
+      distinction matters).
+- [x] `format.ts` gained `burnFraction(spent, limit)`, clamped to [0, 1]
+      for rendering (the raw ratio can exceed 1 — a "warn" budget is
+      allowed to go over, and even a "block" budget can be pushed over
+      post-flight by a real cost exceeding its pre-flight estimate).
+- [x] Nav: Budgets tab is now enabled/clickable.
+- [x] Tests: 3 new backend unit tests (`test_augment_attributes_with_block_*`
+      in `test_budgets.py`), 1 new `test_sqlite_store_query_and_count_filter_by_status`
+      in `test_receipts.py`, 2 budget-block-attribute assertions added to
+      existing tests in `test_gateway_budgets.py` (chat + messages paths),
+      3 new local-API tests (`status` filter, `budgets/spend` reusing
+      enforcement's computation, `budgets/spend` flagging unpriced usage)
+      in `test_localapi_routes.py` — 88 tests pass across these 4 files.
+      Frontend: 3 new `burnFraction` cases in `format.test.ts`.
+- [x] Live end-to-end smoke test (not just unit tests): started a real
+      `inferrail serve --app-mode`, created a global block budget with a
+      $0.0001 limit via the real API, confirmed `budgets/spend` reports
+      `$0` spent before any receipts exist, sent a real
+      `POST /v1/chat/completions` that got rejected `402` by the budget,
+      then confirmed `GET /v1/local/receipts?status=error` returns that
+      exact receipt with `attributes.budget_id` set — the precise shape
+      the frontend's `listBlockedReceipts()` depends on.
+- [x] Local verification: `ruff check .`/`mypy` clean (83 files),
+      `bash scripts/check_no_internal_content.sh` clean,
+      `cd app && npm run lint && npm run build && npm test` — 18 vitest
+      cases (up from 15), all passed. All three generator scripts
+      re-run, zero diff (no config/error-code changes this unit).
+      Full-repo `pytest -q`: **874 passed, 19 skipped, 0 failed** (up
+      from 868 at unit 2 — exactly the 6 new backend tests this unit
+      added). One transient failure earlier in this session
+      (`test_a2a_economic_authority_transport.py::test_get_task_is_disabled_regardless_of_credential`)
+      was caused by this session accidentally running two full
+      `pytest -q` invocations concurrently (a stray `&`-backgrounded
+      shell command alongside a properly tracked one) — that test starts
+      a real subprocess server on a fixed port, so the two runs
+      collided; it passed cleanly in isolation and again in this final
+      clean single run. Not a regression from anything in this unit.
+- [x] Docs: `docs/PRODUCT.md`'s dashboard subsection and "Budgets and
+      enforcement" subsection both updated, `docs/ARCHITECTURE.md`'s
+      "budgets boundary" section extended, `README.md`'s dashboard
+      bullet updated, `CHANGELOG.md`'s `## v0.4.0` entry gained the
+      Budgets bullet.
+- [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — v0.4.0 is still
+      not closed (Recover/Connect/Settings remain).
 - [ ] **Not done yet, this unit's own honest gap:** committed locally,
       **not pushed** — same push-permission gap as every prior unit.
       Exact handoff commands: see "HUMAN ACTION NEEDED" below.
@@ -716,30 +814,32 @@ unit is frontend-only.
   server, not the built static output this unit actually ships); fixing
   requires a breaking major-version bump (`vite@8`, `vitest@5`) not
   attempted in this unit. Tracked, not silently ignored.
-- Budgets, Recover, Connect, Settings screens: not built. Budgets and
-  Recover in particular are what MISSION.md's full v0.4.0 acceptance
-  criterion needs ("set a budget, see a block, clear a review item") —
-  this unit alone does not close the milestone.
+- Recover, Connect, Settings screens: not built. Recover in particular
+  is the other half of MISSION.md's full v0.4.0 acceptance criterion
+  ("set a budget, see a block, clear a review item") — Budgets alone
+  does not close the milestone.
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 2's PR
+   changed underneath since this session — check whether unit 3's PR
    (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
    been pushed/merged; if the founder reports it was, verify with
    `gh pr view <n> --json state,mergedAt` before trusting it, same
    discipline as every prior milestone.
-2. **Pick v0.4.0's next unit: Budgets.** It needs real POST/DELETE
-   interactions (create/edit/remove a budget via `POST`/`DELETE
-   /v1/local/budgets*`, already built in v0.3.0 unit 4) plus a way to
-   show a burn bar and the blocked-request log (query
-   `GET /v1/local/receipts` filtered to `budget_exceeded`-category
-   failures, or add a small dedicated view if that proves awkward —
-   check `budgets/enforcement.py`'s `augment_overrun`/`_emit_failure`
-   paths for exactly what's queryable before deciding). Recover comes
-   after Budgets — it's independent of it, but Budgets is smaller and
-   completes the "set a budget, see a block" half of MISSION.md's
-   v0.4.0 acceptance criterion first.
+2. **Pick v0.4.0's next unit: Recover.** This is the last screen
+   MISSION.md's acceptance criterion needs ("clear a review item"). It
+   needs a pending-human-review queue (work_ids currently routed to
+   human review with no outcome recorded yet — check
+   `work.builder.build_work_summary`/`aggregate_work_summaries` for
+   what's already derivable from receipts+outcomes, since a "pending
+   review" work_id is likely just one with `inference_status` showing no
+   successful retry and no `outcome_status` set yet) and a way to record
+   an outcome (`inferrail work outcome` exists as a CLI command but the
+   local API has no `POST` equivalent yet — check whether one is needed
+   or whether outcomes should be appended directly the same way the CLI
+   does, via `work.builder.append_outcome`). After Recover, only
+   Connect and Settings remain, plus the deferred wheel-packaging unit.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then
@@ -751,17 +851,17 @@ unit is frontend-only.
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 2 needs to be pushed and opened as a PR** — same
+- **Unit 3 needs to be pushed and opened as a PR** — same
   push-permission gap as every prior unit (`git push` from this session
   returns `403: Permission to domondi1/inferrail.git denied to
   domondi1`, confirmed again this session). Committed locally as
-  `a5b28d9` on branch `feat/dashboard-work-screen`, based on `main` at
-  `b900a59` (PR #29's merge commit, the current `origin/main` tip as of
-  this session). Exact commands:
+  `1ea10f1` on branch `feat/dashboard-budgets-screen`, based on `main`
+  at `217000b` (PR #30's merge commit, the current `origin/main` tip as
+  of this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-work-screen
-  gh pr create --title "feat: dashboard Work screen (v0.4.0 unit 2)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 2's checklist, for the full record. Frontend-only -- GET /v1/local/work and /v1/local/work/{id} already existed. Adds the dashboard's hash-based router, a Work list + drill-down screen, and honest partial-cost rendering (\$0.0007 (+2 unknown), never a single misleading total). 15 vitest cases pass, ruff/boundary-check clean, live-smoke-tested against a running inferrail serve --app-mode instance. Budgets/Recover/Connect/Settings remain separate later units." \
+  git push -u origin feat/dashboard-budgets-screen
+  gh pr create --title "feat: dashboard Budgets screen (v0.4.0 unit 3)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 3's checklist, for the full record. Real backend work this time: budgets/enforcement.py gains augment_attributes_with_block (same pattern as the existing augment_attributes_with_overrun), a new status filter on GET /v1/local/receipts, and a new GET /v1/local/budgets/spend that reuses spent_so_far_usd directly. Frontend: a Budgets screen with create/remove, burn bars, and a blocked-request log built from real evidence. 874 tests pass (868 + 6 new backend), 18 vitest cases pass, ruff/mypy/boundary-check clean, live-smoke-tested end-to-end against a running inferrail serve --app-mode instance (real budget created, real 402 block, confirmed the resulting receipt). Recover/Connect/Settings remain separate later units." \
     --base main
   ```
 - Everything below remains deferred per `MISSION.md`'s standing ledger,

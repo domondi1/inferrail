@@ -1,3 +1,4 @@
+import { Budgets } from "./screens/Budgets";
 import { LiveFeed } from "./screens/LiveFeed";
 import { Work } from "./screens/Work";
 import { hasToken } from "./api";
@@ -9,7 +10,7 @@ import { navigateTo, useHashRoute } from "./useHashRoute";
 const TABS = [
   { screen: "live", label: "Live Feed", enabled: true },
   { screen: "work", label: "Work", enabled: true },
-  { screen: "budgets", label: "Budgets", enabled: false },
+  { screen: "budgets", label: "Budgets", enabled: true },
   { screen: "recover", label: "Recover", enabled: false },
   { screen: "connect", label: "Connect", enabled: false },
   { screen: "settings", label: "Settings", enabled: false },
@@ -45,7 +46,9 @@ export function App(): JSX.Element {
             <code>?token=...</code>) — the screens below will stay disconnected without it.
           </p>
         )}
-        {route.screen === "work" ? <Work workId={route.param} /> : <LiveFeed />}
+        {route.screen === "work" && <Work workId={route.param} />}
+        {route.screen === "budgets" && <Budgets />}
+        {route.screen !== "work" && route.screen !== "budgets" && <LiveFeed />}
       </main>
     </div>
   );

@@ -4,6 +4,7 @@ the local control API — see docs/adr/0016-local-control-api.md.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,20 @@ def test_list_receipts_paginates_and_filters(
     assert all(r["attributes"]["project"] == "acme" for r in page["receipts"])
 
 
+def test_list_receipts_filters_by_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client, token, config = _make_client(monkeypatch, tmp_path)
+    store = ReceiptsStore(config.receipts.path)
+    store.emit(_receipt(receipt_id="ir_ok", status="success"))
+    store.emit(_receipt(receipt_id="ir_bad", status="error"))
+
+    page = client.get(
+        "/v1/local/receipts", params={"status": "error"}, headers=_auth(token)
+    ).json()
+
+    assert page["total"] == 1
+    assert page["receipts"][0]["receipt_id"] == "ir_bad"
+
+
 def test_list_work_and_get_one_work_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client, token, config = _make_client(monkeypatch, tmp_path)
     store = ReceiptsStore(config.receipts.path)
@@ -200,6 +215,52 @@ def test_budgets_crud(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert len(listed) == 1
     assert deleted.status_code == 204
     assert deleted_again.status_code == 404
+
+
+def test_budget_spend_reuses_the_same_computation_enforcement_uses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, config = _make_client(monkeypatch, tmp_path)
+    client.post(
+        "/v1/local/budgets",
+        headers=_auth(token),
+        json={"scope": "global", "window": "daily", "mode": "block", "limit_usd": "10"},
+    )
+    store = ReceiptsStore(config.receipts.path)
+    store.emit(
+        _receipt(receipt_id="ir_1", status="success", estimated_cost_usd=Decimal("1.5"))
+    )
+
+    spend = client.get("/v1/local/budgets/spend", headers=_auth(token)).json()
+
+    assert len(spend) == 1
+    assert spend[0]["budget_id"] == "global:_:daily"
+    assert spend[0]["limit_usd"] == "10"
+    assert Decimal(spend[0]["spent_usd"]) == Decimal("1.5")
+    assert spend[0]["has_unpriced_usage"] is False
+
+
+def test_budget_spend_flags_unpriced_usage_without_fabricating_a_total(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, config = _make_client(monkeypatch, tmp_path)
+    client.post(
+        "/v1/local/budgets",
+        headers=_auth(token),
+        json={"scope": "global", "window": "daily", "mode": "block", "limit_usd": "10"},
+    )
+    store = ReceiptsStore(config.receipts.path)
+    store.emit(
+        _receipt(
+            receipt_id="ir_unpriced", status="success", prompt_tokens=10, completion_tokens=10,
+            estimated_cost_usd=None,
+        )
+    )
+
+    spend = client.get("/v1/local/budgets/spend", headers=_auth(token)).json()
+
+    assert Decimal(spend[0]["spent_usd"]) == Decimal("0")
+    assert spend[0]["has_unpriced_usage"] is True
 
 
 def test_create_budget_rejects_invalid_scope_shape(

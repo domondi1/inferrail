@@ -79,6 +79,87 @@ export function getWork(workId: string): Promise<WorkSummary> {
   return fetchLocal<WorkSummary>(`/v1/local/work/${encodeURIComponent(workId)}`);
 }
 
+/** See `inferrail.budgets.schema.Budget`. */
+export type BudgetScope = "global" | "project" | "work_id";
+export type BudgetWindow = "per_work" | "daily" | "monthly";
+export type BudgetMode = "warn" | "block";
+
+export interface Budget {
+  budget_id: string;
+  scope: BudgetScope;
+  scope_value: string | null;
+  window: BudgetWindow;
+  mode: BudgetMode;
+  limit_usd: string;
+  created_at: string;
+}
+
+export interface BudgetCreate {
+  scope: BudgetScope;
+  scope_value?: string | null;
+  window: BudgetWindow;
+  mode: BudgetMode;
+  limit_usd: string;
+}
+
+/** See `localapi.schemas.BudgetSpend` -- `spent_usd`/`limit_usd` reuse
+ * the exact computation `BudgetEnforcer.check` itself uses, never a
+ * client-side re-derivation. `has_unpriced_usage: true` means this
+ * budget's spend is a floor, not the true total. */
+export interface BudgetSpend {
+  budget_id: string;
+  limit_usd: string;
+  spent_usd: string;
+  has_unpriced_usage: boolean;
+}
+
+export function listBudgets(): Promise<Budget[]> {
+  return fetchLocal<Budget[]>("/v1/local/budgets");
+}
+
+export function listBudgetSpend(): Promise<BudgetSpend[]> {
+  return fetchLocal<BudgetSpend[]>("/v1/local/budgets/spend");
+}
+
+export async function createBudget(payload: BudgetCreate): Promise<Budget> {
+  const response = await fetch("/v1/local/budgets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new LocalApiError(response.status, body.detail ?? `create budget -> ${response.status}`);
+  }
+  return (await response.json()) as Budget;
+}
+
+export async function deleteBudget(budgetId: string): Promise<void> {
+  const response = await fetch(`/v1/local/budgets/${encodeURIComponent(budgetId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!response.ok && response.status !== 404) {
+    throw new LocalApiError(response.status, `delete budget -> ${response.status}`);
+  }
+}
+
+/** The blocked-request log: every receipt a real budget block produced
+ * (`status: "error"` + a `budget_id` attribute -- see
+ * `budgets.enforcement.augment_attributes_with_block`), newest first.
+ * Fetches one page of error receipts and filters client-side for the
+ * `budget_id` marker, since not every `status: "error"` receipt is a
+ * budget block (a provider failure looks the same otherwise). */
+export async function listBlockedReceipts(limit = 100): Promise<Receipt[]> {
+  const page = await fetchLocal<{ receipts: Receipt[] }>(
+    `/v1/local/receipts?status=error&limit=${limit}`,
+  );
+  return page.receipts.filter((r) => Boolean(r.attributes.budget_id)).reverse();
+}
+
 /** Opens the SSE tail of newly-emitted receipts. Native `EventSource`
  * cannot set an `Authorization` header, so the token travels as a query
  * parameter here -- the one deliberate, documented exception in
