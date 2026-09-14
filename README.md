@@ -447,10 +447,12 @@ a whole — your configured provider still receives the real prompt either
 way; Inferrail is a pass-through gateway to it, not a privacy boundary
 against the provider.
 
-Inferrail currently measures supported OpenAI chat-completions traffic. It is
-not a background monitor: it records while requests pass through the running
-process and serves nothing when that process is stopped. It does not enforce
-budgets or control provider spend.
+Inferrail currently measures supported OpenAI- and Anthropic-shaped
+traffic. It is not a background monitor: it records while requests pass
+through the running process and serves nothing when that process is
+stopped. Budget enforcement is opt-in (see "Supported today" below) —
+without it configured, Inferrail measures and reports spend but does not
+block a request on cost.
 
 `inferrail try` says this in its own output too, not just in the schema:
 
@@ -541,7 +543,15 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
   and derived Work Economics via `inferrail work outcome`, `inferrail work
   <work-id>`, and `inferrail work --all`
 - CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
-  `report`, `transaction`, `work`, `receipts import|export`
+  `report`, `transaction`, `work`, `receipts import|export`,
+  `budget set|list|rm`
+- Budget enforcement (opt-in, requires `receipts.sink: sqlite`):
+  `global`/`project`/`work_id`-scoped spend caps over a `per_work`/
+  `daily`/`monthly` window, in `warn` or `block` mode. A `block` budget
+  rejects a request with HTTP 402 *before* any provider is contacted,
+  using a conservative upper-bound cost estimate; the block is still
+  visible in `inferrail report`. See
+  [docs/adr/0015](docs/adr/0015-budget-enforcement.md).
 
 ## Not yet
 
@@ -550,7 +560,6 @@ Honest edges, not silent gaps — full list in
 
 - Cost- or latency-aware routing, or automatic failover to a different
   provider/model on error — routing is a static config lookup
-- Budgets, spend limits, or blocking a request based on cost
 - Any provider wire format other than OpenAI-compatible or
   Anthropic-compatible (Gemini, Bedrock's native API, ...)
 - The full OpenAI/Anthropic API surface — only `/v1/chat/completions`,

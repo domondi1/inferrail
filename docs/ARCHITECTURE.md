@@ -15,6 +15,9 @@ src/inferrail/
 ├── pricing/     Built-in (OpenAI + Anthropic) + operator-override price
 │                catalogs, PricingResolver
 ├── receipts/    InferenceReceipt schema, Decimal cost calculator, sinks
+├── budgets/     Budget schema, SQLite store, pre-flight/post-flight
+│                enforcement (see docs/adr/0015) — depends on receipts
+│                (ReceiptsStore.query()) and pricing (PricingResolver)
 ├── gateway/     FastAPI app: HTTP schemas + execution engine for both
 │                /v1/chat/completions and /v1/messages, routes,
 │                attribution header parsing
@@ -24,7 +27,8 @@ src/inferrail/
 │                gateway — experimental, see docs/adr/0009
 └── cli/         `inferrail serve` (+ `--quickstart`), `inferrail config
                  check`, `inferrail report`, `inferrail transaction`,
-                 `inferrail demo`, `inferrail try`
+                 `inferrail demo`, `inferrail try`, `inferrail budget
+                 set|list|rm`
 ```
 
 Each package has one job and depends only on the ones below it in this
@@ -50,6 +54,13 @@ InferenceEngine.execute (gateway/execution.py)
         +--> Router.resolve(RoutingContext) -> RoutingDecision
         |         (routing/router.py: static lookup of request.model
         |          in inferrail.yaml's `routes`)
+        |
+        +--> BudgetEnforcer.check(...) — no-op unless budgets.enabled
+        |         (budgets/enforcement.py: pre-flight upper-bound
+        |          estimate + spent-so-far vs. every matching budget;
+        |          raises BudgetExceededError for an exceeded
+        |          block-mode budget, *before* the provider is ever
+        |          contacted — see docs/adr/0015)
         |
         +--> normalize into NormalizedChatRequest
         |         (provider-agnostic shape: model, messages, sampling
@@ -297,6 +308,26 @@ aggregates by provider, model, route, or any attribution attribute name —
 pure functions independent of `argparse`, mirroring how `InferenceEngine`
 stays
 independent of FastAPI.
+
+## The budgets boundary
+
+See `docs/adr/0015-budget-enforcement.md` for the full design. In short:
+`budgets.store.BudgetStore` (SQLite, same connection discipline as
+`ReceiptsStore`) holds `Budget` rows (scope/scope_value/window/mode/
+limit_usd), managed by `inferrail budget set|list|rm` independent of
+whether enforcement is on. `budgets.enforcement.BudgetEnforcer` — wired
+into both `InferenceEngine` and `AnthropicInferenceEngine` only when
+`InferrailConfig.budgets.enabled` — does two things: `check()` (called
+after routing resolves the provider/model, before any provider call)
+projects `spent_so_far` (via `ReceiptsStore.query()`) plus a catalog-based
+upper-bound estimate against every matching budget, raising
+`BudgetExceededError` for a `block`-mode budget that would be exceeded;
+`augment_overrun()` (called once actual usage is known, right before the
+receipt is emitted) adds a `budget_overrun_usd` attribute when the
+*actual* cost pushes a budget over its limit. Neither method is a new
+architectural layer between the engines and receipts/pricing — both take
+the same `ReceiptsStore`/`PricingResolver` the engines already hold, so
+there's exactly one code path that resolves a price or queries spend.
 
 ## OSS data plane vs. future hosted control plane
 

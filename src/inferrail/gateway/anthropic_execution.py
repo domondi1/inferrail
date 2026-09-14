@@ -26,8 +26,10 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from typing import Literal
 
+from inferrail.budgets.enforcement import BudgetEnforcer, approx_char_count
 from inferrail.errors import (
     AuthenticationError,
+    BudgetExceededError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -61,6 +63,8 @@ _StreamStatus = Literal["success", "error", "partial"]
 
 
 def _categorize(exc: InferrailError) -> ErrorCategory:
+    if isinstance(exc, BudgetExceededError):
+        return "budget_exceeded"
     if isinstance(exc, AuthenticationError):
         return "authentication"
     if isinstance(exc, RateLimitError):
@@ -146,12 +150,15 @@ class AnthropicInferenceEngine:
         telemetry: TelemetrySink,
         pricing_resolver: PricingResolver,
         receipts: ReceiptSink,
+        *,
+        budgets: BudgetEnforcer | None = None,
     ) -> None:
         self._router = router
         self._providers = providers
         self._telemetry = telemetry
         self._pricing_resolver = pricing_resolver
         self._receipts = receipts
+        self._budgets = budgets
 
     async def execute(
         self, request: MessagesRequest, *, attributes: dict[str, str] | None = None
@@ -163,6 +170,7 @@ class AnthropicInferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
+        self._check_budgets(request, decision, request_id, started, attributes)
 
         return await self._execute_with_retries(
             request_id, decision, provider, normalized_request, started, attributes
@@ -182,10 +190,45 @@ class AnthropicInferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
+        self._check_budgets(request, decision, request_id, started, attributes)
         ctx = await self._open_stream_with_retries(
             request_id, decision, provider, normalized_request, started, attributes
         )
         return self._iter_stream(ctx)
+
+    def _check_budgets(
+        self,
+        request: MessagesRequest,
+        decision: RoutingDecision,
+        request_id: str,
+        started: float,
+        attributes: dict[str, str],
+    ) -> None:
+        """See `gateway.execution.InferenceEngine._check_budgets` — same
+        pre-flight check, same no-op when unwired, same requirement that a
+        block is recorded (not silent) via `_emit_failure`. `max_tokens`
+        is always present here (Anthropic's Messages API requires it), so
+        there is no OpenAI-side fallback-constant case to handle on this
+        path."""
+        if self._budgets is None:
+            return
+        prompt_chars = approx_char_count(
+            [m.model_dump() for m in request.messages]
+        ) + approx_char_count(request.system)
+        try:
+            self._budgets.check(
+                provider=decision.provider_name,
+                model=decision.model,
+                attributes=attributes,
+                prompt_chars=prompt_chars,
+                max_completion_tokens=request.max_tokens,
+            )
+        except BudgetExceededError as exc:
+            self._emit_failure(
+                request_id, decision.route_name, decision.provider_name,
+                decision.model, 0, started, exc, attributes,
+            )
+            raise
 
     async def _resolve(
         self,
@@ -268,6 +311,10 @@ class AnthropicInferenceEngine:
                     retry_count=attempt,
                 )
             )
+            receipt_attributes = self._augment_overrun(
+                attributes, decision.provider_name, decision.model,
+                result.input_tokens, result.output_tokens,
+            )
             self._receipts.emit(
                 build_receipt(
                     receipt_id=new_receipt_id(),
@@ -278,7 +325,7 @@ class AnthropicInferenceEngine:
                     status="success",
                     prompt_tokens=result.input_tokens,
                     completion_tokens=result.output_tokens,
-                    attributes=attributes,
+                    attributes=receipt_attributes,
                     total_latency_ms=latency_ms,
                     retry_count=attempt,
                     pricing_resolver=self._pricing_resolver,
@@ -381,6 +428,10 @@ class AnthropicInferenceEngine:
                 retry_count=ctx.attempts_used,
             )
         )
+        receipt_attributes = self._augment_overrun(
+            ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
+            bookkeeper.prompt_tokens, bookkeeper.completion_tokens,
+        )
         self._receipts.emit(
             build_receipt(
                 receipt_id=new_receipt_id(),
@@ -391,7 +442,7 @@ class AnthropicInferenceEngine:
                 status=status,
                 prompt_tokens=bookkeeper.prompt_tokens,
                 completion_tokens=bookkeeper.completion_tokens,
-                attributes=ctx.attributes,
+                attributes=receipt_attributes,
                 total_latency_ms=latency_ms,
                 retry_count=ctx.attempts_used,
                 pricing_resolver=self._pricing_resolver,
@@ -468,6 +519,25 @@ class AnthropicInferenceEngine:
                 retry_count=retry_count,
                 pricing_resolver=self._pricing_resolver,
             )
+        )
+
+    def _augment_overrun(
+        self,
+        attributes: dict[str, str],
+        provider: str,
+        model: str,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+    ) -> dict[str, str]:
+        """See `gateway.execution.InferenceEngine._augment_overrun`."""
+        if self._budgets is None:
+            return attributes
+        return self._budgets.augment_overrun(
+            attributes,
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     @staticmethod

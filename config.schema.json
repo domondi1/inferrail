@@ -1,5 +1,23 @@
 {
   "$defs": {
+    "BudgetsConfig": {
+      "additionalProperties": false,
+      "description": "Where the `Budget` store (`inferrail.budgets.store.BudgetStore`)\nlives, and whether the gateway actually enforces it.\n\n`enabled` defaults to `False` so an operator who hasn't configured\nany budgets never pays for the enforcement path (and, more\nimportantly, so `inferrail serve`/`create_app` never touches\n`path` on disk at all unless budgets are explicitly turned on \u2014 see\ndocs/adr/0015-budget-enforcement.md). `inferrail budget set|list|rm`\nmanage the store's contents independently of this flag (via their\nown `--db`), so budgets can be authored before enforcement is\nswitched on.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "path": {
+          "default": "./inferrail-budgets.db",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "title": "BudgetsConfig",
+      "type": "object"
+    },
     "PriceEntry": {
       "additionalProperties": false,
       "description": "A verified per-model price, with the provenance to audit it later.\n\nUsed both for the built-in catalog (`inferrail.pricing.builtin`) and\nfor operator overrides (`InferrailConfig.pricing`). `source` and\n`verified_date` are mandatory in both cases \u2014 Inferrail never persists\na price it can't explain the origin of. Values are `Decimal`, not\n`float`: money is never computed with binary floating point here.",
@@ -196,6 +214,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "budgets": {
+      "$ref": "#/$defs/BudgetsConfig"
+    },
     "default_provider": {
       "anyOf": [
         {

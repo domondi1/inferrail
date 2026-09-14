@@ -60,8 +60,13 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from typing import Literal
 
+from inferrail.budgets.enforcement import (
+    DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE as _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE,
+)
+from inferrail.budgets.enforcement import BudgetEnforcer, approx_char_count
 from inferrail.errors import (
     AuthenticationError,
+    BudgetExceededError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -93,6 +98,8 @@ _StreamStatus = Literal["success", "error", "partial"]
 
 
 def _categorize(exc: InferrailError) -> ErrorCategory:
+    if isinstance(exc, BudgetExceededError):
+        return "budget_exceeded"
     if isinstance(exc, AuthenticationError):
         return "authentication"
     if isinstance(exc, RateLimitError):
@@ -169,12 +176,15 @@ class InferenceEngine:
         telemetry: TelemetrySink,
         pricing_resolver: PricingResolver,
         receipts: ReceiptSink,
+        *,
+        budgets: BudgetEnforcer | None = None,
     ) -> None:
         self._router = router
         self._providers = providers
         self._telemetry = telemetry
         self._pricing_resolver = pricing_resolver
         self._receipts = receipts
+        self._budgets = budgets
 
     async def execute(
         self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
@@ -187,6 +197,7 @@ class InferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
+        self._check_budgets(request, decision, request_id, started, attributes)
 
         return await self._execute_with_retries(
             request_id, decision, provider, normalized_request, started, attributes
@@ -207,10 +218,56 @@ class InferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
+        self._check_budgets(request, decision, request_id, started, attributes)
         ctx = await self._open_stream_with_retries(
             request_id, decision, provider, normalized_request, started, attributes
         )
         return self._iter_stream(ctx)
+
+    def _check_budgets(
+        self,
+        request: ChatCompletionRequest,
+        decision: RoutingDecision,
+        request_id: str,
+        started: float,
+        attributes: dict[str, str],
+    ) -> None:
+        """Pre-flight budget check — raises `BudgetExceededError` (an
+        `InferrailError`, caught by `gateway/app.py` like any other) before
+        the provider is ever contacted. A no-op when no `BudgetEnforcer`
+        is wired (the default — see `InferrailConfig.budgets.enabled`).
+        `max_tokens` may be `None` for an OpenAI request; the fallback
+        constant is a documented, conservative assumption, never a
+        fabricated exact count — see
+        `budgets.enforcement.DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE`.
+
+        A block is recorded through the same `_emit_failure` path as any
+        other pre-execution rejection — MISSION.md's acceptance criterion
+        is not just "blocked before the provider is called" but "the
+        block is visible in the store", so this must never fail silently.
+        """
+        if self._budgets is None:
+            return
+        prompt_chars = approx_char_count([m.model_dump() for m in request.messages])
+        max_completion_tokens = (
+            request.max_tokens
+            if request.max_tokens is not None
+            else _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE
+        )
+        try:
+            self._budgets.check(
+                provider=decision.provider_name,
+                model=decision.model,
+                attributes=attributes,
+                prompt_chars=prompt_chars,
+                max_completion_tokens=max_completion_tokens,
+            )
+        except BudgetExceededError as exc:
+            self._emit_failure(
+                request_id, decision.route_name, decision.provider_name,
+                decision.model, 0, started, exc, attributes,
+            )
+            raise
 
     def _reject_unsupported(
         self,
@@ -310,6 +367,10 @@ class InferenceEngine:
                     retry_count=attempt,
                 )
             )
+            receipt_attributes = self._augment_overrun(
+                attributes, decision.provider_name, decision.model,
+                result.prompt_tokens, result.completion_tokens,
+            )
             self._receipts.emit(
                 build_receipt(
                     receipt_id=new_receipt_id(),
@@ -320,7 +381,7 @@ class InferenceEngine:
                     status="success",
                     prompt_tokens=result.prompt_tokens,
                     completion_tokens=result.completion_tokens,
-                    attributes=attributes,
+                    attributes=receipt_attributes,
                     total_latency_ms=latency_ms,
                     retry_count=attempt,
                     pricing_resolver=self._pricing_resolver,
@@ -441,6 +502,10 @@ class InferenceEngine:
         # provider's final usage chunk can arrive right before a late
         # failure) — build_receipt only prices when both token counts are
         # actually known, so this never fabricates a cost either way.
+        receipt_attributes = self._augment_overrun(
+            ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
+            bookkeeper.prompt_tokens, bookkeeper.completion_tokens,
+        )
         self._receipts.emit(
             build_receipt(
                 receipt_id=new_receipt_id(),
@@ -451,7 +516,7 @@ class InferenceEngine:
                 status=status,
                 prompt_tokens=bookkeeper.prompt_tokens,
                 completion_tokens=bookkeeper.completion_tokens,
-                attributes=ctx.attributes,
+                attributes=receipt_attributes,
                 total_latency_ms=latency_ms,
                 retry_count=ctx.attempts_used,
                 pricing_resolver=self._pricing_resolver,
@@ -542,6 +607,27 @@ class InferenceEngine:
                 retry_count=retry_count,
                 pricing_resolver=self._pricing_resolver,
             )
+        )
+
+    def _augment_overrun(
+        self,
+        attributes: dict[str, str],
+        provider: str,
+        model: str,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+    ) -> dict[str, str]:
+        """Post-flight budget reconciliation — see
+        `BudgetEnforcer.augment_overrun`. A no-op (returns `attributes`
+        unchanged) when no `BudgetEnforcer` is wired."""
+        if self._budgets is None:
+            return attributes
+        return self._budgets.augment_overrun(
+            attributes,
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     @staticmethod

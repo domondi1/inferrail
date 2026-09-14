@@ -21,9 +21,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from inferrail import __version__
+from inferrail.budgets.enforcement import BudgetEnforcer
+from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import InferrailConfig
 from inferrail.errors import (
     AuthenticationError,
+    BudgetExceededError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -44,6 +47,7 @@ from inferrail.providers.anthropic_base import AnthropicMessagesProvider
 from inferrail.providers.base import Provider
 from inferrail.providers.registry import build_anthropic_providers, build_providers
 from inferrail.receipts.sinks import build_receipt_sink
+from inferrail.receipts.sqlite_store import ReceiptsStore
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import build_telemetry_sink
 
@@ -55,6 +59,7 @@ _logger = logging.getLogger("inferrail.gateway")
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (GatewayAuthenticationError, 401),
     (AuthenticationError, 401),
+    (BudgetExceededError, 402),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),
@@ -70,6 +75,27 @@ def _status_for(exc: InferrailError) -> int:
         if isinstance(exc, exc_type):
             return status
     return 500
+
+
+def _error_details(exc: InferrailError) -> dict[str, str] | None:
+    """Structured, machine-readable fields for error types where
+    `message` alone (free text, even if not upstream-tainted) isn't
+    enough for a caller to programmatically react — currently just
+    `BudgetExceededError` (see docs/PRODUCT.md's v0.3.0 acceptance
+    criteria: "block responses are machine-readable")."""
+    if isinstance(exc, BudgetExceededError):
+        return {
+            "budget_id": exc.budget_id,
+            "scope": exc.scope,
+            "scope_value": exc.scope_value or "",
+            "window": exc.window,
+            "mode": exc.mode,
+            "limit_usd": str(exc.limit_usd),
+            "spent_so_far_usd": str(exc.spent_so_far_usd),
+            "estimated_request_usd": str(exc.estimated_request_usd),
+            "projected_total_usd": str(exc.projected_total_usd),
+        }
+    return None
 
 
 def create_app(config: InferrailConfig) -> FastAPI:
@@ -90,9 +116,22 @@ def create_app(config: InferrailConfig) -> FastAPI:
     telemetry = build_telemetry_sink(config.telemetry)
     pricing_resolver = PricingResolver(config.providers, config.pricing)
     receipts = build_receipt_sink(config.receipts)
-    engine = InferenceEngine(router, providers, telemetry, pricing_resolver, receipts)
+    # Only touch the budgets store at all when enabled — config validation
+    # (InferrailConfig._budgets_require_sqlite_receipts) already guarantees
+    # `receipts` is a real ReceiptsStore whenever this is true, so the
+    # enforcer never has to defend against a mismatched sink at request
+    # time. See docs/adr/0015-budget-enforcement.md.
+    budget_enforcer: BudgetEnforcer | None = None
+    if config.budgets.enabled:
+        assert isinstance(receipts, ReceiptsStore)  # guaranteed by config validation above
+        budget_store = BudgetStore(config.budgets.path)
+        budget_enforcer = BudgetEnforcer(budget_store, receipts, pricing_resolver)
+    engine = InferenceEngine(
+        router, providers, telemetry, pricing_resolver, receipts, budgets=budget_enforcer
+    )
     anthropic_engine = AnthropicInferenceEngine(
-        router, anthropic_providers, telemetry, pricing_resolver, receipts
+        router, anthropic_providers, telemetry, pricing_resolver, receipts,
+        budgets=budget_enforcer,
     )
 
     @asynccontextmanager
@@ -132,6 +171,7 @@ def create_app(config: InferrailConfig) -> FastAPI:
                 code=error_code.code,
                 remediation=error_code.remediation,
                 docs_url=docs_url_for(error_code.code),
+                details=_error_details(exc),
             )
         )
         return JSONResponse(status_code=status, content=body.model_dump())
