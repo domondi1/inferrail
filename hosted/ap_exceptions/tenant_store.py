@@ -46,3 +46,17 @@ class TenantStoreRegistry:
                 store = RecoveryStore(self._data_dir / f"{tenant_id}.sqlite3")
                 self._stores[tenant_id] = store
             return store
+
+    def purge_tenant(self, tenant_id: str) -> None:
+        """Irreversibly deletes one tenant's entire SQLite file (plus any
+        WAL/SHM sidecar files) and drops it from the in-process cache.
+        Used to auto-purge an expired sandbox tenant (see `sandbox.py`)
+        -- `RecoveryStore` never holds a long-lived connection open
+        (every method opens and closes its own, see `inferrail.ap.store`),
+        so there is no connection to close first."""
+        with self._lock:
+            self._stores.pop(tenant_id, None)
+        db_path = self._data_dir / f"{tenant_id}.sqlite3"
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            candidate = db_path.parent / (db_path.name + suffix)
+            candidate.unlink(missing_ok=True)

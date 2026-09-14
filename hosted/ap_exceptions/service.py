@@ -27,6 +27,7 @@ file per tenant, not a shared table with a row filter), rate-limited
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 from datetime import datetime
@@ -38,6 +39,7 @@ from auth import RateLimiter, authenticate, rate_limiter_from_env
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sandbox import SANDBOX_NOTICE, SandboxRegistry, iso, sandbox_registry_from_env
 from tenant_store import TenantStoreRegistry
 
 from inferrail.ap import Action, PolicyConfig
@@ -50,6 +52,9 @@ DEFAULT_LEASE_SECONDS = 300.0
 
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("AP_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_REPORT_ROWS = int(os.environ.get("AP_MAX_REPORT_ROWS", "500"))
+SANDBOX_MAX_ROWS_PER_TENANT = int(os.environ.get("AP_SANDBOX_MAX_ROWS_PER_TENANT", "20"))
+SANDBOX_PURGE_INTERVAL_SECONDS = float(os.environ.get("AP_SANDBOX_PURGE_INTERVAL_SECONDS", "60"))
+MAX_REQUEST_BODY_BYTES = int(os.environ.get("AP_MAX_REQUEST_BODY_BYTES", str(64 * 1024)))
 
 
 class PolicyConfigPayload(BaseModel):
@@ -129,23 +134,47 @@ class OutcomeRequest(BaseModel):
     review_cost_usd: str | None = None
 
 
-def _decision_response(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "work_id": row["work_id"],
-        "decision_id": row["decision_id"],
-        "checkpoint_attempt_id": row["checkpoint_attempt_id"],
-        "failure_type": row["failure_type"],
-        "recommended_action": row["recommended_action"],
-        "reason": row["reason"],
-        "policy_version": row["policy_version"],
-        "status": row["status"],
-    }
+def _decision_response(row: dict[str, Any], *, is_sandbox: bool) -> dict[str, Any]:
+    return _stamp(
+        {
+            "work_id": row["work_id"],
+            "decision_id": row["decision_id"],
+            "checkpoint_attempt_id": row["checkpoint_attempt_id"],
+            "failure_type": row["failure_type"],
+            "recommended_action": row["recommended_action"],
+            "reason": row["reason"],
+            "policy_version": row["policy_version"],
+            "status": row["status"],
+        },
+        is_sandbox=is_sandbox,
+    )
+
+
+def _stamp(payload: dict[str, Any], *, is_sandbox: bool) -> dict[str, Any]:
+    """Every response is explicitly labeled `sandbox: true/false` --
+    never left ambiguous -- and a sandbox response additionally carries
+    `sandbox_notice` (see `sandbox.SANDBOX_NOTICE`), satisfying the
+    product promise that a sandbox tenant is "clearly labeled as such in
+    every response" (`MISSION.md`, v0.2.1)."""
+    payload["sandbox"] = is_sandbox
+    payload["sandbox_notice"] = SANDBOX_NOTICE if is_sandbox else None
+    return payload
+
+
+def _client_ip(request: Request) -> str:
+    """`request.client.host` reflects the real client address here, not
+    the proxy's: `uvicorn.run(..., proxy_headers=True,
+    forwarded_allow_ips="*")` (see this module's `__main__` block)
+    rewrites it from `X-Forwarded-For`/`Forwarded` at the ASGI-server
+    level for every deployment behind a reverse proxy (e.g. Render)."""
+    return request.client.host if request.client is not None else "unknown"
 
 
 def create_app(data_dir: Path) -> FastAPI:
     app = FastAPI(title="Inferrail AP Exceptions", version="1")
     registry = TenantStoreRegistry(data_dir)
     limiter: RateLimiter = rate_limiter_from_env()
+    sandbox_registry: SandboxRegistry = sandbox_registry_from_env(on_purge=registry.purge_tenant)
 
     @app.middleware("http")
     async def timeout_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -157,19 +186,130 @@ def create_app(data_dir: Path) -> FastAPI:
                 content={"detail": f"request exceeded {REQUEST_TIMEOUT_SECONDS:.0f}s timeout"},
             )
 
-    def _tenant_store(tenant_id: str = Depends(authenticate)) -> tuple[str, RecoveryStore]:
+    @app.middleware("http")
+    async def request_size_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        """Abuse guard: rejects an oversized body before it is ever
+        parsed, by trusting a declared `Content-Length` (a request that
+        lies about a small `Content-Length` and then streams more bytes
+        is cut off downstream by FastAPI/Starlette's own body-size
+        handling, not by this check) -- applies to every route, not just
+        the sandbox ones, since an unauthenticated `POST /v1/sandbox` is
+        exactly the route an attacker would target with an oversized
+        body."""
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = 0
+            if declared_size > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": (
+                            f"request body of {declared_size} bytes exceeds the "
+                            f"{MAX_REQUEST_BODY_BYTES}-byte limit"
+                        )
+                    },
+                )
+        return await call_next(request)
+
+    @app.on_event("startup")
+    async def _start_sandbox_purge_loop() -> None:
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(SANDBOX_PURGE_INTERVAL_SECONDS)
+                sandbox_registry.purge_expired()
+
+        app.state.sandbox_purge_task = asyncio.create_task(_loop())
+
+    @app.on_event("shutdown")
+    async def _stop_sandbox_purge_loop() -> None:
+        task = getattr(app.state, "sandbox_purge_task", None)
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    def _authenticate(request: Request) -> tuple[str, bool]:
+        """Resolves the caller's tenant id from `Authorization: Bearer
+        <api-key>`, checking self-serve sandbox keys before falling back
+        to operator-provisioned `AP_API_KEYS` -- a sandbox key's prefix
+        (`sbx_`) never collides with an operator key an operator chose
+        to provision (`sandbox.lookup` returns `None` immediately for
+        any key not carrying that prefix, so this never accidentally
+        treats an operator key as a sandbox one or vice versa). Returns
+        `(tenant_id, is_sandbox)`; raises 401 exactly like plain
+        `auth.authenticate` for anything invalid."""
+        header = request.headers.get("authorization", "")
+        if header.lower().startswith("bearer "):
+            api_key = header[len("bearer ") :].strip()
+            sandbox_tenant = sandbox_registry.lookup(api_key)
+            if sandbox_tenant is not None:
+                if sandbox_tenant.is_expired():
+                    raise HTTPException(
+                        status_code=401,
+                        detail=(
+                            f"sandbox key expired at {iso(sandbox_tenant.expires_at)} -- "
+                            "sandbox keys are short-lived; issue a new one with "
+                            "POST /v1/sandbox"
+                        ),
+                    )
+                return sandbox_tenant.tenant_id, True
+        return authenticate(request), False
+
+    def _tenant_store(
+        ctx: tuple[str, bool] = Depends(_authenticate),
+    ) -> tuple[str, bool, RecoveryStore]:
+        tenant_id, is_sandbox = ctx
         limiter.check(tenant_id)
-        return tenant_id, registry.get(tenant_id)
+        return tenant_id, is_sandbox, registry.get(tenant_id)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/v1/sandbox")
+    async def issue_sandbox(request: Request) -> dict[str, Any]:
+        """No authentication required -- this is the self-serve entry
+        point (`MISSION.md`, v0.2.1, End-state 2). Returns a short-lived
+        `api_key`/`tenant_id` pair a visitor can use immediately against
+        every other route exactly like an operator-provisioned key,
+        scoped to its own isolated tenant store and capped at
+        `SANDBOX_MAX_ROWS_PER_TENANT` decisions."""
+        api_key, tenant = sandbox_registry.issue(client_ip=_client_ip(request))
+        return _stamp(
+            {
+                "api_key": api_key,
+                "tenant_id": tenant.tenant_id,
+                "expires_at": iso(tenant.expires_at),
+                "ttl_seconds": sandbox_registry.ttl_seconds,
+                "max_rows_per_tenant": SANDBOX_MAX_ROWS_PER_TENANT,
+                "rate_limit": {
+                    "max_requests": limiter.max_requests,
+                    "window_seconds": limiter.window_seconds,
+                },
+            },
+            is_sandbox=True,
+        )
+
     @app.post("/v1/decisions")
     async def create_decision(
-        body: DecisionRequest, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        body: DecisionRequest, ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store)
     ) -> dict[str, Any]:
-        tenant_id, store = ctx
+        tenant_id, is_sandbox, store = ctx
+        if is_sandbox:
+            existing_work_ids = store.all_work_ids()
+            is_new_row = body.work_id not in existing_work_ids
+            if is_new_row and len(existing_work_ids) >= SANDBOX_MAX_ROWS_PER_TENANT:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"sandbox tenant row cap reached ({SANDBOX_MAX_ROWS_PER_TENANT} "
+                        "decisions per sandbox key) -- issue a new sandbox key with "
+                        "POST /v1/sandbox to continue"
+                    ),
+                )
         config = body.policy_config.to_policy_config()
         try:
             cost_so_far = Decimal(body.cost_so_far_usd) if body.cost_so_far_usd else None
@@ -207,25 +347,25 @@ def create_app(data_dir: Path) -> FastAPI:
             worker_id=f"tenant:{tenant_id}" if is_retry else None,
             lease_expires_at=time.time() + body.lease_seconds if is_retry else None,
         )
-        response = _decision_response(row)
+        response = _decision_response(row, is_sandbox=is_sandbox)
         response["idempotent_replay"] = not created
         return response
 
     @app.get("/v1/decisions/{work_id}")
     async def get_decision(
-        work_id: str, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        work_id: str, ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store)
     ) -> dict[str, Any]:
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         row = store.get_decision(work_id)
         if row is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
-        return _decision_response(row)
+        return _decision_response(row, is_sandbox=is_sandbox)
 
     @app.post("/v1/decisions/{work_id}/retry-attempts")
     async def record_retry_attempt(
         work_id: str,
         body: RetryAttemptRequest,
-        ctx: tuple[str, RecoveryStore] = Depends(_tenant_store),
+        ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store),
     ) -> dict[str, Any]:
         """Records the result of a retry the caller already executed
         locally, and -- exactly like the local SDK's `RecoveryEngine.
@@ -258,7 +398,7 @@ def create_app(data_dir: Path) -> FastAPI:
         `RecoveryStore.record_late_retry_result` and
         `report.LiveReportRow.late_result_status`.
         """
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
         if body.validation_passed is True and body.status != AttemptStatus.SUCCESS.value:
@@ -319,23 +459,27 @@ def create_app(data_dir: Path) -> FastAPI:
                 else DecisionStatus.AWAITING_HUMAN_REVIEW.value,
             )
             store.clear_retry_lease(work_id)
-        return {**row, "newly_recorded": created}
+        return _stamp({**row, "newly_recorded": created}, is_sandbox=is_sandbox)
 
     @app.post("/v1/decisions/{work_id}/handoff")
     async def record_handoff(
-        work_id: str, body: HandoffRequest, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        work_id: str,
+        body: HandoffRequest,
+        ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store),
     ) -> dict[str, Any]:
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
         row, created = store.record_handoff(work_id=work_id, handoff_ref=body.handoff_ref)
-        return {**row, "newly_recorded": created}
+        return _stamp({**row, "newly_recorded": created}, is_sandbox=is_sandbox)
 
     @app.post("/v1/decisions/{work_id}/outcome")
     async def record_outcome(
-        work_id: str, body: OutcomeRequest, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        work_id: str,
+        body: OutcomeRequest,
+        ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store),
     ) -> dict[str, Any]:
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         timestamp = (body.timestamp or datetime.now()).timestamp()
         try:
             row = store.record_outcome(
@@ -348,11 +492,11 @@ def create_app(data_dir: Path) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return row
+        return _stamp(row, is_sandbox=is_sandbox)
 
     @app.post("/v1/decisions/{work_id}/reap")
     async def reap_one(
-        work_id: str, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        work_id: str, ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store)
     ) -> dict[str, Any]:
         """Operator recovery for one work_id whose retry lease has
         expired -- the hosted-service analog of `inferrail ap reap` /
@@ -367,50 +511,58 @@ def create_app(data_dir: Path) -> FastAPI:
         inserted) or `"reconciled"` (a real attempt WAS already
         recorded before the crash -- its own validation result decides
         the terminal status, never re-guessed)."""
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         if store.get_decision(work_id) is None:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
         result = store.reap_stale_retry_lease(work_id)
-        return {
-            "work_id": work_id,
-            "reaped": result is not None,
-            "kind": result["kind"] if result is not None else None,
-        }
+        return _stamp(
+            {
+                "work_id": work_id,
+                "reaped": result is not None,
+                "kind": result["kind"] if result is not None else None,
+            },
+            is_sandbox=is_sandbox,
+        )
 
     @app.post("/v1/reap-stale")
     async def reap_stale(
-        ctx: tuple[str, RecoveryStore] = Depends(_tenant_store),
+        ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store),
     ) -> dict[str, Any]:
         """Sweeps every stale retry lease for the calling tenant only.
         Safe to call on a schedule (an operator's own cron/health job) --
         a repeat call reaps nothing new for a work_id already reaped or
         resolved by its real worker."""
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         reaped_work_ids = []
         for row in store.find_stale_retry_leases():
             if store.reap_stale_retry_lease(row["work_id"]) is not None:
                 reaped_work_ids.append(row["work_id"])
-        return {"reaped_count": len(reaped_work_ids), "reaped_work_ids": reaped_work_ids}
+        return _stamp(
+            {"reaped_count": len(reaped_work_ids), "reaped_work_ids": reaped_work_ids},
+            is_sandbox=is_sandbox,
+        )
 
     @app.delete("/v1/decisions/{work_id}")
     async def delete_decision(
-        work_id: str, ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)
+        work_id: str, ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store)
     ) -> dict[str, Any]:
         """Retention/deletion: irreversibly removes every record for one
         work_id (decision, retry attempt, handoff, outcome history)."""
-        _tenant_id, store = ctx
+        _tenant_id, is_sandbox, store = ctx
         deleted = store.delete_work_id(work_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"no decision for work_id={work_id!r}")
-        return {"work_id": work_id, "deleted": True}
+        return _stamp({"work_id": work_id, "deleted": True}, is_sandbox=is_sandbox)
 
     @app.get("/v1/report")
-    async def report(ctx: tuple[str, RecoveryStore] = Depends(_tenant_store)) -> dict[str, Any]:
-        _tenant_id, store = ctx
+    async def report(
+        ctx: tuple[str, bool, RecoveryStore] = Depends(_tenant_store),
+    ) -> dict[str, Any]:
+        _tenant_id, is_sandbox, store = ctx
         full_report = build_live_report(store)
         rows = full_report.rows[:MAX_REPORT_ROWS]
         truncated = len(full_report.rows) > MAX_REPORT_ROWS
-        return {
+        payload = {
             "rows": [
                 {
                     "work_id": r.work_id,
@@ -445,6 +597,7 @@ def create_app(data_dir: Path) -> FastAPI:
             "truncated": truncated,
             "max_rows": MAX_REPORT_ROWS,
         }
+        return _stamp(payload, is_sandbox=is_sandbox)
 
     return app
 
