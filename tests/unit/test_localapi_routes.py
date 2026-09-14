@@ -99,6 +99,39 @@ def test_wrong_token_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert response.json()["error"]["code"] == "INFERRAIL_E011"
 
 
+def test_token_query_param_is_accepted_as_an_alternative_to_the_header(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Browser EventSource can't set an Authorization header -- the
+    # dashboard's live feed depends on this working (docs/adr/0017).
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.get(f"/v1/local/receipts?token={token}")
+
+    assert response.status_code == 200
+
+
+def test_wrong_token_query_param_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, _token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.get("/v1/local/receipts?token=not-the-real-token")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INFERRAIL_E011"
+
+
+def test_header_takes_precedence_when_both_are_present_but_only_header_is_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.get("/v1/local/receipts?token=not-the-real-token", headers=_auth(token))
+
+    assert response.status_code == 200
+
+
 def test_health_and_gateway_routes_still_work_without_the_local_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

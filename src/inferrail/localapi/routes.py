@@ -40,16 +40,26 @@ STREAM_POLL_INTERVAL_SECONDS = 1.0
 
 
 async def _require_local_api_token(
-    request: Request, authorization: str | None = Header(default=None)
+    request: Request,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(
+        default=None,
+        description=(
+            "Alternative to the Authorization header, accepted only because browser "
+            "EventSource cannot set custom headers -- see "
+            "docs/adr/0017-dashboard-in-app-directory.md. The dashboard is the only "
+            "intended user of this; prefer the header for anything else (curl, scripts)."
+        ),
+    ),
 ) -> None:
     expected: str = request.app.state.local_api_token
-    provided = (authorization or "").removeprefix("Bearer ")
+    provided = (authorization or "").removeprefix("Bearer ") or (token or "")
     if not secrets.compare_digest(provided, expected):
         raise LocalApiAuthenticationError(
             "missing or invalid local API credentials: set the 'Authorization: "
-            "Bearer <token>' header to match the per-install token printed by "
-            "'inferrail serve --app-mode' (also readable from the token file "
-            "under the app-data directory)"
+            "Bearer <token>' header (or a '?token=' query parameter) to match the "
+            "per-install token printed by 'inferrail serve --app-mode' (also readable "
+            "from the token file under the app-data directory)"
         )
 
 

@@ -330,9 +330,34 @@ fleet "control plane" `docs/adr/0004` anticipates):
   /v1/local/budgets` / `DELETE /v1/local/budgets/{id}` (CRUD, shared
   live with `BudgetEnforcer` — no second view of the same data), and
   `GET /v1/local/stream` (SSE tail of newly-emitted receipts).
-- Meant to be consumed by the not-yet-built desktop dashboard (v0.4.0),
-  not by a human directly — `inferrail report`/`work`/`budget` remain
-  the CLI's own read/write surface either way.
+- Meant to be consumed by the dashboard (v0.4.0, below), not by a human
+  directly — `inferrail report`/`work`/`budget` remain the CLI's own
+  read/write surface either way.
+
+### Dashboard (v0.4.0, in progress) — Live Feed only so far
+
+A static, local web SPA in `app/`, served by the same process as the
+local control API when `--app-mode` is on — see
+`docs/adr/0017-dashboard-in-app-directory.md`.
+
+- `inferrail serve --app-mode` prints a ready-to-open URL —
+  `http://<host>:<port>/dashboard/?token=<token>` — that already carries
+  the per-install local-API token, so opening it is the only step: no
+  copy-pasting a token into a settings field, no second terminal command.
+- **Live Feed** (built): every receipt this install produces, streamed
+  in as it happens over `GET /v1/local/stream`. An unknown cost renders
+  as the word "unknown", styled distinctly from a real, known `$0.0000`
+  — never collapsed into the same thing.
+- **Not yet built**: Work, Budgets, Recover, Connect, Settings — the
+  remaining `MISSION.md` v0.4.0 screens. The nav shows all six tabs; the
+  five not yet built are visibly disabled rather than omitted, so the
+  eventual shape of the dashboard is honest from the first screen
+  onward.
+- Known gap: the built dashboard is not yet bundled into the PyPI
+  wheel — `pip install inferrail` alone does not currently ship a
+  dashboard. Build it from a checkout: `cd app && npm install && npm run
+  build`. See ADR-0017's "Consequences" for the tracked packaging
+  follow-up.
 
 ### Diagnostics: `inferrail pricing update` and `inferrail doctor`
 

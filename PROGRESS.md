@@ -5,22 +5,20 @@ session; `MISSION.md` almost never does.
 
 ## Status summary
 
-**v0.2.1 is fully closed** — PR #20/#21 merged. **v0.3.0 is now fully
-closed — all four units merged, `pyproject.toml` is `0.3.0`.** PR
-#22/#23 (unit 1, SQLite receipts), #24/#25 (unit 2, Anthropic
-passthrough), #26 (unit 3, budget enforcement), and #27 (unit 4, local
-control API/`--app-mode`/`pricing update`/`doctor`) are all `MERGED` —
-every one confirmed directly via `gh pr view <n> --json
-state,mergedAt`, never taken on a verbal report alone (see "Process
-note" below for why that discipline mattered this session). `main` is
-synced through `7d66719` (PR #27's squash-merge commit). Full
-`pytest -q` on synced `main`: **860 passed, 19 skipped, 0 failed**.
+**v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
+**v0.4.0 (the dashboard) is now started — unit 1 of N done this
+session, not yet merged.**
 
-**Next session's job: pick the next thing to work, starting with
-`MISSION.md`'s v0.4.0 (the dashboard)** — see "Next session starts
-here" below before doing anything else; v0.4.0 has an explicit
-architectural decision (same repo vs. sibling repo for the React app)
-that MISSION.md says to make via ADR, not assume.
+**Architectural decision made and recorded, per explicit founder
+instruction this session: the dashboard lives in `app/` in this
+repository**, not a sibling repo — `docs/adr/0017-dashboard-in-app-directory.md`.
+See "v0.4.0 — IN PROGRESS" below for the full record of what's built
+(Live Feed screen, real serving/auth) vs. not yet (five more screens,
+wheel packaging).
+
+**Next session's job:** pick v0.4.0's next unit (Work screen is the
+natural next one — see "Next session starts here" below), once this
+unit's PR is pushed/merged.
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -533,42 +531,154 @@ session pointed at the gateway produces attributed receipts;
 crash/idempotency tests for budgets pass) were met by unit (3). **All
 four v0.3.0 units are merged. The milestone is closed.**
 
+## v0.4.0 — IN PROGRESS ("The dashboard")
+
+**Architectural decision (founder-directed this session): the dashboard
+lives in `app/` in this repository**, not a sibling repo. Recorded in
+`docs/adr/0017-dashboard-in-app-directory.md`, which also records how
+it's served (a static SPA mounted at `/dashboard` by `inferrail serve
+--app-mode` when a build is found) and how it authenticates (the
+per-install local-API token travels in the printed dashboard URL's query
+string, since the acceptance bar is "zero terminal use after startup").
+
+### Checklist for unit 1: scaffold, real serving/auth, Live Feed screen — DONE, not yet pushed/merged
+
+- [x] `app/` scaffolded: Vite + React + TypeScript, `npm run build` ->
+      `app/dist` (a static SPA, no server-side rendering, no Node
+      runtime needed to serve it). Design tokens match the marketing
+      site's paper-receipt language (`--paper`/`--ink`/`--stamp`/... from
+      `docs/index.html`), but fonts are a local-first system stack
+      (`"IBM Plex Mono", ui-monospace, ...`) rather than a Google Fonts
+      network dependency — deliberate, since this is an offline-capable
+      local tool, unlike the marketing site.
+- [x] Hash-based client routing only (`#/live`, `#/work`, ...) — a
+      permanent decision (ADR-0017), not a placeholder: the server-side
+      mount never needs a SPA catch-all regardless of how many screens
+      get added later.
+- [x] `inferrail.dashboard.find_dashboard_dist()` — env override,
+      future-bundled-package path, or an `app/dist` found by walking up
+      from the source tree (what resolves today from a checkout).
+      `gateway/app.py`'s `create_app` mounts it (`StaticFiles(html=True)`
+      at `/dashboard`) only under `app_mode=True` and only when a build
+      is actually found; `app.state.dashboard_dist` records which for
+      tests/callers. A missing/unbuilt dashboard is not an error —
+      every other `--app-mode` guarantee is unaffected.
+- [x] `inferrail serve --app-mode` prints
+      `http://<host>:<port>/dashboard/?token=<token>` once a build is
+      found (and a one-line "not built yet" message with the exact build
+      command otherwise) — this is what makes MISSION.md's "zero
+      terminal use after startup" real: opening the printed link is the
+      only step.
+- [x] `localapi/routes.py`'s `_require_local_api_token` now accepts
+      `?token=` as well as the `Authorization` header — narrowly
+      motivated by browser `EventSource` (used by Live Feed) being
+      unable to set custom headers; the header still wins when both are
+      present. Documented as a scoped exception in ADR-0017, not a
+      pattern to reuse elsewhere.
+- [x] **Live Feed screen** (`app/src/screens/LiveFeed.tsx`): opens
+      `GET /v1/local/stream`, renders each receipt as it arrives
+      (provider/model, work_id/project if present, status, cost),
+      de-duplicates on `receipt_id` (the poll-based tail can in principle
+      redeliver), caps at 200 rows. **A `null` cost renders as the word
+      "unknown", visually distinct from a real `$0.0000`** — never
+      collapsed into the same thing, per MISSION.md's non-negotiable
+      honest-numbers rule.
+- [x] Nav shows all six v0.4.0 screens; the five not yet built (Work,
+      Budgets, Recover, Connect, Settings) render as visibly disabled
+      tabs rather than being omitted, so the dashboard's eventual shape
+      is honest from this first unit onward.
+- [x] Tests: `app/src/format.test.ts` (8 vitest cases — the honest-cost
+      formatting rule explicitly, including the "$0.0000 known-zero vs.
+      unknown" distinction), `tests/unit/test_dashboard.py` (discovery
+      env-override + missing-index cases, app-mode-with/without-a-build
+      end-to-end via `TestClient`, dashboard absent without app-mode),
+      3 new cases in `tests/unit/test_localapi_routes.py` (query-token
+      accepted, wrong query-token rejected, header takes precedence over
+      a simultaneously-present invalid query token).
+- [x] New `dashboard` CI job (`.github/workflows/ci.yml`): Node 20 setup,
+      `npm ci`/type-check/`vitest run`/`npm run build`, then
+      `scripts/check_dashboard_discoverable.py` — verifies the *Python*
+      discovery logic actually finds the real build, not just that the
+      file exists on disk. Kept fully separate from the Python `test`
+      job — Node is a dev-time dependency of `app/` only, never of the
+      package's own build/lint/test.
+- [x] Docs: `docs/PRODUCT.md` (new "Dashboard (v0.4.0, in progress)"
+      subsection, explicit about what's built vs. not), `docs/
+      ARCHITECTURE.md` (component tree + new "dashboard boundary"
+      section), `README.md` ("Supported today" gains the dashboard
+      bullet), `CHANGELOG.md`'s new `## v0.4.0 — in progress` entry.
+      `openapi.json`/`config.schema.json`/`ERRORS.md` regenerated with
+      zero diff (no config or error-code changes this unit).
+- [x] Local verification this session: `ruff check .` clean; `mypy`
+      clean (83 source files); `bash scripts/check_no_internal_content.sh`
+      clean; `cd app && npm run lint` (tsc --noEmit) clean; `npm run
+      build` succeeds; `npm test` — 8/8 vitest passed;
+      `pytest tests/unit/test_dashboard.py tests/unit/test_localapi_routes.py`
+      — 18/18 passed. Full-repo `pytest -q`: **868 passed, 19 skipped, 0
+      failed** (up from 860 at the v0.3.0 close — exactly the 8 new
+      tests this unit added: 5 in `test_dashboard.py`, 3 in
+      `test_localapi_routes.py`; the 19 skips are the same pre-existing
+      credential-gated ones, unaffected).
+- [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — same rule v0.3.0's
+      own in-progress units followed (only the unit that *closes* a
+      milestone bumps the version); v0.4.0 is not closed yet.
+- [ ] **Not done yet, this unit's own honest gap:** committed locally on
+      a new branch, but **not pushed** — this agent has no push access to
+      `domondi1/inferrail` (confirmed repeatedly across v0.2.1/v0.3.0,
+      see "Process note" above; unchanged this session). Exact handoff
+      commands are in "Next session starts here" below — actually, since
+      this is a same-session handoff, see the end-of-turn message to the
+      founder instead.
+
+### Known gaps, explicitly deferred (not hidden) — see ADR-0017's "Consequences"
+
+- Built dashboard is not yet bundled into the PyPI wheel. `pip install
+  inferrail` alone does not currently ship a working dashboard; a future
+  packaging unit needs a build hook (`npm run build` + copy into
+  `src/inferrail/dashboard_static/`) plus a CI check that it actually
+  worked, plus Node added to the release pipeline's prerequisites.
+- `npm audit` reports 5 vulnerabilities (3 moderate, 1 high, 1 critical)
+  in `vite`/`vitest`'s own dev-server dependency chain (`esbuild`,
+  `@vitest/mocker`) — dev-tooling only (affects `npm run dev`'s dev
+  server, not the built static output this unit actually ships); fixing
+  requires a breaking major-version bump (`vite@8`, `vitest@5`) not
+  attempted in this unit. Tracked, not silently ignored.
+- Work, Budgets, Recover, Connect, Settings screens: not built. Budgets
+  and Recover in particular are what MISSION.md's full v0.4.0 acceptance
+  criterion needs ("set a budget, see a block, clear a review item") —
+  this unit alone does not close the milestone.
+
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath — `git log origin/main --oneline -5` should show
-   `7d66719` (PR #27) as the most recent ancestor, and `pyproject.toml`
-   should read `0.3.0`. If the founder reports anything was
-   merged/changed, verify with `gh pr view <n> --json state,mergedAt`
-   before trusting it — same discipline that mattered repeatedly this
-   session; don't relax it just because recent rounds went smoothly.
-2. **Read `MISSION.md`'s v0.4.0 section (the dashboard) before writing
-   any code.** It requires an explicit architectural decision this
-   session did not make: React + Vite in a new `app/` directory in
-   *this* repo, or a sibling repo (`inferrail-app`) — MISSION.md says
-   "decide via ADR." Don't default to one silently; if it's genuinely
-   ambiguous, that's a case for asking the founder directly rather than
-   guessing, since it affects repo structure, CI, and release tooling
-   going forward.
-3. Once that's decided and recorded (a new ADR, same numbering
-   sequence — next is `0017`), scope v0.4.0's own smallest first unit
-   the same way each v0.3.0 unit was scoped, and follow the same
-   protocol throughout: build with tests at the existing rigor, run
-   *all three* generator scripts (`generate_errors_md.py`,
-   `generate_config_schema.py`, `generate_openapi.py`) before opening a
-   PR — not just the ones that seem relevant, per this session's own
-   `ERRORS.md` near-miss — commit locally, then hand the founder the
-   exact `git push`/`gh pr create` commands (this agent cannot push to
-   this repo — confirmed repeatedly, see "Status summary" above). Do
-   not self-merge.
-4. Update this file's "Status summary" to reflect wherever v0.4.0 work
-   lands, the same way v0.2.1's and v0.3.0's closures were recorded
-   before the next milestone began.
+   changed underneath since this session — check whether this unit's PR
+   (branch name and exact push/PR-create commands given to the founder
+   at the end of this session) has been pushed/merged; if the founder
+   reports it was, verify with `gh pr view <n> --json state,mergedAt`
+   before trusting it, same discipline as every prior milestone.
+2. **Pick v0.4.0's next unit.** The Work screen is the natural next
+   one — it needs only `GET /v1/local/work` (already built, unit 4 of
+   v0.3.0) and can reuse Live Feed's styling/patterns directly. Budgets
+   and Recover are larger (they need real POST/DELETE interactions, not
+   just a read-only view) and are better split into their own units
+   after Work, matching how v0.3.0 sequenced its four units by real
+   dependency order rather than MISSION.md's listed order alone.
+3. Follow the same protocol throughout: build with tests at the existing
+   rigor (both `pytest` and `vitest`), run *all three* generator scripts
+   before opening a PR, commit locally, then hand the founder the exact
+   `git push`/`gh pr create` commands (this agent cannot push to this
+   repo). Do not self-merge.
+4. Update this file's "Status summary" and the "v0.4.0" section above
+   to reflect wherever the next unit lands, the same way each v0.3.0
+   unit's checklist was filled in as it merged.
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding as of this update** — v0.3.0 is fully merged and
-  closed. Everything below remains deferred per `MISSION.md`'s standing
+- **This session's unit needs to be pushed and opened as a PR** — exact
+  commands given directly to the founder at the end of this session (not
+  duplicated here since the branch name/commit hash weren't fixed until
+  the commit was actually made).
+- Everything below remains deferred per `MISSION.md`'s standing
   ledger, untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
   tier.

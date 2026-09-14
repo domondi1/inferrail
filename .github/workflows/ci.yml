@@ -123,3 +123,48 @@ jobs:
         run: |
           pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
             tests/integration/test_ap_crash_recovery.py -v
+
+  dashboard:
+    # The dashboard (app/, docs/adr/0017) is a separate Node/TypeScript
+    # project -- kept as its own job so a Node toolchain is never a
+    # dependency of the Python package's own CI (the `test` job above).
+    # Also verifies the built output is actually discoverable by the
+    # backend, the same integration point test_dashboard.py's env-override
+    # tests exercise directly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package (for the discovery-integration check below)
+        run: pip install -e .
+
+      - name: Install dashboard dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Type-check
+        working-directory: app
+        run: npm run lint
+
+      - name: Test (vitest)
+        working-directory: app
+        run: npm test
+
+      - name: Build
+        working-directory: app
+        run: npm run build
+
+      - name: Verify the Python backend can find the built dashboard
+        run: |
+          test -f app/dist/index.html
+          python scripts/check_dashboard_discoverable.py

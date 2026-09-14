@@ -6,6 +6,30 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.0 — in progress
+
+### Added
+
+- The dashboard: a static React + Vite + TypeScript SPA in `app/`,
+  served by `inferrail serve --app-mode` at `/dashboard` alongside the
+  local control API. This unit ships the scaffold, real serving/auth,
+  and one screen: **Live Feed**, streaming every receipt live over
+  `GET /v1/local/stream`. See `docs/adr/0017-dashboard-in-app-directory.md`.
+- `inferrail serve --app-mode` now prints a ready-to-open dashboard URL
+  with the local API token already embedded (`?token=...`) — no
+  additional terminal step to authenticate.
+- The local control API's auth dependency now also accepts `?token=` as
+  an alternative to the `Authorization` header, since browser
+  `EventSource` cannot set custom headers.
+
+### Not yet in this milestone
+
+- The Work, Budgets, Recover, Connect, and Settings screens (visible in
+  the nav as disabled tabs, not omitted).
+- Bundling the built dashboard into the PyPI wheel — build it from a
+  checkout (`cd app && npm install && npm run build`) until a packaging
+  unit lands.
+
 ## v0.3.0 — 2026-09-14
 
 ### Added
