@@ -6,19 +6,22 @@ session; `MISSION.md` almost never does.
 ## Current milestone
 
 **v0.2.1 — "Visitors can run the hosted workflow themselves"** (see
-`MISSION.md`). Status: **[PR #20](https://github.com/domondi1/inferrail/pull/20)
-open, all 8 CI checks green (test 3.11/3.12, wheel-smoke x3,
-ap-exceptions, hosted-economic-authority, boundary-check) — blocked on
-a human merging it. See "Next session starts here."**
+`MISSION.md`). Status: **code merged to `main`
+([PR #20](https://github.com/domondi1/inferrail/pull/20), founder-
+reviewed and merged 2026-09-14, merge commit `ab4eb54`) — but the live
+Render instance at `https://inferrail-ap-exceptions.onrender.com` has
+NOT yet redeployed from it as of this session's last check. This
+milestone's acceptance criterion ("from a machine with only curl, a
+person with no prior context completes the four commands") is not yet
+true in production. See "HUMAN ACTION NEEDED" and "Next session starts
+here."**
 
-**Why not merged already:** the agent attempted `gh pr merge --squash`
-and the harness itself (not GitHub, not this repo's own branch
-protection) refused with "Permission for this action was denied by the
-Claude Code auto mode classifier ... [Merge Without Review]." This is a
-session-level safety gate on the tool, separate from `CONTRIBUTING.md`
-or any repo policy — the fix is a human clicking merge on the PR (or
-explicitly re-authorizing squash-merges for this session), not a retry
-by the agent. Do not try to route around it with another tool.
+**Why the harness blocked the earlier merge attempt (now moot, kept for
+context):** the coding harness's own safety classifier refused an
+agent-initiated `gh pr merge --squash` with "Permission for this action
+was denied ... [Merge Without Review]" — a session-level tool gate, not
+GitHub or this repo's branch protection. The founder reviewed and
+merged it directly instead.
 
 ### Checklist
 
@@ -68,16 +71,23 @@ by the agent. Do not try to route around it with another tool.
 - [x] `CHANGELOG.md` created (didn't exist before) with a v0.2.1 entry.
 - [x] `MISSION.md` (this multi-session brief, verbatim from the
       founder's instructions) and this file created at repo root.
-- [ ] **Not yet done this session:** open the PR, get it through CI,
-      and merge it. Local checks below all pass; CI on GitHub has not
-      run yet as of session end.
-- [ ] **Not yet verified live:** the acceptance criterion "from a
-      machine with only curl, a person with no prior context completes
-      the four commands successfully" against the actual
-      `https://inferrail-ap-exceptions.onrender.com` deployment — that
-      requires the PR merged AND Render redeployed from `main`. Local
-      `TestClient`-based tests cover the same logic but are not a
-      substitute for hitting the real deployed URL once live.
+- [x] Open the PR, get it through CI, get it merged. **Done:** PR #20
+      merged to `main` 2026-09-14 (merge commit `ab4eb54`), founder-
+      reviewed.
+- [ ] **Still not true in production as of this session:** the
+      acceptance criterion "from a machine with only curl, a person
+      with no prior context completes the four commands successfully"
+      against the actual `https://inferrail-ap-exceptions.onrender.com`
+      deployment. Verified directly this session: `GET /health` returns
+      `200 {"status": "ok"}` (service is up), but `POST /v1/sandbox`
+      returns `404 {"detail": "Not Found"}` and the live instance's own
+      `GET /openapi.json` still lists only the pre-merge route set
+      (`/health`, `/v1/decisions`, `/v1/decisions/{work_id}`, `.../handoff`,
+      `.../outcome`, `.../reap`, `.../retry-attempts`, `/v1/reap-stale`,
+      `/v1/report` — no `/v1/sandbox`). Polled for ~6 minutes after the
+      merge with no change. **Render has not redeployed from the new
+      `main` yet** — see "HUMAN ACTION NEEDED." Do not mark v0.2.1 fully
+      done until this route is confirmed live.
 
 ### Local verification performed this session
 
@@ -103,26 +113,43 @@ repo's branch protection — see "Why not merged already" above.
 
 ## Next session starts here
 
-1. **First, check whether a human has merged PR #20 in the meantime.**
-   If merged: confirm Render has redeployed `hosted/ap_exceptions` from
-   the new `main` (check `GET /health` and, ideally, `POST /v1/sandbox`
-   against the live URL) before declaring v0.2.1's "from a machine with
-   only curl" acceptance criterion actually met — local tests prove the
-   logic, not the live deployment. Then update this file's checklist,
-   mark v0.2.1 fully done, and move to v0.3.0's first unit (SQLite
-   receipts store — see `MISSION.md`).
-2. If PR #20 is still open and unmerged: do not repeatedly retry
-   `gh pr merge` — the harness's classifier denial isn't a flaky error,
-   it's a deliberate gate requiring a human. Leave it for the founder
-   and, if nothing else is actionable in this milestone, move on to
-   scoping v0.3.0's first unit in the meantime (see `MISSION.md`) rather
-   than blocking on this.
-3. If CI has since gone red on PR #20 for an unrelated reason (a flaky
-   external dependency, a new commit to `main` that conflicts), triage
-   that before assuming the PR is still mergeable as-is.
+PR #20 is merged. The only remaining step for v0.2.1 is confirming the
+live Render deployment actually serves the new code.
+
+1. Recheck the live instance:
+   `curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox`.
+   - If it now returns `{"api_key": "sbx_...", ...}`: run the full
+     four-command walkthrough for real against the live URL (not just
+     `TestClient`), confirm step 4's report shows
+     `observed_cost_complete: true`, check off the remaining checklist
+     item above, mark v0.2.1 fully done in this file, and move to
+     v0.3.0's first unit (SQLite receipts store — see `MISSION.md`).
+   - If it still 404s: this is not something the agent can fix from
+     this repo (no `render.yaml`/deploy-hook lives here — see
+     `hosted/ap_exceptions/README.md`'s "Deploying it" section; Render
+     project configuration is external, referenced from the private
+     repo's `ops/deployments.md`). Don't keep polling indefinitely each
+     session — ask the founder whether Render's auto-deploy is enabled
+     for this service and pointed at `main`, or whether a manual deploy
+     needs triggering from the Render dashboard. In the meantime, this
+     does not block starting v0.3.0's first unit.
+2. Once live-verified, also sanity-check that `GET /health` on the live
+   instance still returns `200` after whatever redeploy happened (a
+   basic regression check, not specific to this feature).
 
 ## HUMAN ACTION NEEDED
 
+- **Render has not redeployed `hosted/ap_exceptions` from the merged
+  `main` (merge commit `ab4eb54`) as of this session's last check.**
+  `GET /health` on `https://inferrail-ap-exceptions.onrender.com` is up
+  and returns `200`, but `POST /v1/sandbox` still 404s and the live
+  instance's own `GET /openapi.json` lists only the pre-merge route
+  set. The agent has no Render dashboard/API access to trigger or
+  inspect a deploy from here. Please check whether auto-deploy is
+  enabled and pointed at `main` for this service, or trigger a manual
+  deploy — then a future session (or you) can re-run
+  `curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox`
+  to confirm.
 - **Render warm/upgrade decision.** The hosted AP Exceptions demo
   (`https://inferrail-ap-exceptions.onrender.com`) runs on Render's free
   tier: no persistent disk (irrelevant to sandbox tenants, which are
