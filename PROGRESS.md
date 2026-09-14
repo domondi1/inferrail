@@ -3,9 +3,24 @@
 Read this after `MISSION.md` every session. This file changes every
 session; `MISSION.md` almost never does.
 
-## Current milestone
+## Status summary
 
-**v0.2.1 — "Visitors can run the hosted workflow themselves" — DONE.**
+**v0.2.1 is fully closed — [PR #20](https://github.com/domondi1/inferrail/pull/20)
+and [PR #21](https://github.com/domondi1/inferrail/pull/21) both
+squash-merged by the founder 2026-09-14. Now working v0.3.0.** See
+"v0.2.1 — CLOSED" below for the full record, and "Current milestone:
+v0.3.0" further down for what's being worked now.
+
+**Founder decisions that closed out the two remaining open items:**
+- *Expired-key live verification:* test coverage (short-TTL, same
+  `_authenticate` code path already exercised live for the golden path)
+  accepted as sufficient — no 30-minute real-time wait against
+  production needed.
+- *Render tier:* staying on the free tier; the walkthrough's honest
+  cold-start documentation satisfies `MISSION.md`'s "ensure warm/
+  upgraded or document honestly" line. No upgrade purchased.
+
+## v0.2.1 — CLOSED ("Visitors can run the hosted workflow themselves")
 Code merged to `main` ([PR #20](https://github.com/domondi1/inferrail/pull/20),
 founder-reviewed and merged 2026-09-14, merge commit `ab4eb54`), and
 **live-verified against the real deployed instance** on 2026-09-14: ran
@@ -126,36 +141,122 @@ back green. **Merge itself was refused by the coding harness's own
 safety classifier** ("Merge Without Review"), not by GitHub or this
 repo's branch protection — see "Why not merged already" above.
 
+## Current milestone: v0.3.0 — "Core engine: measure better, and enforce"
+
+Per `MISSION.md`. Never skip ahead to v0.4.0+ while this has unmet
+acceptance criteria, unless a blocker is logged here with a reason —
+same rule that applied to v0.2.1.
+
+v0.3.0 bundles four units: (1) SQLite receipts store, (2) Anthropic
+`/v1/messages` passthrough, (3) budgets with real enforcement, (4)
+local control API + `inferrail doctor`/`pricing update`. Per the
+session protocol, work the smallest first unit, not the whole milestone
+at once — (1) went first since (3) and (4) both depend on querying
+receipts, and doing them before a real store exists would mean building
+throwaway plumbing.
+
+### Checklist for unit (1): SQLite receipts store — DONE
+
+Built and merged as [PR #23](https://github.com/domondi1/inferrail/pull/23)
+(2026-09-14) while this PR was still open, so this checklist is filled
+in retroactively rather than describing planned work:
+
+- [x] WAL-mode SQLite sink alongside the existing JSONL sink:
+      `src/inferrail/receipts/sqlite_store.py`'s `ReceiptsStore`,
+      implementing the same `ReceiptSink` protocol as
+      `sinks.JSONLReceiptSink` — `sinks.build_receipt_sink` is the only
+      dispatch point, so the gateway/`InferenceEngine` never know which
+      sink is active. `receipts.sink: sqlite` in `inferrail.yaml`
+      selects it; `jsonl` remains the default.
+- [x] JSONL import/export: `inferrail receipts import --jsonl <path>
+      --db <path>` / `inferrail receipts export --db <path> --jsonl
+      <path>` (`src/inferrail/cli/receipts_io.py`). Import is
+      idempotent (`ReceiptsStore.emit` is `INSERT OR IGNORE` on
+      `receipt_id`); export only ever appends.
+- [x] Indices on `ts`, `work_id`, `project`, `model` — `work_id`/
+      `project` are extracted from the receipt's open-ended
+      `attributes` dict into their own columns purely for indexing;
+      `attributes` itself is still stored in full.
+- [x] Existing `inferrail report`/`transaction`/`work` CLI commands
+      work unchanged over the SQLite store: they all share
+      `cli.report.load_receipts`, which now detects which sink
+      produced a given file by its own SQLite magic bytes
+      (`sqlite_store.looks_like_sqlite`) rather than a new flag — zero
+      new CLI surface for those three commands, and their pure
+      aggregation functions (`aggregate`, `build_work_summary`,
+      `build_transaction`) are completely unchanged.
+- [x] Tests at the existing rigor: idempotent emit, indexed `query()`
+      by work_id/project/model, an 8-thread concurrent-writer test
+      (mirrors `JSONLReceiptSink`'s own), tolerant `read_all` (skips a
+      row with corrupted `attributes_json` rather than crashing),
+      `export_jsonl`, `import_jsonl` (+ idempotent re-import, +
+      malformed-row skip count), magic-byte detection (incl. a
+      misnamed-extension case), `build_receipt_sink` dispatch,
+      `load_receipts` auto-detection, `run_report` against a live
+      store, and the full `receipts import`/`export` CLI surface via
+      `main()`. All in `tests/unit/test_receipts.py`,
+      `tests/unit/test_cli_report.py`,
+      `tests/unit/test_cli_receipts_io.py`.
+- [x] `docs/adr/0013-sqlite-receipts-store.md` — records that this is a
+      new opt-in sink, not a replacement (JSONL stays the default), and
+      why (real indexed columns over JSON1 expressions, detection over
+      a new flag).
+- [x] `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `README.md`,
+      `inferrail.example.yaml`, `config.schema.json` all updated to
+      describe the new sink option.
+- [x] CI green on PR #23 (all 8 checks) before merge; full local
+      `pytest -q` — 726 passed, 19 skipped, 0 failed.
+
+### Remaining units: (2)-(4)
+
+Per `MISSION.md`, in the order the mission lists them (not yet
+prioritized against each other beyond that):
+
+- **(2) Anthropic `/v1/messages` passthrough** — streaming + tool use,
+  priced via the catalog. This is what makes "point Claude Code at
+  Inferrail" true.
+- **(3) Budgets with real enforcement** — global/project/work_id scope,
+  window (per-work/daily/monthly), mode (warn/block); pre-flight
+  catalog-based estimate + spent-so-far check in the gateway; honest
+  `budget_overrun_usd` on reconciliation. `inferrail budget
+  set|list|rm`. Now has `ReceiptsStore.query()` to build the
+  spent-so-far check on, rather than re-deriving its own SQLite access.
+- **(4) Local control API on `127.0.0.1`** with a per-install token:
+  paginated receipts query, work rollups, budgets CRUD,
+  `GET /v1/local/stream` (SSE of new receipts); `inferrail serve
+  --app-mode`; `inferrail pricing update`; `inferrail doctor`.
+
+v0.3.0's own acceptance criteria (a $0.01 hard cap blocks before the
+provider is called; a Claude Code session pointed at the gateway
+produces attributed receipts; crash/idempotency tests for budgets pass)
+depend on units (2) and (3) both existing — pick (2) or (3) next, not
+(4), since (4)'s control API is meant to expose budgets that need to
+exist first.
+
 ## Next session starts here
 
-**v0.2.1 is fully done — start v0.3.0.** Per `MISSION.md`: "Core
-engine: measure better, and enforce." Pick the smallest first unit —
-most likely the SQLite receipts store (WAL, JSONL import/export,
-indices on `ts`/`work_id`/`project`/`model`, existing reports work over
-it) — and follow the same session protocol: read `MISSION.md` +this
-file, build with tests at the existing rigor, open a PR (never push
-directly to `main` — see the process note above), get CI green, and
-update this file before ending the session. Do not self-merge unless a
-future explicit policy says otherwise; the harness's classifier will
-likely refuse it anyway, and the founder has been merging promptly.
+Start v0.3.0 unit (2) or (3) — recommend (2), the Anthropic passthrough,
+since it's the smaller, more self-contained of the two (mirrors the
+existing OpenAI provider adapter shape; see `src/inferrail/providers/`
+and `docs/adr/0007-model-passthrough-routing.md`) and unblocks "point
+Claude Code at Inferrail" sooner. Follow the same protocol as v0.2.1 and
+v0.3.0 unit (1): build with tests at the existing rigor, open a PR
+(never push directly to `main`), get CI green, and update this file
+before ending the session. Do not self-merge — the founder reviews and
+merges promptly. If two units end up in flight on separate PRs at once,
+remember what happened this round: whichever PR merges second must
+re-check this file for staleness before merging, since the first PR's
+merge may have already made its own checklist claims outdated.
 
 ## HUMAN ACTION NEEDED
 
-- **Render warm/upgrade decision.** The hosted AP Exceptions demo
-  (`https://inferrail-ap-exceptions.onrender.com`) runs on Render's free
-  tier: no persistent disk (irrelevant to sandbox tenants, which are
-  meant to be ephemeral, but still true for operator tenants) and it
-  spins down when idle (cold start up to ~1 minute+, no upper bound).
-  The walkthrough documents this honestly rather than hiding it. If you
-  want a snappier first impression for visitors, upgrading to a paid
-  Render plan (persistent disk + no idle spin-down) is a paid-account
-  decision only you can make — not blocking v0.2.1, since the docs are
-  honest about the cold start either way.
-- **No other new human action this session.** Signing accounts,
-  stopwatch tests, demo video/screenshots, and HN post timing remain
-  deferred per `MISSION.md`'s standing ledger — untouched this session.
+- **None outstanding as of this update.** The Render warm/upgrade
+  decision from v0.2.1 was resolved (staying on free tier — see "v0.2.1
+  — CLOSED" above). Signing accounts, stopwatch tests, demo
+  video/screenshots, and HN post timing remain deferred per
+  `MISSION.md`'s standing ledger, untouched and not yet due.
 
-## Decisions made this session
+## Decisions made during the v0.2.1 session (historical)
 
 - **Render's auto-deploy for `hosted/ap_exceptions` set to "After CI
   Checks Pass"** (founder action, in the Render dashboard — not
@@ -208,7 +309,7 @@ likely refuse it anyway, and the founder has been merging promptly.
   attacker would target with an oversized body, but there's no reason
   operator routes should be unprotected either.
 
-## Reference: where things live
+## Reference: where the v0.2.1 sandbox code lives (historical)
 
 - Sandbox issuance/validation logic: `hosted/ap_exceptions/sandbox.py`
 - Wiring into the service (auth, routes, stamping, row cap, background
