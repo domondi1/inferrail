@@ -3,9 +3,24 @@
 Read this after `MISSION.md` every session. This file changes every
 session; `MISSION.md` almost never does.
 
-## Current milestone
+## Status summary
 
-**v0.2.1 — "Visitors can run the hosted workflow themselves" — DONE.**
+**v0.2.1 is fully closed — [PR #20](https://github.com/domondi1/inferrail/pull/20)
+and [PR #21](https://github.com/domondi1/inferrail/pull/21) both
+squash-merged by the founder 2026-09-14. Now working v0.3.0.** See
+"v0.2.1 — CLOSED" below for the full record, and "Current milestone:
+v0.3.0" further down for what's being worked now.
+
+**Founder decisions that closed out the two remaining open items:**
+- *Expired-key live verification:* test coverage (short-TTL, same
+  `_authenticate` code path already exercised live for the golden path)
+  accepted as sufficient — no 30-minute real-time wait against
+  production needed.
+- *Render tier:* staying on the free tier; the walkthrough's honest
+  cold-start documentation satisfies `MISSION.md`'s "ensure warm/
+  upgraded or document honestly" line. No upgrade purchased.
+
+## v0.2.1 — CLOSED ("Visitors can run the hosted workflow themselves")
 Code merged to `main` ([PR #20](https://github.com/domondi1/inferrail/pull/20),
 founder-reviewed and merged 2026-09-14, merge commit `ab4eb54`), and
 **live-verified against the real deployed instance** on 2026-09-14: ran
@@ -126,36 +141,66 @@ back green. **Merge itself was refused by the coding harness's own
 safety classifier** ("Merge Without Review"), not by GitHub or this
 repo's branch protection — see "Why not merged already" above.
 
+## Current milestone: v0.3.0 — "Core engine: measure better, and enforce"
+
+Per `MISSION.md`. Never skip ahead to v0.4.0+ while this has unmet
+acceptance criteria, unless a blocker is logged here with a reason —
+same rule that applied to v0.2.1.
+
+v0.3.0 bundles four units: (1) SQLite receipts store, (2) Anthropic
+`/v1/messages` passthrough, (3) budgets with real enforcement, (4)
+local control API + `inferrail doctor`/`pricing update`. Per the
+session protocol, work the smallest first unit, not the whole
+milestone at once — this session (or the next) starts with **(1) the
+SQLite receipts store**, since (3) and (4) both depend on querying
+receipts, and doing them before a real store exists would mean
+building throwaway plumbing.
+
+### Checklist for unit (1): SQLite receipts store
+
+- [ ] WAL-mode SQLite sink alongside the existing JSONL sink in
+      `src/inferrail/receipts/sinks.py` (see that file + `schema.py`
+      for the current `InferenceReceipt`/JSONL shape before designing
+      the table).
+- [ ] JSONL import/export so existing JSONL receipt files aren't
+      stranded.
+- [ ] Indices on `ts`, `work_id`, `project`, `model`.
+- [ ] Existing `inferrail report`/`work`/`transaction` CLI commands
+      work unchanged over the SQLite store (check `src/inferrail/cli`
+      and `src/inferrail/work` for what "existing reports" currently
+      read from).
+- [ ] Tests at the existing rigor: idempotency, crash-recovery,
+      concurrency (this repo's `inferrail.ap.store.RecoveryStore` is
+      the house style to match — WAL, `busy_timeout`, one connection
+      per call, `BEGIN IMMEDIATE` for writes).
+- [ ] ADR continuing the `docs/adr` numbering (next is `0013`) if this
+      changes a structural boundary (e.g. whether SQLite becomes the
+      default sink or stays opt-in).
+- [ ] `docs/PRODUCT.md` updated if default/opt-in scope changes.
+
+Not started yet as of this update — see "Next session starts here."
+
 ## Next session starts here
 
-**v0.2.1 is fully done — start v0.3.0.** Per `MISSION.md`: "Core
-engine: measure better, and enforce." Pick the smallest first unit —
-most likely the SQLite receipts store (WAL, JSONL import/export,
-indices on `ts`/`work_id`/`project`/`model`, existing reports work over
-it) — and follow the same session protocol: read `MISSION.md` +this
-file, build with tests at the existing rigor, open a PR (never push
-directly to `main` — see the process note above), get CI green, and
-update this file before ending the session. Do not self-merge unless a
-future explicit policy says otherwise; the harness's classifier will
-likely refuse it anyway, and the founder has been merging promptly.
+Start (or continue) v0.3.0 unit (1), the SQLite receipts store. Read
+`src/inferrail/receipts/sinks.py`, `schema.py`, `aggregation.py`,
+`builder.py`, and `src/inferrail/work/` before writing code — this
+repo's `docs/PRODUCT.md` "Current scope" section is the authoritative
+description of what the JSONL sink and existing reports do today; do
+not assume, read it. Follow the same protocol as v0.2.1: build with
+tests at the existing rigor, open a PR (never push directly to `main`),
+get CI green, and update this file before ending the session. Do not
+self-merge — the founder reviews and merges promptly.
 
 ## HUMAN ACTION NEEDED
 
-- **Render warm/upgrade decision.** The hosted AP Exceptions demo
-  (`https://inferrail-ap-exceptions.onrender.com`) runs on Render's free
-  tier: no persistent disk (irrelevant to sandbox tenants, which are
-  meant to be ephemeral, but still true for operator tenants) and it
-  spins down when idle (cold start up to ~1 minute+, no upper bound).
-  The walkthrough documents this honestly rather than hiding it. If you
-  want a snappier first impression for visitors, upgrading to a paid
-  Render plan (persistent disk + no idle spin-down) is a paid-account
-  decision only you can make — not blocking v0.2.1, since the docs are
-  honest about the cold start either way.
-- **No other new human action this session.** Signing accounts,
-  stopwatch tests, demo video/screenshots, and HN post timing remain
-  deferred per `MISSION.md`'s standing ledger — untouched this session.
+- **None outstanding as of this update.** The Render warm/upgrade
+  decision from v0.2.1 was resolved (staying on free tier — see "v0.2.1
+  — CLOSED" above). Signing accounts, stopwatch tests, demo
+  video/screenshots, and HN post timing remain deferred per
+  `MISSION.md`'s standing ledger, untouched and not yet due.
 
-## Decisions made this session
+## Decisions made during the v0.2.1 session (historical)
 
 - **Render's auto-deploy for `hosted/ap_exceptions` set to "After CI
   Checks Pass"** (founder action, in the Render dashboard — not
@@ -208,7 +253,7 @@ likely refuse it anyway, and the founder has been merging promptly.
   attacker would target with an oversized body, but there's no reason
   operator routes should be unprotected either.
 
-## Reference: where things live
+## Reference: where the v0.2.1 sandbox code lives (historical)
 
 - Sandbox issuance/validation logic: `hosted/ap_exceptions/sandbox.py`
 - Wiring into the service (auth, routes, stamping, row cap, background
