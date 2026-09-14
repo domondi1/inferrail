@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## v0.3.0 — in progress
+## v0.3.0 — 2026-09-14
 
 ### Added
 
@@ -32,11 +32,18 @@ PyPI release (the hosted service and website ship independently of the
   recorded on the receipt as `budget_overrun_usd`. New CLI: `inferrail
   budget set|list|rm`. Shared between `/v1/chat/completions` and
   `/v1/messages`. See `docs/adr/0015-budget-enforcement.md`.
+- `inferrail serve --app-mode`: relocates receipts/budgets under the OS
+  app-data directory (forcing `receipts.sink: sqlite` and
+  `budgets.enabled: true`) and mounts a local control API
+  (`/v1/local/receipts|work|budgets|stream`) guarded by a mandatory
+  per-install token — for the not-yet-built desktop dashboard, not a
+  hosted/cross-fleet capability. New `inferrail pricing update`
+  (reports built-in catalog freshness; never fetches over the network)
+  and `inferrail doctor` (port, pricing freshness, provider
+  reachability — one-line fixes). See
+  `docs/adr/0016-local-control-api.md`.
 
-### Notes
-
-- v0.3.0 also includes a local control API, not yet built as of this
-  entry — see `PROGRESS.md` for current status.
+This closes all four v0.3.0 units from `MISSION.md`.
 
 ## v0.2.1 — 2026-09-14
 

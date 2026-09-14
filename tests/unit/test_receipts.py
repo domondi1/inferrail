@@ -378,6 +378,43 @@ def test_sqlite_store_query_filters_by_work_id_project_and_model(tmp_path: Path)
     assert store.query(work_id="does-not-exist") == []
 
 
+def test_sqlite_store_query_limit_and_offset_page_in_ts_order(tmp_path: Path) -> None:
+    store = ReceiptsStore(tmp_path / "receipts.sqlite3")
+    for i in range(5):
+        ts = datetime(2026, 1, 1, 0, 0, i, tzinfo=UTC)
+        store.emit(_receipt(receipt_id=f"ir_{i}", timestamp=ts))
+
+    page1 = store.query(limit=2, offset=0)
+    page2 = store.query(limit=2, offset=2)
+    page3 = store.query(limit=2, offset=4)
+
+    assert [r.receipt_id for r in page1] == ["ir_0", "ir_1"]
+    assert [r.receipt_id for r in page2] == ["ir_2", "ir_3"]
+    assert [r.receipt_id for r in page3] == ["ir_4"]
+
+
+def test_sqlite_store_query_since_is_exclusive_lower_bound(tmp_path: Path) -> None:
+    store = ReceiptsStore(tmp_path / "receipts.sqlite3")
+    t0 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    t1 = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+    store.emit(_receipt(receipt_id="ir_old", timestamp=t0))
+    store.emit(_receipt(receipt_id="ir_new", timestamp=t1))
+
+    assert [r.receipt_id for r in store.query(since=t0.timestamp())] == ["ir_new"]
+    assert {r.receipt_id for r in store.query(since=None)} == {"ir_old", "ir_new"}
+
+
+def test_sqlite_store_count_matches_filters_without_limit(tmp_path: Path) -> None:
+    store = ReceiptsStore(tmp_path / "receipts.sqlite3")
+    store.emit(_receipt(receipt_id="ir_1", attributes={"project": "P1"}))
+    store.emit(_receipt(receipt_id="ir_2", attributes={"project": "P1"}))
+    store.emit(_receipt(receipt_id="ir_3", attributes={"project": "P2"}))
+
+    assert store.count() == 3
+    assert store.count(project="P1") == 2
+    assert store.count(project="does-not-exist") == 0
+
+
 def test_sqlite_store_survives_concurrent_writers(tmp_path: Path) -> None:
     # Same concurrency bar as JSONLReceiptSink's own test: WAL mode plus a
     # busy_timeout should serialize concurrent writers rather than losing

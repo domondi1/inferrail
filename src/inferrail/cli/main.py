@@ -17,10 +17,12 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
+from inferrail.appdata import ensure_app_data_dir
 from inferrail.cli.ap import (
     run_ap_batch,
     run_ap_demo,
@@ -30,12 +32,15 @@ from inferrail.cli.ap import (
 )
 from inferrail.cli.budget import run_budget_list, run_budget_rm, run_budget_set
 from inferrail.cli.demo import run_demo
+from inferrail.cli.doctor import run_doctor
+from inferrail.cli.pricing import run_pricing_update
 from inferrail.cli.receipts_io import run_receipts_export, run_receipts_import
 from inferrail.cli.report import run_report
 from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
 from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work, run_work_outcome
 from inferrail.config.loader import load_config
+from inferrail.config.models import BudgetsConfig, InferrailConfig, ReceiptsConfig
 from inferrail.config.quickstart import (
     QUICKSTART_MODEL,
     QUICKSTART_RECEIPTS_PATH,
@@ -65,6 +70,19 @@ def _build_parser() -> argparse.ArgumentParser:
             "Skip inferrail.yaml entirely and serve with in-memory quickstart "
             f"defaults (OpenAI/{QUICKSTART_MODEL}, receipts at {QUICKSTART_RECEIPTS_PATH}). "
             "Requires OPENAI_API_KEY."
+        ),
+    )
+    serve.add_argument(
+        "--app-mode",
+        action="store_true",
+        help=(
+            "Load providers/routes from --config as normal, but relocate "
+            "receipts and budgets under the OS app-data directory (forcing "
+            "receipts.sink: sqlite and budgets.enabled: true regardless of "
+            "what inferrail.yaml says) and mount the local control API "
+            "(/v1/local/*) guarded by a per-install token. See "
+            "docs/adr/0016-local-control-api.md. Not combinable with "
+            "--quickstart."
         ),
     )
 
@@ -309,6 +327,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the budget store (default: %(default)s).",
     )
 
+    pricing = subparsers.add_parser("pricing", help="Pricing utilities.")
+    pricing_sub = pricing.add_subparsers(dest="pricing_command", required=True)
+    pricing_sub.add_parser(
+        "update",
+        help="Report built-in pricing catalog freshness (never fetches over the network).",
+    )
+
+    doctor = subparsers.add_parser(
+        "doctor", help="Check port availability, pricing freshness, and provider reachability."
+    )
+    doctor.add_argument(
+        "--config", default="inferrail.yaml", help="Path to inferrail.yaml (default: %(default)s)"
+    )
+
     return parser
 
 
@@ -336,11 +368,46 @@ def _resolve_receipts_path(args: argparse.Namespace) -> Path | None:
     return Path(config.receipts.path)
 
 
+@dataclass(frozen=True)
+class _AppModePaths:
+    app_data_dir: Path
+    receipts: Path
+    budgets: Path
+    outcomes: Path
+    token_file: Path
+
+
+def _apply_app_mode(config: InferrailConfig) -> tuple[InferrailConfig, _AppModePaths]:
+    """`--app-mode` relocates receipts/budgets under the OS app-data
+    directory and forces `receipts.sink: sqlite` /
+    `budgets.enabled: true`, regardless of what `inferrail.yaml` says —
+    see docs/adr/0016-local-control-api.md. Providers/routes/telemetry
+    are untouched: app-mode is about *where local data lives and how
+    it's exposed*, not which upstream providers are configured.
+    """
+    app_data = ensure_app_data_dir()
+    paths = _AppModePaths(
+        app_data_dir=app_data,
+        receipts=app_data / "receipts.db",
+        budgets=app_data / "budgets.db",
+        outcomes=app_data / "work-outcomes.jsonl",
+        token_file=app_data / "local-api-token",
+    )
+    config.receipts = ReceiptsConfig(sink="sqlite", path=str(paths.receipts))
+    config.budgets = BudgetsConfig(enabled=True, path=str(paths.budgets))
+    return config, paths
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from inferrail.gateway.app import create_app
 
+    if args.quickstart and args.app_mode:
+        print("error: --quickstart and --app-mode are not combinable", file=sys.stderr)
+        return 1
+
+    app_mode_paths = None
     try:
         if args.quickstart:
             print("No inferrail.yaml used — running with quickstart defaults:")
@@ -353,10 +420,25 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             config = build_quickstart_config()
         else:
             config = load_config(args.config)
-        app = create_app(config)
+        if args.app_mode:
+            config, app_mode_paths = _apply_app_mode(config)
+        app = create_app(
+            config,
+            app_mode=args.app_mode,
+            local_outcomes_path=app_mode_paths.outcomes if app_mode_paths else None,
+        )
     except ConfigurationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if app_mode_paths is not None:
+        print(f"App-mode data directory: {app_mode_paths.app_data_dir}")
+        print(f"  receipts: {app_mode_paths.receipts}")
+        print(f"  budgets:  {app_mode_paths.budgets}")
+        print(f"  outcomes: {app_mode_paths.outcomes}")
+        print(f"Local control API token (also saved at {app_mode_paths.token_file}):")
+        print(f"  {app.state.local_api_token}")
+        print()
 
     host = args.host or config.server.host
     port = args.port or config.server.port
@@ -497,6 +579,17 @@ def _cmd_try(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_pricing(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.pricing_command == "update":
+        return run_pricing_update()
+    parser.error(f"unknown pricing subcommand: {args.pricing_command}")
+    return 1
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    return run_doctor(args.config)
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     # find_dotenv(usecwd=True): without it, python-dotenv locates .env
@@ -532,6 +625,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_receipts(args, parser)
     if args.command == "budget":
         return _cmd_budget(args, parser)
+    if args.command == "pricing":
+        return _cmd_pricing(args, parser)
+    if args.command == "doctor":
+        return _cmd_doctor(args)
 
     parser.print_help()
     return 1

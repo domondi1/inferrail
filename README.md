@@ -542,9 +542,10 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - Customer-defined `work_id` attribution, append-only outcome declarations,
   and derived Work Economics via `inferrail work outcome`, `inferrail work
   <work-id>`, and `inferrail work --all`
-- CLI: `inferrail demo`, `try`, `serve` (`--quickstart`), `config check`,
-  `report`, `transaction`, `work`, `receipts import|export`,
-  `budget set|list|rm`
+- CLI: `inferrail demo`, `try`, `serve` (`--quickstart`/`--app-mode`),
+  `config check`, `report`, `transaction`, `work`,
+  `receipts import|export`, `budget set|list|rm`, `pricing update`,
+  `doctor`
 - Budget enforcement (opt-in, requires `receipts.sink: sqlite`):
   `global`/`project`/`work_id`-scoped spend caps over a `per_work`/
   `daily`/`monthly` window, in `warn` or `block` mode. A `block` budget
@@ -552,6 +553,15 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
   using a conservative upper-bound cost estimate; the block is still
   visible in `inferrail report`. See
   [docs/adr/0015](docs/adr/0015-budget-enforcement.md).
+- `inferrail serve --app-mode`: relocates receipts/budgets under the OS
+  app-data directory and mounts a local control API (`/v1/local/*` —
+  paginated receipts, work rollups, budgets CRUD, an SSE receipt tail)
+  guarded by a mandatory per-install token — for the not-yet-built
+  desktop dashboard, not for humans directly. See
+  [docs/adr/0016](docs/adr/0016-local-control-api.md).
+- `inferrail doctor` (port, pricing-catalog freshness, provider
+  reachability) and `inferrail pricing update` (reports built-in
+  catalog age; never fetches prices over the network).
 
 ## Not yet
 

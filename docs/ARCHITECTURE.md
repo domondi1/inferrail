@@ -7,6 +7,8 @@ src/inferrail/
 ├── config/      YAML + env -> validated InferrailConfig (pydantic), plus
 │                an in-memory quickstart config builder (same type/validation)
 ├── errors/      Small internal exception hierarchy
+├── appdata.py   OS-conventional per-user app-data directory (stdlib
+│                only) — used only by `inferrail serve --app-mode`
 ├── providers/   Provider protocols + OpenAI-compatible and
 │                Anthropic-compatible adapters (parallel, not shared —
 │                see docs/adr/0014) + registry
@@ -18,17 +20,22 @@ src/inferrail/
 ├── budgets/     Budget schema, SQLite store, pre-flight/post-flight
 │                enforcement (see docs/adr/0015) — depends on receipts
 │                (ReceiptsStore.query()) and pricing (PricingResolver)
+├── localapi/    `/v1/local/*` — the local control API (see
+│                docs/adr/0016), mounted only under `--app-mode`;
+│                depends on receipts, budgets, and work (all read-only
+│                or CRUD reuse of those packages' own domain models)
 ├── gateway/     FastAPI app: HTTP schemas + execution engine for both
 │                /v1/chat/completions and /v1/messages, routes,
-│                attribution header parsing
+│                attribution header parsing; mounts `localapi.routes`
+│                when `create_app(..., app_mode=True)`
 ├── transactions/ TaskTransaction schema + read-side builder over receipts
 ├── tracking.py  Client-side helper: ambient task_id propagation
 │                (contextvars + an httpx event hook) for callers of the
 │                gateway — experimental, see docs/adr/0009
-└── cli/         `inferrail serve` (+ `--quickstart`), `inferrail config
-                 check`, `inferrail report`, `inferrail transaction`,
-                 `inferrail demo`, `inferrail try`, `inferrail budget
-                 set|list|rm`
+└── cli/         `inferrail serve` (+ `--quickstart`/`--app-mode`),
+                 `inferrail config check`, `report`, `transaction`,
+                 `demo`, `try`, `budget set|list|rm`, `pricing update`,
+                 `doctor`
 ```
 
 Each package has one job and depends only on the ones below it in this
@@ -328,6 +335,27 @@ receipt is emitted) adds a `budget_overrun_usd` attribute when the
 architectural layer between the engines and receipts/pricing — both take
 the same `ReceiptsStore`/`PricingResolver` the engines already hold, so
 there's exactly one code path that resolves a price or queries spend.
+
+## The local control API boundary
+
+See `docs/adr/0016-local-control-api.md` — including why "local
+control API" (MISSION.md's own phrase) is deliberately not called
+"control plane": that word is reserved by the ADR just below this one
+for a *future hosted*, cross-fleet capability, and this is the opposite
+— a second, localhost-only HTTP surface over one process's own SQLite
+files. `inferrail serve --app-mode` forces `receipts.sink: sqlite` and
+`budgets.enabled: true`, relocates both under `appdata.app_data_dir()`,
+generates a mandatory per-install token
+(`localapi.token.ensure_local_api_token`), and mounts
+`localapi.routes.router` (`/v1/local/receipts`, `/work`, `/budgets`,
+`/stream`) alongside the normal `/v1/chat/completions`/`/v1/messages`
+routes on the same `FastAPI` app. Every route reuses the same
+`ReceiptsStore`/`BudgetStore` instances `create_app` already built for
+the engines/enforcer — never a second connection or a second source of
+truth for the same file. `/v1/local/stream` is a poll loop over
+`ReceiptsStore.query(since=...)` (SQLite has no pub-sub), stopping on
+`Request.is_disconnected()`, the same discipline the inference
+engines' own streaming already follows.
 
 ## OSS data plane vs. future hosted control plane
 
