@@ -20,7 +20,7 @@
     .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); }
     .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
     .wordmark { font-size:clamp(16px,1.4vw,22px); }
-    .nav { display:flex; gap:clamp(18px,2.8vw,42px); font-size:clamp(13px,1vw,16px); }
+    .nav { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:clamp(10px,2.8vw,42px); font-size:clamp(13px,1vw,16px); }
     .nav a { text-underline-offset:4px; }
     .hero { padding:clamp(64px,7vw,120px) 0 clamp(48px,5vw,84px); }
     h1,h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(40px,8.4vw,138px); font-weight:700; line-height:.94; letter-spacing:-.02em; text-transform:uppercase; }
@@ -45,7 +45,7 @@
     .stamp { display:inline-block; margin:clamp(20px,2vw,30px) 0 clamp(11px,1vw,16px); padding:5px 9px; color:var(--stamp); border:1.5px solid var(--stamp); font-size:clamp(11px,.75vw,13px); transform:rotate(-1.5deg); }
     .receipt-note { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); line-height:1.45; }
     .install-wrap { margin-top:clamp(20px,2vw,30px); }
-    .install { padding:clamp(10px,1vw,15px); background:var(--ink); color:var(--paper); }
+    .install { padding:clamp(10px,1vw,15px); background:var(--ink); color:var(--paper); overflow-x:auto; }
     .install code { font-family:inherit; font-size:clamp(13.5px,1.15vw,19px); white-space:nowrap; }
     .copy { padding:5px 8px; color:var(--paper); background:transparent; border:1px solid var(--paper); font:500 clamp(10px,.7vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
     .install-note { margin:9px 0 0; color:var(--ink-3); font-size:clamp(10px,.75vw,12px); }
@@ -65,7 +65,7 @@
     .agents-copy { max-width:56ch; margin:clamp(12px,1.4vw,18px) 0 0; color:var(--ink-2); font-size:clamp(14px,1.05vw,17px); line-height:1.5; }
     .agents-card .button { margin-top:clamp(18px,2vw,26px); padding:clamp(11px,1vw,15px) clamp(22px,2vw,30px); font-size:clamp(13px,1vw,15px); }
     footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    footer nav { display:flex; gap:18px; }
+    footer nav { display:flex; flex-wrap:wrap; gap:18px; }
     @media (max-width:600px) { .masthead{min-height:58px}.receipt{max-width:none;box-shadow:4px 4px 0 rgba(20,32,27,.06)}footer{display:block}footer nav{margin-top:10px} }
     @media (prefers-reduced-motion:reduce) { html{scroll-behavior:auto}.receipt > *{opacity:1;animation:none} }
   </style>
