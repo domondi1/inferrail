@@ -52,14 +52,16 @@ def service_module(monkeypatch, tmp_path):
     monkeypatch.setenv("AP_API_KEYS", "key-a,key-b")
     monkeypatch.setenv("AP_RATE_LIMIT_MAX_REQUESTS", "1000")
     monkeypatch.setenv("AP_RATE_LIMIT_WINDOW_SECONDS", "60")
-    # "auth"/"tenant_store" are unique names in this repo -- registering
-    # them under their own plain names is safe and lets service.py's
-    # internal `from auth import ...` / `from tenant_store import ...`
-    # resolve correctly without hosted/ap_exceptions ever touching
-    # sys.path. "service" is deliberately NOT reused as the registration
-    # name -- that's the exact name the collision above is about.
+    # "auth"/"tenant_store"/"sandbox" are unique names in this repo --
+    # registering them under their own plain names is safe and lets
+    # service.py's internal `from auth import ...` /
+    # `from tenant_store import ...` / `from sandbox import ...` resolve
+    # correctly without hosted/ap_exceptions ever touching sys.path.
+    # "service" is deliberately NOT reused as the registration name --
+    # that's the exact name the collision above is about.
     _load("tenant_store", "tenant_store.py")
     _load("auth", "auth.py")
+    _load("sandbox", "sandbox.py")
     return _load("ap_exceptions_service_under_test", "service.py")
 
 
@@ -288,14 +290,18 @@ def test_reap_endpoint_transitions_a_stale_decision(client):
     time.sleep(0.05)
     reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
     assert reap.status_code == 200
-    assert reap.json() == {"work_id": "WORK-8", "reaped": True, "kind": "reaped"}
+    assert reap.json()["work_id"] == "WORK-8"
+    assert reap.json()["reaped"] is True
+    assert reap.json()["kind"] == "reaped"
 
     after = client.get("/v1/decisions/WORK-8", headers=_auth())
     assert after.json()["status"] == "awaiting_human_review"
 
     # Idempotent: a repeat reap for the same work_id is a no-op.
     second_reap = client.post("/v1/decisions/WORK-8/reap", headers=_auth())
-    assert second_reap.json() == {"work_id": "WORK-8", "reaped": False, "kind": None}
+    assert second_reap.json()["work_id"] == "WORK-8"
+    assert second_reap.json()["reaped"] is False
+    assert second_reap.json()["kind"] is None
 
 
 def test_reap_endpoint_reconciles_when_a_real_attempt_already_exists(app, tmp_path):
@@ -426,6 +432,229 @@ def test_retry_attempt_failed_validation_transitions_to_awaiting_human_review(cl
     )
     after = client.get("/v1/decisions/WORK-10", headers=_auth())
     assert after.json()["status"] == "awaiting_human_review"
+
+
+def test_sandbox_issuance_returns_usable_key_and_is_stamped(client):
+    resp = client.post("/v1/sandbox")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api_key"].startswith("sbx_")
+    assert body["tenant_id"].startswith("sbx_")
+    assert body["sandbox"] is True
+    assert body["sandbox_notice"]  # non-empty synthetic-data-only notice
+    assert body["max_rows_per_tenant"] > 0
+    assert body["expires_at"]
+
+
+def test_sandbox_key_runs_the_full_walkthrough_and_every_response_is_stamped(client):
+    """The v0.2.1 walkthrough: get key -> create decision -> record
+    retry attempt -> read report, entirely with a self-serve key and no
+    operator-provisioned AP_API_KEYS entry involved."""
+    key = client.post("/v1/sandbox").json()["api_key"]
+    headers = _auth(key)
+
+    created = client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "SANDBOX-DEMO-1", "checkpoint_attempt_id": "att-1",
+            "failure_type": "low_confidence", "confidence": 0.6,
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200
+    assert created.json()["sandbox"] is True
+    assert created.json()["status"] == "retry_in_progress"
+
+    retry = client.post(
+        "/v1/decisions/SANDBOX-DEMO-1/retry-attempts",
+        json={
+            "attempt_id": "ret-1", "status": "success", "cost_usd": "0.05",
+            "validation_passed": True, "validator_version": "ap.validator/v1",
+        },
+        headers=headers,
+    )
+    assert retry.status_code == 200
+    assert retry.json()["sandbox"] is True
+
+    report = client.get("/v1/report", headers=headers)
+    assert report.status_code == 200
+    assert report.json()["sandbox"] is True
+    row = next(r for r in report.json()["rows"] if r["work_id"] == "SANDBOX-DEMO-1")
+    assert row["status"] == "retry_resolved"
+
+
+def test_operator_tenant_response_is_stamped_sandbox_false(client):
+    ok = client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "OPERATOR-STAMP-1", "checkpoint_attempt_id": "att-1",
+            "failure_type": "low_confidence", "confidence": 0.6,
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=_auth("key-a"),
+    )
+    assert ok.json()["sandbox"] is False
+    assert ok.json()["sandbox_notice"] is None
+
+
+def test_two_sandbox_keys_are_isolated_from_each_other_and_from_operator_tenants(client):
+    key_1 = client.post("/v1/sandbox").json()["api_key"]
+    key_2 = client.post("/v1/sandbox").json()["api_key"]
+
+    client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "SHARED-SANDBOX-ID", "checkpoint_attempt_id": "att-1",
+            "failure_type": "low_confidence", "confidence": 0.6,
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=_auth(key_1),
+    )
+    assert client.get("/v1/decisions/SHARED-SANDBOX-ID", headers=_auth(key_2)).status_code == 404
+    assert client.get("/v1/decisions/SHARED-SANDBOX-ID", headers=_auth("key-a")).status_code == 404
+    assert client.get("/v1/decisions/SHARED-SANDBOX-ID", headers=_auth(key_1)).status_code == 200
+
+
+def test_sandbox_key_expires_and_fails_cleanly_with_a_helpful_error(
+    service_module, tmp_path, monkeypatch
+):
+    del service_module  # re-loaded fresh below with a near-zero TTL in effect
+    monkeypatch.setenv("AP_SANDBOX_TTL_SECONDS", "0.01")
+    short_ttl_module = _load("ap_exceptions_service_under_test_short_ttl", "service.py")
+    from fastapi.testclient import TestClient
+
+    short_ttl_client = TestClient(short_ttl_module.create_app(tmp_path / "data"))
+
+    key = short_ttl_client.post("/v1/sandbox").json()["api_key"]
+
+    import time
+
+    time.sleep(0.05)
+    resp = short_ttl_client.get("/v1/decisions/ANYTHING", headers=_auth(key))
+    assert resp.status_code == 401
+    assert "expired" in resp.json()["detail"].lower()
+    assert "/v1/sandbox" in resp.json()["detail"]
+
+
+def test_sandbox_issuance_throttled_per_ip(service_module, tmp_path, monkeypatch):
+    del service_module
+    monkeypatch.setenv("AP_SANDBOX_ISSUE_MAX_PER_IP", "2")
+    monkeypatch.setenv("AP_SANDBOX_ISSUE_WINDOW_SECONDS", "60")
+    throttled_module = _load("ap_exceptions_service_under_test_throttled", "service.py")
+    from fastapi.testclient import TestClient
+
+    throttled_client = TestClient(throttled_module.create_app(tmp_path / "data"))
+
+    for _ in range(2):
+        assert throttled_client.post("/v1/sandbox").status_code == 200
+    limited = throttled_client.post("/v1/sandbox")
+    assert limited.status_code == 429
+    assert "sandbox key issuance limit" in limited.json()["detail"]
+
+
+def test_sandbox_global_tenant_ceiling_returns_503(service_module, tmp_path, monkeypatch):
+    del service_module
+    monkeypatch.setenv("AP_SANDBOX_MAX_LIVE_TENANTS", "1")
+    monkeypatch.setenv("AP_SANDBOX_ISSUE_MAX_PER_IP", "1000")
+    capped_module = _load("ap_exceptions_service_under_test_capped", "service.py")
+    from fastapi.testclient import TestClient
+
+    capped_client = TestClient(capped_module.create_app(tmp_path / "data"))
+
+    assert capped_client.post("/v1/sandbox").status_code == 200
+    full = capped_client.post("/v1/sandbox")
+    assert full.status_code == 503
+    assert "capacity" in full.json()["detail"]
+
+
+def test_sandbox_kill_switch_disables_issuance(service_module, tmp_path, monkeypatch):
+    del service_module
+    monkeypatch.setenv("AP_SANDBOX_ENABLED", "false")
+    disabled_module = _load("ap_exceptions_service_under_test_disabled", "service.py")
+    from fastapi.testclient import TestClient
+
+    disabled_client = TestClient(disabled_module.create_app(tmp_path / "data"))
+
+    resp = disabled_client.post("/v1/sandbox")
+    assert resp.status_code == 503
+    assert "disabled" in resp.json()["detail"]
+
+
+def test_sandbox_row_cap_blocks_further_decisions(service_module, tmp_path, monkeypatch):
+    del service_module
+    monkeypatch.setenv("AP_SANDBOX_MAX_ROWS_PER_TENANT", "2")
+    capped_module = _load("ap_exceptions_service_under_test_row_capped", "service.py")
+    from fastapi.testclient import TestClient
+
+    capped_client = TestClient(capped_module.create_app(tmp_path / "data"))
+    key = capped_client.post("/v1/sandbox").json()["api_key"]
+
+    for i in range(2):
+        resp = capped_client.post(
+            "/v1/decisions",
+            json={
+                "work_id": f"ROW-CAP-{i}", "checkpoint_attempt_id": f"att-{i}",
+                "failure_type": "low_confidence", "confidence": 0.6,
+                "policy_config": _POLICY_CONFIG,
+            },
+            headers=_auth(key),
+        )
+        assert resp.status_code == 200
+
+    over_cap = capped_client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "ROW-CAP-OVER", "checkpoint_attempt_id": "att-over",
+            "failure_type": "low_confidence", "confidence": 0.6,
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=_auth(key),
+    )
+    assert over_cap.status_code == 429
+    assert "row cap" in over_cap.json()["detail"]
+
+    # A repeat of an already-created work_id is still an idempotent
+    # replay, never blocked by the row cap -- it isn't a new row.
+    replay = capped_client.post(
+        "/v1/decisions",
+        json={
+            "work_id": "ROW-CAP-0", "checkpoint_attempt_id": "att-0",
+            "failure_type": "low_confidence", "confidence": 0.6,
+            "policy_config": _POLICY_CONFIG,
+        },
+        headers=_auth(key),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+
+
+def test_sandbox_key_never_authenticates_as_an_operator_key_and_vice_versa(client):
+    sandbox_key = client.post("/v1/sandbox").json()["api_key"]
+    # An operator key is never treated as a sandbox key just because it
+    # doesn't match AP_API_KEYS -- it still gets the plain "invalid API
+    # key" 401, not the sandbox "expired" branch.
+    resp = client.get("/v1/decisions/X", headers=_auth("not-configured-and-not-sandbox"))
+    assert resp.status_code == 401
+    assert "invalid api key" in resp.json()["detail"].lower()
+    # A real sandbox key works.
+    assert client.get("/v1/decisions/X", headers=_auth(sandbox_key)).status_code == 404
+
+
+def test_oversized_request_body_is_rejected_with_413(service_module, tmp_path, monkeypatch):
+    del service_module
+    monkeypatch.setenv("AP_MAX_REQUEST_BODY_BYTES", "100")
+    small_limit_module = _load("ap_exceptions_service_under_test_small_body", "service.py")
+    from fastapi.testclient import TestClient
+
+    small_limit_client = TestClient(small_limit_module.create_app(tmp_path / "data"))
+    oversized_body = {
+        "work_id": "OVERSIZED", "checkpoint_attempt_id": "att-1",
+        "failure_type": "low_confidence" * 20, "confidence": 0.6,
+        "policy_config": _POLICY_CONFIG,
+    }
+    resp = small_limit_client.post("/v1/decisions", json=oversized_body, headers=_auth("key-a"))
+    assert resp.status_code == 413
 
 
 def _load_hosted_client_example():

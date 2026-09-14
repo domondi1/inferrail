@@ -55,7 +55,7 @@
 
 ## Hosted services
 
-- [Inferrail AP Exceptions](https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md): the optional hosted counterpart to AP invoice-exception recovery — authenticated decision/persistence/reporting over HTTP, isolated per API key. Not paid/x402-gated. Never executes a retry itself.
+- [Inferrail AP Exceptions](https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md): the optional hosted counterpart to AP invoice-exception recovery — authenticated decision/persistence/reporting over HTTP, isolated per API key. Not paid/x402-gated. Never executes a retry itself. `POST /v1/sandbox` (no auth) self-issues a short-lived, isolated, synthetic-data-only sandbox key with no account needed — see the README's "Try it yourself" walkthrough.
 
 ## Paid capabilities
 

@@ -7,21 +7,22 @@ for the public contract and
 [`docs/adr/0004-data-plane-control-plane-boundary.md`](../../docs/adr/0004-data-plane-control-plane-boundary.md)
 for why this lives outside `src/inferrail`.
 
-**Hosted demonstration, not a durable service and not a usable public
-demo of the workflow itself:** `https://inferrail-ap-exceptions.onrender.com`
-runs on Render's free tier with no persistent disk — every record on
-it is synthetic and disposable, gone on the next restart or idle
-spin-down, and it is never used for real customer data. Without a key,
-`GET /health` is the only reachable route — that confirms the process
-is up, nothing more; every other route needs an `Authorization: Bearer
-<api-key>` header this demo does not distribute publicly. The free
-tier also spins down when idle, so the first request after a quiet
-period may take a minute or longer to wake it (no guaranteed upper
-bound). **To actually try the decide → retry → validate →
-recover-or-review → report workflow, run `inferrail ap demo`** (see
-the package README) — it exercises the real decision engine locally,
-no key or network call required. Deploy your own hosted instance
+**Hosted demonstration, not a durable service:**
+`https://inferrail-ap-exceptions.onrender.com` runs on Render's free
+tier with no persistent disk — every record on it is synthetic and
+disposable, gone on the next restart or idle spin-down, and it is never
+used for real customer data. The free tier also spins down when idle,
+so the first request after a quiet period may take a minute or longer
+to wake it (no guaranteed upper bound). Deploy your own hosted instance
 (below) for real, durable, authenticated use.
+
+**No account needed to run the real hosted workflow yourself.**
+`POST /v1/sandbox` (no auth) issues you your own short-lived, isolated
+API key — no signup, no waiting on a human. See "Try it yourself: the
+self-serve sandbox" below for the exact four commands. `inferrail ap
+demo` (see the package README) is still the fastest way to exercise the
+decision engine with zero key and zero network call, if that's all you
+need.
 
 **This service never executes a retry itself.** It runs the same
 `inferrail.ap.policy.recommend` policy evaluation and
@@ -70,9 +71,94 @@ curl -X POST http://127.0.0.1:8422/v1/decisions \
   }'
 ```
 
+## Try it yourself: the self-serve sandbox
+
+No account, no self-hosting, no human on the other end — run this against
+the live demo instance right now. Every response is a real decision
+running through the real policy engine, tagged `"sandbox": true` and
+scoped to a tenant only you can see.
+
+```bash
+# 1. Get a sandbox key (no account needed)
+curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox
+```
+
+Copy the `api_key` value from the response, then paste it here (the
+sandbox tenant is scoped entirely to this one key — nothing else to
+configure):
+
+```bash
+export API_KEY=sbx_paste-your-key-here
+```
+
+```bash
+# 2. Create a decision
+curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "work_id": "SANDBOX-DEMO-1",
+    "checkpoint_attempt_id": "SANDBOX-DEMO-1-checkpoint",
+    "failure_type": "low_confidence",
+    "confidence": 0.6,
+    "cost_so_far_usd": "0.10",
+    "policy_config": {
+      "eligible_failure_types": ["low_confidence", "validation_check_failed"],
+      "retry_floor": 0.5,
+      "human_review_threshold": 0.75,
+      "max_retry_cost_usd": "1.00",
+      "decision_deadline_seconds": 86400
+    }
+  }'
+```
+
+```bash
+# 3. Record a retry attempt (as if your own RetryAdapter had just run it)
+curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions/SANDBOX-DEMO-1/retry-attempts \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "attempt_id": "SANDBOX-DEMO-1-attempt-1",
+    "status": "success",
+    "cost_usd": "0.06",
+    "validation_passed": true,
+    "validator_version": "ap.validator/v1"
+  }'
+```
+
+```bash
+# 4. Read your own report
+curl -s https://inferrail-ap-exceptions.onrender.com/v1/report \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+**What to expect:** step 4's `rows` includes `work_id: "SANDBOX-DEMO-1"`
+with `status: "retry_resolved"` and `observed_cost_complete: true`.
+Every response above carries `"sandbox": true` and a `sandbox_notice`
+field.
+
+**Guardrails, so this stays usable for everyone:** a sandbox key expires
+(`expires_at` in step 1's response — issuing a new one after expiry
+returns a clear `401` naming the expiry time, not a generic "invalid
+key" error), is capped at a small number of decisions per key, is
+rate-limited per key exactly like an operator key, and issuance itself
+is throttled per IP address. If step 1 returns `503`, the sandbox is
+temporarily at capacity or has been disabled by the operator — try again
+shortly, or self-host your own instance (below) for unthrottled,
+durable use. See "Environment variables" for the exact defaults.
+
+**Cold start:** if the demo instance has been idle, step 1 (or any
+step) may take up to a minute or more to respond the first time —
+Render's free tier spins the process down when idle. This is not a bug;
+the second request is fast.
+
 ## API surface
 
-All routes except `/health` require `Authorization: Bearer <api-key>`.
+All routes except `/health` and `POST /v1/sandbox` require
+`Authorization: Bearer <api-key>` — a self-serve sandbox key from
+`POST /v1/sandbox` works identically to an operator-provisioned one on
+every route below, scoped to its own isolated, capped, auto-expiring
+tenant.
+
+- `POST /v1/sandbox` — no auth. Issues `{api_key, tenant_id, expires_at,
+  ttl_seconds, max_rows_per_tenant, rate_limit}` for a brand-new,
+  isolated sandbox tenant. See "Try it yourself" above.
 
 - `GET /health` — liveness check, no auth required.
 - `POST /v1/decisions` — decide retry vs. human review for one case.
@@ -161,6 +247,15 @@ stuck indefinitely.
 | `AP_RATE_LIMIT_WINDOW_SECONDS` | no | `60` | Rate-limit window, in seconds. |
 | `AP_REQUEST_TIMEOUT_SECONDS` | no | `10` | Per-request processing timeout; exceeding it returns `504`. |
 | `AP_MAX_REPORT_ROWS` | no | `500` | Max rows `GET /v1/report` returns in one call. |
+| `AP_MAX_REQUEST_BODY_BYTES` | no | `65536` | Abuse guard: any request (sandbox or operator) with a declared `Content-Length` above this is rejected `413` before its body is parsed. |
+| `AP_SANDBOX_ENABLED` | no | `true` | Kill switch. Set to `false` to make `POST /v1/sandbox` refuse all new issuance (`503`) — existing sandbox tenants keep working until they expire. |
+| `AP_SANDBOX_TTL_SECONDS` | no | `1800` | How long a sandbox key stays valid after issuance. |
+| `AP_SANDBOX_MAX_LIVE_TENANTS` | no | `200` | Global ceiling on not-yet-expired sandbox tenants at once; issuance returns `503` above it. |
+| `AP_SANDBOX_MAX_ROWS_PER_TENANT` | no | `20` | Max distinct `work_id` decisions one sandbox tenant may create; `POST /v1/decisions` for a *new* `work_id` returns `429` above it (an idempotent replay of an existing `work_id` is never blocked). |
+| `AP_SANDBOX_ISSUE_MAX_PER_IP` | no | `5` | Max `POST /v1/sandbox` calls one IP address may make per `AP_SANDBOX_ISSUE_WINDOW_SECONDS`; `429` above it. |
+| `AP_SANDBOX_ISSUE_WINDOW_SECONDS` | no | `3600` | Window for the per-IP issuance throttle above. |
+| `AP_SANDBOX_PURGE_GRACE_SECONDS` | no | `300` | How long an expired sandbox tenant's record is kept (so a reused expired key gets a clear "expired" `401`, not "invalid") before it and its SQLite file are purged. |
+| `AP_SANDBOX_PURGE_INTERVAL_SECONDS` | no | `60` | How often a background task sweeps and purges expired sandbox tenants, independent of traffic. |
 
 ## Persistence
 
@@ -208,14 +303,23 @@ rolling back.
 
 ## Access, retention, and deletion
 
-- Access is controlled entirely by possession of a valid `AP_API_KEYS`
-  entry — there is no self-serve key issuance or per-key scoping beyond
-  tenant isolation in this release.
-- This service sets no automatic retention/expiry policy on its own —
-  data for a `work_id` persists until the tenant calls
+- Two ways to get a key: an operator adds one to `AP_API_KEYS` (durable,
+  no expiry, for real use), or anyone self-issues a sandbox key via
+  `POST /v1/sandbox` (no account, isolated, capped, and auto-expiring —
+  see "Try it yourself" above and `sandbox.py`). Both authenticate the
+  same way and get the same per-tenant isolation; a sandbox tenant is
+  simply bounded in size and lifetime and is labeled `sandbox: true` in
+  every response.
+- Operator-provisioned tenant data has no automatic retention/expiry
+  policy — it persists until the tenant calls
   `DELETE /v1/decisions/{work_id}`. Operators running this for a real
   customer should agree a retention period with them and enforce it
   operationally (a scheduled job calling `DELETE` on resolved,
   past-retention work_ids), matching the same procedural (not automatic)
   discipline the private repo's data-handling notes describe for the
   historical batch/analysis path.
+- Sandbox tenant data *is* automatically purged: `AP_SANDBOX_TTL_SECONDS`
+  after issuance, the key stops authenticating, and roughly
+  `AP_SANDBOX_PURGE_GRACE_SECONDS` after that its entire SQLite file is
+  deleted (a background sweep runs every `AP_SANDBOX_PURGE_INTERVAL_SECONDS`
+  regardless of traffic — see `sandbox.SandboxRegistry.purge_expired`).

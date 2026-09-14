@@ -54,6 +54,14 @@ class RateLimiter:
         self._window_seconds = window_seconds
         self._requests: dict[str, deque[float]] = defaultdict(deque)
 
+    @property
+    def max_requests(self) -> int:
+        return self._max_requests
+
+    @property
+    def window_seconds(self) -> float:
+        return self._window_seconds
+
     def check(self, tenant_id: str) -> None:
         now = time.monotonic()
         window = self._requests[tenant_id]

@@ -46,7 +46,10 @@ integration, and record the resulting cost and outcome.
 - **CLI:** `inferrail ap demo|report|outcome|batch`.
 - **Hosted API (optional):** `hosted/ap_exceptions/` — decision,
   persistence, and reporting only; retry execution always happens in
-  your own process.
+  your own process. Self-serve, no-account sandbox credentials
+  (isolated, capped, auto-expiring) are available via
+  `POST /v1/sandbox` on top of operator-provisioned keys — see
+  `hosted/ap_exceptions/README.md` and `docs/adr/0012`.
 - **Full contract:** `docs/capabilities/ap-invoice-exception-recovery.md`
   — supported failure types, retry method, validation contract,
   human-review handoff, versioned policy config, identifiers,

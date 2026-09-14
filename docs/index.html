@@ -46,7 +46,7 @@
     .receipt-note { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); line-height:1.45; }
     .install-wrap { margin-top:clamp(20px,2vw,30px); }
     .install { padding:clamp(10px,1vw,15px); background:var(--ink); color:var(--paper); overflow-x:auto; }
-    .install code { font-family:inherit; font-size:clamp(13.5px,1.15vw,19px); white-space:nowrap; }
+    .install code { font-family:inherit; font-size:clamp(13.5px,1.15vw,19px); white-space:pre; }
     .copy { padding:5px 8px; color:var(--paper); background:transparent; border:1px solid var(--paper); font:500 clamp(10px,.7vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
     .install-note { margin:9px 0 0; color:var(--ink-3); font-size:clamp(10px,.75vw,12px); }
     .primary-action { display:grid; justify-items:center; gap:16px; margin-top:clamp(34px,4vw,62px); text-align:center; }
@@ -82,7 +82,7 @@
         <div class="receipt-row"><span>work_id</span><span>INV-90210</span></div><div class="receipt-row"><span>failure_type</span><span>low_confidence</span></div><div class="receipt-row"><span>recommended_action</span><span>retry</span></div><div class="receipt-row"><span>retry_status</span><span>success</span></div><div class="receipt-row muted"><span>invoice content stored</span><span>none</span></div>
         <div class="solid"></div><div class="receipt-total"><span>Incremental cost</span><span>$0.06</span></div><div class="stamp receipt-stamp">Data stays in your process</div>
         <p class="receipt-note">Invoice content and provider credentials never reach an Inferrail-operated service — only identifiers, confidence/validation results, and cost figures.</p><div class="dash"></div>
-        <div class="install-wrap"><div class="install"><code>$ pip install inferrail &amp;&amp; inferrail ap demo</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">fixture-based · zero-key · runs locally · Apache-2.0</p></div>
+        <div class="install-wrap"><div class="install hero-install"><code>$ pip install inferrail &amp;&amp; inferrail ap demo</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div><p class="install-note">fixture-based · zero-key · runs locally · Apache-2.0</p></div>
       </article>
       <div class="primary-action"><a class="button button-dark" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a><a class="button button-ghost" href="https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery">See the examples</a><button class="button button-ghost" id="try-button" type="button">Copy the local demo command</button><p class="action-hint" id="action-hint">Then run it locally: inferrail ap demo</p></div>
     </section>
@@ -97,12 +97,39 @@
     </section>
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="agents wrap" id="ap-hosted" aria-labelledby="ap-hosted-title">
-      <h2 id="ap-hosted-title">A hosted demonstration instance exists, plus deploy-your-own instructions.<span>Not testnet — but the demo is Render's free tier: no persistent disk, synthetic data only.</span></h2>
+      <h2 id="ap-hosted-title">Run the real hosted workflow yourself — no account needed.<span>Not testnet — the demo is Render's free tier: no persistent disk, synthetic data only.</span></h2>
       <div class="agents-card">
-        <p class="agents-eyebrow">Hosted demonstration</p>
-        <h3>Proof the hosted API is real and reachable</h3>
-        <p class="agents-copy">A demo instance runs at <code>inferrail-ap-exceptions.onrender.com</code> — Render's free tier, with no persistent disk: every record on it is synthetic and disposable, gone on the next restart or idle spin-down. Not a durable service and never used for real customer data. Visitors without a key can only reach <code>GET /health</code> — that confirms the service is up, not the product workflow. Every other route requires an <code>Authorization: Bearer &lt;api-key&gt;</code> header this demo does not hand out publicly; self-host your own instance (below) for real access. <strong>To actually try the decide → retry → validate → recover-or-review → report workflow yourself, run the local demo above</strong> (<code>pip install inferrail &amp;&amp; inferrail ap demo</code>) — it exercises the real decision engine, no key or network call required.</p>
-        <div class="install-wrap"><div class="install"><code>$ curl https://inferrail-ap-exceptions.onrender.com/health</code></div><p class="install-note">unauthenticated liveness check only · the instance may take a minute or longer to wake if it's been idle</p></div>
+        <p class="agents-eyebrow">Self-serve sandbox</p>
+        <h3>Get your own key and run it — four commands, no signup</h3>
+        <p class="agents-copy">A demo instance runs at <code>inferrail-ap-exceptions.onrender.com</code> — Render's free tier, with no persistent disk: every record on it is synthetic and disposable, gone on the next restart or idle spin-down, never used for real customer data. <code>POST /v1/sandbox</code> issues you your own short-lived, isolated API key — no account, no human in the loop. Run the four commands below, unmodified, from any machine with <code>curl</code>. Every response is tagged <code>"sandbox": true</code>; the key expires, is capped in size, and is rate-limited. <strong>Prefer zero network calls?</strong> <code>pip install inferrail &amp;&amp; inferrail ap demo</code> runs the same decision engine locally instead.</p>
+        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox</code><button class="copy" type="button" aria-label="Copy get-key command">Copy</button></div><p class="install-note">1. get a sandbox key · no account needed · the instance may take a minute to wake if it's been idle</p></div>
+        <div class="install-wrap"><div class="install"><code>export API_KEY=sbx_paste-your-key-here</code><button class="copy" type="button" aria-label="Copy export-key command">Copy</button></div><p class="install-note">paste the "api_key" value from step 1's response above</p></div>
+        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "work_id": "SANDBOX-DEMO-1",
+    "checkpoint_attempt_id": "SANDBOX-DEMO-1-checkpoint",
+    "failure_type": "low_confidence",
+    "confidence": 0.6,
+    "cost_so_far_usd": "0.10",
+    "policy_config": {
+      "eligible_failure_types": ["low_confidence", "validation_check_failed"],
+      "retry_floor": 0.5,
+      "human_review_threshold": 0.75,
+      "max_retry_cost_usd": "1.00",
+      "decision_deadline_seconds": 86400
+    }
+  }'</code><button class="copy" type="button" aria-label="Copy create-decision command">Copy</button></div><p class="install-note">2. create a decision — a real policy evaluation, not canned output</p></div>
+        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions/SANDBOX-DEMO-1/retry-attempts \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "attempt_id": "SANDBOX-DEMO-1-attempt-1",
+    "status": "success",
+    "cost_usd": "0.06",
+    "validation_passed": true,
+    "validator_version": "ap.validator/v1"
+  }'</code><button class="copy" type="button" aria-label="Copy record-retry command">Copy</button></div><p class="install-note">3. record a retry attempt, as your own RetryAdapter would</p></div>
+        <div class="install-wrap"><div class="install"><code>curl -s https://inferrail-ap-exceptions.onrender.com/v1/report \
+  -H "Authorization: Bearer $API_KEY"</code><button class="copy" type="button" aria-label="Copy report command">Copy</button></div><p class="install-note">4. read your own report back — expect retry_resolved, observed_cost_complete: true</p></div>
+        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md#try-it-yourself-the-self-serve-sandbox">Full walkthrough, guardrails, and error cases</a>
       </div>
       <div class="agents-card">
         <p class="agents-eyebrow">Self-hosted, optional</p>
@@ -138,9 +165,16 @@
   <script>
     (() => {
       const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
-      const install = 'pip install inferrail && inferrail ap demo'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint'); const copyButton = document.querySelector('.copy');
+      const install = 'pip install inferrail && inferrail ap demo'; const button = document.querySelector('#try-button'); const hint = document.querySelector('#action-hint');
       const copyInstall = async (trigger) => { try { await copy(install); trigger.textContent='Copied'; button.textContent='Copied — now run it in your own terminal'; hint.textContent='Fixture-based, zero-key. Then inspect it: inferrail ap report --db inferrail-ap-demo.sqlite3'; } catch { hint.textContent='Copy failed. Run this yourself: pip install inferrail && inferrail ap demo'; } };
-      button.addEventListener('click', () => copyInstall(button)); copyButton.addEventListener('click', () => copyInstall(copyButton));
+      button.addEventListener('click', () => copyInstall(button));
+      document.querySelectorAll('.install').forEach((box) => {
+        const code = box.querySelector('code'); const btn = box.querySelector('.copy');
+        if (!code || !btn) return;
+        if (box.classList.contains('hero-install')) { btn.addEventListener('click', () => copyInstall(btn)); return; }
+        const original = btn.textContent;
+        btn.addEventListener('click', async () => { try { await copy(code.textContent); btn.textContent='Copied'; setTimeout(() => { btn.textContent=original; }, 1600); } catch { btn.textContent='Copy failed'; } });
+      });
     })();
   </script>
 </body>
