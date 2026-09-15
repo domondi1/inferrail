@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { type CatalogFreshness, downloadReceiptsExport, getPricingFreshness } from "../api";
+import {
+  type CatalogFreshness,
+  downloadReceiptsExport,
+  getPricingFreshness,
+  getUsagePingStatus,
+  setUsagePingEnabled,
+  type UsagePingStatus,
+} from "../api";
 
 function CatalogRow({ c }: { c: CatalogFreshness }): JSX.Element {
   return (
@@ -20,13 +27,26 @@ function CatalogRow({ c }: { c: CatalogFreshness }): JSX.Element {
 export function Settings(): JSX.Element {
   const [catalogs, setCatalogs] = useState<CatalogFreshness[] | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [pingEnabled, setPingEnabled] = useState(false);
+  const [ping, setPing] = useState<UsagePingStatus | null>(null);
+  const [pingError, setPingError] = useState<string | null>(null);
 
   useEffect(() => {
     getPricingFreshness()
       .then(setCatalogs)
       .catch(() => setCatalogs([]));
+    getUsagePingStatus()
+      .then(setPing)
+      .catch(() => setPing(null));
   }, []);
+
+  async function onTogglePing(checked: boolean): Promise<void> {
+    setPingError(null);
+    try {
+      setPing(await setUsagePingEnabled(checked));
+    } catch {
+      setPingError("Could not update the usage ping setting.");
+    }
+  }
 
   async function onExport(): Promise<void> {
     setExportError(null);
@@ -77,22 +97,43 @@ export function Settings(): JSX.Element {
       </p>
 
       <h2 className="screen-title" style={{ fontSize: 18, marginTop: 32 }}>
-        Telemetry
+        Usage ping
       </h2>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
         <input
           type="checkbox"
-          checked={pingEnabled}
-          onChange={(e) => setPingEnabled(e.target.checked)}
-          disabled
+          checked={ping?.enabled ?? false}
+          onChange={(e) => void onTogglePing(e.target.checked)}
+          disabled={ping === null}
         />
         Send an anonymous opt-in usage ping
       </label>
-      <p className="receipt-attrs" style={{ marginTop: 4, maxWidth: "58ch" }}>
-        Disabled — no telemetry-ping mechanism exists in this codebase yet, so there is nothing to
-        opt into. This control is a placeholder for a future capability, not a working toggle;
-        nothing is ever sent today, regardless of this checkbox.
-      </p>
+      {ping && !ping.configured && (
+        <p className="receipt-attrs" style={{ marginTop: 4, maxWidth: "58ch" }}>
+          <strong>Not yet active</strong> — no collection endpoint is configured on this install,
+          so nothing is ever sent regardless of this toggle. The toggle itself still works and is
+          remembered.
+        </p>
+      )}
+      {ping && ping.configured && (
+        <p className="receipt-attrs" style={{ marginTop: 4, maxWidth: "58ch" }}>
+          {ping.enabled
+            ? "Active — four lifecycle events only (install, tool connected, first receipt, budget created); never a prompt, response, model name, cost, or anything about your traffic."
+            : "Off — the default. Nothing is ever sent unless you turn this on."}
+        </p>
+      )}
+      {pingError && (
+        <p style={{ color: "var(--stamp)", fontSize: 12, marginTop: 4 }}>{pingError}</p>
+      )}
+      {ping && (
+        <p className="receipt-attrs" style={{ marginTop: 8 }}>
+          Install id: <code>{ping.install_id}</code> ·{" "}
+          <a href={ping.privacy_url} target="_blank" rel="noreferrer">
+            exact payload and privacy details
+          </a>{" "}
+          · preview locally with <code>inferrail telemetry preview</code>.
+        </p>
+      )}
     </div>
   );
 }

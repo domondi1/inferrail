@@ -399,14 +399,37 @@ local control API when `--app-mode` is on — see
   server-side temp file); a real "Pricing catalog" freshness view
   (`GET /v1/local/pricing/freshness`, the same
   `cli.pricing.catalog_freshness` computation `inferrail pricing
-  update`/`doctor` already share — never a network fetch). **The
-  "opt-in usage ping" control is a deliberately disabled placeholder,
-  not a working toggle** — no telemetry-ping mechanism exists anywhere
-  in this codebase yet, and inventing one wasn't in scope for a
-  dashboard unit; the UI says so explicitly rather than pretending a
-  checkbox controls real behavior. See `PROGRESS.md`'s v0.4.0 unit 5
-  record for why this was flagged rather than either built or silently
-  omitted.
+  update`/`doctor` already share — never a network fetch); and a real
+  "Usage ping" toggle (`GET`/`POST /v1/local/usage-ping`) — see below.
+
+### Opt-in usage ping
+
+A real feature, not a placeholder (`src/inferrail/usage_ping/`,
+`docs/adr/0019-opt-in-usage-ping.md`, `docs/privacy/usage-ping.md`). Off
+by default, and inert with no `usage_ping.endpoint` configured in
+`inferrail.yaml` regardless of the toggle — Inferrail ships with no
+built-in default endpoint, so an install is never able to send anything
+until an operator explicitly configures one. Four lifecycle events only,
+each sent at most once per install: `first_run`, `tool_connected`,
+`first_receipt`, `budget_created`. Never a prompt, response, model name,
+cost, work_id, project name, or anything about actual traffic. Sending
+never blocks, slows, or can fail the gateway — it happens on a
+best-effort background thread with a short timeout, and any failure
+(offline, unreachable, timeout) is swallowed.
+
+Two ways to verify what would be sent without trusting this
+documentation: `inferrail telemetry preview` (prints the exact payload
+for every event, from this install's real id/OS/version, without
+sending anything) and the Settings screen's own link to
+`docs/privacy/usage-ping.md`. `inferrail telemetry status|enable|disable`
+work standalone, without `--app-mode` or even an `inferrail.yaml`.
+
+A reference collector (`hosted/usage_ping/`) is proposed and built —
+own process, own SQLite storage, zero dependency on the `inferrail`
+package, never logs or persists the connecting IP address, admin-gated
+aggregate `/stats` (disabled entirely unless an admin token is set).
+Deploying an instance and configuring `usage_ping.endpoint` to point at
+it is a human action — see `PROGRESS.md`'s "HUMAN ACTION NEEDED".
 - **The dashboard is bundled into every wheel this project's CI
   builds — including the actual PyPI-published artifact and the
   three-OS `platform-verify.yml` wheels.** A hatchling build hook

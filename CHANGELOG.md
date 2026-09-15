@@ -6,6 +6,42 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.1 — 2026-09-15
+
+### Added
+
+- **A real opt-in, anonymous usage ping** (`src/inferrail/usage_ping/`,
+  `docs/adr/0019-opt-in-usage-ping.md`), replacing v0.4.0's disabled
+  Settings placeholder. Off by default, and inert with no
+  `usage_ping.endpoint` configured — Inferrail ships with no built-in
+  default endpoint. Four lifecycle events only, each sent at most once
+  per install: `first_run`, `tool_connected`, `first_receipt`,
+  `budget_created`. Never a prompt, response, model name, cost,
+  work_id, project name, or anything about actual traffic. Sending
+  never blocks, slows, or can fail the gateway — a background thread,
+  short timeout, every failure swallowed silently.
+- The dashboard's Settings toggle is now real
+  (`GET`/`POST /v1/local/usage-ping`), and states "Not yet active — no
+  collection endpoint is configured" whenever `usage_ping.endpoint` is
+  unset, regardless of the toggle, so it never looks like it works when
+  it can't.
+- `inferrail telemetry preview|status|enable|disable` — `preview` in
+  particular prints the exact JSON payload for every lifecycle event,
+  from this install's real id/OS/version, without sending anything, so
+  the ping's behavior is independently verifiable rather than trusted
+  from documentation. Works standalone, without `--app-mode` or even an
+  `inferrail.yaml`.
+- `docs/privacy/usage-ping.md` — the plain-language privacy page linked
+  from the Settings toggle, with the exact payload shown verbatim.
+- **A proposed, built reference receiver** (`hosted/usage_ping/`): a
+  small FastAPI service, own process, own SQLite storage, zero
+  dependency on the `inferrail` package, no auth required to submit a
+  ping (the payload is harmless and anonymous), a per-IP rate limit, a
+  kill switch, and admin-token-gated aggregate `/stats`. **Never logs
+  or persists the connecting IP address.** Deploying an instance and
+  configuring `usage_ping.endpoint` to point at it is a human action —
+  see `PROGRESS.md`'s "HUMAN ACTION NEEDED" for exact deploy steps.
+
 ## v0.4.0 — 2026-09-15
 
 ### Added

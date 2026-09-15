@@ -53,10 +53,12 @@ from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.anthropic_base import AnthropicMessagesProvider
 from inferrail.providers.base import Provider
 from inferrail.providers.registry import build_anthropic_providers, build_providers
-from inferrail.receipts.sinks import build_receipt_sink
+from inferrail.receipts.sinks import ReceiptSink, build_receipt_sink
 from inferrail.receipts.sqlite_store import ReceiptsStore
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import build_telemetry_sink
+from inferrail.usage_ping.client import maybe_send_event
+from inferrail.usage_ping.receipt_hook import UsagePingReceiptSink
 
 _logger = logging.getLogger("inferrail.gateway")
 
@@ -152,11 +154,27 @@ def create_app(
         assert isinstance(receipts, ReceiptsStore)  # guaranteed by config validation above
         budget_store = BudgetStore(config.budgets.path)
         budget_enforcer = BudgetEnforcer(budget_store, receipts, pricing_resolver)
+    # app_data is computed here (pure path derivation, no disk I/O) rather
+    # than only inside `if app_mode:` below, because the usage-ping wrapper
+    # has to be in place *before* the engines are constructed -- they hold
+    # onto whichever ReceiptSink they're given for the life of the app.
+    # Reused, not recomputed, by app_mode's own setup further down.
+    app_data = Path(config.budgets.path).parent
+    engine_receipts: ReceiptSink = receipts
+    if app_mode:
+        # Only `--app-mode` ever has a Settings toggle to turn this on, so
+        # only it ever wraps the sink; every other `create_app` caller
+        # (including every existing test) is unaffected. `receipts` itself
+        # (unwrapped) is still what `budget_enforcer`/the local API use —
+        # they need real `ReceiptsStore.query()`, not just `.emit()`.
+        engine_receipts = UsagePingReceiptSink(
+            receipts, app_data_dir=app_data, config=config.usage_ping
+        )
     engine = InferenceEngine(
-        router, providers, telemetry, pricing_resolver, receipts, budgets=budget_enforcer
+        router, providers, telemetry, pricing_resolver, engine_receipts, budgets=budget_enforcer
     )
     anthropic_engine = AnthropicInferenceEngine(
-        router, anthropic_providers, telemetry, pricing_resolver, receipts,
+        router, anthropic_providers, telemetry, pricing_resolver, engine_receipts,
         budgets=budget_enforcer,
     )
 
@@ -186,7 +204,6 @@ def create_app(
                 "the CLI's own --app-mode setup should have guaranteed both; see "
                 "docs/adr/0016-local-control-api.md"
             )
-        app_data = Path(config.budgets.path).parent
         app.state.local_api_token = ensure_local_api_token(app_data / "local-api-token")
         app.state.local_receipts_store = receipts
         app.state.local_budget_store = budget_store
@@ -200,6 +217,13 @@ def create_app(
         app.state.ap_recovery_store = RecoveryStore(
             ap_recovery_path or (app_data / "ap-recovery.db")
         )
+        # Usage ping (docs/adr/0019): the local API's `/v1/local/usage-ping`
+        # routes read/write this same app-data dir + config; storing both
+        # on app.state, rather than re-deriving them per-request, mirrors
+        # every other app-mode store above.
+        app.state.usage_ping_app_data = app_data
+        app.state.usage_ping_config = config.usage_ping
+        maybe_send_event("first_run", app_data_dir=app_data, config=config.usage_ping)
         app.include_router(local_api_router)
 
         # The dashboard (docs/adr/0017) is a static SPA -- mounted only

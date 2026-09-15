@@ -37,6 +37,12 @@ from inferrail.cli.doctor import run_doctor
 from inferrail.cli.pricing import run_pricing_update
 from inferrail.cli.receipts_io import run_receipts_export, run_receipts_import
 from inferrail.cli.report import run_report
+from inferrail.cli.telemetry import (
+    run_telemetry_disable,
+    run_telemetry_enable,
+    run_telemetry_preview,
+    run_telemetry_status,
+)
 from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
 from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work, run_work_outcome
@@ -342,6 +348,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", default="inferrail.yaml", help="Path to inferrail.yaml (default: %(default)s)"
     )
 
+    telemetry = subparsers.add_parser(
+        "telemetry",
+        help="Opt-in, anonymous usage ping — off by default (see docs/adr/0019).",
+    )
+    telemetry_sub = telemetry.add_subparsers(dest="telemetry_command", required=True)
+    for name, help_text in (
+        ("preview", "Show the exact payload each lifecycle event would send, without sending it."),
+        ("status", "Show whether the usage ping is enabled and configured."),
+        ("enable", "Turn the usage ping on."),
+        ("disable", "Turn the usage ping off (the default)."),
+    ):
+        sub = telemetry_sub.add_parser(name, help=help_text)
+        sub.add_argument(
+            "--config", default=None,
+            help="Path to inferrail.yaml (default: ./inferrail.yaml if present).",
+        )
+
     return parser
 
 
@@ -598,6 +621,19 @@ def _cmd_budget(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     return 1
 
 
+def _cmd_telemetry(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.telemetry_command == "preview":
+        return run_telemetry_preview(args.config)
+    if args.telemetry_command == "status":
+        return run_telemetry_status(args.config)
+    if args.telemetry_command == "enable":
+        return run_telemetry_enable(args.config)
+    if args.telemetry_command == "disable":
+        return run_telemetry_disable(args.config)
+    parser.error(f"unknown telemetry subcommand: {args.telemetry_command}")
+    return 1
+
+
 def _cmd_try(args: argparse.Namespace) -> int:
     return run_try(
         args.prompt,
@@ -658,6 +694,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pricing(args, parser)
     if args.command == "doctor":
         return _cmd_doctor(args)
+    if args.command == "telemetry":
+        return _cmd_telemetry(args, parser)
 
     parser.print_help()
     return 1
