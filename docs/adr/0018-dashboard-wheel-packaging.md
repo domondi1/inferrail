@@ -94,12 +94,11 @@ this file.
   already an implicit build-time dependency via `[build-system]
   .requires`, just not otherwise importable in a normal dev/test
   environment because of pip's PEP 517 build isolation.
-- **Still not done, deliberately out of scope for this pass:** the
-  *actual* PyPI-published wheel (`publish.yml`'s `build` job) and the
-  three-OS `platform-verify.yml`/`wheel-smoke` jobs don't set up Node
-  yet, so neither currently produces a dashboard-bundled artifact —
-  only this repository's own `dashboard` CI job (which already has
-  Node) demonstrates the real bundling working. Wiring Node into those
-  two higher-stakes, more heavily-reviewed workflows is a deliberate
-  follow-up decision, not an oversight — see `PROGRESS.md`'s record of
-  this pass for the reasoning.
+- **Closed in the v0.4.0-closing pass** (`PROGRESS.md`'s "v0.4.0 closing
+  audit"): `publish.yml`'s `build` job and `platform-verify.yml`'s
+  `wheel-smoke` matrix (all three OSes) now also set up Node
+  (`actions/setup-node@v4`) and each assert their own built/installed
+  wheel actually contains `dashboard_static/index.html` — the actual
+  PyPI-published artifact and the three-OS platform-verify wheels are
+  now proven to bundle the dashboard, not just this repository's own
+  separate `dashboard` CI job.

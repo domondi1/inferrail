@@ -28,6 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node is required here, not just in ci.yml's own `dashboard` job:
+      # `python -m build` triggers hatch_build.py's wheel-build hook,
+      # which runs `npm ci && npm run build` in app/ to bundle the
+      # dashboard into this exact wheel (docs/adr/0018). Without it, the
+      # hook's own never-fail-the-build design (see ADR-0018) would let
+      # this job silently succeed while publishing a wheel with no
+      # dashboard in it -- the actual PyPI release must not depend on
+      # Node happening to already be on a GitHub-hosted runner's image.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -36,6 +50,23 @@ jobs:
         run: |
           python -m pip install build
           python -m build
+
+      - name: Confirm the built wheel bundles the dashboard
+        # Publishing a wheel with no dashboard, silently, would be exactly
+        # the kind of misleading gap this project's own MISSION.md
+        # non-negotiables refuse to ship -- fail the release outright
+        # rather than merely hoping the step above worked.
+        run: |
+          python3 -c "
+          import zipfile, glob
+          whl = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert any(n.endswith('dashboard_static/index.html') for n in names), (
+              f'{whl} does not bundle the dashboard (dashboard_static/index.html missing) -- '
+              'refusing to publish a release without it.'
+          )
+          print('ok: wheel bundles the dashboard:', whl)
+          "
 
       - name: Upload distribution
         uses: actions/upload-artifact@v4
@@ -70,6 +101,16 @@ jobs:
           /tmp/inferrail-release-check/bin/inferrail --help
           /tmp/inferrail-release-check/bin/python3 -c "import inferrail; print('version:', inferrail.__version__)"
           /tmp/inferrail-release-check/bin/python3 -c "import inferrail.ap; print(sorted(inferrail.ap.__all__))"
+
+      - name: Confirm the installed wheel discovers its own bundled dashboard
+        working-directory: /tmp
+        run: |
+          /tmp/inferrail-release-check/bin/python3 -c "
+          from inferrail.dashboard import find_dashboard_dist
+          found = find_dashboard_dist()
+          assert found is not None and (found / 'index.html').is_file(), found
+          print('ok: installed wheel discovers its own bundled dashboard at', found)
+          "
 
   publish:
     needs: [ci, build, verify-wheel, platform-verify]

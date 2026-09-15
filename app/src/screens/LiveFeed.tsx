@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { streamReceipts, type Receipt } from "../api";
+import { listRecentReceipts, streamReceipts, type Receipt } from "../api";
 import { attrSummary, formatCost, formatTime } from "../format";
 
 const MAX_ROWS = 200;
@@ -10,6 +10,28 @@ export function LiveFeed(): JSX.Element {
   const seen = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    let cancelled = false;
+
+    // Seed with what this install has already produced *before* the live
+    // tail connects -- the stream only ever pushes receipts emitted after
+    // it opens (`since = time.time()` at connect, `localapi/routes.py`),
+    // so without this, opening the dashboard after sending requests (the
+    // ordinary case, not just a fresh install) showed "No receipts yet"
+    // even though the store had real history -- contradicting this
+    // screen's own "every receipt this install has produced" subtitle.
+    listRecentReceipts(MAX_ROWS)
+      .then((initial) => {
+        if (cancelled) return;
+        for (const r of initial) seen.current.add(r.receipt_id);
+        setReceipts(initial);
+      })
+      .catch(() => {
+        // Non-fatal: the live tail below still works even if this
+        // backfill fails (e.g. a token that's valid for SSE but the
+        // fetch races a server restart) -- an empty backfill just means
+        // "no history shown yet", not a broken screen.
+      });
+
     const close = streamReceipts(
       (receipt) => {
         // The stream can, in principle, redeliver a receipt already seen
@@ -21,7 +43,10 @@ export function LiveFeed(): JSX.Element {
       },
       setStatus,
     );
-    return close;
+    return () => {
+      cancelled = true;
+      close();
+    };
   }, []);
 
   return (

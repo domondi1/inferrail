@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## v0.4.0 — in progress
+## v0.4.0 — 2026-09-15
 
 ### Added
 
@@ -65,16 +65,60 @@ PyPI release (the hosted service and website ship independently of the
   same pass: the sdist was including `app/node_modules` (real,
   pre-existing bloat, not something this pass introduced).
 
+- `publish.yml` and `platform-verify.yml` now set up Node
+  (`actions/setup-node@v4`) so the actual PyPI-published wheel and the
+  three-OS `platform-verify.yml` wheels bundle the dashboard too, not
+  just `ci.yml`'s own `dashboard` job — each workflow also now asserts
+  the built/installed wheel actually contains
+  `dashboard_static/index.html`, so a future Node/npm regression on any
+  of those runners fails the run instead of silently shipping a
+  dashboard-less release.
+- **Fixed:** Live Feed never showed a receipt already in the store when
+  the dashboard was opened — only ones sent *after* the tab connected —
+  contradicting its own "every receipt this install has produced"
+  subtitle. Found by opening the real dashboard in a real (headless
+  Chromium) browser against a live `inferrail serve --app-mode`
+  instance with existing receipts already on disk, not by reading the
+  code. `listRecentReceipts` (`app/src/api.ts`) now seeds the screen
+  from `GET /v1/local/receipts` (correctly reading the true tail, since
+  that endpoint orders oldest-first) before the live SSE tail takes
+  over.
+- **Verified this session, end to end, with real clients — not just
+  the existing test suite:** the real `openai` and `anthropic` Python
+  SDKs, pointed at a live `inferrail serve --app-mode` process, both
+  produce attributed receipts; a real `block`-mode budget genuinely
+  rejects a request before the (mocked, since this session had no paid
+  provider keys) upstream is ever called, and the block appears live in
+  the dashboard's Budgets screen; no prompt/response text is persisted
+  in any local store; the dashboard renders correctly in a real
+  browser with zero console errors. See `PROGRESS.md`'s "v0.4.0 closing
+  audit" section for the full record, including what this session could
+  *not* verify (a real paid-provider round trip; streaming/tool-use
+  against a real SDK).
+
 ### Not yet closed
 
-- The *actual* PyPI-published wheel and the three-OS
-  `platform-verify.yml` wheels still don't set up Node, so neither is
-  proven to bundle a dashboard yet — only this project's own CI
-  (`dashboard` job) demonstrates the real bundling. Deliberately
-  deferred, see `docs/adr/0018`'s "Consequences".
 - Whether the Settings screen's "opt-in usage ping" placeholder is
   accepted as final, or a real telemetry-ping feature gets scoped as
-  its own future unit — a founder decision, not yet made.
+  its own future unit — a founder decision. **Resolved this session:
+  build it for real** — see the new `## v0.4.1` section below (or
+  `PROGRESS.md` if that unit hasn't landed yet).
+- `GET /v1/local/receipts?limit=N` (with no `offset`) returns the
+  *oldest* N receipts once an install has more than N total, not the
+  most recent N — `ReceiptsStore.query()` always orders `ts` ascending.
+  Worked around in Live Feed's own backfill (computed the correct
+  `offset` explicitly) but the route itself has no "give me the most
+  recent N" mode; a future caller could hit the same trap. Not fixed
+  broadly this session — it's an existing, documented route contract
+  change, out of scope for a closing-audit pass.
+- Budget enforcement (and cost display generally) only ever applies
+  when the (provider, model) pair has a *known* price — the built-in
+  catalog (which requires the provider's real, unmodified `base_url`)
+  or an explicit `pricing:` override. A budget scoped to an unrecognized
+  model never blocks, by design (see `pricing/resolver.py`) — cost
+  shows honestly as `unknown` rather than blocking on a guess, but this
+  is easy to be surprised by. Documented here since this session's own
+  first budget-enforcement test tripped on it.
 
 ## v0.3.0 — 2026-09-14
 
