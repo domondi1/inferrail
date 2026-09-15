@@ -43,14 +43,25 @@ PyPI release (the hosted service and website ship independently of the
   provisions an AP recovery store at a fixed app-data path (printed on
   startup; override with `INFERRAIL_AP_DB`) — the first local-API
   surface to bridge to the previously separate `inferrail.ap` module.
+- **Connect** screen: copy-paste snippets (curl, Claude Code/Anthropic
+  SDK, the OpenAI Python SDK, LangChain) generated against
+  `window.location.origin`, so they're correct for the exact running
+  install rather than a generic placeholder host/port.
+- **Settings** screen: real "Export" (new
+  `GET /v1/local/receipts/export`, streams the same JSONL shape
+  `inferrail receipts export` produces) and real pricing-catalog
+  freshness (new `GET /v1/local/pricing/freshness`, reuses
+  `cli.pricing.catalog_freshness` — never a network fetch). The
+  "opt-in usage ping" control is a deliberately disabled placeholder:
+  no telemetry-ping mechanism exists in this codebase, so the UI says
+  so rather than pretending a checkbox does something.
+- **All six MISSION.md v0.4.0 screens are now built.**
 
-### Not yet in this milestone
+### Not yet closed
 
-- The Connect and Settings screens (visible in the nav as disabled
-  tabs, not omitted).
 - Bundling the built dashboard into the PyPI wheel — build it from a
   checkout (`cd app && npm install && npm run build`) until a packaging
-  unit lands.
+  unit lands. See `docs/adr/0017`'s "Consequences".
 
 ## v0.3.0 — 2026-09-14
 

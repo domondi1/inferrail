@@ -232,3 +232,38 @@ export async function recordOutcome(workId: string, payload: OutcomeRequest): Pr
     );
   }
 }
+
+export interface CatalogFreshness {
+  name: string;
+  model_count: number;
+  oldest_verified_date: string | null;
+  age_days: number | null;
+  is_stale: boolean;
+}
+
+export async function getPricingFreshness(): Promise<CatalogFreshness[]> {
+  const page = await fetchLocal<{ catalogs: CatalogFreshness[] }>("/v1/local/pricing/freshness");
+  return page.catalogs;
+}
+
+/** Triggers a browser download of every stored receipt as JSONL. Can't
+ * use a plain `<a href>` (the local API requires a bearer token no
+ * plain link can carry) -- fetches the file, then hands the browser a
+ * blob URL to save, same trick `docs/index.html`'s own download flows
+ * use nowhere yet but is the standard workaround for an authenticated
+ * download. */
+export async function downloadReceiptsExport(): Promise<void> {
+  const response = await fetch("/v1/local/receipts/export", {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!response.ok) {
+    throw new LocalApiError(response.status, `export -> ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "inferrail-receipts.jsonl";
+  a.click();
+  URL.revokeObjectURL(url);
+}

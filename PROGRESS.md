@@ -3,14 +3,127 @@
 Read this after `MISSION.md` every session. This file changes every
 session; `MISSION.md` almost never does.
 
+## Independent status audit — 2026-09-15
+
+A separate audit session (not doing feature work) re-verified this
+file's claims against the running repo rather than trusting the text.
+**Important caveat: this audit ran concurrently with another live
+session actively building v0.4.0 unit 5 (Connect/Settings) — the
+working tree had uncommitted changes to `README.md`, `CHANGELOG.md`,
+`docs/PRODUCT.md`, `app/src/App.tsx`, `app/src/api.ts`,
+`src/inferrail/localapi/routes.py`, `tests/unit/test_localapi_routes.py`,
+plus untracked `app/src/CopyButton.tsx`,
+`app/src/screens/{Connect,Settings}.tsx` during this audit.** That work
+is real and looked substantially complete (all six nav tabs enabled,
+both screens built, two new local-API routes — `GET
+/v1/local/pricing/freshness`, `GET /v1/local/receipts/export` — both
+live-tested and working) but is **not yet committed, not reflected in
+this file's own "Status summary," and should not be counted as done**
+until it lands in a PR the normal way.
+
+**What was independently re-verified as genuinely true, not just
+documented:**
+
+- v0.2.1's own acceptance bar — re-ran, live, right now, with no prior
+  key or context: `POST /v1/sandbox` → `POST /v1/decisions` → `POST
+  .../retry-attempts` → `GET /v1/report` against
+  `https://inferrail-ap-exceptions.onrender.com`. All four succeeded
+  unmodified exactly as published in `hosted/ap_exceptions/README.md`
+  and on `tryinferrail.com` (confirmed the live site serves the same
+  copy). Cold start took ~21s on step 1, consistent with the documented
+  free-tier spin-down behavior.
+- PRs #20, #23, #24, #26, #27, #29, #30, #31, #32 all independently
+  confirmed `MERGED` via `gh pr list --json state,mergedAt` (not taken
+  on the file's word). CI (`CI`, `Boundary Check`, `Platform Verify`)
+  green on `ffce54f` (current `main` tip).
+- `ruff check .` and `mypy` both clean on current `main`.
+- `npm audit` in `app/` reproduces the documented 5 vulnerabilities (3
+  moderate, 1 high, 1 critical) — dev-dependency-only, matches this
+  file's existing note.
+- Rebuilt the dashboard from the current working tree
+  (`cd app && npm install && npm run build` — clean, no Node.js
+  bundled, this is a real added dev dependency) and ran
+  `inferrail serve --app-mode` end-to-end from a **fresh venv, `pip
+  install -e .` from this checkout** (no other setup): startup printed
+  the app-data dir, local API token, and a working
+  `/dashboard/?token=...` URL; `GET /health`, `GET /dashboard/`, and
+  the new pricing-freshness/receipts-export routes all returned real
+  200s. Did not visually click through the UI in a real browser this
+  session — verification here is API-level, not a screenshot/click-through.
+- `inferrail demo` and `pip install -e .` both work cleanly from a
+  fresh checkout with no prior Python environment.
+- Homepage hero (`docs/index.html`) is AP invoice-exception recovery,
+  not crypto/testnet material — matches `MISSION.md`'s non-negotiable.
+  `pyproject.toml`'s wheel `packages` list (`src/inferrail`,
+  `inferrail-mcp/src/inferrail_mcp` only) confirms the dashboard is
+  genuinely not bundled into the wheel yet, independent of this file's
+  own claim of that gap.
+
+**One material gap this file does not currently state plainly: `main`
+is two versions ahead of what's actually published.** `pyproject.toml`
+is `0.3.0` and v0.4.0 work is merging, but PyPI's actual latest release
+is still **0.2.0** (confirmed via `pypi.org/pypi/inferrail/json`), and
+`gh release list` shows only `v0.1.2` as a GitHub Release (tags
+`v0.2.0`/`v0.1.2` exist locally/remotely but no `v0.3.0` tag or release
+exists). Bumping `pyproject.toml`'s version bumps what a `pip install
+-e .` checkout reports as its own version — it does not publish
+anything. A stranger running `pip install inferrail` today gets 0.2.0:
+no SQLite store, no Anthropic passthrough, no budgets, no local control
+API, no dashboard. Every "download Inferrail" framing in `MISSION.md`'s
+End-state 1 currently only holds for someone building from a git
+checkout, not for the literal `pip install inferrail` a stranger would
+run. This should be an explicit founder decision (publish now, or
+defer intentionally to v0.5.0/v1.0.0), not an implicit gap.
+
+**Full local `pytest -q` completed: 883 passed, 19 skipped, 1 failed**
+(`test_a2a_economic_authority_transport.py::test_claim_endpoint_rejects_malformed_json_cleanly`),
+in 785s — slow and with one failure because a second live session was
+running its own full `pytest -q` at the same time (confirmed via `ps
+aux`, real subprocess servers on real ports colliding), the exact same
+collision pattern already documented above for the Budgets-screen
+session. Re-ran that one test alone once the collision cleared: **passes
+cleanly in 13s** — confirmed not a regression, same disposition as the
+prior occurrence.
+
+**Risks flagged, in order of likely impact:**
+
+1. **Two Claude Code sessions were operating on this exact working
+   directory at the same time during this audit** (confirmed via `ps
+   aux` — two separate `claude` processes). This isn't hypothetical:
+   it produced the uncommitted, undocumented unit-5 work above and a
+   second concurrent full-`pytest` run. Recommend not running two
+   sessions against the same checkout at once (a second worktree costs
+   nothing and removes this risk entirely).
+2. **This agent still cannot push to the repo** (the same 403 gap
+   logged for every prior unit) — every unit's landing depends on the
+   founder manually running the handed-off `git push`/`gh pr create`
+   commands. This is the main throughput bottleneck across the whole
+   project, not a per-unit fluke.
+3. **v0.5.0 (desktop packaging, 3 OSes, code signing) is entirely
+   unstarted** and is very likely to take longer than its single
+   milestone entry implies — it bundles a new build toolchain
+   (PyInstaller + Tauri), three OS-specific smoke tests, and a signing
+   decision that has real lead time (Apple Developer enrollment isn't
+   instant) if the founder wants it done rather than deferred again at
+   v0.9.0. Deciding the signed-vs-unsigned-launch question now, instead
+   of at v0.9.0, would remove a lot of schedule uncertainty.
+4. **No real stranger/human test has happened yet for End-state 1** —
+   every "done" claim so far is code/test/CI-based. The first real
+   human attempt is likely to surface friction nothing here has hit
+   yet (e.g., Node.js as a hard dependency for the dashboard is new
+   since `app/` was added, and a genuinely "real" (non-demo) receipt
+   needs a paid `OPENAI_API_KEY` the whole flow doesn't message clearly
+   yet).
+
 ## Status summary
 
 **v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
-**v0.4.0 (the dashboard) is in progress — units 1–3 are merged:**
+**v0.4.0 (the dashboard) is in progress — units 1–4 are merged:**
 
 - Unit 1 (scaffold, real serving/auth, Live Feed): [PR #29](https://github.com/domondi1/inferrail/pull/29), merge commit `b900a59`.
 - Unit 2 (Work screen): [PR #30](https://github.com/domondi1/inferrail/pull/30), merge commit `217000b`.
 - Unit 3 (Budgets screen): [PR #31](https://github.com/domondi1/inferrail/pull/31), merge commit `8d43bc6`.
+- Unit 4 (Recover screen): [PR #32](https://github.com/domondi1/inferrail/pull/32), merge commit `ffce54f`.
 
 Each merge was confirmed independently via `gh pr list --json
 state,mergedAt` before trusting the founder's report (not taken on a
@@ -18,27 +131,25 @@ verbal report alone), all 9 CI checks green via `gh pr checks <n>` on
 the exact merged commit, and merge-commit tree confirmed byte-identical
 to what was authored locally (`git diff <local>^{tree} <merge>^{tree}`
 → empty, no squash drift) — same discipline every prior milestone used.
-`main` is synced through `8d43bc6`.
+`main` is synced through `ffce54f`.
 
 **Architectural decision recorded, per explicit founder instruction:
 the dashboard lives in `app/` in this repository**, not a sibling
 repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 
+**MISSION.md's full v0.4.0 acceptance criterion is now behaviorally
+complete** ("watch a live request appear, set a budget, see a block,
+and clear a review item") — all four are real, working screens as of
+unit 4. The milestone itself isn't closed yet: Connect and Settings
+(the two remaining listed screens) and the deferred wheel-packaging
+follow-up (ADR-0017's "Known gap") are still open.
+
 See "v0.4.0 — IN PROGRESS" below for the full record of what's built
-(Live Feed, Work, Budgets) vs. not yet (Recover, Connect, Settings;
+(Live Feed, Work, Budgets, Recover) vs. not yet (Connect, Settings;
 wheel packaging).
 
-**Unit 4 (Recover screen) is also done this session, committed locally,
-not yet pushed/merged.** Real backend work again: `--app-mode` now also
-provisions an AP recovery store (`ap.store.RecoveryStore`), and two new
-local API routes bridge to the previously separate `inferrail.ap`
-module. This is the last screen MISSION.md's full v0.4.0 acceptance
-criterion needs ("watch a live request appear, set a budget, see a
-block, and clear a review item").
-
-**Next session's job:** once unit 4 is pushed/merged (see "HUMAN ACTION
-NEEDED"), only Connect and Settings remain, plus the deferred
-wheel-packaging unit.
+**Next session's job:** pick unit 5 — Connect and/or Settings, either
+order, neither depends on the other.
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -803,7 +914,7 @@ from any other failure.
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 4: Recover screen — DONE, not yet pushed/merged
+### Checklist for unit 4: Recover screen — DONE, merged (PR #32, `ffce54f`)
 
 The first unit to bridge the dashboard to `inferrail.ap` — a previously
 separate module with its own store, its own CLI subcommands
@@ -884,6 +995,102 @@ separate module with its own store, its own CLI subcommands
       bullet.
 - [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — v0.4.0 is still
       not closed (Connect/Settings remain).
+- [x] **Pushed and merged.** [PR #32](https://github.com/domondi1/inferrail/pull/32)
+      merged, merge commit `ffce54f` — confirmed `MERGED` and all 9 CI
+      checks green before trusting the founder's report; merge-commit
+      tree byte-identical to the local commit (no squash drift).
+
+### Checklist for unit 5: Connect + Settings screens — DONE, not yet pushed/merged
+
+The last two `MISSION.md` v0.4.0 screens, built together since neither
+depends on the other and both are small. **All six v0.4.0 screens now
+exist.**
+
+- [x] **`app/src/screens/Connect.tsx`**: curl, Claude Code/Anthropic SDK
+      env var, the Anthropic Messages API, the OpenAI Python SDK, and
+      LangChain snippets — adapted verbatim from `README.md`'s own "Use
+      it as a gateway" section, not invented fresh, so the dashboard
+      never says something the docs don't already say. Every snippet is
+      built against `window.location.origin` — since the dashboard is
+      served by the exact same process as the gateway (`docs/adr/0017`),
+      this is the real, currently-running base URL, not a
+      `127.0.0.1:8000` placeholder that might not match the actual port.
+      The two snippets that need an Anthropic route configured say so in
+      their own blurb rather than implying universal applicability.
+- [x] New `app/src/CopyButton.tsx` — shared by Connect (one per
+      snippet); same clipboard fallback discipline the marketing site's
+      own copy button already established (write → "Copied", a genuine
+      failure → "Copy failed", never silently swallowed).
+- [x] **New `GET /v1/local/pricing/freshness`** (`localapi/routes.py`):
+      wraps `cli.pricing.catalog_freshness` — the exact function
+      `inferrail pricing update`/`inferrail doctor` already share —
+      never a network fetch (matches that module's own "there is no
+      network call that would stay verified" rule).
+- [x] **New `GET /v1/local/receipts/export`**: streams every stored
+      receipt as JSONL directly from `ReceiptsStore.read_all()`, not
+      via `export_jsonl`'s file-to-file path — avoids writing a
+      server-side temp file just to immediately re-read it for an HTTP
+      response body. `Content-Disposition: attachment` so a browser
+      downloads it as a real file.
+- [x] `app/src/screens/Settings.tsx`: a working Export button
+      (`downloadReceiptsExport()` — fetch + blob + a programmatic
+      `<a download>` click, since an authenticated download can't be a
+      plain `<a href>` link), a real pricing-catalog freshness table,
+      and — **the one deliberate judgment call in this unit** — a
+      **disabled** "opt-in usage ping" checkbox with an explicit label
+      explaining why: no telemetry-ping mechanism exists anywhere in
+      this codebase, and inventing a new privacy-surface feature
+      (network calls, an opt-in flag, what it would even send) was out
+      of scope for a dashboard-presentation unit. Per `MISSION.md`'s
+      "flag, don't fake" rule, this renders as an honestly-labeled
+      placeholder, never a checkbox that silently does nothing while
+      implying it works. **Founder attention worth having before v0.4.0
+      formally closes:** confirm this is the right call, or that a real
+      opt-in-ping feature should be scoped as its own future unit.
+- [x] `app/src/api.ts` gained `CatalogFreshness`, `getPricingFreshness()`,
+      `downloadReceiptsExport()`.
+- [x] `App.tsx` refactored from a chain of `route.screen === "x" && ...`
+      conditionals into a `Record<Screen, Component>` map, now that all
+      six screens are real — every tab is enabled and clickable; the
+      "not built yet" disabled-tab styling in `styles.css` is now unused
+      but left in place rather than removed mid-unit for no functional
+      reason.
+- [x] Tests: 4 new local-API tests (`test_localapi_routes.py` — pricing
+      freshness reports both built-in catalogs, requires the token,
+      export streams exactly the stored receipts as JSONL with the
+      correct `Content-Disposition`, export requires the token).
+      `cd app && npm run lint && npm run build && npm test` — 18 vitest
+      cases (unchanged; Connect/Settings are thin enough their logic is
+      exercised by the live smoke test below rather than needing new
+      pure-function tests).
+- [x] Live end-to-end smoke test (not just unit tests): started a real
+      `inferrail serve --app-mode`, confirmed `pricing/freshness`
+      reports both catalogs with real ages, inserted a real receipt,
+      confirmed `receipts/export` returns it as JSONL with the correct
+      headers.
+- [x] Local verification: `ruff check .`/`mypy` clean (83 files),
+      `bash scripts/check_no_internal_content.sh` clean. All three
+      generator scripts re-run, zero diff. Full-repo `pytest -q`:
+      **884 passed, 19 skipped, 0 failed** (up from 880 at unit 4 —
+      exactly the 4 new tests this unit added). One transient failure
+      appeared mid-session in `test_a2a_economic_authority_transport.py`
+      (a real subprocess-server test that binds a real port and polls
+      it with a timeout) — traced to a second, independent `pytest -q`
+      process running concurrently on this shared machine (not started
+      by this session, confirmed via `ps aux` and its own PID/start
+      time), which starved the test's subprocess past its readiness
+      timeout under load. Waited for that other process to exit, then
+      reran clean — 0 failures. Not a regression from anything in this
+      unit; nothing in `hosted/a2a_economic_authority` was touched.
+- [x] Docs: `docs/PRODUCT.md`'s dashboard subsection retitled ("all six
+      screens built") and extended, `README.md`'s dashboard bullet
+      updated, `CHANGELOG.md`'s `## v0.4.0` entry gained the Connect/
+      Settings bullets and a "not yet closed" section (renamed from
+      "not yet in this milestone" now that every screen exists).
+- [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — the milestone
+      isn't formally closed until the wheel-packaging follow-up lands
+      and MISSION.md's acceptance criterion gets an explicit founder
+      sign-off, even though it's now behaviorally true.
 - [ ] **Not done yet, this unit's own honest gap:** committed locally,
       **not pushed** — same push-permission gap as every prior unit.
       Exact handoff commands: see "HUMAN ACTION NEEDED" below.
@@ -917,26 +1124,31 @@ separate module with its own store, its own CLI subcommands
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 4's PR
+   changed underneath since this session — check whether unit 5's PR
    (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
    been pushed/merged; if the founder reports it was, verify with
    `gh pr view <n> --json state,mergedAt` before trusting it, same
    discipline as every prior milestone.
-2. **Pick v0.4.0's next unit: Connect or Settings — either order,
-   neither depends on the other.** Connect is per-tool copy-paste
-   snippets (OpenAI SDK, Claude Code, curl, etc. — `README.md`'s
-   existing "Use it as a gateway" section already has the exact
-   snippets to adapt, so this is presentation, not new backend surface).
-   Settings is export/catalog-refresh/opt-in-ping-default-off — check
-   whether `inferrail receipts export` (v0.3.0) already covers "export"
-   or whether the dashboard needs its own download route; "opt-in ping
-   default OFF" should just mean a toggle that's honest about currently
-   doing nothing, since no ping mechanism exists yet in this codebase
-   (verify that assumption before building a UI for a backend feature
-   that isn't real). After both, v0.4.0's screens are all built — what
-   remains before the milestone can close: the wheel-packaging follow-up
-   (ADR-0017's "Known gap") and MISSION.md's own acceptance-criterion
-   sign-off.
+2. **All six v0.4.0 screens now exist.** What remains before the
+   milestone can formally close:
+   - Check whether the founder has weighed in on the "opt-in usage
+     ping" placeholder (flagged in "HUMAN ACTION NEEDED") — if a real
+     feature is wanted, scope it as its own unit; if the placeholder is
+     accepted, no further action needed there.
+   - The wheel-packaging follow-up (`docs/adr/0017`'s "Known gap"): a
+     build hook that runs `npm run build` and copies `app/dist` into
+     `src/inferrail/dashboard_static/` before the wheel is built, plus
+     a CI check that it actually worked, plus Node added to the release
+     pipeline's prerequisites (see `dashboard.py`'s
+     `find_dashboard_dist` — the `dashboard_static/` path is already
+     reserved for this).
+   - Once both are resolved, bump `pyproject.toml` to `0.4.0`, add the
+     dated `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and
+     get explicit founder sign-off that MISSION.md's acceptance
+     criterion is met — don't declare the milestone closed unilaterally
+     the way v0.3.0's last unit did without asking, since a version
+     bump is exactly the kind of change this repo's merge policy wants
+     deliberately reviewed.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then
@@ -948,19 +1160,27 @@ separate module with its own store, its own CLI subcommands
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 4 needs to be pushed and opened as a PR** — same
+- **Unit 5 needs to be pushed and opened as a PR** — same
   push-permission gap as every prior unit (`git push` from this session
   returns `403: Permission to domondi1/inferrail.git denied to
   domondi1`, confirmed again this session). Committed locally as
-  `10ab29a` on branch `feat/dashboard-recover-screen`, based on `main`
-  at `8d43bc6` (PR #31's merge commit, the current `origin/main` tip as
-  of this session). Exact commands:
+  `e976c6a` on branch `feat/dashboard-connect-settings-screens`, based
+  on `main` at `ffce54f` (PR #32's merge commit, the current
+  `origin/main` tip as of this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-recover-screen
-  gh pr create --title "feat: dashboard Recover screen (v0.4.0 unit 4)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 4's checklist, for the full record. First unit to bridge the dashboard to inferrail.ap: --app-mode now provisions an AP recovery store (override with INFERRAIL_AP_DB), new GET /v1/local/ap/pending (built from ap.report.build_live_report, filtered to awaiting_human_review) and POST /v1/local/ap/{work_id}/outcome (calls RecoveryStore.record_outcome directly, same as inferrail ap outcome). Frontend: a pending-review queue with an inline outcome form. 880 tests pass (874 + 6 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end (seeded a real decision, confirmed it appears/resolves/disappears, confirmed 404 on an unknown work_id). This is the last screen MISSION.md's full v0.4.0 acceptance criterion needs -- only Connect and Settings remain." \
+  git push -u origin feat/dashboard-connect-settings-screens
+  gh pr create --title "feat: dashboard Connect + Settings screens (v0.4.0 unit 5)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 5's checklist, for the full record. Last two v0.4.0 screens -- all six now built. Connect: copy-paste snippets adapted from README.md, built against window.location.origin. Settings: real Export (new GET /v1/local/receipts/export) and real pricing-catalog freshness (new GET /v1/local/pricing/freshness). One judgment call worth your attention: the 'opt-in usage ping' control is a deliberately disabled placeholder -- no telemetry-ping mechanism exists in this codebase, so it's honestly labeled rather than faked; confirm that's the right call or scope a real one as a future unit. 884 tests pass (880 + 4 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end." \
     --base main
   ```
+- **Founder confirmation worth having before v0.4.0 formally closes:**
+  the Settings screen's "opt-in usage ping" checkbox is a disabled
+  placeholder (see above) — is that the right scope decision, or should
+  a real telemetry-ping feature (what it would send, the opt-in
+  mechanism itself) be scoped as its own future unit? Not blocking
+  anything today either way, since the honest current behavior (nothing
+  is ever sent) matches MISSION.md's non-negotiable regardless of which
+  path is chosen later.
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
   untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
