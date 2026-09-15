@@ -24,6 +24,10 @@ src/inferrail/
 │                docs/adr/0016), mounted only under `--app-mode`;
 │                depends on receipts, budgets, and work (all read-only
 │                or CRUD reuse of those packages' own domain models)
+├── usage_ping/  Opt-in, anonymous usage ping (docs/adr/0019) — wraps a
+│                ReceiptSink, never reuses TelemetrySink/ReceiptSink
+│                itself; the one deliberate exception to "nothing
+│                transmits data off the machine by default"
 ├── dashboard.py Locates a built `app/dist` (see docs/adr/0017); no
 │                dependency on anything else in this package
 ├── gateway/     FastAPI app: HTTP schemas + execution engine for both
@@ -43,7 +47,7 @@ app/             Dashboard SPA (React + Vite + TypeScript, docs/adr/0017)
 └── cli/         `inferrail serve` (+ `--quickstart`/`--app-mode`),
                  `inferrail config check`, `report`, `transaction`,
                  `demo`, `try`, `budget set|list|rm`, `pricing update`,
-                 `doctor`
+                 `doctor`, `telemetry preview|status|enable|disable`
 ```
 
 Each package has one job and depends only on the ones below it in this
@@ -409,6 +413,39 @@ filters to `status == "awaiting_human_review"`; the latter calls
 `RecoveryStore.record_outcome` directly, the same store-level call
 `inferrail ap outcome` makes — no new AP business logic, only a new,
 local, single-user way to reach the existing one.
+
+## The usage-ping boundary
+
+See `docs/adr/0019-opt-in-usage-ping.md`. `src/inferrail/usage_ping/` is
+deliberately separate from both `telemetry/` and `receipts/` — it does
+not reuse `TelemetrySink`/`ReceiptSink` as its own transport, only
+`usage_ping.receipt_hook.UsagePingReceiptSink`, which *wraps* whichever
+`ReceiptSink` the two inference engines hold (never the raw
+`ReceiptsStore` the budget enforcer/local API still use directly, which
+need real `.query()`). This is the one deliberate, narrow exception to
+this whole repository's "nothing transmits data off the machine by
+default" rule, and it's built to be architecturally hard to confuse with
+either of those local-only systems.
+
+Off by default (`UsagePingConfig.enabled`), and inert with no
+`usage_ping.endpoint` configured — `usage_ping.client.maybe_send_event`
+checks `endpoint` first, before touching even the local state file, so
+an unconfigured install does zero work per call. A separate, mutable
+`usage-ping-state.json` under the OS app-data dir (not the static config
+file) owns the on/off toggle at runtime once it exists, the same
+"config seeds it, a store owns it after that" pattern
+`budgets`/`receipts` already use under `--app-mode`; `endpoint` itself
+stays config-only, never dashboard-settable, to close off a redirect-the-
+pings-elsewhere abuse surface for no real benefit. Every send happens on
+a background thread the caller never waits on, with a short timeout and
+every exception swallowed — see the ADR for the full reasoning and the
+exact fixed payload shape.
+
+`hosted/usage_ping/` is the proposed, built (but not yet
+founder-deployed) reference receiver — its own process, own SQLite
+storage, zero dependency on the `inferrail` package, same "own process,
+own storage, no shared code path" isolation every other `hosted/`
+surface in this repository already follows.
 
 ## OSS data plane vs. future hosted control plane
 

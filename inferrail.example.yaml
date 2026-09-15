@@ -100,6 +100,20 @@ receipts:
 #   enabled: true       # requires receipts.sink: sqlite above
 #   path: ./inferrail-budgets.db
 
+# Optional: the opt-in, anonymous usage ping. Off by default, and inert
+# with no endpoint configured, regardless of `enabled` — Inferrail ships
+# with no built-in default endpoint. See
+# docs/adr/0019-opt-in-usage-ping.md and docs/privacy/usage-ping.md for
+# exactly what this sends (four lifecycle events only, never a prompt,
+# response, model name, cost, or anything about your traffic); preview
+# the exact payload locally with `inferrail telemetry preview`. Under
+# `inferrail serve --app-mode`, `enabled` only seeds the dashboard
+# Settings toggle's *first* value — the toggle (or `inferrail telemetry
+# enable|disable`) owns it after that.
+# usage_ping:
+#   enabled: false
+#   endpoint: https://your-own-collector.example/ping
+
 server:
   host: 127.0.0.1
   port: 8000
