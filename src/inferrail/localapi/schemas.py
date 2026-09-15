@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from inferrail.budgets.schema import Budget, BudgetMode, BudgetScope, BudgetWindow
 from inferrail.receipts.schema import InferenceReceipt
@@ -41,6 +41,24 @@ class BudgetSpend(BaseModel):
     has_unpriced_usage: bool
 
 
+class OutcomeRequest(BaseModel):
+    """Request body for `POST /v1/local/ap/{work_id}/outcome` — the same
+    shape as `hosted/ap_exceptions/service.py`'s own `OutcomeRequest`
+    (not imported from there: `hosted/` is a separate deployable with
+    its own dependency set, never a dependency of the installed
+    `inferrail` package). `correction_delta_usd`/`review_cost_usd` are
+    left as `str | None`, not `Decimal`, matching
+    `ap.store.RecoveryStore.record_outcome`'s own signature exactly —
+    no reparsing between the two."""
+
+    model_config = {"extra": "forbid"}
+
+    outcome: str = Field(min_length=1)
+    source: str = "unknown"
+    correction_delta_usd: str | None = None
+    review_cost_usd: str | None = None
+
+
 class BudgetCreate(BaseModel):
     """Request body for `POST /v1/local/budgets`. No `budget_id` field —
     it's computed server-side from scope/scope_value/window
@@ -56,4 +74,4 @@ class BudgetCreate(BaseModel):
     limit_usd: Decimal
 
 
-__all__ = ["Budget", "BudgetCreate", "BudgetSpend", "ReceiptsPage"]
+__all__ = ["Budget", "BudgetCreate", "BudgetSpend", "OutcomeRequest", "ReceiptsPage"]

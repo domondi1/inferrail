@@ -18,16 +18,20 @@ import asyncio
 import secrets
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from inferrail.ap.models import DecisionStatus
+from inferrail.ap.report import build_live_report
+from inferrail.ap.store import RecoveryStore
 from inferrail.budgets.enforcement import spent_so_far_usd
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.errors import LocalApiAuthenticationError
-from inferrail.localapi.schemas import BudgetCreate, BudgetSpend, ReceiptsPage
+from inferrail.localapi.schemas import BudgetCreate, BudgetSpend, OutcomeRequest, ReceiptsPage
 from inferrail.receipts.sqlite_store import ReceiptsStore
 from inferrail.work.builder import aggregate_work_summaries, build_work_summary, load_outcomes
 from inferrail.work.schema import WorkSummary
@@ -217,3 +221,55 @@ async def _tail_new_receipts(store: ReceiptsStore, request: Request) -> AsyncIte
             since = max(since, receipt.timestamp.timestamp())
             yield f"data: {receipt.model_dump_json()}\n\n".encode()
         await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+
+
+def _ap_store(request: Request) -> RecoveryStore:
+    store: RecoveryStore = request.app.state.ap_recovery_store
+    return store
+
+
+@router.get(
+    "/ap/pending",
+    dependencies=[Depends(_require_local_api_token)],
+    summary="AP work_ids currently awaiting human review",
+)
+async def list_ap_pending(request: Request) -> dict[str, Any]:
+    """The dashboard's Recover screen (docs/PRODUCT.md's "Dashboard"
+    section) — every work_id whose decision is currently
+    `awaiting_human_review`, built from `ap.report.build_live_report`
+    (the same auditable report `inferrail ap report`/the hosted API's
+    `GET /v1/report` produce), filtered to one status. Returns the same
+    dict shape as those, not a new response model — keeps exactly one
+    place that decides what a report row looks like."""
+    report = build_live_report(_ap_store(request))
+    rows = [
+        row
+        for row in report.to_dict()["rows"]
+        if row["status"] == DecisionStatus.AWAITING_HUMAN_REVIEW.value
+    ]
+    return {"rows": rows}
+
+
+@router.post(
+    "/ap/{work_id}/outcome",
+    dependencies=[Depends(_require_local_api_token)],
+    summary="Record a human-review outcome for one work_id",
+)
+async def record_ap_outcome(
+    request: Request, work_id: str, body: OutcomeRequest
+) -> dict[str, Any]:
+    """Same store-level call `inferrail ap outcome`/the hosted API's
+    `POST /v1/decisions/{work_id}/outcome` make — closing the loop the
+    CLI can't with a click instead of composing a command
+    (`MISSION.md`'s v0.4.0 "Recover" screen)."""
+    try:
+        return _ap_store(request).record_outcome(
+            work_id=work_id,
+            outcome=body.outcome,
+            timestamp=time.time(),
+            source=body.source,
+            correction_delta_usd=body.correction_delta_usd,
+            review_cost_usd=body.review_cost_usd,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc

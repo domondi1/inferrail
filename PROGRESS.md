@@ -6,38 +6,39 @@ session; `MISSION.md` almost never does.
 ## Status summary
 
 **v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
-**v0.4.0 (the dashboard) is in progress — unit 1 (scaffold + real
-serving/auth + Live Feed) is merged.** [PR #29](https://github.com/domondi1/inferrail/pull/29),
-merge commit `b900a59` — confirmed `MERGED` via `gh pr list --head
-feat/dashboard-scaffold-live-feed --json state,mergedAt` before trusting
-the founder's report, same discipline as every prior milestone; all 9
-CI checks (including the new `dashboard` job) green on that exact
-commit via `gh pr checks 29`; merge-commit tree confirmed byte-identical
-to what was authored locally (`git diff a332e23^{tree} b900a59^{tree}`
-→ empty) — no drift. `main` is synced through `b900a59`.
+**v0.4.0 (the dashboard) is in progress — units 1–3 are merged:**
+
+- Unit 1 (scaffold, real serving/auth, Live Feed): [PR #29](https://github.com/domondi1/inferrail/pull/29), merge commit `b900a59`.
+- Unit 2 (Work screen): [PR #30](https://github.com/domondi1/inferrail/pull/30), merge commit `217000b`.
+- Unit 3 (Budgets screen): [PR #31](https://github.com/domondi1/inferrail/pull/31), merge commit `8d43bc6`.
+
+Each merge was confirmed independently via `gh pr list --json
+state,mergedAt` before trusting the founder's report (not taken on a
+verbal report alone), all 9 CI checks green via `gh pr checks <n>` on
+the exact merged commit, and merge-commit tree confirmed byte-identical
+to what was authored locally (`git diff <local>^{tree} <merge>^{tree}`
+→ empty, no squash drift) — same discipline every prior milestone used.
+`main` is synced through `8d43bc6`.
 
 **Architectural decision recorded, per explicit founder instruction:
 the dashboard lives in `app/` in this repository**, not a sibling
 repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 
-**Unit 2 (Work screen) is merged.** [PR #30](https://github.com/domondi1/inferrail/pull/30),
-merge commit `217000b` — confirmed `MERGED` via `gh pr list` before
-trusting the founder's report, all 9 CI checks green via `gh pr checks
-30`, merge-commit tree byte-identical to what was authored locally
-(`git diff ee9c86a^{tree} 217000b^{tree}` → empty). `main` synced
-through `217000b`.
+See "v0.4.0 — IN PROGRESS" below for the full record of what's built
+(Live Feed, Work, Budgets) vs. not yet (Recover, Connect, Settings;
+wheel packaging).
 
-**Unit 3 (Budgets screen) is also done this session, committed locally,
-not yet pushed/merged.** Unlike unit 2, this one needed real backend
-work, not just frontend — see "v0.4.0 — IN PROGRESS" below for the full
-record of what's built (Live Feed, Work, Budgets) vs. not yet (Recover,
-Connect, Settings; wheel packaging).
-
-**Next session's job:** once unit 3 is pushed/merged (see "HUMAN ACTION
-NEEDED"), pick v0.4.0's next unit — Recover (approve/record-outcome for
-the human-review queue). That completes MISSION.md's full v0.4.0
-acceptance criterion ("watch a live request appear, set a budget, see a
+**Unit 4 (Recover screen) is also done this session, committed locally,
+not yet pushed/merged.** Real backend work again: `--app-mode` now also
+provisions an AP recovery store (`ap.store.RecoveryStore`), and two new
+local API routes bridge to the previously separate `inferrail.ap`
+module. This is the last screen MISSION.md's full v0.4.0 acceptance
+criterion needs ("watch a live request appear, set a budget, see a
 block, and clear a review item").
+
+**Next session's job:** once unit 4 is pushed/merged (see "HUMAN ACTION
+NEEDED"), only Connect and Settings remain, plus the deferred
+wheel-packaging unit.
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -711,7 +712,7 @@ unit is frontend-only.
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 3: Budgets screen — DONE, not yet pushed/merged
+### Checklist for unit 3: Budgets screen — DONE, merged (PR #31, `8d43bc6`)
 
 Unlike unit 2, this one needed real backend work: the endpoints
 `GET /v1/local/budgets/spend` and receipts' `status` filter didn't exist
@@ -797,6 +798,92 @@ from any other failure.
       Budgets bullet.
 - [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — v0.4.0 is still
       not closed (Recover/Connect/Settings remain).
+- [x] **Pushed and merged.** [PR #31](https://github.com/domondi1/inferrail/pull/31)
+      merged, merge commit `8d43bc6` — confirmed `MERGED` and all 9 CI
+      checks green before trusting the founder's report; merge-commit
+      tree byte-identical to the local commit (no squash drift).
+
+### Checklist for unit 4: Recover screen — DONE, not yet pushed/merged
+
+The first unit to bridge the dashboard to `inferrail.ap` — a previously
+separate module with its own store, its own CLI subcommands
+(`inferrail ap demo|report|outcome|reap`), and no prior config-file or
+`--app-mode` wiring at all.
+
+- [x] **`_apply_app_mode` (`cli/main.py`)** gained `ap_recovery: Path`
+      in `_AppModePaths` — a fixed default under the app-data dir
+      (`ap-recovery.db`), overridable via `INFERRAIL_AP_DB` (an env var,
+      not a new CLI flag — kept minimal since this is the Recover
+      screen's only consumer so far). Printed on startup alongside
+      receipts/budgets, with the exact `--db` value to point
+      `inferrail ap demo|report|outcome` at to populate it.
+- [x] **`create_app` (`gateway/app.py`)** gained `ap_recovery_path`;
+      under `app_mode=True` it always constructs an
+      `ap.store.RecoveryStore` at that path (or the default) —
+      unconditional, same treatment as receipts/budgets, never "mounted
+      only if AP happens to be in use." `RecoveryStore.__init__` creates
+      its schema eagerly and is safe against a nonexistent/empty file;
+      an empty store is a normal state (`build_live_report` returns zero
+      rows), never an error — confirmed both by a live smoke test and by
+      `test_ap_pending_is_empty_with_no_decisions`.
+- [x] **New `GET /v1/local/ap/pending`** (`localapi/routes.py` +
+      nothing new in `schemas.py` — returns the same dict shape
+      `ap.report.build_live_report(...).to_dict()` already produces,
+      filtered to `status == "awaiting_human_review"`, matching the
+      precedent `hosted/ap_exceptions/service.py`'s own `GET /v1/report`
+      already set for "no new response model, reuse the one report
+      shape"). **New `POST /v1/local/ap/{work_id}/outcome`**
+      (`localapi/schemas.py`'s new `OutcomeRequest`, deliberately not
+      imported from `hosted/ap_exceptions/service.py`'s own copy since
+      `hosted/` is a separate deployable, never a dependency of the
+      installed package) — calls `RecoveryStore.record_outcome` directly,
+      the same store-level call `inferrail ap outcome` and the hosted
+      API's own outcome route make; a `KeyError` (unknown work_id) maps
+      to `404`, matching both of those existing precedents exactly.
+- [x] `app/src/screens/Recover.tsx`: a pending-review queue (failure
+      type, reason, sunk/retry cost) with an inline outcome/review-cost
+      form per row and a "record outcome" button; an empty store or one
+      with nothing pending both render as honest empty states, not
+      errors — a missing AP recovery store isn't assumed to be a bug.
+- [x] `app/src/api.ts` gained `PendingReview`, `OutcomeRequest`,
+      `listPendingReviews()`, `recordOutcome()`.
+- [x] Nav: Recover tab is now enabled/clickable.
+- [x] Tests: 5 new local-API tests (`test_localapi_routes.py` —
+      empty-by-default, filters to awaiting-review only, requires the
+      token, resolves a decision end-to-end confirming it drops out of
+      `pending` afterward, 404 on an unknown work_id), 2 new CLI tests
+      (`test_cli_main.py` — the ap-recovery path is created and printed,
+      `INFERRAIL_AP_DB` override is honored and actually used by the
+      constructed store, plus one existing app-mode test extended with
+      ap-recovery assertions) — 6 new backend tests across both files.
+      `cd app && npm run lint && npm run build && npm test` — 18
+      vitest cases (unchanged; Recover's logic is thin enough it didn't
+      need new pure-function tests the way Work/Budgets did — its inline
+      form logic is exercised by the live smoke test below instead).
+- [x] Live end-to-end smoke test (not just unit tests): started a real
+      `inferrail serve --app-mode`, confirmed `ap/pending` is `[]` before
+      any decisions exist and the startup log prints the exact
+      `ap-recovery.db` path, seeded one real `awaiting_human_review`
+      decision directly via `RecoveryStore.create_decision` (the same
+      call `inferrail ap`'s own decision path makes), confirmed it
+      appears in `ap/pending` with the exact shape the frontend's
+      `PendingReview` interface expects, recorded a real outcome via
+      `POST .../outcome`, confirmed it then disappears from `pending`,
+      and confirmed an unknown work_id correctly 404s.
+- [x] Local verification: `ruff check .`/`mypy` clean (83 files),
+      `bash scripts/check_no_internal_content.sh` clean. All three
+      generator scripts re-run, zero diff (no config/error-code changes
+      this unit — the local API still isn't in the generated OpenAPI
+      spec, per ADR-0016's existing scope decision). Full-repo
+      `pytest -q`: **880 passed, 19 skipped, 0 failed** (up from 874 at
+      unit 3 — exactly the 6 new backend tests this unit added).
+- [x] Docs: `docs/PRODUCT.md`'s dashboard subsection updated,
+      `docs/ARCHITECTURE.md`'s dashboard-boundary section gained a
+      paragraph on the AP bridge, `README.md`'s dashboard bullet
+      updated, `CHANGELOG.md`'s `## v0.4.0` entry gained the Recover
+      bullet.
+- [x] **Not bumped:** `pyproject.toml` stays `0.3.0` — v0.4.0 is still
+      not closed (Connect/Settings remain).
 - [ ] **Not done yet, this unit's own honest gap:** committed locally,
       **not pushed** — same push-permission gap as every prior unit.
       Exact handoff commands: see "HUMAN ACTION NEEDED" below.
@@ -814,32 +901,42 @@ from any other failure.
   server, not the built static output this unit actually ships); fixing
   requires a breaking major-version bump (`vite@8`, `vitest@5`) not
   attempted in this unit. Tracked, not silently ignored.
-- Recover, Connect, Settings screens: not built. Recover in particular
-  is the other half of MISSION.md's full v0.4.0 acceptance criterion
-  ("set a budget, see a block, clear a review item") — Budgets alone
-  does not close the milestone.
+- Connect, Settings screens: not built — the last two, both smaller
+  than any unit so far (Connect is static per-tool snippets; Settings
+  is export/catalog-refresh/opt-in toggles). With Recover done,
+  MISSION.md's full v0.4.0 acceptance criterion is now behaviorally
+  complete ("watch a live request appear, set a budget, see a block,
+  and clear a review item"), though the milestone itself isn't closed
+  until every listed screen exists.
+- The Recover screen requires an AP recovery store — most `--app-mode`
+  users who never touch `inferrail ap` will see an empty queue, not an
+  error, which is correct, but is worth knowing before expecting the
+  screen to show anything without first running `inferrail ap demo`
+  or pointing `INFERRAIL_AP_DB` at an existing store.
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 3's PR
+   changed underneath since this session — check whether unit 4's PR
    (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
    been pushed/merged; if the founder reports it was, verify with
    `gh pr view <n> --json state,mergedAt` before trusting it, same
    discipline as every prior milestone.
-2. **Pick v0.4.0's next unit: Recover.** This is the last screen
-   MISSION.md's acceptance criterion needs ("clear a review item"). It
-   needs a pending-human-review queue (work_ids currently routed to
-   human review with no outcome recorded yet — check
-   `work.builder.build_work_summary`/`aggregate_work_summaries` for
-   what's already derivable from receipts+outcomes, since a "pending
-   review" work_id is likely just one with `inference_status` showing no
-   successful retry and no `outcome_status` set yet) and a way to record
-   an outcome (`inferrail work outcome` exists as a CLI command but the
-   local API has no `POST` equivalent yet — check whether one is needed
-   or whether outcomes should be appended directly the same way the CLI
-   does, via `work.builder.append_outcome`). After Recover, only
-   Connect and Settings remain, plus the deferred wheel-packaging unit.
+2. **Pick v0.4.0's next unit: Connect or Settings — either order,
+   neither depends on the other.** Connect is per-tool copy-paste
+   snippets (OpenAI SDK, Claude Code, curl, etc. — `README.md`'s
+   existing "Use it as a gateway" section already has the exact
+   snippets to adapt, so this is presentation, not new backend surface).
+   Settings is export/catalog-refresh/opt-in-ping-default-off — check
+   whether `inferrail receipts export` (v0.3.0) already covers "export"
+   or whether the dashboard needs its own download route; "opt-in ping
+   default OFF" should just mean a toggle that's honest about currently
+   doing nothing, since no ping mechanism exists yet in this codebase
+   (verify that assumption before building a UI for a backend feature
+   that isn't real). After both, v0.4.0's screens are all built — what
+   remains before the milestone can close: the wheel-packaging follow-up
+   (ADR-0017's "Known gap") and MISSION.md's own acceptance-criterion
+   sign-off.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then

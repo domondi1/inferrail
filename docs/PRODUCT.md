@@ -337,7 +337,7 @@ fleet "control plane" `docs/adr/0004` anticipates):
   directly — `inferrail report`/`work`/`budget` remain the CLI's own
   read/write surface either way.
 
-### Dashboard (v0.4.0, in progress) — Live Feed, Work, and Budgets built so far
+### Dashboard (v0.4.0, in progress) — Live Feed, Work, Budgets, and Recover built so far
 
 A static, local web SPA in `app/`, served by the same process as the
 local control API when `--app-mode` is on — see
@@ -371,10 +371,24 @@ local control API when `--app-mode` is on — see
   tell a genuine budget block apart from any other `status: "error"`
   receipt. `GET /v1/local/receipts` gained an optional `status` filter
   to support this.
-- **Not yet built**: Recover, Connect, Settings — the remaining
-  `MISSION.md` v0.4.0 screens. The nav shows all six tabs; the three not
-  yet built are visibly disabled rather than omitted, so the eventual
-  shape of the dashboard is honest from the first screen onward.
+- **Recover** (built): the pending human-review queue —
+  `GET /v1/local/ap/pending` (every work_id whose AP invoice-exception
+  decision is `awaiting_human_review`, built from
+  `ap.report.build_live_report`, the same auditable report `inferrail ap
+  report` and the hosted API's `GET /v1/report` already produce) — with
+  a one-click "record outcome" (`POST /v1/local/ap/{work_id}/outcome`,
+  the same store call `inferrail ap outcome` makes). **Requires an AP
+  recovery store** — `inferrail serve --app-mode` always provisions one
+  at a fixed app-data path (printed on startup, alongside the receipts/
+  budgets paths) and prints the exact `--db` value to point `inferrail
+  ap demo|report|outcome` at to populate it; override the path with
+  `INFERRAIL_AP_DB` if you already have one elsewhere. An empty store
+  (the common case for anyone not using the AP module) shows "nothing
+  pending review," never an error.
+- **Not yet built**: Connect, Settings — the remaining `MISSION.md`
+  v0.4.0 screens. The nav shows all six tabs; the two not yet built are
+  visibly disabled rather than omitted, so the eventual shape of the
+  dashboard is honest from the first screen onward.
 - Known gap: the built dashboard is not yet bundled into the PyPI
   wheel — `pip install inferrail` alone does not currently ship a
   dashboard. Build it from a checkout: `cd app && npm install && npm run

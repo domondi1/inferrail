@@ -149,9 +149,32 @@ def test_serve_app_mode_relocates_receipts_and_budgets_and_prints_token(
     app = _no_real_server[0]["app"]
     assert (app_data / "inferrail" / "receipts.db").exists()
     assert (app_data / "inferrail" / "local-api-token").exists()
+    assert (app_data / "inferrail" / "ap-recovery.db").exists()
     out = capsys.readouterr().out
     assert "App-mode data directory" in out
     assert app.state.local_api_token in out
+    assert str(app_data / "inferrail" / "ap-recovery.db") in out
+
+
+def test_serve_app_mode_honors_inferrail_ap_db_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    config_path = _write_serve_config(tmp_path)
+    monkeypatch.setenv("TEST_SERVE_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "appdata"))
+    monkeypatch.setattr("sys.platform", "linux")
+    override_path = tmp_path / "my-existing-ap-recovery.db"
+    monkeypatch.setenv("INFERRAIL_AP_DB", str(override_path))
+
+    result = main(["serve", "--config", str(config_path), "--app-mode"])
+
+    assert result == 0
+    assert override_path.exists()
+    app = _no_real_server[0]["app"]
+    assert app.state.ap_recovery_store.db_path == override_path
 
 
 def test_serve_quickstart_and_app_mode_together_is_rejected(

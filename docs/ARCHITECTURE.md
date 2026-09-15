@@ -394,6 +394,19 @@ already embedded in the URL
 dependency accepts either form, since browser `EventSource` (used by the
 Live Feed screen) cannot set custom headers at all.
 
+**The Recover screen bridges to `inferrail.ap`, a previously separate
+module.** `--app-mode` now also constructs an `ap.store.RecoveryStore`
+at a fixed app-data path (`INFERRAIL_AP_DB` overrides it), always —
+same treatment as receipts/budgets, never conditional on whether the AP
+module happens to be in use. `localapi.routes`'s `/ap/pending` and
+`/ap/{work_id}/outcome` are thin wrappers: the former calls
+`ap.report.build_live_report` (the exact function `inferrail ap report`
+and the hosted AP service's own `GET /v1/report` already call) and
+filters to `status == "awaiting_human_review"`; the latter calls
+`RecoveryStore.record_outcome` directly, the same store-level call
+`inferrail ap outcome` makes — no new AP business logic, only a new,
+local, single-user way to reach the existing one.
+
 ## OSS data plane vs. future hosted control plane
 
 Everything in this repository is the **data plane**: the hot path that

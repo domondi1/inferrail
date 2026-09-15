@@ -185,3 +185,50 @@ export function streamReceipts(
 
   return () => source.close();
 }
+
+/** One row of the AP recovery report (`ap.report.LiveReportRow`), kept
+ * loose like `Receipt` -- only the fields the Recover screen actually
+ * renders, not the full report contract. Cost fields are `string | null`
+ * on the wire; `null` is genuinely unknown, never `$0`. */
+export interface PendingReview {
+  work_id: string;
+  failure_type: string;
+  recommended_action: string;
+  reason: string;
+  status: string;
+  retry_status: string | null;
+  sunk_cost_usd: string | null;
+  retry_cost_usd: string | null;
+  validation_passed: boolean | null;
+  handoff_ref: string | null;
+}
+
+export async function listPendingReviews(): Promise<PendingReview[]> {
+  const page = await fetchLocal<{ rows: PendingReview[] }>("/v1/local/ap/pending");
+  return page.rows;
+}
+
+export interface OutcomeRequest {
+  outcome: string;
+  source?: string;
+  correction_delta_usd?: string | null;
+  review_cost_usd?: string | null;
+}
+
+export async function recordOutcome(workId: string, payload: OutcomeRequest): Promise<void> {
+  const response = await fetch(`/v1/local/ap/${encodeURIComponent(workId)}/outcome`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new LocalApiError(
+      response.status,
+      body.detail ?? `record outcome -> ${response.status}`,
+    );
+  }
+}

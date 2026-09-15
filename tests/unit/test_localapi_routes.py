@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from inferrail.ap.store import RecoveryStore
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import InferrailConfig
@@ -355,3 +356,81 @@ def test_pre_seeded_budget_store_is_reused_not_recreated(
     response = client.get("/v1/local/budgets", headers=_auth(token))
 
     assert [b["budget_id"] for b in response.json()] == ["global:_:daily"]
+
+
+def _ap_decision(
+    store: RecoveryStore, work_id: str, *, status: str = "awaiting_human_review"
+) -> None:
+    store.create_decision(
+        work_id=work_id, decision_id=f"dec-{work_id}", checkpoint_attempt_id=f"att-{work_id}",
+        failure_type="low_confidence", confidence="0.6", cost_so_far_usd="0.10",
+        policy_name="candidate_policy", policy_version="ap.policy/v1",
+        recommended_action="human_review", reason="test", status=status,
+    )
+
+
+def test_ap_pending_is_empty_with_no_decisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.get("/v1/local/ap/pending", headers=_auth(token))
+
+    assert response.status_code == 200
+    assert response.json() == {"rows": []}
+
+
+def test_ap_pending_lists_only_awaiting_human_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+    store = RecoveryStore(tmp_path / "ap-recovery.db")
+    _ap_decision(store, "W1", status="awaiting_human_review")
+    _ap_decision(store, "W2", status="retry_resolved")
+
+    response = client.get("/v1/local/ap/pending", headers=_auth(token))
+
+    rows = response.json()["rows"]
+    assert [r["work_id"] for r in rows] == ["W1"]
+    assert rows[0]["status"] == "awaiting_human_review"
+
+
+def test_ap_pending_requires_the_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client, _token, _config = _make_client(monkeypatch, tmp_path)
+
+    assert client.get("/v1/local/ap/pending").status_code == 401
+
+
+def test_record_ap_outcome_resolves_the_decision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+    store = RecoveryStore(tmp_path / "ap-recovery.db")
+    _ap_decision(store, "W1", status="awaiting_human_review")
+
+    response = client.post(
+        "/v1/local/ap/W1/outcome",
+        headers=_auth(token),
+        json={"outcome": "accepted", "source": "dashboard"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "accepted"
+    assert store.get_decision("W1")["status"] == "resolved"
+
+    pending_after = client.get("/v1/local/ap/pending", headers=_auth(token)).json()
+    assert pending_after["rows"] == []
+
+
+def test_record_ap_outcome_unknown_work_id_is_404(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/v1/local/ap/does-not-exist/outcome",
+        headers=_auth(token),
+        json={"outcome": "accepted"},
+    )
+
+    assert response.status_code == 404
