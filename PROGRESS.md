@@ -948,17 +948,17 @@ separate module with its own store, its own CLI subcommands
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 3 needs to be pushed and opened as a PR** — same
+- **Unit 4 needs to be pushed and opened as a PR** — same
   push-permission gap as every prior unit (`git push` from this session
   returns `403: Permission to domondi1/inferrail.git denied to
   domondi1`, confirmed again this session). Committed locally as
-  `1ea10f1` on branch `feat/dashboard-budgets-screen`, based on `main`
-  at `217000b` (PR #30's merge commit, the current `origin/main` tip as
+  `10ab29a` on branch `feat/dashboard-recover-screen`, based on `main`
+  at `8d43bc6` (PR #31's merge commit, the current `origin/main` tip as
   of this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-budgets-screen
-  gh pr create --title "feat: dashboard Budgets screen (v0.4.0 unit 3)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 3's checklist, for the full record. Real backend work this time: budgets/enforcement.py gains augment_attributes_with_block (same pattern as the existing augment_attributes_with_overrun), a new status filter on GET /v1/local/receipts, and a new GET /v1/local/budgets/spend that reuses spent_so_far_usd directly. Frontend: a Budgets screen with create/remove, burn bars, and a blocked-request log built from real evidence. 874 tests pass (868 + 6 new backend), 18 vitest cases pass, ruff/mypy/boundary-check clean, live-smoke-tested end-to-end against a running inferrail serve --app-mode instance (real budget created, real 402 block, confirmed the resulting receipt). Recover/Connect/Settings remain separate later units." \
+  git push -u origin feat/dashboard-recover-screen
+  gh pr create --title "feat: dashboard Recover screen (v0.4.0 unit 4)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 4's checklist, for the full record. First unit to bridge the dashboard to inferrail.ap: --app-mode now provisions an AP recovery store (override with INFERRAIL_AP_DB), new GET /v1/local/ap/pending (built from ap.report.build_live_report, filtered to awaiting_human_review) and POST /v1/local/ap/{work_id}/outcome (calls RecoveryStore.record_outcome directly, same as inferrail ap outcome). Frontend: a pending-review queue with an inline outcome form. 880 tests pass (874 + 6 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end (seeded a real decision, confirmed it appears/resolves/disappears, confirmed 404 on an unknown work_id). This is the last screen MISSION.md's full v0.4.0 acceptance criterion needs -- only Connect and Settings remain." \
     --base main
   ```
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
