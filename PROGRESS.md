@@ -1319,8 +1319,8 @@ verified.
   checkout, confirmed before writing the fix, not guessed at) and
   re-verified the fix passes against that exact reproduction.
 
-  Committed as `<pending — see next commit on this branch>` on
-  `feat/dashboard-wheel-packaging`. Same force-push pattern as before:
+  Committed as `e9b8556` on `feat/dashboard-wheel-packaging`. Same
+  force-push pattern as before:
   ```
   git push --force-with-lease origin feat/dashboard-wheel-packaging
   ```
