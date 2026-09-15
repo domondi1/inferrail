@@ -118,14 +118,17 @@ prior occurrence.
 ## Status summary
 
 **v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
-**v0.4.0 (the dashboard) — all five units are merged; all six
-MISSION.md screens exist:**
+**v0.4.0 (the dashboard) — all six units are merged; all six MISSION.md
+screens exist, and the dashboard is now bundled into the wheel this
+project's own CI builds:**
 
 - Unit 1 (scaffold, real serving/auth, Live Feed): [PR #29](https://github.com/domondi1/inferrail/pull/29), merge commit `b900a59`.
 - Unit 2 (Work screen): [PR #30](https://github.com/domondi1/inferrail/pull/30), merge commit `217000b`.
 - Unit 3 (Budgets screen): [PR #31](https://github.com/domondi1/inferrail/pull/31), merge commit `8d43bc6`.
 - Unit 4 (Recover screen): [PR #32](https://github.com/domondi1/inferrail/pull/32), merge commit `ffce54f`.
 - Unit 5 (Connect + Settings screens): [PR #33](https://github.com/domondi1/inferrail/pull/33), merge commit `41f83aa`.
+- ops (PROGRESS.md status update + audit note): [PR #34](https://github.com/domondi1/inferrail/pull/34), merge commit `a49d2f7`.
+- Unit 6 (bundle the dashboard into the PyPI wheel): [PR #35](https://github.com/domondi1/inferrail/pull/35), merge commit `558365d` — took two rounds of real, post-push fixes to land clean (a git-history-artifact merge conflict from rebasing onto a squash-merged commit under a different hash, then a genuine CI script gap once the conflict was resolved — see unit 6's own checklist below for both).
 
 Each merge was confirmed independently via `gh pr list --json
 state,mergedAt` before trusting the founder's report (not taken on a
@@ -133,7 +136,7 @@ verbal report alone), all 9 CI checks green via `gh pr checks <n>` on
 the exact merged commit, and merge-commit tree confirmed byte-identical
 to what was authored locally (`git diff <local>^{tree} <merge>^{tree}`
 → empty, no squash drift) — same discipline every prior milestone used.
-`main` is synced through `41f83aa`.
+`main` is synced through `558365d`.
 
 **Architectural decision recorded, per explicit founder instruction:
 the dashboard lives in `app/` in this repository**, not a sibling
@@ -142,21 +145,24 @@ repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 **MISSION.md's full v0.4.0 acceptance criterion is now behaviorally
 complete** ("watch a live request appear, set a budget, see a block,
 and clear a review item") — all six listed screens are real, working
-UI as of unit 5. **The milestone is not yet formally closed**: two
-things remain, both requiring founder input rather than a unilateral
-decision (see "HUMAN ACTION NEEDED" below) —
+UI, and `pip install inferrail` (from a wheel this project's own CI
+builds) now ships a working dashboard (`docs/adr/0018`). **The
+milestone is not yet formally closed**: three things remain, all
+requiring founder input rather than a unilateral decision (see "HUMAN
+ACTION NEEDED" below) —
 
 1. Whether the Settings screen's disabled "opt-in usage ping"
    placeholder is the right call, or whether a real telemetry-ping
    feature should be scoped as its own future unit.
-2. The deferred wheel-packaging follow-up (`docs/adr/0017`'s "Known
-   gap") — **and, per a concurrent audit session's finding preserved
-   above, a related but separate question: PyPI's actual latest
-   release is still 0.2.0** (confirmed via `pypi.org/pypi/inferrail/json`),
-   two versions behind `main`. Closing v0.4.0 doesn't require
-   publishing to PyPI, but the founder should decide explicitly whether
-   v0.3.0/v0.4.0 get published before v1.0, rather than that staying an
-   implicit gap.
+2. Whether/when to wire Node into `publish.yml` and
+   `platform-verify.yml` so the *actual* PyPI-published wheel and the
+   three-OS platform-verify wheels also bundle a dashboard (today only
+   this project's own `dashboard` CI job proves the bundling works).
+3. Per a concurrent audit session's finding, preserved above: PyPI's
+   actual latest release is still 0.2.0, two versions behind `main`.
+   Closing v0.4.0 doesn't require publishing to PyPI, but the founder
+   should decide explicitly whether v0.3.0/v0.4.0 get published before
+   v1.0, rather than that staying an implicit gap.
 
 **Process note on this session sharing a working directory with a
 concurrent audit session:** the "Independent status audit" section
@@ -1124,7 +1130,7 @@ exist.**
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, pushed as PR #35, two rounds of fixes, awaiting final force-push + merge
+### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, merged (PR #35, `558365d`)
 
 Closes ADR-0017's "Known gap" for the wheel this project's own CI
 builds — see `docs/adr/0018-dashboard-wheel-packaging.md` for the full
@@ -1211,8 +1217,13 @@ verified.
       files, per its own merge policy) — a deliberate scope boundary for
       this unit, not an oversight. See ADR-0018's "Consequences" and
       "HUMAN ACTION NEEDED" below.
-- [ ] **Pushed and opened as PR #35, but not yet merged — two rounds of
-      real problems found and fixed post-push, neither hidden:**
+- [x] **Pushed, fixed twice post-push, and merged.**
+      [PR #35](https://github.com/domondi1/inferrail/pull/35) merged,
+      merge commit `558365d` — confirmed `MERGED` and all 9 CI checks
+      green (including a clean `dashboard` run) before trusting the
+      founder's report; merge-commit tree byte-identical to the local
+      commit (no squash drift). Two real problems found and fixed
+      post-push, neither hidden:
       1. A `CONFLICTING` mergeable state, caused by a git-history
          artifact from rebasing onto a commit that got squash-merged
          under a different hash — fixed by rebasing onto the actual
@@ -1225,8 +1236,8 @@ verified.
          then), which legitimately produces a `dashboard_static/`
          result instead — a correct outcome the check script didn't
          know about yet. Reproduced locally before fixing, fix verified
-         against that exact reproduction. See "HUMAN ACTION NEEDED" for
-         the exact push command and what to re-check.
+         against that exact reproduction, then force-pushed again by
+         the founder — clean on the next run.
 
 ### Known gaps, explicitly deferred (not hidden) — see ADR-0017's/0018's "Consequences"
 
@@ -1249,11 +1260,11 @@ verified.
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 6's PR
-   and the small `ops:` PROGRESS.md-only PR (see "HUMAN ACTION NEEDED"
-   for both) have been pushed/merged; verify with `gh pr view <n> --json
-   state,mergedAt` before trusting a verbal report, same discipline as
-   every prior milestone.
+   changed underneath since this session — `main` should be at
+   `558365d` (PR #35's merge commit). If the founder reports anything
+   else was merged/changed, verify with `gh pr view <n> --json
+   state,mergedAt` before trusting it, same discipline as every prior
+   milestone.
 2. **Check for a concurrent session on this same checkout before
    editing anything** (`ListAgents` or ask the founder) — a prior pass
    this session found a peer session actively editing this exact
@@ -1293,43 +1304,13 @@ verified.
 
 ## HUMAN ACTION NEEDED
 
-- **PR #34 (the small ops/status-update PR) is merged** — merge commit
-  `a49d2f7`, confirmed via `gh pr list --json state,mergedAt`.
-- **PR #35 (unit 6, wheel packaging): the earlier `CONFLICTING` state
-  was force-pushed away successfully** (founder ran the
-  `git push --force-with-lease` + `gh pr edit --title` commands from
-  the previous round), but CI's `dashboard` job then failed on a real,
-  new issue — not the conflict, a genuine gap in a CI helper script.
-
-  **Root cause:** `scripts/check_dashboard_discoverable.py` (written
-  before unit 6 existed) asserted `find_dashboard_dist()` must return a
-  path named exactly `dist` (the `app/dist` checkout fallback). This
-  job's own earlier `pip install -e .` step *also* triggers the new
-  wheel-packaging build hook — Node is already on `PATH` in this job by
-  that point (`actions/setup-node@v4` runs first) — which bundles a
-  real `dashboard_static/` directly into the checkout during that
-  install. `find_dashboard_dist()` correctly finds that (it's checked
-  before the `app/dist` fallback, same priority order as the installed-
-  wheel case), but the check script's `!= "dist"` assertion then failed
-  on a result that isn't wrong, just differently-shaped than the script
-  assumed. **Fixed:** the script now accepts either `dist` or
-  `dashboard_static` as a valid, successful discovery — reproduced
-  locally first (`rm -rf app/dist src/inferrail/dashboard_static &&
-  pip install -e .` really does materialize `dashboard_static` in the
-  checkout, confirmed before writing the fix, not guessed at) and
-  re-verified the fix passes against that exact reproduction.
-
-  Committed as `e9b8556` on `feat/dashboard-wheel-packaging`. Same
-  force-push pattern as before:
-  ```
-  git push --force-with-lease origin feat/dashboard-wheel-packaging
-  ```
-  (No new conflict expected this time — this is a plain fast-forward of
-  the same branch, not a rebase, so a normal push should work; use
-  `--force-with-lease` anyway only if a plain `git push` is refused.)
-  After it lands, re-check `gh pr checks 35` for a clean `dashboard` run
-  before merging.
-
+- **None outstanding for pushing** — both PR #34 (merge commit
+  `a49d2f7`) and PR #35 (merge commit `558365d`) are merged, all 9 CI
+  checks green on each exact merged commit, `main` synced through
+  `558365d` with zero drift from what was authored locally. Unit 6's
+  own checklist above has the full record of the two real, post-push
+  problems found and fixed along the way (a git-history merge-conflict
+  artifact, then a genuine CI script gap) — neither is outstanding now.
 - **Three open decisions remain, none blocking, all worth explicit
   founder input rather than a unilateral call:**
   1. **The Settings screen's "opt-in usage ping" checkbox is a
