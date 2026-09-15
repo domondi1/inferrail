@@ -118,12 +118,14 @@ prior occurrence.
 ## Status summary
 
 **v0.2.1 and v0.3.0 are fully closed** (see their own sections below).
-**v0.4.0 (the dashboard) is in progress — units 1–4 are merged:**
+**v0.4.0 (the dashboard) — all five units are merged; all six
+MISSION.md screens exist:**
 
 - Unit 1 (scaffold, real serving/auth, Live Feed): [PR #29](https://github.com/domondi1/inferrail/pull/29), merge commit `b900a59`.
 - Unit 2 (Work screen): [PR #30](https://github.com/domondi1/inferrail/pull/30), merge commit `217000b`.
 - Unit 3 (Budgets screen): [PR #31](https://github.com/domondi1/inferrail/pull/31), merge commit `8d43bc6`.
 - Unit 4 (Recover screen): [PR #32](https://github.com/domondi1/inferrail/pull/32), merge commit `ffce54f`.
+- Unit 5 (Connect + Settings screens): [PR #33](https://github.com/domondi1/inferrail/pull/33), merge commit `41f83aa`.
 
 Each merge was confirmed independently via `gh pr list --json
 state,mergedAt` before trusting the founder's report (not taken on a
@@ -131,7 +133,7 @@ verbal report alone), all 9 CI checks green via `gh pr checks <n>` on
 the exact merged commit, and merge-commit tree confirmed byte-identical
 to what was authored locally (`git diff <local>^{tree} <merge>^{tree}`
 → empty, no squash drift) — same discipline every prior milestone used.
-`main` is synced through `ffce54f`.
+`main` is synced through `41f83aa`.
 
 **Architectural decision recorded, per explicit founder instruction:
 the dashboard lives in `app/` in this repository**, not a sibling
@@ -139,17 +141,43 @@ repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 
 **MISSION.md's full v0.4.0 acceptance criterion is now behaviorally
 complete** ("watch a live request appear, set a budget, see a block,
-and clear a review item") — all four are real, working screens as of
-unit 4. The milestone itself isn't closed yet: Connect and Settings
-(the two remaining listed screens) and the deferred wheel-packaging
-follow-up (ADR-0017's "Known gap") are still open.
+and clear a review item") — all six listed screens are real, working
+UI as of unit 5. **The milestone is not yet formally closed**: two
+things remain, both requiring founder input rather than a unilateral
+decision (see "HUMAN ACTION NEEDED" below) —
+
+1. Whether the Settings screen's disabled "opt-in usage ping"
+   placeholder is the right call, or whether a real telemetry-ping
+   feature should be scoped as its own future unit.
+2. The deferred wheel-packaging follow-up (`docs/adr/0017`'s "Known
+   gap") — **and, per a concurrent audit session's finding preserved
+   above, a related but separate question: PyPI's actual latest
+   release is still 0.2.0** (confirmed via `pypi.org/pypi/inferrail/json`),
+   two versions behind `main`. Closing v0.4.0 doesn't require
+   publishing to PyPI, but the founder should decide explicitly whether
+   v0.3.0/v0.4.0 get published before v1.0, rather than that staying an
+   implicit gap.
+
+**Process note on this session sharing a working directory with a
+concurrent audit session:** the "Independent status audit" section
+above this one was written by a separate Claude Code session auditing
+this same checkout while this session was mid-way through committing
+unit 5 — both sessions share the same on-disk working directory, not
+just the same remote repo. Because of that, this session's final
+`git commit` for PROGRESS.md's unit-5 handoff-commands update
+(`fcec6a8`, now part of merged PR #33) incidentally captured that
+audit content too, since `git add <file>` picks up whatever is on disk
+at commit time. **Flagging this plainly rather than treating it as
+uneventful:** the audit content itself is accurate and was worth
+keeping (see its own "Risks flagged" point 1, which already recommends
+against exactly this — two sessions on one checkout at once, ideally
+via separate git worktrees instead), but it landed in a PR under this
+session's authorship without this session having reviewed or written
+it, which is worth the founder knowing about even though nothing here
+looks wrong or harmful.
 
 See "v0.4.0 — IN PROGRESS" below for the full record of what's built
-(Live Feed, Work, Budgets, Recover) vs. not yet (Connect, Settings;
-wheel packaging).
-
-**Next session's job:** pick unit 5 — Connect and/or Settings, either
-order, neither depends on the other.
+(all six screens) vs. what's still open (the wheel-packaging follow-up).
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -1000,7 +1028,7 @@ separate module with its own store, its own CLI subcommands
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 5: Connect + Settings screens — DONE, not yet pushed/merged
+### Checklist for unit 5: Connect + Settings screens — DONE, merged (PR #33, `41f83aa`)
 
 The last two `MISSION.md` v0.4.0 screens, built together since neither
 depends on the other and both are small. **All six v0.4.0 screens now
@@ -1091,9 +1119,10 @@ exist.**
       isn't formally closed until the wheel-packaging follow-up lands
       and MISSION.md's acceptance criterion gets an explicit founder
       sign-off, even though it's now behaviorally true.
-- [ ] **Not done yet, this unit's own honest gap:** committed locally,
-      **not pushed** — same push-permission gap as every prior unit.
-      Exact handoff commands: see "HUMAN ACTION NEEDED" below.
+- [x] **Pushed and merged.** [PR #33](https://github.com/domondi1/inferrail/pull/33)
+      merged, merge commit `41f83aa` — confirmed `MERGED` and all 9 CI
+      checks green before trusting the founder's report; merge-commit
+      tree byte-identical to the local commit (no squash drift).
 
 ### Known gaps, explicitly deferred (not hidden) — see ADR-0017's "Consequences"
 
@@ -1124,63 +1153,69 @@ exist.**
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 5's PR
-   (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
-   been pushed/merged; if the founder reports it was, verify with
-   `gh pr view <n> --json state,mergedAt` before trusting it, same
-   discipline as every prior milestone.
-2. **All six v0.4.0 screens now exist.** What remains before the
-   milestone can formally close:
-   - Check whether the founder has weighed in on the "opt-in usage
-     ping" placeholder (flagged in "HUMAN ACTION NEEDED") — if a real
-     feature is wanted, scope it as its own unit; if the placeholder is
-     accepted, no further action needed there.
+   changed underneath since this session — `main` should be at
+   `41f83aa` (PR #33's merge commit). If the founder reports anything
+   else was merged/changed, verify with `gh pr view <n> --json
+   state,mergedAt` before trusting it, same discipline as every prior
+   milestone.
+2. **Check for a concurrent session on this same checkout before
+   editing anything.** This session's own commit unintentionally
+   captured a separate concurrent audit session's writes to
+   `PROGRESS.md` (see "Process note" in "Status summary" above) — both
+   sessions shared one working directory rather than using separate
+   worktrees. If another session might still be active here, prefer a
+   fresh worktree over editing this same checkout concurrently.
+3. **All six v0.4.0 screens now exist.** What remains before the
+   milestone can formally close — both are founder decisions, not
+   something to resolve unilaterally (see "HUMAN ACTION NEEDED"):
+   - Whether the "opt-in usage ping" placeholder is accepted as-is, or
+     a real feature should be scoped as its own unit.
    - The wheel-packaging follow-up (`docs/adr/0017`'s "Known gap"): a
      build hook that runs `npm run build` and copies `app/dist` into
      `src/inferrail/dashboard_static/` before the wheel is built, plus
      a CI check that it actually worked, plus Node added to the release
      pipeline's prerequisites (see `dashboard.py`'s
      `find_dashboard_dist` — the `dashboard_static/` path is already
-     reserved for this).
-   - Once both are resolved, bump `pyproject.toml` to `0.4.0`, add the
-     dated `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and
-     get explicit founder sign-off that MISSION.md's acceptance
-     criterion is met — don't declare the milestone closed unilaterally
-     the way v0.3.0's last unit did without asking, since a version
-     bump is exactly the kind of change this repo's merge policy wants
+     reserved for this). Separately, and not required to close v0.4.0:
+     PyPI's latest release is still 0.2.0, two versions behind `main` —
+     the founder should decide explicitly whether/when v0.3.0/v0.4.0
+     get published, per the audit's own finding above.
+   - Once resolved, bump `pyproject.toml` to `0.4.0`, add the dated
+     `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and get
+     explicit founder sign-off that MISSION.md's acceptance criterion
+     is met — don't declare the milestone closed unilaterally the way
+     v0.3.0's last unit did without asking, since a version bump is
+     exactly the kind of change this repo's merge policy wants
      deliberately reviewed.
-3. Follow the same protocol throughout: build with tests at the existing
+4. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then
    hand the founder the exact `git push`/`gh pr create` commands (this
    agent cannot push to this repo). Do not self-merge.
-4. Update this file's "Status summary" and the "v0.4.0" section above
+5. Update this file's "Status summary" and the "v0.4.0" section above
    to reflect wherever the next unit lands, the same way each unit's
    checklist was filled in as it merged.
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 5 needs to be pushed and opened as a PR** — same
-  push-permission gap as every prior unit (`git push` from this session
-  returns `403: Permission to domondi1/inferrail.git denied to
-  domondi1`, confirmed again this session). Committed locally as
-  `e976c6a` on branch `feat/dashboard-connect-settings-screens`, based
-  on `main` at `ffce54f` (PR #32's merge commit, the current
-  `origin/main` tip as of this session). Exact commands:
-  ```
-  git push -u origin feat/dashboard-connect-settings-screens
-  gh pr create --title "feat: dashboard Connect + Settings screens (v0.4.0 unit 5)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 5's checklist, for the full record. Last two v0.4.0 screens -- all six now built. Connect: copy-paste snippets adapted from README.md, built against window.location.origin. Settings: real Export (new GET /v1/local/receipts/export) and real pricing-catalog freshness (new GET /v1/local/pricing/freshness). One judgment call worth your attention: the 'opt-in usage ping' control is a deliberately disabled placeholder -- no telemetry-ping mechanism exists in this codebase, so it's honestly labeled rather than faked; confirm that's the right call or scope a real one as a future unit. 884 tests pass (880 + 4 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end." \
-    --base main
-  ```
-- **Founder confirmation worth having before v0.4.0 formally closes:**
-  the Settings screen's "opt-in usage ping" checkbox is a disabled
-  placeholder (see above) — is that the right scope decision, or should
-  a real telemetry-ping feature (what it would send, the opt-in
-  mechanism itself) be scoped as its own future unit? Not blocking
-  anything today either way, since the honest current behavior (nothing
-  is ever sent) matches MISSION.md's non-negotiable regardless of which
-  path is chosen later.
+- **None outstanding for pushing** — unit 5 is pushed, reviewed, and
+  merged (PR #33). Two open decisions remain, neither blocking, both
+  worth explicit founder input rather than a unilateral call:
+  1. **The Settings screen's "opt-in usage ping" checkbox is a
+     disabled placeholder** — no telemetry-ping mechanism exists
+     anywhere in this codebase, so it's honestly labeled rather than
+     faked. Is that the right scope decision, or should a real
+     telemetry-ping feature (what it would send, the opt-in mechanism
+     itself) be scoped as its own future unit? Not blocking anything
+     today either way — the honest current behavior (nothing is ever
+     sent) matches MISSION.md's non-negotiable regardless of which path
+     is chosen later.
+  2. **PyPI's actual latest release is still 0.2.0**, two versions
+     behind `main` (confirmed via `pypi.org/pypi/inferrail/json` by a
+     concurrent audit session this pass — see "Independent status
+     audit" above). Closing v0.4.0 doesn't require a PyPI publish, but
+     whether v0.3.0/v0.4.0 get published before v1.0.0 (and when)
+     should be an explicit decision, not an implicit gap.
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
   untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
