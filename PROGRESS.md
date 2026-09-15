@@ -1124,26 +1124,31 @@ exist.**
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether unit 4's PR
+   changed underneath since this session — check whether unit 5's PR
    (see "HUMAN ACTION NEEDED" below for the exact branch/commands) has
    been pushed/merged; if the founder reports it was, verify with
    `gh pr view <n> --json state,mergedAt` before trusting it, same
    discipline as every prior milestone.
-2. **Pick v0.4.0's next unit: Connect or Settings — either order,
-   neither depends on the other.** Connect is per-tool copy-paste
-   snippets (OpenAI SDK, Claude Code, curl, etc. — `README.md`'s
-   existing "Use it as a gateway" section already has the exact
-   snippets to adapt, so this is presentation, not new backend surface).
-   Settings is export/catalog-refresh/opt-in-ping-default-off — check
-   whether `inferrail receipts export` (v0.3.0) already covers "export"
-   or whether the dashboard needs its own download route; "opt-in ping
-   default OFF" should just mean a toggle that's honest about currently
-   doing nothing, since no ping mechanism exists yet in this codebase
-   (verify that assumption before building a UI for a backend feature
-   that isn't real). After both, v0.4.0's screens are all built — what
-   remains before the milestone can close: the wheel-packaging follow-up
-   (ADR-0017's "Known gap") and MISSION.md's own acceptance-criterion
-   sign-off.
+2. **All six v0.4.0 screens now exist.** What remains before the
+   milestone can formally close:
+   - Check whether the founder has weighed in on the "opt-in usage
+     ping" placeholder (flagged in "HUMAN ACTION NEEDED") — if a real
+     feature is wanted, scope it as its own unit; if the placeholder is
+     accepted, no further action needed there.
+   - The wheel-packaging follow-up (`docs/adr/0017`'s "Known gap"): a
+     build hook that runs `npm run build` and copies `app/dist` into
+     `src/inferrail/dashboard_static/` before the wheel is built, plus
+     a CI check that it actually worked, plus Node added to the release
+     pipeline's prerequisites (see `dashboard.py`'s
+     `find_dashboard_dist` — the `dashboard_static/` path is already
+     reserved for this).
+   - Once both are resolved, bump `pyproject.toml` to `0.4.0`, add the
+     dated `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and
+     get explicit founder sign-off that MISSION.md's acceptance
+     criterion is met — don't declare the milestone closed unilaterally
+     the way v0.3.0's last unit did without asking, since a version
+     bump is exactly the kind of change this repo's merge policy wants
+     deliberately reviewed.
 3. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then
@@ -1155,19 +1160,27 @@ exist.**
 
 ## HUMAN ACTION NEEDED
 
-- **Unit 4 needs to be pushed and opened as a PR** — same
+- **Unit 5 needs to be pushed and opened as a PR** — same
   push-permission gap as every prior unit (`git push` from this session
   returns `403: Permission to domondi1/inferrail.git denied to
   domondi1`, confirmed again this session). Committed locally as
-  `10ab29a` on branch `feat/dashboard-recover-screen`, based on `main`
-  at `8d43bc6` (PR #31's merge commit, the current `origin/main` tip as
-  of this session). Exact commands:
+  `e976c6a` on branch `feat/dashboard-connect-settings-screens`, based
+  on `main` at `ffce54f` (PR #32's merge commit, the current
+  `origin/main` tip as of this session). Exact commands:
   ```
-  git push -u origin feat/dashboard-recover-screen
-  gh pr create --title "feat: dashboard Recover screen (v0.4.0 unit 4)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 4's checklist, for the full record. First unit to bridge the dashboard to inferrail.ap: --app-mode now provisions an AP recovery store (override with INFERRAIL_AP_DB), new GET /v1/local/ap/pending (built from ap.report.build_live_report, filtered to awaiting_human_review) and POST /v1/local/ap/{work_id}/outcome (calls RecoveryStore.record_outcome directly, same as inferrail ap outcome). Frontend: a pending-review queue with an inline outcome form. 880 tests pass (874 + 6 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end (seeded a real decision, confirmed it appears/resolves/disappears, confirmed 404 on an unknown work_id). This is the last screen MISSION.md's full v0.4.0 acceptance criterion needs -- only Connect and Settings remain." \
+  git push -u origin feat/dashboard-connect-settings-screens
+  gh pr create --title "feat: dashboard Connect + Settings screens (v0.4.0 unit 5)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 5's checklist, for the full record. Last two v0.4.0 screens -- all six now built. Connect: copy-paste snippets adapted from README.md, built against window.location.origin. Settings: real Export (new GET /v1/local/receipts/export) and real pricing-catalog freshness (new GET /v1/local/pricing/freshness). One judgment call worth your attention: the 'opt-in usage ping' control is a deliberately disabled placeholder -- no telemetry-ping mechanism exists in this codebase, so it's honestly labeled rather than faked; confirm that's the right call or scope a real one as a future unit. 884 tests pass (880 + 4 new), ruff/mypy/boundary-check clean, live-smoke-tested end-to-end." \
     --base main
   ```
+- **Founder confirmation worth having before v0.4.0 formally closes:**
+  the Settings screen's "opt-in usage ping" checkbox is a disabled
+  placeholder (see above) — is that the right scope decision, or should
+  a real telemetry-ping feature (what it would send, the opt-in
+  mechanism itself) be scoped as its own future unit? Not blocking
+  anything today either way, since the honest current behavior (nothing
+  is ever sent) matches MISSION.md's non-negotiable regardless of which
+  path is chosen later.
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
   untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
