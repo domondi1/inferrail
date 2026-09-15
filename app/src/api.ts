@@ -288,3 +288,34 @@ export async function downloadReceiptsExport(): Promise<void> {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** The opt-in usage ping's status (docs/adr/0019-opt-in-usage-ping.md).
+ * `configured: false` means no collection endpoint exists yet -- the
+ * Settings screen renders that as "not yet active" regardless of
+ * `enabled`, so the toggle never looks like it works when it can't. */
+export interface UsagePingStatus {
+  enabled: boolean;
+  configured: boolean;
+  install_id: string;
+  privacy_url: string;
+}
+
+export function getUsagePingStatus(): Promise<UsagePingStatus> {
+  return fetchLocal<UsagePingStatus>("/v1/local/usage-ping");
+}
+
+export async function setUsagePingEnabled(enabled: boolean): Promise<UsagePingStatus> {
+  const response = await fetch("/v1/local/usage-ping", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new LocalApiError(response.status, body.detail ?? `usage-ping -> ${response.status}`);
+  }
+  return response.json();
+}

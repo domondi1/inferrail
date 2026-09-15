@@ -149,6 +149,24 @@ def test_budgets_disabled_is_valid_with_any_receipts_sink(
     assert config.budgets.enabled is False
 
 
+def test_usage_ping_disabled_and_unconfigured_by_default(base_config: InferrailConfig) -> None:
+    assert base_config.usage_ping.enabled is False
+    assert base_config.usage_ping.endpoint is None
+
+
+def test_usage_ping_accepts_an_explicit_endpoint(base_config_dict: dict[str, Any]) -> None:
+    base_config_dict["usage_ping"] = {"enabled": True, "endpoint": "https://ping.example/ping"}
+    config = InferrailConfig.model_validate(base_config_dict)
+    assert config.usage_ping.enabled is True
+    assert config.usage_ping.endpoint == "https://ping.example/ping"
+
+
+def test_usage_ping_rejects_unknown_fields(base_config_dict: dict[str, Any]) -> None:
+    base_config_dict["usage_ping"] = {"enabled": True, "extra_field": "nope"}
+    with pytest.raises(ValidationError):
+        InferrailConfig.model_validate(base_config_dict)
+
+
 def test_build_providers_fails_loudly_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:

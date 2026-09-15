@@ -32,8 +32,19 @@ from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.cli.pricing import catalog_freshness
 from inferrail.errors import LocalApiAuthenticationError
-from inferrail.localapi.schemas import BudgetCreate, BudgetSpend, OutcomeRequest, ReceiptsPage
+from inferrail.localapi.schemas import (
+    BudgetCreate,
+    BudgetSpend,
+    OutcomeRequest,
+    ReceiptsPage,
+    UsagePingStatus,
+    UsagePingUpdate,
+)
 from inferrail.receipts.sqlite_store import ReceiptsStore
+from inferrail.usage_ping.client import maybe_send_event
+from inferrail.usage_ping.install_id import ensure_install_id
+from inferrail.usage_ping.state import load_state as load_usage_ping_state
+from inferrail.usage_ping.state import save_state as save_usage_ping_state
 from inferrail.work.builder import aggregate_work_summaries, build_work_summary, load_outcomes
 from inferrail.work.schema import WorkSummary
 
@@ -184,6 +195,11 @@ async def create_budget(request: Request, payload: BudgetCreate) -> Budget:
     except ValidationError as exc:
         raise HTTPException(400, str(exc)) from exc
     _budget_store(request).set(budget)
+    maybe_send_event(
+        "budget_created",
+        app_data_dir=request.app.state.usage_ping_app_data,
+        config=request.app.state.usage_ping_config,
+    )
     return budget
 
 
@@ -322,4 +338,52 @@ async def export_receipts(request: Request) -> StreamingResponse:
         _lines(),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": 'attachment; filename="inferrail-receipts.jsonl"'},
+    )
+
+
+_USAGE_PING_PRIVACY_URL = (
+    "https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md"
+)
+
+
+@router.get(
+    "/usage-ping",
+    dependencies=[Depends(_require_local_api_token)],
+    response_model=UsagePingStatus,
+    summary="Opt-in usage ping status, for the dashboard's Settings screen",
+)
+async def usage_ping_status(request: Request) -> UsagePingStatus:
+    """`configured=false` (no `usage_ping.endpoint` in `inferrail.yaml`)
+    means the ping can never actually send anything regardless of
+    `enabled` — the Settings screen renders that as "not yet active"
+    rather than letting the toggle look like it works. See
+    docs/adr/0019-opt-in-usage-ping.md."""
+    app_data = request.app.state.usage_ping_app_data
+    config = request.app.state.usage_ping_config
+    state = load_usage_ping_state(app_data, default_enabled=config.enabled)
+    return UsagePingStatus(
+        enabled=state.enabled,
+        configured=bool(config.endpoint),
+        install_id=ensure_install_id(app_data),
+        privacy_url=_USAGE_PING_PRIVACY_URL,
+    )
+
+
+@router.post(
+    "/usage-ping",
+    dependencies=[Depends(_require_local_api_token)],
+    response_model=UsagePingStatus,
+    summary="Turn the opt-in usage ping on or off",
+)
+async def set_usage_ping(request: Request, payload: UsagePingUpdate) -> UsagePingStatus:
+    app_data = request.app.state.usage_ping_app_data
+    config = request.app.state.usage_ping_config
+    state = load_usage_ping_state(app_data, default_enabled=config.enabled)
+    state.enabled = payload.enabled
+    save_usage_ping_state(app_data, state)
+    return UsagePingStatus(
+        enabled=state.enabled,
+        configured=bool(config.endpoint),
+        install_id=ensure_install_id(app_data),
+        privacy_url=_USAGE_PING_PRIVACY_URL,
     )

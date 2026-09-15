@@ -124,6 +124,34 @@ jobs:
           pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
             tests/integration/test_ap_crash_recovery.py -v
 
+  usage-ping-collector:
+    # hosted/usage_ping/ (docs/adr/0019) has zero dependency on the
+    # `inferrail` package, so its tests already run in the main `test`
+    # job above for free -- this job exists only to lint/type-check the
+    # collector itself, which -- like hosted/ap_exceptions and
+    # hosted/a2a_economic_authority -- is deliberately excluded from the
+    # main `mypy` invocation's package list.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install hosted/usage_ping dependencies
+        # This job doesn't install the `inferrail` package at all --
+        # hosted/usage_ping has zero dependency on it (see service.py's
+        # own docstring) -- so ruff/mypy are installed directly rather
+        # than via the `dev` extra.
+        run: pip install -r hosted/usage_ping/requirements.txt "ruff>=0.4" "mypy>=1.9"
+
+      - name: Lint (ruff) -- hosted/usage_ping
+        run: ruff check hosted/usage_ping tests/unit/hosted/test_usage_ping_service.py
+
+      - name: Type-check (mypy) -- hosted/usage_ping
+        run: mypy hosted/usage_ping --strict --ignore-missing-imports
+
   dashboard:
     # The dashboard (app/, docs/adr/0017) is a separate Node/TypeScript
     # project -- kept as its own job so a Node toolchain is never a
