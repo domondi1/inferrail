@@ -160,6 +160,27 @@ export async function listBlockedReceipts(limit = 100): Promise<Receipt[]> {
   return page.receipts.filter((r) => Boolean(r.attributes.budget_id)).reverse();
 }
 
+/** The most recent receipts this install has already produced, newest
+ * first -- used to seed Live Feed on load so "every receipt this install
+ * has produced" (the screen's own subtitle) is actually true the moment
+ * it opens, not just for requests sent after the tab happened to be open.
+ * `GET /v1/local/receipts` pages oldest-first (`ORDER BY ts`, see
+ * `ReceiptsStore.query`), so a plain `?limit=N` would return the *oldest*
+ * N receipts once an install has more than N total -- the opposite of
+ * "recent". This reads `total` from a cheap 1-row call first, then asks
+ * for the true tail page via `offset`, and reverses that page to
+ * newest-first. */
+export async function listRecentReceipts(limit = 200): Promise<Receipt[]> {
+  const probe = await fetchLocal<{ receipts: Receipt[]; total: number }>(
+    "/v1/local/receipts?limit=1",
+  );
+  const offset = Math.max(0, probe.total - limit);
+  const page = await fetchLocal<{ receipts: Receipt[] }>(
+    `/v1/local/receipts?limit=${limit}&offset=${offset}`,
+  );
+  return [...page.receipts].reverse();
+}
+
 /** Opens the SSE tail of newly-emitted receipts. Native `EventSource`
  * cannot set an `Authorization` header, so the token travels as a query
  * parameter here -- the one deliberate, documented exception in

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.3.0"
+version = "0.4.0"
 description = "Decides whether an invoice-extraction exception gets one machine retry or human review, executes it, and records the cost and outcome -- built on Inferrail's self-hosted, attributable-cost LLM gateway."
 readme = "README.md"
 requires-python = ">=3.11"

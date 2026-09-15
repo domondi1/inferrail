@@ -32,6 +32,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Required so hatch_build.py's wheel-build hook (docs/adr/0018) can
+      # bundle the dashboard on every OS this workflow verifies, not just
+      # ci.yml's own Ubuntu-only `dashboard` job -- setup-node is
+      # cross-platform (works on windows-latest/macos-latest too), so one
+      # step covers the whole matrix.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -47,6 +58,24 @@ jobs:
         run: |
           python -m pip install build
           python -m build --wheel
+
+      - name: Confirm the built wheel bundles the dashboard
+        # One shell works for all three OSes here (see the Build wheel
+        # step's own comment on why bash) -- catches a per-OS npm/hook
+        # failure (e.g. a Windows path-length or shell-quoting issue in
+        # hatch_build.py) that ci.yml's Ubuntu-only `dashboard` job could
+        # never see.
+        shell: bash
+        run: |
+          python3 -c "
+          import zipfile, glob
+          whl = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert any(n.endswith('dashboard_static/index.html') for n in names), (
+              f'{whl} does not bundle the dashboard on this OS -- refusing to pass.'
+          )
+          print('ok: wheel bundles the dashboard:', whl)
+          "
 
       - name: Create a clean venv outside the checkout (POSIX)
         if: runner.os != 'Windows'
@@ -99,6 +128,12 @@ jobs:
           py="$RUNNER_TEMP/inferrail-platform-check/bin/python3"
           "$py" -c "import inferrail; print('version:', inferrail.__version__)"
           "$py" -c "import inferrail.ap; print('ap.__all__:', sorted(inferrail.ap.__all__))"
+          "$py" -c "
+          from inferrail.dashboard import find_dashboard_dist
+          found = find_dashboard_dist()
+          assert found is not None and (found / 'index.html').is_file(), found
+          print('ok: installed wheel discovers its own bundled dashboard at', found)
+          "
 
       - name: Confirm version and imports, from outside the checkout (Windows)
         if: runner.os == 'Windows'
@@ -114,6 +149,13 @@ jobs:
           Assert-Success "import inferrail"
           & $py -c "import inferrail.ap; print('ap.__all__:', sorted(inferrail.ap.__all__))"
           Assert-Success "import inferrail.ap"
+          & $py -c "
+          from inferrail.dashboard import find_dashboard_dist
+          found = find_dashboard_dist()
+          assert found is not None and (found / 'index.html').is_file(), found
+          print('ok: installed wheel discovers its own bundled dashboard at', found)
+          "
+          Assert-Success "dashboard discovery"
 
       - name: Run the documented AP demo + report, from outside the checkout (POSIX)
         if: runner.os != 'Windows'

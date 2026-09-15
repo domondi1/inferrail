@@ -407,16 +407,19 @@ local control API when `--app-mode` is on — see
   checkbox controls real behavior. See `PROGRESS.md`'s v0.4.0 unit 5
   record for why this was flagged rather than either built or silently
   omitted.
-- **The dashboard is now bundled into the wheel this project's own CI
-  builds** — a hatchling build hook (`hatch_build.py`) runs the dashboard
-  build and packages the result as `inferrail/dashboard_static/` inside
-  the wheel; see `docs/adr/0018-dashboard-wheel-packaging.md`. Building
-  from a checkout with no Node installed, or from the sdist, still works
-  and just ships without a dashboard, exactly as before — never a build
-  failure. **Not yet true for the actual PyPI-published artifact or the
-  three-OS platform-verify wheels**, since `publish.yml` and
-  `platform-verify.yml` don't set up Node yet — a deliberate, separate
-  follow-up (see ADR-0018's "Consequences").
+- **The dashboard is bundled into every wheel this project's CI
+  builds — including the actual PyPI-published artifact and the
+  three-OS `platform-verify.yml` wheels.** A hatchling build hook
+  (`hatch_build.py`) runs the dashboard build and packages the result
+  as `inferrail/dashboard_static/` inside the wheel; see
+  `docs/adr/0018-dashboard-wheel-packaging.md`. Building from a
+  checkout with no Node installed, or from the sdist, still works and
+  just ships without a dashboard, exactly as before — never a build
+  failure. `publish.yml` and `platform-verify.yml` both set up Node
+  (`actions/setup-node@v4`) and assert the built/installed wheel
+  actually contains the dashboard, so a real `pip install inferrail`
+  release is verified to ship a working dashboard before it's ever
+  published, not just this project's own separate `dashboard` CI job.
 
 ### Diagnostics: `inferrail pricing update` and `inferrail doctor`
 
