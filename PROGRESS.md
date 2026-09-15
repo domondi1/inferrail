@@ -1124,7 +1124,7 @@ exist.**
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, not yet pushed/merged
+### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, pushed as PR #35, conflict fixed, awaiting force-push + merge
 
 Closes ADR-0017's "Known gap" for the wheel this project's own CI
 builds — see `docs/adr/0018-dashboard-wheel-packaging.md` for the full
@@ -1211,9 +1211,10 @@ verified.
       files, per its own merge policy) — a deliberate scope boundary for
       this unit, not an oversight. See ADR-0018's "Consequences" and
       "HUMAN ACTION NEEDED" below.
-- [ ] **Not done yet, this unit's own honest gap:** committed locally,
-      **not pushed** — same push-permission gap as every prior unit.
-      Exact handoff commands: see "HUMAN ACTION NEEDED" below.
+- [ ] **Pushed and opened as PR #35, but not yet merged** — it came
+      back `CONFLICTING` (a real git-history artifact, not a false
+      alarm; root cause and fix in "HUMAN ACTION NEEDED" below) and
+      needs a force-push to pick up the fix before it can merge.
 
 ### Known gaps, explicitly deferred (not hidden) — see ADR-0017's/0018's "Consequences"
 
@@ -1280,35 +1281,35 @@ verified.
 
 ## HUMAN ACTION NEEDED
 
-- **Two PRs need to be pushed and opened, in this order** (both hit the
-  same push-permission 403 as every prior unit; the second branch is
-  built on top of the first's commit, so merging in this order avoids a
-  guaranteed conflict — GitHub will compute the second PR's diff against
-  whatever `main` looks like after the first merges, cleanly, since the
-  content already matches):
+- **PR #34 (the small ops/status-update PR) is merged** — merge commit
+  `a49d2f7`, confirmed via `gh pr list --json state,mergedAt`.
+- **PR #35 (unit 6, wheel packaging) needs a force-push to pick up a
+  fix.** The founder pushed and opened it as planned, but GitHub then
+  reported it `CONFLICTING` against `main` — confirmed real (not a
+  stale-cache false alarm) by actually attempting the merge locally.
+  **Root cause:** PR #34 was squash-merged, producing a new commit
+  (`a49d2f7`) with content byte-identical to the local commit
+  (`6c2c03e`) unit 6 was built on top of, but a *different commit
+  hash/lineage* — git's merge algorithm got confused reconciling two
+  differently-shaped histories that both introduce the same textual
+  change, even though there was never a real content disagreement.
+  **Fixed** by rebasing the unit-6 branch directly onto the actual
+  merged commit (`git rebase --onto a49d2f7 6c2c03e
+  feat/dashboard-wheel-packaging`) — verified clean afterward with a
+  real local test-merge against `a49d2f7` (no conflicts). New branch
+  tip: `89d7235`. The PR's title also came out wrong when it was
+  created (it shows the *previous* PR's title, "ops: record PR #33
+  merge...", not unit 6's own title) — fixed below alongside the
+  content.
 
-  **1. First:** the small documentation-only status update (records
-  unit 5's merge + folds in the concurrent audit session's PyPI-version
-  finding). Committed as `6c2c03e` on branch
-  `ops/record-v0.4.0-unit5-merge-and-audit-note`, based on `main` at
-  `41f83aa`.
+  Since this rewrites the branch's history, it needs a **force push**
+  (safe here — nothing else is based on this branch) plus a title fix:
   ```
-  git push -u origin ops/record-v0.4.0-unit5-merge-and-audit-note
-  gh pr create --title "ops: record PR #33 merge, all six v0.4.0 screens built" \
-    --body "Documentation-only: confirms unit 5's merge (PR #33) and folds in a concurrent audit session's PyPI-version-lag finding (main is two versions ahead of what's published). Also notes that a prior commit in this session unintentionally captured that audit content since both sessions shared one working directory." \
-    --base main
+  git push --force-with-lease origin feat/dashboard-wheel-packaging
+  gh pr edit 35 --title "feat: bundle the dashboard into the PyPI wheel (v0.4.0 unit 6)"
   ```
-
-  **2. Second, after the first merges:** unit 6 (bundle the dashboard
-  into the PyPI wheel). Committed as `d20efa2` on branch
-  `feat/dashboard-wheel-packaging`, built on top of commit `6c2c03e`
-  above (not on `main` directly — this is what avoids the conflict).
-  ```
-  git push -u origin feat/dashboard-wheel-packaging
-  gh pr create --title "feat: bundle the dashboard into the PyPI wheel (v0.4.0 unit 6)" \
-    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 6's checklist, for the full record. New hatchling build hook (hatch_build.py) bundles the dashboard into the wheel this project's own CI builds -- never fails the build for an environment without Node. Real bug found+fixed during verification: the first version silently produced a dashboard-less wheel because hatchling respects .gitignore for its default file selection; fixed via build_data['force_include']. Also fixed a pre-existing, unrelated sdist bloat issue (app/node_modules was being included). Full manual end-to-end verification against a real installed wheel outside any checkout, plus a new CI check on every push/PR. Deliberately does not touch publish.yml or platform-verify.yml -- see ADR-0018's Consequences for why that's a separate follow-up. 890 tests pass (884 + 6 new), ruff/mypy/boundary-check clean." \
-    --base main
-  ```
+  After that, re-check `gh pr view 35 --json mergeable` — it should
+  report `MERGEABLE`, not `CONFLICTING`, before merging.
 
 - **Three open decisions remain, none blocking, all worth explicit
   founder input rather than a unilateral call:**
