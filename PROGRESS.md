@@ -3,6 +3,197 @@
 Read this after `MISSION.md` every session. This file changes every
 session; `MISSION.md` almost never does.
 
+## v0.4.0 closing audit + v0.4.1 (opt-in usage ping) — 2026-09-15
+
+A separate session from the "Independent status audit" and the unit-5/6
+work below it (both preserved as-is further down this file, unchanged,
+as history). Founder instruction at the start of this session: before
+any version bump, publish, or new milestone, prove or disprove — by
+running it, not by reading code or trusting this file — the sentence
+"Inferrail: a local AI cost meter. Download it, point your AI tools at
+it, and see exactly what every unit of work costs — then set budgets
+and rules that actually enforce themselves. Your prompts never leave
+your machine's control; Inferrail stores only receipts," clause by
+clause, then fix anything broken before bumping/publishing, then decide
+the usage-ping/Node/publish questions the prior session left open.
+
+### The five-clause audit, what was actually run, and the result
+
+- **"Download it"** — confirmed via `pypi.org/pypi/inferrail/json`:
+  PyPI's latest release is still **0.2.0**. `main` (pre-this-session)
+  was two versions ahead: no SQLite store, no Anthropic passthrough, no
+  budgets, no local control API, no dashboard in what a stranger
+  actually gets from `pip install inferrail` today. This session does
+  not change that fact by itself — closing it requires the founder to
+  actually tag and let `publish.yml` run (see "HUMAN ACTION NEEDED").
+- **"Point your AI tools at it"** — **verified with real SDKs, not unit
+  tests.** Installed the real `openai` and `anthropic` Python packages
+  in a clean venv, built a real wheel from `main` (confirmed it bundles
+  the dashboard), started a real `inferrail serve --app-mode` process,
+  and pointed both SDKs' `base_url` at it. Both produced real, correctly
+  attributed receipts (`work_id`/`project` from
+  `X-Inferrail-Attribute-*` headers came through exactly as documented).
+  **Caveat, stated plainly:** this session has no paid OpenAI/Anthropic
+  API key, so the actual upstream leg was a small local mock server
+  returning wire-accurate OpenAI/Anthropic response shapes — the real
+  SDK and the real gateway code (routing, auth, pricing, receipts,
+  budgets) were genuinely exercised end-to-end; only the very last hop
+  to the real vendor API was substituted. Streaming/tool-use were
+  *not* re-verified live this session (the mock upstream doesn't speak
+  SSE) — that claim still rests on the existing unit-test suite
+  (`test_gateway_anthropic.py` et al.), not on this session's own
+  live check. Say so plainly, per the founder's own instruction.
+- **"See exactly what every unit of work costs"** — **opened the real
+  dashboard in a real headless-Chromium browser** (Playwright, installed
+  fresh this session) against the live `--app-mode` process. Confirmed
+  a receipt appears **live, without a page reload**, the instant a real
+  request completes (fired a request from a separate process while the
+  browser tab was already open and watched it print in). This is a real
+  click-through/visual check, not just an API-level assertion — the
+  prior session's own "did not visually click through the UI" caveat no
+  longer holds. **One real bug found and fixed in the process** — see
+  below.
+- **"Budgets that enforce themselves"** — set a `work_id`-scoped
+  `block` budget with a tiny limit, sent a real request against it
+  through the real gateway, confirmed it was rejected `402` **before**
+  the (mock) provider was ever called (the mock upstream's own request
+  counter did not increment), and confirmed the block appeared, live,
+  in both the receipts store and the dashboard's Budgets screen
+  (burn bar + blocked-request log). **One real nuance surfaced by this
+  test, not previously stated this plainly anywhere:** enforcement (and
+  cost display generally) only ever applies when the (provider, model)
+  pair has a *known* price — the built-in catalog (which requires the
+  provider's real, unmodified `base_url`) or an explicit `pricing:`
+  override. A budget scoped to an unpriced model never blocks, by
+  design (`pricing/resolver.py` — unknown stays unknown, never a
+  fabricated guess) — correct behavior, but worth stating plainly since
+  this session's own first attempt at this test tripped on exactly it
+  (a mock `base_url` makes pricing unrecognized).
+- **"Prompts never leave your machine"** — grepped every local SQLite
+  store (`receipts.db`, `budgets.db`, `ap-recovery.db`) for the literal
+  prompt/response text sent during the SDK tests above: not found in
+  any of them. Confirmed the request body sent *upstream* (to the
+  configured provider) does obviously contain it — that's the necessary
+  and expected pass-through, not a violation — but nothing is persisted
+  locally beyond the payload-free receipt shape, and no telemetry
+  network call of any kind fired (telemetry sink was `none`; no
+  telemetry-ping mechanism existed anywhere in the codebase before this
+  session added the new, separate, opt-in one below).
+
+### Is anything broken or misleading? One real bug, found and fixed.
+
+**Live Feed's SSE tail only ever streams receipts emitted *after* it
+connects** (`since = time.time()` at connect,
+`localapi/routes.py::stream_receipts`) — opening the dashboard after
+receipts already existed in the store showed "No receipts yet," which
+directly contradicts the screen's own subtitle: "Every receipt this
+install has produced, newest first." Reproduced live in the real
+browser (pre-existing receipts from the SDK tests above simply never
+appeared until a *new* one arrived), fixed by seeding the screen from
+`GET /v1/local/receipts` before the live tail takes over
+(`listRecentReceipts` in `app/src/api.ts`, wired into
+`app/src/screens/LiveFeed.tsx`) — verified fixed, live, in the same
+browser session, before/after. This shipped in every prior session's
+own live/API-level checks because none of them opened the dashboard
+*after* receipts already existed and watched what rendered on first
+paint; only a real click-through surfaced it. Full record in this
+session's commit on `ops/close-v0.4.0-audit-fixes` (see "HUMAN ACTION
+NEEDED" for the exact push/PR commands — this agent still cannot push).
+
+Two smaller, non-blocking findings, documented rather than fixed this
+session (out of scope for a closing-audit pass, not oversights):
+
+- `GET /v1/local/receipts?limit=N` (no `offset`) returns the **oldest**
+  N receipts once an install has more than N total, not the most recent
+  N (`ReceiptsStore.query()` always orders `ts` ascending). Worked
+  around explicitly in the Live Feed fix above (computed the correct
+  `offset`); the route itself still has no "give me the recent tail"
+  mode, so a future caller could hit the same trap.
+- A budget's burn bar formats a very small `limit_usd` (this session
+  used `$0.000001` to force a block deterministically) as `$0.0000`,
+  visually indistinguishable from a real `$0` budget — irrelevant for
+  any realistic dollar/cents budget, only surfaced by this session's
+  own extreme test value.
+
+**Would a real person who downloaded this today find it useful enough
+to keep using?** For someone building from a git checkout (`pip install
+-e .`) or once PyPI is actually caught up: yes, on the evidence gathered
+this session — the core loop (point a real SDK at it, see a live
+receipt, set a budget, watch it actually block) works end to end, not
+just in tests. For someone running the literal `pip install inferrail`
+today: no, because they get 0.2.0, which has none of the above — that
+gap is a publishing gap, not a product gap (see "HUMAN ACTION NEEDED").
+`inferrail try`'s own no-key error message and `inferrail doctor`'s own
+no-config error message (both flagged as an open risk in the prior
+"Independent status audit" below) were re-checked this session and are
+both already clear, one-line, actionable — that specific worry is
+resolved, not by a fix, but by re-verification.
+
+### What this closed
+
+**v0.4.0 is now formally closed (0.4.0).** All three items the prior
+session's audit and "HUMAN ACTION NEEDED" left open are resolved this
+session, per explicit founder decision at the start of it:
+
+1. **The Live Feed bug above — fixed and verified live**, not just the
+   wheel-packaging/Node question.
+2. **Node wired into `publish.yml` and `platform-verify.yml`**
+   (`actions/setup-node@v4`, matching `ci.yml`'s own `dashboard` job) —
+   both workflows now also assert their own built/installed wheel
+   actually bundles `dashboard_static/index.html`, so the *actual*
+   PyPI-published wheel and the three-OS platform-verify wheels are
+   proven to ship a working dashboard, not just this repo's own
+   separate `dashboard` CI job, before either is ever published.
+   Simulated the exact `publish.yml`/`platform-verify.yml` build+check
+   steps locally in a clean venv (can't run GitHub Actions from here) —
+   both pass.
+3. **PyPI publish sequencing decided** (founder, this session): publish
+   now that the audit is clean, not deferred further — "the fix is to
+   publish, not slow development down." This agent cannot publish to
+   PyPI (no credentials, no push access) — see "HUMAN ACTION NEEDED"
+   for the exact tag-push step that triggers `publish.yml`.
+
+**v0.4.1 — a real opt-in usage ping, built end to end this session**
+(founder decision: "build it for real, now," not deferred past this
+session the way v0.4.0's own placeholder had left it). Off by default,
+inert with no collector endpoint configured regardless of the toggle
+(no default endpoint ships in this package), four lifecycle events
+only, verified live against a local mock collector this session
+(`first_run`/`tool_connected`/`first_receipt`/`budget_created` all
+fired exactly once each, in the real browser, via the real dashboard
+toggle and via `inferrail telemetry enable/disable/preview/status`).
+Full design record: `docs/adr/0019-opt-in-usage-ping.md`. See its own
+section further down this file for the complete checklist, and "HUMAN
+ACTION NEEDED" for the one thing this agent could not do: deploy the
+proposed, already-built reference collector (`hosted/usage_ping/`) and
+hand back a real URL.
+
+**Both units are committed locally, stacked** (this agent still cannot
+push — see "HUMAN ACTION NEEDED" for the exact commands):
+
+- `ops/close-v0.4.0-audit-fixes` (commit `b251da3`, based on `main` at
+  `33956b1`): the Live Feed fix, Node wiring, `pyproject.toml` ->
+  `0.4.0`, `CHANGELOG.md`.
+- `feat/opt-in-usage-ping` (commit `cf35904`, stacked on top of the
+  above — **must merge after it, not independently**): the full usage-
+  ping feature, `pyproject.toml` -> `0.4.1`, `CHANGELOG.md`.
+
+Both verified independently before committing: `ruff check .`, `mypy`
+(92 source files), `mypy hosted/ap_exceptions --strict
+--ignore-missing-imports`, `mypy hosted/usage_ping --strict
+--ignore-missing-imports`, `bash scripts/check_no_internal_content.sh`,
+all three generator scripts (only `config.schema.json` and (once,
+for the version-string bump) `openapi.json` actually changed —
+`ERRORS.md` has zero diff, no new error codes), `cd app && npm run
+lint && npm run build && npm test` (18/18 vitest, unchanged), and two
+full, clean `pytest -q` runs on the final combined state: **934 passed,
+19 skipped, 0 failed** (up from 890 at the prior session's close — the
+44 new tests are exactly this session's: `test_usage_ping.py` (19),
+`test_localapi_routes.py` (+5), `test_cli_telemetry.py` (6),
+`test_config.py` (+3), `tests/unit/hosted/test_usage_ping_service.py`
+(11)). No concurrent-session collision this time (checked `ps aux`
+before each full run, per the prior session's own lesson).
+
 ## Independent status audit — 2026-09-15
 
 A separate audit session (not doing feature work) re-verified this
@@ -146,23 +337,29 @@ repo — `docs/adr/0017-dashboard-in-app-directory.md`.
 complete** ("watch a live request appear, set a budget, see a block,
 and clear a review item") — all six listed screens are real, working
 UI, and `pip install inferrail` (from a wheel this project's own CI
-builds) now ships a working dashboard (`docs/adr/0018`). **The
-milestone is not yet formally closed**: three things remain, all
-requiring founder input rather than a unilateral decision (see "HUMAN
-ACTION NEEDED" below) —
+builds) now ships a working dashboard (`docs/adr/0018`).
+
+**Update, 2026-09-15, later closing-audit session (see this file's top
+section): all three items below are now resolved and v0.4.0 is formally
+closed.** Left in place, unedited, as the accurate record of what was
+still open at the time this "Status summary" section was written —
 
 1. Whether the Settings screen's disabled "opt-in usage ping"
    placeholder is the right call, or whether a real telemetry-ping
    feature should be scoped as its own future unit.
+   **Resolved: built for real, as v0.4.1 — see this file's top section.**
 2. Whether/when to wire Node into `publish.yml` and
    `platform-verify.yml` so the *actual* PyPI-published wheel and the
    three-OS platform-verify wheels also bundle a dashboard (today only
    this project's own `dashboard` CI job proves the bundling works).
+   **Resolved: wired this session — see the top section.**
 3. Per a concurrent audit session's finding, preserved above: PyPI's
    actual latest release is still 0.2.0, two versions behind `main`.
    Closing v0.4.0 doesn't require publishing to PyPI, but the founder
    should decide explicitly whether v0.3.0/v0.4.0 get published before
    v1.0, rather than that staying an implicit gap.
+   **Resolved: founder decided to publish now — see "HUMAN ACTION
+   NEEDED" for the exact tag-push step still pending.**
 
 **Process note on this session sharing a working directory with a
 concurrent audit session:** the "Independent status audit" section
@@ -182,8 +379,9 @@ session's authorship without this session having reviewed or written
 it, which is worth the founder knowing about even though nothing here
 looks wrong or harmful.
 
-See "v0.4.0 — IN PROGRESS" below for the full record of what's built
-(all six screens) vs. what's still open (the wheel-packaging follow-up).
+See "v0.4.0 — CLOSED" below for the full record of what's built (all
+six screens, now formally closed as of the later closing-audit session
+recorded at the top of this file).
 
 **Process note on PR #27's own near-miss:** CI failed
 (`test (3.11)`/`test (3.12)`) because `ERRORS.md` was stale — a new
@@ -696,7 +894,15 @@ session pointed at the gateway produces attributed receipts;
 crash/idempotency tests for budgets pass) were met by unit (3). **All
 four v0.3.0 units are merged. The milestone is closed.**
 
-## v0.4.0 — IN PROGRESS ("The dashboard")
+## v0.4.0 — CLOSED ("The dashboard")
+
+**Closed 2026-09-15** in a later closing-audit session (see this file's
+top section for the full record): the Live Feed backfill bug found and
+fixed, Node wired into `publish.yml`/`platform-verify.yml`, PyPI publish
+sequencing decided, `pyproject.toml` -> `0.4.0`. Committed locally as
+`ops/close-v0.4.0-audit-fixes` (commit `b251da3`), not yet pushed/merged
+— see "HUMAN ACTION NEEDED". The checklist below (units 1-6) predates
+that closing session and is preserved as the accurate build record.
 
 **Architectural decision (founder-directed this session): the dashboard
 lives in `app/` in this repository**, not a sibling repo. Recorded in
@@ -1252,97 +1458,274 @@ verified.
   error, which is correct, but is worth knowing before expecting the
   screen to show anything without first running `inferrail ap demo`
   or pointing `INFERRAIL_AP_DB` at an existing store.
-- The actual PyPI-published wheel and the three-OS
-  `platform-verify.yml` wheels still don't bundle a dashboard (see
-  unit 6's checklist above) — only this project's own `dashboard` CI
-  job proves the real bundling works.
+- ~~The actual PyPI-published wheel and the three-OS
+  `platform-verify.yml` wheels still don't bundle a dashboard~~ —
+  **resolved in the 2026-09-15 closing-audit session** (this file's top
+  section): both workflows now set up Node and assert the bundling
+  themselves.
+
+## v0.4.1 — CLOSED (opt-in usage ping) — committed, not yet pushed/merged
+
+Founder decision, 2026-09-15: build the opt-in usage ping for real now,
+replacing v0.4.0's own disabled Settings placeholder (the "1." item in
+this file's "Status summary" section above). Full design record:
+`docs/adr/0019-opt-in-usage-ping.md`. Full audit/verification narrative
+in this file's top section — this section is the build checklist.
+
+- [x] `src/inferrail/usage_ping/` — `install_id.py` (random,
+      local-only, race-safe persisted id), `state.py` (mutable
+      `usage-ping-state.json` under the app-data dir: the on/off toggle
+      + idempotent per-event "already sent" markers), `payload.py`
+      (the fixed, exhaustive payload shape), `client.py`
+      (`maybe_send_event` — the one call every integration point uses;
+      no-ops immediately with zero network access when disabled or
+      unconfigured; otherwise a daemon-thread `httpx.post` with a 3s
+      timeout, every exception swallowed), `receipt_hook.py`
+      (`UsagePingReceiptSink`, wraps a `ReceiptSink` — never reuses
+      `TelemetrySink`/`ReceiptSink` as its own transport).
+- [x] `config/models.py`'s new `UsagePingConfig` (`enabled: bool =
+      False`, `endpoint: str | None = None`) — no built-in default
+      endpoint anywhere in this package.
+- [x] `gateway/app.py`: under `app_mode=True` only, wraps the
+      `ReceiptSink` the two inference engines hold (not the raw
+      `ReceiptsStore` the budget enforcer/local API still use directly)
+      with `UsagePingReceiptSink`, and fires `first_run` once at
+      startup. Required moving `app_data`'s computation earlier than
+      where it previously lived (still reused, not recomputed, by
+      app_mode's existing setup further down) — the wrapper has to be
+      in place *before* the engines are constructed.
+- [x] `POST /v1/local/budgets` fires `budget_created` (not
+      `inferrail budget set` — deliberately: that CLI command is
+      config-independent by design, works against a bare `--db` path
+      with no `inferrail.yaml` at all, and requiring it to load a
+      config just to check a ping setting would add exactly the
+      coupling it was built to avoid).
+- [x] New `GET`/`POST /v1/local/usage-ping` (`localapi/routes.py` +
+      `localapi/schemas.py`'s `UsagePingStatus`/`UsagePingUpdate`) —
+      `configured: false` (no endpoint) is reported separately from
+      `enabled`, so the dashboard can render "not yet active" correctly
+      regardless of the toggle. `endpoint` is deliberately not
+      settable via this API — only the on/off toggle is; the endpoint
+      itself stays an operator/config-file decision, closing off a
+      redirect-the-pings-elsewhere abuse surface for no real benefit.
+- [x] `app/src/screens/Settings.tsx`: the real toggle, replacing
+      v0.4.0's disabled placeholder. Verified **live, in a real
+      headless-Chromium browser**: clicked the checkbox, confirmed the
+      server-side state persisted across a fresh page load, and
+      confirmed the "Not yet active — no collection endpoint is
+      configured" copy renders correctly whenever `endpoint` is unset,
+      *regardless* of the toggle's own state (tested both states
+      explicitly).
+- [x] `inferrail telemetry preview|status|enable|disable`
+      (`cli/telemetry.py`) — `preview` prints the exact JSON payload for
+      every event from this install's real id/OS/version without
+      sending anything; works standalone, with no `--app-mode` and no
+      `inferrail.yaml` at all (falls back to "unconfigured" honestly
+      rather than erroring).
+- [x] `docs/privacy/usage-ping.md` — the plain-language privacy page,
+      linked from the Settings toggle via the same
+      `github.com/.../blob/main/...` pattern `ERRORS.md`'s own
+      `docs_url` links already use.
+- [x] **A proposed, fully built reference collector**
+      (`hosted/usage_ping/service.py` + `requirements.txt` + `README.md`)
+      — own process, own SQLite storage, **zero dependency on the
+      `inferrail` package** (unlike `hosted/ap_exceptions`, which
+      genuinely needs `inferrail.ap`), no auth required on `POST /ping`
+      (the payload is harmless/anonymous), server-side schema
+      enforcement (`extra="forbid"` — an accidental or malicious extra
+      field is rejected `422`, not silently stored), per-IP rate limit,
+      a kill switch (`USAGE_PING_ENABLED=false` fails open toward the
+      client — never surfaces that collection is off), and an
+      admin-token-gated `GET /stats` (aggregate counts only, disabled
+      entirely — a bare `404` — unless `USAGE_PING_ADMIN_TOKEN` is set).
+      **Never logs or persists the connecting IP address** — verified
+      by inspecting the actual SQLite schema after a live local smoke
+      test, not just by reading the code. Proposed hosting: Render's
+      free tier (same platform `hosted/ap_exceptions` already uses, no
+      new vendor account) — deploying an instance is a human action,
+      see "HUMAN ACTION NEEDED".
+- [x] One real bug found and fixed while building this, not left latent:
+      the collector's first draft had a module-level `app =
+      create_app()` (the usual `uvicorn module:app` shape) — this
+      silently created a stray `usage-ping.sqlite3` file at the default
+      path on every bare *import* of the module, including during this
+      project's own test collection. Caught by noticing the stray file
+      in `git status` after a full test run, not by the tests
+      themselves (they all passed either way). Fixed by matching
+      `hosted/ap_exceptions/service.py`'s own pattern exactly: `app` is
+      only ever constructed inside `if __name__ == "__main__":`.
+- [x] Tests: 44 new — `tests/unit/test_usage_ping.py` (19: install id,
+      state idempotency, payload shape/rejection, the client's
+      no-op-when-unconfigured/disabled paths, fire-exactly-once
+      behavior, failure-never-raises, the receipt-hook wrapper's
+      first_receipt/tool_connected logic, and two `create_app`-level
+      integration tests confirming `first_run` fires once at app-mode
+      startup and that non-app-mode `create_app` never touches usage
+      ping at all), 5 new in `test_localapi_routes.py` (status/toggle/
+      auth/the budget-created wiring), 6 in `test_cli_telemetry.py`,
+      3 in `test_config.py`, 11 in
+      `tests/unit/hosted/test_usage_ping_service.py` (schema
+      enforcement, kill switch, rate limit, size limit, IP-never-
+      persisted, admin-gated stats). Full-repo `pytest -q` (final,
+      combined with v0.4.0's own closing-audit fix): **934 passed, 19
+      skipped, 0 failed** (up from 890 at the prior session's close).
+- [x] Local verification: `ruff check .` clean, `mypy` clean (92 source
+      files, up from 85 — six new `usage_ping/` modules + `cli/
+      telemetry.py`), `mypy hosted/usage_ping --strict
+      --ignore-missing-imports` clean (new dedicated CI job added,
+      `usage-ping-collector` in `ci.yml`, mirroring the `ap-exceptions`/
+      `hosted-economic-authority` job pattern — installs
+      `hosted/usage_ping/requirements.txt` + ruff/mypy directly, since
+      this collector has zero dependency on the `inferrail` package at
+      all), `bash scripts/check_no_internal_content.sh` clean, all
+      three generator scripts re-run (`config.schema.json` gained the
+      new `usage_ping:` section; `ERRORS.md`/`openapi.json` (beyond the
+      version-string bump) unchanged — `/v1/local/*` still isn't in the
+      generated OpenAPI spec, per ADR-0016's existing scope decision).
+      `cd app && npm run lint && npm run build && npm test` clean (18
+      vitest cases, unchanged — Settings' new logic is thin enough it's
+      exercised by the live browser smoke test above, matching this
+      project's own established convention for these screens).
+- [x] Docs: new ADR-0019, new `docs/privacy/usage-ping.md`, `docs/
+      PRODUCT.md`'s new "Opt-in usage ping" subsection, `docs/
+      ARCHITECTURE.md`'s new "usage-ping boundary" section + component-
+      tree entry, `README.md`'s "Supported today" list, `inferrail.
+      example.yaml`'s new commented `usage_ping:` section,
+      `CHANGELOG.md`'s new `## v0.4.1` entry.
+- [x] `pyproject.toml` bumped `0.4.0` -> `0.4.1` — this unit closes a
+      real, shippable milestone (a genuine feature, not an in-progress
+      fragment), matching the same "only the unit that closes a
+      milestone bumps the version" rule every prior milestone followed.
+- [ ] **Not yet pushed or merged** — this agent cannot push to this
+      repository (the same standing limitation logged for every prior
+      unit). Committed locally as `feat/opt-in-usage-ping` (commit
+      `cf35904`), **stacked on top of** `ops/close-v0.4.0-audit-fixes`
+      (commit `b251da3`) — the v0.4.0-closing branch must be pushed and
+      merged to `main` *first*; this branch's PR should target `main`
+      only after that merge (or target the other branch directly, then
+      be retargeted once it merges — see "HUMAN ACTION NEEDED" for the
+      exact commands either way).
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — `main` should be at
-   `558365d` (PR #35's merge commit). If the founder reports anything
-   else was merged/changed, verify with `gh pr view <n> --json
-   state,mergedAt` before trusting it, same discipline as every prior
-   milestone.
+   changed underneath since this session — check whether the founder
+   has pushed/merged `ops/close-v0.4.0-audit-fixes` and
+   `feat/opt-in-usage-ping` yet (see "HUMAN ACTION NEEDED" — this agent
+   committed both locally but cannot push). If merged, `main` should be
+   at `cf35904`'s content (or a squash-merge of it) on top of `main` at
+   `33956b1`. Verify with `gh pr list --json state,mergedAt` and `git
+   log`, never take a verbal report on trust — same discipline every
+   prior milestone used, including two specific past incidents in this
+   file where that discipline caught a real problem.
 2. **Check for a concurrent session on this same checkout before
-   editing anything** (`ListAgents` or ask the founder) — a prior pass
-   this session found a peer session actively editing this exact
-   working directory (see "Status summary" above); the founder has
-   since closed it, but it's worth re-checking at the start of any new
-   session rather than assuming. Prefer a separate git worktree over
-   two sessions editing one checkout concurrently.
-3. **All six v0.4.0 screens exist and the dashboard is now bundled into
-   this project's own CI-built wheel** (unit 6, `docs/adr/0018`). What
-   remains before the milestone can formally close — none of these are
-   this agent's to decide unilaterally (see "HUMAN ACTION NEEDED"):
-   - Whether the "opt-in usage ping" placeholder is accepted as-is, or
-     a real feature should be scoped as its own unit.
-   - Whether/when to wire Node into `publish.yml` and
-     `platform-verify.yml` so the *actual* published wheel and the
-     three-OS platform-verify wheels also bundle a dashboard (currently
-     only this repo's own `dashboard` CI job proves the bundling works)
-     — these are this repo's most heavily-reviewed files, so this is
-     worth an explicit go-ahead rather than folding into a routine unit.
-   - Separately, not required to close v0.4.0: PyPI's latest release is
-     still 0.2.0, two versions behind `main` — the founder should decide
-     explicitly whether/when v0.3.0/v0.4.0 get published.
-   - Once resolved, bump `pyproject.toml` to `0.4.0`, add the dated
-     `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and get
-     explicit founder sign-off that MISSION.md's acceptance criterion is
-     met — don't declare the milestone closed unilaterally, since a
-     version bump is exactly the kind of change this repo's merge policy
-     wants deliberately reviewed.
-4. Follow the same protocol throughout: build with tests at the existing
-   rigor (both `pytest` and `vitest`), run *all three* generator scripts
-   before opening a PR if any backend file changes, commit locally, then
-   hand the founder the exact `git push`/`gh pr create` commands (this
-   agent cannot push to this repo). Do not self-merge.
-5. Update this file's "Status summary" and the "v0.4.0" section above
-   to reflect wherever the next unit lands, the same way each unit's
-   checklist was filled in as it merged.
+   editing anything** (`ListAgents` or ask the founder) — prefer a
+   separate git worktree over two sessions on one checkout at once
+   (this file has two separate real incidents of that going wrong).
+3. **If the two branches above are merged:** v0.4.0 and v0.4.1 are both
+   closed. Remaining work, in the founder's own stated sequence
+   ("verify → fix → land v0.4.0 → bump → publish"):
+   - **PyPI publish is still a pending human action** (tag push — this
+     agent has no PyPI credentials and cannot push git tags either).
+     See "HUMAN ACTION NEEDED" for the exact command. Recommend tagging
+     `v0.4.1` (not `v0.4.0`) if both branches are merged by then, since
+     0.4.1 is a strict superset and there's no reason to publish an
+     intermediate release the moment it's superseded — but this is the
+     founder's call, not this agent's to decide unilaterally.
+   - **Deploy `hosted/usage_ping/service.py`** (built and tested this
+     session, not yet deployed anywhere) and report back the resulting
+     URL — see "HUMAN ACTION NEEDED" for exact steps. Once given a real
+     URL, a follow-up session should decide (with the founder) whether
+     to bake it in as this package's actual default
+     `usage_ping.endpoint`, or leave it operator-configured-only.
+   - Non-telemetry signal in the meantime: PyPI download counts
+     (`pypistats.org/packages/inferrail` or the JSON API) and GitHub
+     clone/star counts are free and already available post-publish —
+     don't wait on the usage-ping collector to start watching those.
+4. **If the two branches above are NOT yet merged:** do not start new
+   feature work on `main` — either wait for the founder to push/merge,
+   or (if picking up unrelated work) use a separate git worktree so
+   this checkout's own uncommitted-nothing state (everything is
+   committed to the two branches, working tree is clean) isn't
+   disturbed.
+5. v0.5.0 (one-click desktop app — PyInstaller + Tauri, 3 OSes, code
+   signing decision) is next per `MISSION.md`, once the above settles.
+   Not started; the prior session's own risk note (v0.5.0 likely takes
+   longer than its single milestone entry implies, and the
+   signed-vs-unsigned-launch question has real lead time if signing
+   isn't deferred to v0.9.0 as `MISSION.md` currently plans) still
+   stands, unrevisited this session.
+6. Follow the same protocol throughout: build with tests at the
+   existing rigor (`pytest` and `vitest`), run *all three* generator
+   scripts before opening a PR if any backend file changes, commit
+   locally, then hand the founder the exact `git push`/`gh pr create`
+   commands (this agent cannot push to this repo). Do not self-merge.
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding for pushing** — both PR #34 (merge commit
-  `a49d2f7`) and PR #35 (merge commit `558365d`) are merged, all 9 CI
-  checks green on each exact merged commit, `main` synced through
-  `558365d` with zero drift from what was authored locally. Unit 6's
-  own checklist above has the full record of the two real, post-push
-  problems found and fixed along the way (a git-history merge-conflict
-  artifact, then a genuine CI script gap) — neither is outstanding now.
-- **Three open decisions remain, none blocking, all worth explicit
-  founder input rather than a unilateral call:**
-  1. **The Settings screen's "opt-in usage ping" checkbox is a
-     disabled placeholder** — no telemetry-ping mechanism exists
-     anywhere in this codebase, so it's honestly labeled rather than
-     faked. Is that the right scope decision, or should a real
-     telemetry-ping feature (what it would send, the opt-in mechanism
-     itself) be scoped as its own future unit? Not blocking anything
-     today either way — the honest current behavior (nothing is ever
-     sent) matches MISSION.md's non-negotiable regardless of which path
-     is chosen later.
-  2. **Whether/when to wire Node into `publish.yml` and
-     `platform-verify.yml`** so the actual PyPI-published wheel and the
-     three-OS platform-verify wheels also bundle a dashboard (see unit
-     6 above) — these are this repo's most heavily-reviewed workflow
-     files, so this is worth an explicit go-ahead rather than folding
-     into a routine unit.
-  3. **PyPI's actual latest release is still 0.2.0**, two versions
-     behind `main` (confirmed via `pypi.org/pypi/inferrail/json` by a
-     concurrent audit session this pass — see "Independent status
-     audit" above). Closing v0.4.0 doesn't require a PyPI publish, but
-     whether v0.3.0/v0.4.0 get published before v1.0.0 (and when)
-     should be an explicit decision, not an implicit gap.
+- **Two branches committed locally, neither pushed yet** (this agent
+  cannot push — the same 403/no-credentials limitation logged for
+  every prior unit in this file). Paste these into your own terminal,
+  in order (the second depends on the first's PR existing, since it's
+  stacked):
+
+  ```
+  git push -u origin ops/close-v0.4.0-audit-fixes
+  gh pr create --base main --head ops/close-v0.4.0-audit-fixes \
+    --title "fix: Live Feed backfill, wire Node into release workflows, close v0.4.0 (0.4.0)" \
+    --body "See PROGRESS.md's top section (\"v0.4.0 closing audit + v0.4.1\") for the full audit record and what this closes."
+
+  git push -u origin feat/opt-in-usage-ping
+  gh pr create --base ops/close-v0.4.0-audit-fixes --head feat/opt-in-usage-ping \
+    --title "feat: opt-in, anonymous usage ping (0.4.1)" \
+    --body "Stacked on the v0.4.0-closing PR above -- see PROGRESS.md's top section for the full record. Founder decision: build the usage ping for real, now."
+  ```
+
+  Review and merge the first PR before the second (retarget the second
+  PR's base to `main` once the first merges, or merge them in sequence
+  as-is — either works; just don't merge the second one first, since it
+  contains the first one's commit too). Confirm each merge with `gh pr
+  view <n> --json state,mergedAt` before trusting it, per this file's
+  own standing discipline.
+
+- **PyPI publish is a pending human action, once the branches above are
+  merged.** This agent has no PyPI credentials and cannot push a git
+  tag either. `publish.yml` triggers on any `v*.*.*` tag push:
+
+  ```
+  git checkout main && git pull
+  git tag v0.4.1   # or v0.4.0, if publishing before the usage-ping PR merges
+  git push origin v0.4.1
+  ```
+
+  Then watch the `Publish to PyPI` workflow run in the GitHub Actions
+  tab — it re-runs the full CI suite and platform-verify matrix against
+  the exact tagged commit before publishing, so a real failure there
+  should hold the release, not be pushed past.
+
+- **Deploy the usage-ping collector** (`hosted/usage_ping/`, built and
+  tested this session, not yet deployed anywhere) — see
+  `hosted/usage_ping/README.md`'s own "Deploying it" section for the
+  exact steps (mirrors how `hosted/ap_exceptions` was deployed to
+  Render). In short: new Render web service, root directory this repo,
+  build command `pip install -r hosted/usage_ping/requirements.txt`,
+  start command `python3 hosted/usage_ping/service.py`, attach a
+  persistent disk and set `USAGE_PING_DB` to a path on it, optionally
+  set `USAGE_PING_ADMIN_TOKEN` (a long random value) to enable
+  `GET /stats`. **Report the resulting URL back** (e.g.
+  `https://inferrail-usage-ping.onrender.com/ping`) so a future session
+  can wire it in — either as `usage_ping.endpoint` in a self-hosted
+  deployment's own `inferrail.yaml`, or (a separate, later decision)
+  baked in as this package's actual default. Until this is done, the
+  usage ping is fully built and tested but produces zero real-world
+  signal — the Settings screen already says so honestly ("Not yet
+  active").
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
   untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
   tier.
 - Signing accounts, stopwatch tests, demo video/screenshots, HN post
   timing — all deferred to their respective `MISSION.md` milestones.
-- The v0.4.0 architectural decision noted above (repo structure for the
-  dashboard) will need the founder's input when the next session gets
-  there — not urgent yet, flagged here so it isn't a surprise.
 
 ## Decisions made during the v0.2.1 session (historical)
 
