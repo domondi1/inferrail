@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -375,6 +376,7 @@ class _AppModePaths:
     budgets: Path
     outcomes: Path
     token_file: Path
+    ap_recovery: Path
 
 
 def _apply_app_mode(config: InferrailConfig) -> tuple[InferrailConfig, _AppModePaths]:
@@ -384,6 +386,14 @@ def _apply_app_mode(config: InferrailConfig) -> tuple[InferrailConfig, _AppModeP
     see docs/adr/0016-local-control-api.md. Providers/routes/telemetry
     are untouched: app-mode is about *where local data lives and how
     it's exposed*, not which upstream providers are configured.
+
+    `ap_recovery` defaults to a fixed path under the app-data directory,
+    same treatment as receipts/budgets — but unlike those, the AP module
+    (`inferrail ap demo|report|outcome`) has no config-file wiring at
+    all today; a user with an existing recovery store elsewhere points
+    at it via `INFERRAIL_AP_DB` rather than a CLI flag, kept minimal
+    since this is the Recover screen's only consumer so far (see
+    docs/PRODUCT.md's "Dashboard" section).
     """
     app_data = ensure_app_data_dir()
     paths = _AppModePaths(
@@ -392,6 +402,7 @@ def _apply_app_mode(config: InferrailConfig) -> tuple[InferrailConfig, _AppModeP
         budgets=app_data / "budgets.db",
         outcomes=app_data / "work-outcomes.jsonl",
         token_file=app_data / "local-api-token",
+        ap_recovery=Path(os.environ.get("INFERRAIL_AP_DB", str(app_data / "ap-recovery.db"))),
     )
     config.receipts = ReceiptsConfig(sink="sqlite", path=str(paths.receipts))
     config.budgets = BudgetsConfig(enabled=True, path=str(paths.budgets))
@@ -426,6 +437,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             config,
             app_mode=args.app_mode,
             local_outcomes_path=app_mode_paths.outcomes if app_mode_paths else None,
+            ap_recovery_path=app_mode_paths.ap_recovery if app_mode_paths else None,
         )
     except ConfigurationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -439,6 +451,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"  receipts: {app_mode_paths.receipts}")
         print(f"  budgets:  {app_mode_paths.budgets}")
         print(f"  outcomes: {app_mode_paths.outcomes}")
+        print(f"  ap recovery: {app_mode_paths.ap_recovery}")
+        print(
+            "    (point 'inferrail ap demo|report|outcome --db "
+            f"{app_mode_paths.ap_recovery}' at this path to use the "
+            "dashboard's Recover screen; override with INFERRAIL_AP_DB)"
+        )
         print(f"Local control API token (also saved at {app_mode_paths.token_file}):")
         print(f"  {app.state.local_api_token}")
         # See docs/adr/0017-dashboard-in-app-directory.md for why the

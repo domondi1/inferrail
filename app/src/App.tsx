@@ -1,5 +1,6 @@
 import { Budgets } from "./screens/Budgets";
 import { LiveFeed } from "./screens/LiveFeed";
+import { Recover } from "./screens/Recover";
 import { Work } from "./screens/Work";
 import { hasToken } from "./api";
 import { navigateTo, useHashRoute } from "./useHashRoute";
@@ -11,7 +12,7 @@ const TABS = [
   { screen: "live", label: "Live Feed", enabled: true },
   { screen: "work", label: "Work", enabled: true },
   { screen: "budgets", label: "Budgets", enabled: true },
-  { screen: "recover", label: "Recover", enabled: false },
+  { screen: "recover", label: "Recover", enabled: true },
   { screen: "connect", label: "Connect", enabled: false },
   { screen: "settings", label: "Settings", enabled: false },
 ] as const;
@@ -48,7 +49,10 @@ export function App(): JSX.Element {
         )}
         {route.screen === "work" && <Work workId={route.param} />}
         {route.screen === "budgets" && <Budgets />}
-        {route.screen !== "work" && route.screen !== "budgets" && <LiveFeed />}
+        {route.screen === "recover" && <Recover />}
+        {route.screen !== "work" && route.screen !== "budgets" && route.screen !== "recover" && (
+          <LiveFeed />
+        )}
       </main>
     </div>
   );

@@ -34,11 +34,20 @@ PyPI release (the hosted service and website ship independently of the
   (`augment_attributes_with_block`), so the log is built from real
   evidence, not inferred from error text. `GET /v1/local/receipts` gained
   an optional `status` filter to support this.
+- **Recover** screen: the pending human-review queue for AP
+  invoice-exception decisions (new `GET /v1/local/ap/pending`, built
+  from `ap.report.build_live_report` filtered to
+  `awaiting_human_review`) with a one-click record-outcome (new
+  `POST /v1/local/ap/{work_id}/outcome`, the same store call
+  `inferrail ap outcome` makes). `inferrail serve --app-mode` now also
+  provisions an AP recovery store at a fixed app-data path (printed on
+  startup; override with `INFERRAIL_AP_DB`) — the first local-API
+  surface to bridge to the previously separate `inferrail.ap` module.
 
 ### Not yet in this milestone
 
-- The Recover, Connect, and Settings screens (visible in the nav as
-  disabled tabs, not omitted).
+- The Connect and Settings screens (visible in the nav as disabled
+  tabs, not omitted).
 - Bundling the built dashboard into the PyPI wheel — build it from a
   checkout (`cd app && npm install && npm run build`) until a packaging
   unit lands.

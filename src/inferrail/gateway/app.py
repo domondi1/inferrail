@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from inferrail import __version__
+from inferrail.ap.store import RecoveryStore
 from inferrail.budgets.enforcement import BudgetEnforcer
 from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import InferrailConfig
@@ -110,6 +111,7 @@ def create_app(
     *,
     app_mode: bool = False,
     local_outcomes_path: Path | None = None,
+    ap_recovery_path: Path | None = None,
 ) -> FastAPI:
     """`app_mode` mounts the local control API (`/v1/local/*` — see
     docs/adr/0016-local-control-api.md), guarded by a mandatory
@@ -189,6 +191,15 @@ def create_app(
         app.state.local_receipts_store = receipts
         app.state.local_budget_store = budget_store
         app.state.local_outcomes_path = local_outcomes_path or (app_data / "work-outcomes.jsonl")
+        # The AP recovery store (docs/PRODUCT.md's "Recover" screen) —
+        # always constructed under app_mode, same as receipts/budgets.
+        # `RecoveryStore.__init__` creates its schema eagerly and is
+        # cheap/safe against a nonexistent or empty file; a store with
+        # zero decisions is a normal state (`build_live_report` returns
+        # zero rows), never an error.
+        app.state.ap_recovery_store = RecoveryStore(
+            ap_recovery_path or (app_data / "ap-recovery.db")
+        )
         app.include_router(local_api_router)
 
         # The dashboard (docs/adr/0017) is a static SPA -- mounted only
