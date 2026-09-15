@@ -125,6 +125,34 @@ class BudgetsConfig(BaseModel):
     path: str = "./inferrail-budgets.db"
 
 
+class UsagePingConfig(BaseModel):
+    """The opt-in, anonymous usage ping (docs/adr/0019-opt-in-usage-ping.md).
+
+    Off by default, and inert with no `endpoint` configured regardless of
+    `enabled` — there is no built-in default endpoint baked into this
+    package; an operator (or, for the desktop dashboard's toggle, the
+    person running `inferrail serve --app-mode` on their own machine)
+    must explicitly point this at a real collector before anything can
+    ever be sent. The payload is fixed and minimal (see
+    `usage_ping.payload.build_payload`): a locally-generated random
+    install id, OS, Inferrail version, event name, timestamp — never a
+    prompt, response, model name, cost, work_id, project name, or
+    anything about the traffic this install actually handles.
+
+    `enabled` here is only the *config-file* default. Once
+    `inferrail serve --app-mode` has run once, the dashboard's Settings
+    toggle (and `inferrail telemetry enable|disable`) control a separate,
+    mutable on/off state under the OS app-data directory that takes over
+    from this default — the same "config seeds it, a store owns it after
+    that" pattern `budgets`/`receipts` already use under `--app-mode`.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    endpoint: str | None = None
+
+
 class PriceEntry(BaseModel):
     """A verified per-model price, with the provenance to audit it later.
 
@@ -157,6 +185,7 @@ class InferrailConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
     budgets: BudgetsConfig = Field(default_factory=BudgetsConfig)
+    usage_ping: UsagePingConfig = Field(default_factory=UsagePingConfig)
     # provider name -> model -> price override. Always wins over the
     # built-in catalog; see inferrail.pricing.resolver.PricingResolver.
     pricing: dict[str, dict[str, PriceEntry]] = Field(default_factory=dict)

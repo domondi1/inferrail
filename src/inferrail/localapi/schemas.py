@@ -74,4 +74,39 @@ class BudgetCreate(BaseModel):
     limit_usd: Decimal
 
 
-__all__ = ["Budget", "BudgetCreate", "BudgetSpend", "OutcomeRequest", "ReceiptsPage"]
+class UsagePingStatus(BaseModel):
+    """Response body for `GET /v1/local/usage-ping` — everything the
+    Settings screen needs to render honestly (docs/adr/0019). `endpoint`
+    is never null-vs-real-URL ambiguous in the response the way `enabled`
+    is: `configured=false` means no collector is set up at all, so the
+    UI can say "not yet active" regardless of `enabled`, rather than a
+    toggle that looks like it works but silently does nothing."""
+
+    enabled: bool
+    configured: bool
+    install_id: str
+    privacy_url: str
+
+
+class UsagePingUpdate(BaseModel):
+    """Request body for `POST /v1/local/usage-ping` — the *only* thing a
+    caller can change is the on/off toggle. `endpoint` is deliberately
+    not settable here: it stays an operator/config decision
+    (`inferrail.yaml`'s `usage_ping.endpoint`), never something a
+    dashboard visitor (or a compromised/malicious frontend) could
+    redirect to an arbitrary URL."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool
+
+
+__all__ = [
+    "Budget",
+    "BudgetCreate",
+    "BudgetSpend",
+    "OutcomeRequest",
+    "ReceiptsPage",
+    "UsagePingStatus",
+    "UsagePingUpdate",
+]

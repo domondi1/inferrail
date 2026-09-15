@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from inferrail.ap.store import RecoveryStore
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
-from inferrail.config.models import InferrailConfig
+from inferrail.config.models import InferrailConfig, UsagePingConfig
 from inferrail.gateway import app as app_module
 from inferrail.localapi import routes as localapi_routes
 from inferrail.receipts.schema import InferenceReceipt
@@ -485,3 +485,111 @@ def test_export_receipts_requires_the_token(
     client, _token, _config = _make_client(monkeypatch, tmp_path)
 
     assert client.get("/v1/local/receipts/export").status_code == 401
+
+
+def _app_mode_config_with_usage_ping(
+    tmp_path: Path, *, enabled: bool, endpoint: str | None
+) -> InferrailConfig:
+    config = _app_mode_config(tmp_path)
+    return config.model_copy(
+        update={"usage_ping": UsagePingConfig(enabled=enabled, endpoint=endpoint)}
+    )
+
+
+def _make_client_with_config(
+    monkeypatch: pytest.MonkeyPatch, config: InferrailConfig, tmp_path: Path
+) -> tuple[TestClient, str]:
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {})
+    monkeypatch.setattr(app_module, "build_anthropic_providers", lambda cfg, **_kw: {})
+    app = app_module.create_app(
+        config, app_mode=True, local_outcomes_path=tmp_path / "work-outcomes.jsonl"
+    )
+    return TestClient(app), app.state.local_api_token
+
+
+def test_usage_ping_status_reports_not_configured_when_no_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _app_mode_config_with_usage_ping(tmp_path, enabled=True, endpoint=None)
+    client, token = _make_client_with_config(monkeypatch, config, tmp_path)
+
+    response = client.get("/v1/local/usage-ping", headers=_auth(token))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is False
+    assert len(body["install_id"]) >= 16
+    assert body["privacy_url"].endswith("docs/privacy/usage-ping.md")
+
+
+def test_usage_ping_status_reports_configured_when_endpoint_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: None)  # no real network attempt
+    config = _app_mode_config_with_usage_ping(
+        tmp_path, enabled=True, endpoint="http://example.invalid/ping"
+    )
+    client, token = _make_client_with_config(monkeypatch, config, tmp_path)
+
+    response = client.get("/v1/local/usage-ping", headers=_auth(token))
+
+    assert response.json()["configured"] is True
+    assert response.json()["enabled"] is True
+
+
+def test_usage_ping_toggle_persists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _app_mode_config_with_usage_ping(tmp_path, enabled=False, endpoint=None)
+    client, token = _make_client_with_config(monkeypatch, config, tmp_path)
+
+    off = client.get("/v1/local/usage-ping", headers=_auth(token)).json()
+    assert off["enabled"] is False
+
+    on = client.post("/v1/local/usage-ping", headers=_auth(token), json={"enabled": True}).json()
+    assert on["enabled"] is True
+
+    # A fresh request confirms it's actually persisted, not just echoed back.
+    still_on = client.get("/v1/local/usage-ping", headers=_auth(token)).json()
+    assert still_on["enabled"] is True
+
+
+def test_usage_ping_routes_require_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _app_mode_config_with_usage_ping(tmp_path, enabled=False, endpoint=None)
+    client, _token = _make_client_with_config(monkeypatch, config, tmp_path)
+
+    assert client.get("/v1/local/usage-ping").status_code == 401
+    assert client.post("/v1/local/usage-ping", json={"enabled": True}).status_code == 401
+
+
+def test_create_budget_fires_the_budget_created_usage_ping_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import httpx
+
+    received: list[str] = []
+    monkeypatch.setattr(
+        httpx, "post", lambda url, *, json, timeout: received.append(json["event"])
+    )
+    config = _app_mode_config_with_usage_ping(
+        tmp_path, enabled=True, endpoint="http://example.invalid/ping"
+    )
+    client, token = _make_client_with_config(monkeypatch, config, tmp_path)
+
+    response = client.post(
+        "/v1/local/budgets",
+        headers=_auth(token),
+        json={"scope": "global", "window": "daily", "mode": "warn", "limit_usd": "5.00"},
+    )
+    assert response.status_code == 201
+
+    import time
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and "budget_created" not in received:
+        time.sleep(0.02)
+    # "first_run" also fires once, from create_app's own app-mode startup
+    # (unrelated to this test) -- only assert budget_created is among it.
+    assert "budget_created" in received

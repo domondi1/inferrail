@@ -545,7 +545,7 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - CLI: `inferrail demo`, `try`, `serve` (`--quickstart`/`--app-mode`),
   `config check`, `report`, `transaction`, `work`,
   `receipts import|export`, `budget set|list|rm`, `pricing update`,
-  `doctor`
+  `doctor`, `telemetry preview|status|enable|disable`
 - Budget enforcement (opt-in, requires `receipts.sink: sqlite`):
   `global`/`project`/`work_id`-scoped spend caps over a `per_work`/
   `daily`/`monthly` window, in `warn` or `block` mode. A `block` budget
@@ -569,6 +569,13 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - `inferrail doctor` (port, pricing-catalog freshness, provider
   reachability) and `inferrail pricing update` (reports built-in
   catalog age; never fetches prices over the network).
+- An opt-in, anonymous usage ping (off by default, inert with no
+  collector configured): four lifecycle events only (install, tool
+  connected, first receipt, budget created), never a prompt, response,
+  model name, cost, or anything about your traffic. Preview the exact
+  payload with `inferrail telemetry preview`; see
+  [docs/privacy/usage-ping.md](docs/privacy/usage-ping.md) and
+  [docs/adr/0019](docs/adr/0019-opt-in-usage-ping.md).
 
 ## Not yet
 
