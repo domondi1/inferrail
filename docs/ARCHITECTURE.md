@@ -379,8 +379,11 @@ See `docs/adr/0017-dashboard-in-app-directory.md`. `app/` is a
 self-contained React + Vite + TypeScript SPA, built to `app/dist` — a
 static bundle with no server-side rendering and no Node runtime needed
 to serve it. `inferrail.dashboard.find_dashboard_dist()` locates a build
-(an env override, a future bundled `dashboard_static/`, or `app/dist`
-found by walking up from the source tree) and `gateway.app.create_app`
+(an env override, a bundled `dashboard_static/` inside the installed
+package — see `docs/adr/0018-dashboard-wheel-packaging.md` for how that
+gets there at wheel-build time, via `hatch_build.py` — or `app/dist`
+found by walking up from the source tree, for a git checkout) and
+`gateway.app.create_app`
 mounts it at `/dashboard` via `StaticFiles(html=True)`, only when
 `app_mode=True` and only when a build is actually found — no new route,
 no new failure mode for a normal `inferrail serve`. Routing between

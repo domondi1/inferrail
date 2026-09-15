@@ -1124,69 +1124,164 @@ exist.**
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Known gaps, explicitly deferred (not hidden) — see ADR-0017's "Consequences"
+### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, pushed as PR #35, two rounds of fixes, awaiting final force-push + merge
 
-- Built dashboard is not yet bundled into the PyPI wheel. `pip install
-  inferrail` alone does not currently ship a working dashboard; a future
-  packaging unit needs a build hook (`npm run build` + copy into
-  `src/inferrail/dashboard_static/`) plus a CI check that it actually
-  worked, plus Node added to the release pipeline's prerequisites.
+Closes ADR-0017's "Known gap" for the wheel this project's own CI
+builds — see `docs/adr/0018-dashboard-wheel-packaging.md` for the full
+design record; this checklist covers what was actually done and
+verified.
+
+- [x] New `hatch_build.py` (repo root): a hatchling custom build hook,
+      registered via `[tool.hatch.build.hooks.custom]`, that runs
+      `npm ci && npm run build` in `app/` and copies the result into
+      `src/inferrail/dashboard_static/` — only for the `wheel` target,
+      never the `sdist`.
+- [x] **Never fails the build**: no `app/package.json` (stripped
+      source), no `npm` on `PATH`, a failed npm build, or a build that
+      doesn't produce `index.html` — each prints one line to stderr and
+      returns, leaving the wheel to build normally without a bundled
+      dashboard. Verified by 5 of the 6 new unit tests
+      (`tests/unit/test_hatch_build.py`), each exercising exactly one
+      skip path via a mocked `shutil.which`/`subprocess.run`.
+- [x] **Real bug found and fixed while testing this, not left latent:**
+      the first working version wrote files directly under
+      `src/inferrail/dashboard_static/` and relied on the existing
+      `packages = ["src/inferrail", ...]` config to pick them up — this
+      silently produced a wheel with *no dashboard in it at all*, with
+      no error, because hatchling's default wheel file selection
+      respects `.gitignore`, and `dashboard_static/` is (correctly)
+      gitignored as a generated artifact. Caught only by actually
+      inspecting the built wheel's contents (`unzip -l`), not by trusting
+      the hook's own success log or its unit tests. Fixed by using
+      `build_data["force_include"]` instead — hatchling's documented
+      mechanism for exactly this "hook-generated, intentionally
+      gitignored path" case.
+- [x] **Full manual end-to-end verification, not just CI-shaped
+      checks:** built a real wheel (`python -m build --wheel`),
+      confirmed via `unzip -l` that `inferrail/dashboard_static/{index.html,assets/*}`
+      are actually present, installed that wheel into a brand-new venv
+      **outside any checkout**, confirmed
+      `inferrail.dashboard.find_dashboard_dist()` finds the bundled copy
+      from there, then started a real `inferrail serve --app-mode` from
+      that clean install and confirmed `GET /dashboard/` and its
+      hashed asset path both return real content — the same discipline
+      this project's own release-verification passes (v0.2.0) used.
+- [x] **Pre-existing, unrelated packaging bug found and fixed in the
+      same pass:** hatchling's default sdist target does not respect
+      `app/.gitignore` either — a plain `python -m build` was including
+      `app/node_modules` (real, sizable bloat) and any locally-built
+      `app/dist` in the source tarball. Present since `app/` was first
+      added (unit 1), not introduced by this unit. Fixed via an explicit
+      `[tool.hatch.build.targets.sdist]` `exclude`; verified via a real
+      `python -m build --sdist` before and after (0 `node_modules`
+      entries after the fix).
+- [x] `hatchling>=1.18` added to the `dev` extra — needed only so
+      `test_hatch_build.py` can import `BuildHookInterface` (it was
+      already an implicit build-time dependency via `[build-system]
+      .requires`, just not otherwise importable due to pip's PEP 517
+      build isolation).
+- [x] `ci.yml`'s existing `dashboard` job (already has Node set up)
+      extended with two new steps: build a real wheel and assert
+      `inferrail/dashboard_static/index.html` is in the archive: install
+      that wheel into a clean venv and assert `find_dashboard_dist()`
+      finds it — the same sequence verified manually above, now
+      re-verified on every push/PR rather than only once by hand.
+- [x] New ADR: `docs/adr/0018-dashboard-wheel-packaging.md`.
+- [x] Tests: 6 new (`tests/unit/test_hatch_build.py`) — full-repo
+      `pytest -q`: **890 passed, 19 skipped, 0 failed** (up from 884 at
+      unit 5 — exactly the 6 new tests this unit added). No concurrent
+      session collision this time (checked via `ListAgents` before
+      running).
+- [x] Local verification: `ruff check .`/`mypy` clean, all three
+      generator scripts re-run with zero diff, `bash
+      scripts/check_no_internal_content.sh` clean.
+- [x] Docs: new ADR-0018; `docs/PRODUCT.md`'s dashboard subsection,
+      `docs/ARCHITECTURE.md`'s dashboard-boundary section, `README.md`'s
+      dashboard bullet, and `CHANGELOG.md`'s `## v0.4.0` entry all
+      updated to reflect the wheel now bundling the dashboard (with the
+      publish.yml/platform-verify.yml gap stated plainly, not implied
+      closed).
+- [x] **Deliberately not done, stated plainly rather than implied:**
+      `publish.yml` (the actual PyPI release pipeline) and
+      `platform-verify.yml` (the three-OS wheel-smoke tests) don't set
+      up Node yet — neither the real published wheel nor the
+      Windows/macOS/Linux platform-verify wheels are proven to bundle a
+      dashboard. Wiring Node into those two workflows is a separate,
+      higher-stakes follow-up (they're this repo's most heavily-reviewed
+      files, per its own merge policy) — a deliberate scope boundary for
+      this unit, not an oversight. See ADR-0018's "Consequences" and
+      "HUMAN ACTION NEEDED" below.
+- [ ] **Pushed and opened as PR #35, but not yet merged — two rounds of
+      real problems found and fixed post-push, neither hidden:**
+      1. A `CONFLICTING` mergeable state, caused by a git-history
+         artifact from rebasing onto a commit that got squash-merged
+         under a different hash — fixed by rebasing onto the actual
+         merged commit; force-pushed by the founder.
+      2. CI's `dashboard` job then failed for real:
+         `scripts/check_dashboard_discoverable.py` assumed
+         `find_dashboard_dist()` could only ever return the `app/dist`
+         checkout fallback, but that job's own `pip install -e .` step
+         also triggers the new build hook (Node is already on `PATH` by
+         then), which legitimately produces a `dashboard_static/`
+         result instead — a correct outcome the check script didn't
+         know about yet. Reproduced locally before fixing, fix verified
+         against that exact reproduction. See "HUMAN ACTION NEEDED" for
+         the exact push command and what to re-check.
+
+### Known gaps, explicitly deferred (not hidden) — see ADR-0017's/0018's "Consequences"
+
 - `npm audit` reports 5 vulnerabilities (3 moderate, 1 high, 1 critical)
   in `vite`/`vitest`'s own dev-server dependency chain (`esbuild`,
   `@vitest/mocker`) — dev-tooling only (affects `npm run dev`'s dev
   server, not the built static output this unit actually ships); fixing
   requires a breaking major-version bump (`vite@8`, `vitest@5`) not
   attempted in this unit. Tracked, not silently ignored.
-- Connect, Settings screens: not built — the last two, both smaller
-  than any unit so far (Connect is static per-tool snippets; Settings
-  is export/catalog-refresh/opt-in toggles). With Recover done,
-  MISSION.md's full v0.4.0 acceptance criterion is now behaviorally
-  complete ("watch a live request appear, set a budget, see a block,
-  and clear a review item"), though the milestone itself isn't closed
-  until every listed screen exists.
 - The Recover screen requires an AP recovery store — most `--app-mode`
   users who never touch `inferrail ap` will see an empty queue, not an
   error, which is correct, but is worth knowing before expecting the
   screen to show anything without first running `inferrail ap demo`
   or pointing `INFERRAIL_AP_DB` at an existing store.
+- The actual PyPI-published wheel and the three-OS
+  `platform-verify.yml` wheels still don't bundle a dashboard (see
+  unit 6's checklist above) — only this project's own `dashboard` CI
+  job proves the real bundling works.
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — `main` should be at
-   `41f83aa` (PR #33's merge commit). If the founder reports anything
-   else was merged/changed, verify with `gh pr view <n> --json
-   state,mergedAt` before trusting it, same discipline as every prior
-   milestone.
+   changed underneath since this session — check whether unit 6's PR
+   and the small `ops:` PROGRESS.md-only PR (see "HUMAN ACTION NEEDED"
+   for both) have been pushed/merged; verify with `gh pr view <n> --json
+   state,mergedAt` before trusting a verbal report, same discipline as
+   every prior milestone.
 2. **Check for a concurrent session on this same checkout before
-   editing anything.** This session's own commit unintentionally
-   captured a separate concurrent audit session's writes to
-   `PROGRESS.md` (see "Process note" in "Status summary" above) — both
-   sessions shared one working directory rather than using separate
-   worktrees. If another session might still be active here, prefer a
-   fresh worktree over editing this same checkout concurrently.
-3. **All six v0.4.0 screens now exist.** What remains before the
-   milestone can formally close — both are founder decisions, not
-   something to resolve unilaterally (see "HUMAN ACTION NEEDED"):
+   editing anything** (`ListAgents` or ask the founder) — a prior pass
+   this session found a peer session actively editing this exact
+   working directory (see "Status summary" above); the founder has
+   since closed it, but it's worth re-checking at the start of any new
+   session rather than assuming. Prefer a separate git worktree over
+   two sessions editing one checkout concurrently.
+3. **All six v0.4.0 screens exist and the dashboard is now bundled into
+   this project's own CI-built wheel** (unit 6, `docs/adr/0018`). What
+   remains before the milestone can formally close — none of these are
+   this agent's to decide unilaterally (see "HUMAN ACTION NEEDED"):
    - Whether the "opt-in usage ping" placeholder is accepted as-is, or
      a real feature should be scoped as its own unit.
-   - The wheel-packaging follow-up (`docs/adr/0017`'s "Known gap"): a
-     build hook that runs `npm run build` and copies `app/dist` into
-     `src/inferrail/dashboard_static/` before the wheel is built, plus
-     a CI check that it actually worked, plus Node added to the release
-     pipeline's prerequisites (see `dashboard.py`'s
-     `find_dashboard_dist` — the `dashboard_static/` path is already
-     reserved for this). Separately, and not required to close v0.4.0:
-     PyPI's latest release is still 0.2.0, two versions behind `main` —
-     the founder should decide explicitly whether/when v0.3.0/v0.4.0
-     get published, per the audit's own finding above.
+   - Whether/when to wire Node into `publish.yml` and
+     `platform-verify.yml` so the *actual* published wheel and the
+     three-OS platform-verify wheels also bundle a dashboard (currently
+     only this repo's own `dashboard` CI job proves the bundling works)
+     — these are this repo's most heavily-reviewed files, so this is
+     worth an explicit go-ahead rather than folding into a routine unit.
+   - Separately, not required to close v0.4.0: PyPI's latest release is
+     still 0.2.0, two versions behind `main` — the founder should decide
+     explicitly whether/when v0.3.0/v0.4.0 get published.
    - Once resolved, bump `pyproject.toml` to `0.4.0`, add the dated
      `CHANGELOG.md` entry (same pattern as v0.3.0's unit 4), and get
-     explicit founder sign-off that MISSION.md's acceptance criterion
-     is met — don't declare the milestone closed unilaterally the way
-     v0.3.0's last unit did without asking, since a version bump is
-     exactly the kind of change this repo's merge policy wants
-     deliberately reviewed.
+     explicit founder sign-off that MISSION.md's acceptance criterion is
+     met — don't declare the milestone closed unilaterally, since a
+     version bump is exactly the kind of change this repo's merge policy
+     wants deliberately reviewed.
 4. Follow the same protocol throughout: build with tests at the existing
    rigor (both `pytest` and `vitest`), run *all three* generator scripts
    before opening a PR if any backend file changes, commit locally, then
@@ -1198,9 +1293,45 @@ exist.**
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding for pushing** — unit 5 is pushed, reviewed, and
-  merged (PR #33). Two open decisions remain, neither blocking, both
-  worth explicit founder input rather than a unilateral call:
+- **PR #34 (the small ops/status-update PR) is merged** — merge commit
+  `a49d2f7`, confirmed via `gh pr list --json state,mergedAt`.
+- **PR #35 (unit 6, wheel packaging): the earlier `CONFLICTING` state
+  was force-pushed away successfully** (founder ran the
+  `git push --force-with-lease` + `gh pr edit --title` commands from
+  the previous round), but CI's `dashboard` job then failed on a real,
+  new issue — not the conflict, a genuine gap in a CI helper script.
+
+  **Root cause:** `scripts/check_dashboard_discoverable.py` (written
+  before unit 6 existed) asserted `find_dashboard_dist()` must return a
+  path named exactly `dist` (the `app/dist` checkout fallback). This
+  job's own earlier `pip install -e .` step *also* triggers the new
+  wheel-packaging build hook — Node is already on `PATH` in this job by
+  that point (`actions/setup-node@v4` runs first) — which bundles a
+  real `dashboard_static/` directly into the checkout during that
+  install. `find_dashboard_dist()` correctly finds that (it's checked
+  before the `app/dist` fallback, same priority order as the installed-
+  wheel case), but the check script's `!= "dist"` assertion then failed
+  on a result that isn't wrong, just differently-shaped than the script
+  assumed. **Fixed:** the script now accepts either `dist` or
+  `dashboard_static` as a valid, successful discovery — reproduced
+  locally first (`rm -rf app/dist src/inferrail/dashboard_static &&
+  pip install -e .` really does materialize `dashboard_static` in the
+  checkout, confirmed before writing the fix, not guessed at) and
+  re-verified the fix passes against that exact reproduction.
+
+  Committed as `e9b8556` on `feat/dashboard-wheel-packaging`. Same
+  force-push pattern as before:
+  ```
+  git push --force-with-lease origin feat/dashboard-wheel-packaging
+  ```
+  (No new conflict expected this time — this is a plain fast-forward of
+  the same branch, not a rebase, so a normal push should work; use
+  `--force-with-lease` anyway only if a plain `git push` is refused.)
+  After it lands, re-check `gh pr checks 35` for a clean `dashboard` run
+  before merging.
+
+- **Three open decisions remain, none blocking, all worth explicit
+  founder input rather than a unilateral call:**
   1. **The Settings screen's "opt-in usage ping" checkbox is a
      disabled placeholder** — no telemetry-ping mechanism exists
      anywhere in this codebase, so it's honestly labeled rather than
@@ -1210,7 +1341,13 @@ exist.**
      today either way — the honest current behavior (nothing is ever
      sent) matches MISSION.md's non-negotiable regardless of which path
      is chosen later.
-  2. **PyPI's actual latest release is still 0.2.0**, two versions
+  2. **Whether/when to wire Node into `publish.yml` and
+     `platform-verify.yml`** so the actual PyPI-published wheel and the
+     three-OS platform-verify wheels also bundle a dashboard (see unit
+     6 above) — these are this repo's most heavily-reviewed workflow
+     files, so this is worth an explicit go-ahead rather than folding
+     into a routine unit.
+  3. **PyPI's actual latest release is still 0.2.0**, two versions
      behind `main` (confirmed via `pypi.org/pypi/inferrail/json` by a
      concurrent audit session this pass — see "Independent status
      audit" above). Closing v0.4.0 doesn't require a PyPI publish, but

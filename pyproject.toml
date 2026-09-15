@@ -53,6 +53,11 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
     "types-PyYAML",
+    # Only needed to unit-test hatch_build.py's own logic (mocked-npm
+    # skip paths) -- already an implicit build-time dependency via
+    # [build-system].requires, just not otherwise importable in a normal
+    # dev/test environment (pip's PEP 517 build isolation keeps it out).
+    "hatchling>=1.18",
 ]
 mcp = [
     "mcp>=1.0",
@@ -80,6 +85,21 @@ inferrail-mcp = "inferrail_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inferrail", "inferrail-mcp/src/inferrail_mcp"]
+
+[tool.hatch.build.targets.sdist]
+# Pre-existing gap, found and fixed alongside this same wheel-packaging
+# work: hatchling's default sdist does not respect app/.gitignore, so a
+# plain `python -m build` was including app/node_modules (real, sizable
+# dependency bloat) and any locally-built app/dist in the source
+# tarball. Both are excluded explicitly rather than relying on
+# gitignore-based inference.
+exclude = ["app/node_modules", "app/dist"]
+
+[tool.hatch.build.hooks.custom]
+# Bundles the dashboard into the wheel when Node is available; a no-op,
+# never-fatal skip otherwise -- see hatch_build.py and
+# docs/adr/0017-dashboard-in-app-directory.md.
+path = "hatch_build.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

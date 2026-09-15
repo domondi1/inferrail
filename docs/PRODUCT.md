@@ -407,11 +407,16 @@ local control API when `--app-mode` is on — see
   checkbox controls real behavior. See `PROGRESS.md`'s v0.4.0 unit 5
   record for why this was flagged rather than either built or silently
   omitted.
-- Known gap: the built dashboard is not yet bundled into the PyPI
-  wheel — `pip install inferrail` alone does not currently ship a
-  dashboard. Build it from a checkout: `cd app && npm install && npm run
-  build`. See ADR-0017's "Consequences" for the tracked packaging
-  follow-up.
+- **The dashboard is now bundled into the wheel this project's own CI
+  builds** — a hatchling build hook (`hatch_build.py`) runs the dashboard
+  build and packages the result as `inferrail/dashboard_static/` inside
+  the wheel; see `docs/adr/0018-dashboard-wheel-packaging.md`. Building
+  from a checkout with no Node installed, or from the sdist, still works
+  and just ships without a dashboard, exactly as before — never a build
+  failure. **Not yet true for the actual PyPI-published artifact or the
+  three-OS platform-verify wheels**, since `publish.yml` and
+  `platform-verify.yml` don't set up Node yet — a deliberate, separate
+  follow-up (see ADR-0018's "Consequences").
 
 ### Diagnostics: `inferrail pricing update` and `inferrail doctor`
 

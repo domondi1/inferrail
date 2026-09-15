@@ -168,3 +168,32 @@ jobs:
         run: |
           test -f app/dist/index.html
           python scripts/check_dashboard_discoverable.py
+
+      - name: Build a real wheel and verify it bundles the dashboard
+        # Exercises hatch_build.py for real (Node is already set up on
+        # this job) rather than only its mocked-npm unit tests
+        # (tests/unit/test_hatch_build.py) -- the actual point of this
+        # check is proving a real `pip install inferrail` wheel ships a
+        # working dashboard, closing docs/adr/0017's "Known gap".
+        run: |
+          rm -rf app/dist src/inferrail/dashboard_static dist build
+          pip install build
+          python -m build --wheel
+          python -c "
+          import glob, zipfile
+          whl = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert 'inferrail/dashboard_static/index.html' in names, names
+          print('ok: wheel bundles the dashboard:', whl)
+          "
+
+      - name: Install the built wheel into a clean venv and confirm discovery
+        run: |
+          python -m venv /tmp/inferrail-dashboard-wheel-check
+          /tmp/inferrail-dashboard-wheel-check/bin/pip install dist/*.whl
+          /tmp/inferrail-dashboard-wheel-check/bin/python -c "
+          from inferrail.dashboard import find_dashboard_dist
+          found = find_dashboard_dist()
+          assert found is not None and (found / 'index.html').is_file(), found
+          print('ok: installed wheel discovers its own bundled dashboard at', found)
+          "
