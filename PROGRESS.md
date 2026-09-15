@@ -1124,7 +1124,7 @@ exist.**
       checks green before trusting the founder's report; merge-commit
       tree byte-identical to the local commit (no squash drift).
 
-### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, pushed as PR #35, conflict fixed, awaiting force-push + merge
+### Checklist for unit 6: bundle the dashboard into the PyPI wheel — DONE, pushed as PR #35, two rounds of fixes, awaiting final force-push + merge
 
 Closes ADR-0017's "Known gap" for the wheel this project's own CI
 builds — see `docs/adr/0018-dashboard-wheel-packaging.md` for the full
@@ -1211,10 +1211,22 @@ verified.
       files, per its own merge policy) — a deliberate scope boundary for
       this unit, not an oversight. See ADR-0018's "Consequences" and
       "HUMAN ACTION NEEDED" below.
-- [ ] **Pushed and opened as PR #35, but not yet merged** — it came
-      back `CONFLICTING` (a real git-history artifact, not a false
-      alarm; root cause and fix in "HUMAN ACTION NEEDED" below) and
-      needs a force-push to pick up the fix before it can merge.
+- [ ] **Pushed and opened as PR #35, but not yet merged — two rounds of
+      real problems found and fixed post-push, neither hidden:**
+      1. A `CONFLICTING` mergeable state, caused by a git-history
+         artifact from rebasing onto a commit that got squash-merged
+         under a different hash — fixed by rebasing onto the actual
+         merged commit; force-pushed by the founder.
+      2. CI's `dashboard` job then failed for real:
+         `scripts/check_dashboard_discoverable.py` assumed
+         `find_dashboard_dist()` could only ever return the `app/dist`
+         checkout fallback, but that job's own `pip install -e .` step
+         also triggers the new build hook (Node is already on `PATH` by
+         then), which legitimately produces a `dashboard_static/`
+         result instead — a correct outcome the check script didn't
+         know about yet. Reproduced locally before fixing, fix verified
+         against that exact reproduction. See "HUMAN ACTION NEEDED" for
+         the exact push command and what to re-check.
 
 ### Known gaps, explicitly deferred (not hidden) — see ADR-0017's/0018's "Consequences"
 
@@ -1283,33 +1295,40 @@ verified.
 
 - **PR #34 (the small ops/status-update PR) is merged** — merge commit
   `a49d2f7`, confirmed via `gh pr list --json state,mergedAt`.
-- **PR #35 (unit 6, wheel packaging) needs a force-push to pick up a
-  fix.** The founder pushed and opened it as planned, but GitHub then
-  reported it `CONFLICTING` against `main` — confirmed real (not a
-  stale-cache false alarm) by actually attempting the merge locally.
-  **Root cause:** PR #34 was squash-merged, producing a new commit
-  (`a49d2f7`) with content byte-identical to the local commit
-  (`6c2c03e`) unit 6 was built on top of, but a *different commit
-  hash/lineage* — git's merge algorithm got confused reconciling two
-  differently-shaped histories that both introduce the same textual
-  change, even though there was never a real content disagreement.
-  **Fixed** by rebasing the unit-6 branch directly onto the actual
-  merged commit (`git rebase --onto a49d2f7 6c2c03e
-  feat/dashboard-wheel-packaging`) — verified clean afterward with a
-  real local test-merge against `a49d2f7` (no conflicts). New branch
-  tip: `89d7235`. The PR's title also came out wrong when it was
-  created (it shows the *previous* PR's title, "ops: record PR #33
-  merge...", not unit 6's own title) — fixed below alongside the
-  content.
+- **PR #35 (unit 6, wheel packaging): the earlier `CONFLICTING` state
+  was force-pushed away successfully** (founder ran the
+  `git push --force-with-lease` + `gh pr edit --title` commands from
+  the previous round), but CI's `dashboard` job then failed on a real,
+  new issue — not the conflict, a genuine gap in a CI helper script.
 
-  Since this rewrites the branch's history, it needs a **force push**
-  (safe here — nothing else is based on this branch) plus a title fix:
+  **Root cause:** `scripts/check_dashboard_discoverable.py` (written
+  before unit 6 existed) asserted `find_dashboard_dist()` must return a
+  path named exactly `dist` (the `app/dist` checkout fallback). This
+  job's own earlier `pip install -e .` step *also* triggers the new
+  wheel-packaging build hook — Node is already on `PATH` in this job by
+  that point (`actions/setup-node@v4` runs first) — which bundles a
+  real `dashboard_static/` directly into the checkout during that
+  install. `find_dashboard_dist()` correctly finds that (it's checked
+  before the `app/dist` fallback, same priority order as the installed-
+  wheel case), but the check script's `!= "dist"` assertion then failed
+  on a result that isn't wrong, just differently-shaped than the script
+  assumed. **Fixed:** the script now accepts either `dist` or
+  `dashboard_static` as a valid, successful discovery — reproduced
+  locally first (`rm -rf app/dist src/inferrail/dashboard_static &&
+  pip install -e .` really does materialize `dashboard_static` in the
+  checkout, confirmed before writing the fix, not guessed at) and
+  re-verified the fix passes against that exact reproduction.
+
+  Committed as `<pending — see next commit on this branch>` on
+  `feat/dashboard-wheel-packaging`. Same force-push pattern as before:
   ```
   git push --force-with-lease origin feat/dashboard-wheel-packaging
-  gh pr edit 35 --title "feat: bundle the dashboard into the PyPI wheel (v0.4.0 unit 6)"
   ```
-  After that, re-check `gh pr view 35 --json mergeable` — it should
-  report `MERGEABLE`, not `CONFLICTING`, before merging.
+  (No new conflict expected this time — this is a plain fast-forward of
+  the same branch, not a rebase, so a normal push should work; use
+  `--force-with-lease` anyway only if a plain `git push` is refused.)
+  After it lands, re-check `gh pr checks 35` for a clean `dashboard` run
+  before merging.
 
 - **Three open decisions remain, none blocking, all worth explicit
   founder input rather than a unilateral call:**
