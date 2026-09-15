@@ -1280,9 +1280,38 @@ verified.
 
 ## HUMAN ACTION NEEDED
 
-- **None outstanding for pushing** — unit 5 is pushed, reviewed, and
-  merged (PR #33). Two open decisions remain, neither blocking, both
-  worth explicit founder input rather than a unilateral call:
+- **Two PRs need to be pushed and opened, in this order** (both hit the
+  same push-permission 403 as every prior unit; the second branch is
+  built on top of the first's commit, so merging in this order avoids a
+  guaranteed conflict — GitHub will compute the second PR's diff against
+  whatever `main` looks like after the first merges, cleanly, since the
+  content already matches):
+
+  **1. First:** the small documentation-only status update (records
+  unit 5's merge + folds in the concurrent audit session's PyPI-version
+  finding). Committed as `6c2c03e` on branch
+  `ops/record-v0.4.0-unit5-merge-and-audit-note`, based on `main` at
+  `41f83aa`.
+  ```
+  git push -u origin ops/record-v0.4.0-unit5-merge-and-audit-note
+  gh pr create --title "ops: record PR #33 merge, all six v0.4.0 screens built" \
+    --body "Documentation-only: confirms unit 5's merge (PR #33) and folds in a concurrent audit session's PyPI-version-lag finding (main is two versions ahead of what's published). Also notes that a prior commit in this session unintentionally captured that audit content since both sessions shared one working directory." \
+    --base main
+  ```
+
+  **2. Second, after the first merges:** unit 6 (bundle the dashboard
+  into the PyPI wheel). Committed as `d20efa2` on branch
+  `feat/dashboard-wheel-packaging`, built on top of commit `6c2c03e`
+  above (not on `main` directly — this is what avoids the conflict).
+  ```
+  git push -u origin feat/dashboard-wheel-packaging
+  gh pr create --title "feat: bundle the dashboard into the PyPI wheel (v0.4.0 unit 6)" \
+    --body "See PROGRESS.md's 'v0.4.0 -- IN PROGRESS' section, unit 6's checklist, for the full record. New hatchling build hook (hatch_build.py) bundles the dashboard into the wheel this project's own CI builds -- never fails the build for an environment without Node. Real bug found+fixed during verification: the first version silently produced a dashboard-less wheel because hatchling respects .gitignore for its default file selection; fixed via build_data['force_include']. Also fixed a pre-existing, unrelated sdist bloat issue (app/node_modules was being included). Full manual end-to-end verification against a real installed wheel outside any checkout, plus a new CI check on every push/PR. Deliberately does not touch publish.yml or platform-verify.yml -- see ADR-0018's Consequences for why that's a separate follow-up. 890 tests pass (884 + 6 new), ruff/mypy/boundary-check clean." \
+    --base main
+  ```
+
+- **Three open decisions remain, none blocking, all worth explicit
+  founder input rather than a unilateral call:**
   1. **The Settings screen's "opt-in usage ping" checkbox is a
      disabled placeholder** — no telemetry-ping mechanism exists
      anywhere in this codebase, so it's honestly labeled rather than
@@ -1292,7 +1321,13 @@ verified.
      today either way — the honest current behavior (nothing is ever
      sent) matches MISSION.md's non-negotiable regardless of which path
      is chosen later.
-  2. **PyPI's actual latest release is still 0.2.0**, two versions
+  2. **Whether/when to wire Node into `publish.yml` and
+     `platform-verify.yml`** so the actual PyPI-published wheel and the
+     three-OS platform-verify wheels also bundle a dashboard (see unit
+     6 above) — these are this repo's most heavily-reviewed workflow
+     files, so this is worth an explicit go-ahead rather than folding
+     into a routine unit.
+  3. **PyPI's actual latest release is still 0.2.0**, two versions
      behind `main` (confirmed via `pypi.org/pypi/inferrail/json` by a
      concurrent audit session this pass — see "Independent status
      audit" above). Closing v0.4.0 doesn't require a PyPI publish, but
