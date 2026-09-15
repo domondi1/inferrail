@@ -1,24 +1,38 @@
 import { Budgets } from "./screens/Budgets";
+import { Connect } from "./screens/Connect";
 import { LiveFeed } from "./screens/LiveFeed";
 import { Recover } from "./screens/Recover";
+import { Settings } from "./screens/Settings";
 import { Work } from "./screens/Work";
 import { hasToken } from "./api";
 import { navigateTo, useHashRoute } from "./useHashRoute";
 
 // Hash-based routing only (docs/adr/0017) -- the server never needs a SPA
-// catch-all route. Screens land here as they're built; the rest stay
-// disabled tabs so the nav doesn't have to be rebuilt as each one lands.
+// catch-all route. All six MISSION.md v0.4.0 screens are now built.
 const TABS = [
-  { screen: "live", label: "Live Feed", enabled: true },
-  { screen: "work", label: "Work", enabled: true },
-  { screen: "budgets", label: "Budgets", enabled: true },
-  { screen: "recover", label: "Recover", enabled: true },
-  { screen: "connect", label: "Connect", enabled: false },
-  { screen: "settings", label: "Settings", enabled: false },
+  { screen: "live", label: "Live Feed" },
+  { screen: "work", label: "Work" },
+  { screen: "budgets", label: "Budgets" },
+  { screen: "recover", label: "Recover" },
+  { screen: "connect", label: "Connect" },
+  { screen: "settings", label: "Settings" },
 ] as const;
+
+type Screen = (typeof TABS)[number]["screen"];
+
+const SCREENS: Record<Screen, () => JSX.Element> = {
+  live: LiveFeed,
+  work: () => <Work workId={null} />,
+  budgets: Budgets,
+  recover: Recover,
+  connect: Connect,
+  settings: Settings,
+};
 
 export function App(): JSX.Element {
   const route = useHashRoute();
+  const screen = (route.screen in SCREENS ? route.screen : "live") as Screen;
+  const ActiveScreen = screen === "work" ? () => <Work workId={route.param} /> : SCREENS[screen];
 
   return (
     <div className="app">
@@ -29,10 +43,8 @@ export function App(): JSX.Element {
             <button
               key={tab.screen}
               className="nav-tab"
-              disabled={!tab.enabled}
-              aria-current={route.screen === tab.screen ? "page" : undefined}
-              title={tab.enabled ? undefined : "not built yet"}
-              onClick={() => tab.enabled && navigateTo(tab.screen)}
+              aria-current={screen === tab.screen ? "page" : undefined}
+              onClick={() => navigateTo(tab.screen)}
             >
               {tab.label}
             </button>
@@ -47,12 +59,7 @@ export function App(): JSX.Element {
             <code>?token=...</code>) — the screens below will stay disconnected without it.
           </p>
         )}
-        {route.screen === "work" && <Work workId={route.param} />}
-        {route.screen === "budgets" && <Budgets />}
-        {route.screen === "recover" && <Recover />}
-        {route.screen !== "work" && route.screen !== "budgets" && route.screen !== "recover" && (
-          <LiveFeed />
-        )}
+        <ActiveScreen />
       </main>
     </div>
   );

@@ -4,6 +4,7 @@ the local control API — see docs/adr/0016-local-control-api.md.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -434,3 +435,53 @@ def test_record_ap_outcome_unknown_work_id_is_404(
     )
 
     assert response.status_code == 404
+
+
+def test_pricing_freshness_reports_both_builtin_catalogs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, _config = _make_client(monkeypatch, tmp_path)
+
+    response = client.get("/v1/local/pricing/freshness", headers=_auth(token))
+
+    assert response.status_code == 200
+    names = {c["name"] for c in response.json()["catalogs"]}
+    assert names == {"OpenAI", "Anthropic"}
+    for catalog in response.json()["catalogs"]:
+        assert catalog["model_count"] > 0
+        assert catalog["oldest_verified_date"] is not None
+
+
+def test_pricing_freshness_requires_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, _token, _config = _make_client(monkeypatch, tmp_path)
+
+    assert client.get("/v1/local/pricing/freshness").status_code == 401
+
+
+def test_export_receipts_streams_every_stored_receipt_as_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, token, config = _make_client(monkeypatch, tmp_path)
+    store = ReceiptsStore(config.receipts.path)
+    store.emit(_receipt(receipt_id="ir_1"))
+    store.emit(_receipt(receipt_id="ir_2"))
+
+    response = client.get("/v1/local/receipts/export", headers=_auth(token))
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="inferrail-receipts.jsonl"'
+    )
+    lines = [line for line in response.text.splitlines() if line]
+    assert len(lines) == 2
+    assert {json.loads(line)["receipt_id"] for line in lines} == {"ir_1", "ir_2"}
+
+
+def test_export_receipts_requires_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, _token, _config = _make_client(monkeypatch, tmp_path)
+
+    assert client.get("/v1/local/receipts/export").status_code == 401

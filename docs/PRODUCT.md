@@ -337,7 +337,7 @@ fleet "control plane" `docs/adr/0004` anticipates):
   directly — `inferrail report`/`work`/`budget` remain the CLI's own
   read/write surface either way.
 
-### Dashboard (v0.4.0, in progress) — Live Feed, Work, Budgets, and Recover built so far
+### Dashboard (v0.4.0) — all six screens built
 
 A static, local web SPA in `app/`, served by the same process as the
 local control API when `--app-mode` is on — see
@@ -385,10 +385,28 @@ local control API when `--app-mode` is on — see
   `INFERRAIL_AP_DB` if you already have one elsewhere. An empty store
   (the common case for anyone not using the AP module) shows "nothing
   pending review," never an error.
-- **Not yet built**: Connect, Settings — the remaining `MISSION.md`
-  v0.4.0 screens. The nav shows all six tabs; the two not yet built are
-  visibly disabled rather than omitted, so the eventual shape of the
-  dashboard is honest from the first screen onward.
+- **Connect** (built): copy-paste snippets (curl, Claude Code/Anthropic
+  SDK env var, the Anthropic Messages API, the OpenAI Python SDK,
+  LangChain) with copy buttons, each generated against
+  `window.location.origin` — since the dashboard is served by the exact
+  same process as the gateway, these are copy-paste-correct for *this*
+  running install, not a generic `127.0.0.1:8000` placeholder. Snippets
+  that need an Anthropic route configured say so plainly rather than
+  implying they always work.
+- **Settings** (built): a real "Export" (`GET /v1/local/receipts/export`,
+  streams the exact JSONL shape `inferrail receipts export` produces,
+  generated from `ReceiptsStore.read_all()` directly rather than a
+  server-side temp file); a real "Pricing catalog" freshness view
+  (`GET /v1/local/pricing/freshness`, the same
+  `cli.pricing.catalog_freshness` computation `inferrail pricing
+  update`/`doctor` already share — never a network fetch). **The
+  "opt-in usage ping" control is a deliberately disabled placeholder,
+  not a working toggle** — no telemetry-ping mechanism exists anywhere
+  in this codebase yet, and inventing one wasn't in scope for a
+  dashboard unit; the UI says so explicitly rather than pretending a
+  checkbox controls real behavior. See `PROGRESS.md`'s v0.4.0 unit 5
+  record for why this was flagged rather than either built or silently
+  omitted.
 - Known gap: the built dashboard is not yet bundled into the PyPI
   wheel — `pip install inferrail` alone does not currently ship a
   dashboard. Build it from a checkout: `cd app && npm install && npm run

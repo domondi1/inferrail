@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -30,6 +30,7 @@ from inferrail.ap.store import RecoveryStore
 from inferrail.budgets.enforcement import spent_so_far_usd
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
+from inferrail.cli.pricing import catalog_freshness
 from inferrail.errors import LocalApiAuthenticationError
 from inferrail.localapi.schemas import BudgetCreate, BudgetSpend, OutcomeRequest, ReceiptsPage
 from inferrail.receipts.sqlite_store import ReceiptsStore
@@ -273,3 +274,52 @@ async def record_ap_outcome(
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.get(
+    "/pricing/freshness",
+    dependencies=[Depends(_require_local_api_token)],
+    summary="Built-in pricing catalog age, for the dashboard's Settings screen",
+)
+async def pricing_freshness(_request: Request) -> dict[str, Any]:
+    """Same computation `inferrail pricing update`/`inferrail doctor`
+    already share (`cli.pricing.catalog_freshness`) — never a network
+    fetch (see that module's own docstring for why: there is no built-in
+    price this codebase could refresh live and still keep verified)."""
+    return {
+        "catalogs": [
+            {
+                "name": name,
+                "model_count": model_count,
+                "oldest_verified_date": oldest.isoformat() if oldest is not None else None,
+                "age_days": age_days,
+                "is_stale": is_stale,
+            }
+            for name, model_count, oldest, age_days, is_stale in catalog_freshness()
+        ]
+    }
+
+
+@router.get(
+    "/receipts/export",
+    dependencies=[Depends(_require_local_api_token)],
+    summary="Download every stored receipt as JSONL",
+)
+async def export_receipts(request: Request) -> StreamingResponse:
+    """Streams the exact same JSONL shape `inferrail receipts export`
+    writes to a file, generated directly from `ReceiptsStore.read_all()`
+    rather than routing through that CLI command's file-to-file
+    `export_jsonl` -- avoids writing a server-side temp file just to
+    immediately re-read it for an HTTP response body."""
+    store = _receipts_store(request)
+
+    def _lines() -> Iterator[bytes]:
+        receipts, _skipped = store.read_all()
+        for receipt in receipts:
+            yield (receipt.model_dump_json() + "\n").encode()
+
+    return StreamingResponse(
+        _lines(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="inferrail-receipts.jsonl"'},
+    )
