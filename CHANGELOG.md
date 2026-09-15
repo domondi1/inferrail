@@ -56,12 +56,25 @@ PyPI release (the hosted service and website ship independently of the
   no telemetry-ping mechanism exists in this codebase, so the UI says
   so rather than pretending a checkbox does something.
 - **All six MISSION.md v0.4.0 screens are now built.**
+- The built dashboard is now bundled into the wheel this project's own
+  CI builds — a new hatchling build hook (`hatch_build.py`) runs the
+  dashboard build and packages it as `inferrail/dashboard_static/`.
+  Never fails the build: a build environment without Node still
+  produces a working, dashboard-less wheel, exactly as before. See
+  `docs/adr/0018-dashboard-wheel-packaging.md`. Also fixed, found in the
+  same pass: the sdist was including `app/node_modules` (real,
+  pre-existing bloat, not something this pass introduced).
 
 ### Not yet closed
 
-- Bundling the built dashboard into the PyPI wheel — build it from a
-  checkout (`cd app && npm install && npm run build`) until a packaging
-  unit lands. See `docs/adr/0017`'s "Consequences".
+- The *actual* PyPI-published wheel and the three-OS
+  `platform-verify.yml` wheels still don't set up Node, so neither is
+  proven to bundle a dashboard yet — only this project's own CI
+  (`dashboard` job) demonstrates the real bundling. Deliberately
+  deferred, see `docs/adr/0018`'s "Consequences".
+- Whether the Settings screen's "opt-in usage ping" placeholder is
+  accepted as final, or a real telemetry-ping feature gets scoped as
+  its own future unit — a founder decision, not yet made.
 
 ## v0.3.0 — 2026-09-14
 
