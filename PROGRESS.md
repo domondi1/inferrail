@@ -168,15 +168,21 @@ ACTION NEEDED" for the one thing this agent could not do: deploy the
 proposed, already-built reference collector (`hosted/usage_ping/`) and
 hand back a real URL.
 
-**Both units are committed locally, stacked** (this agent still cannot
-push — see "HUMAN ACTION NEEDED" for the exact commands):
+**Both units are now merged to `main`** — see "HUMAN ACTION NEEDED"
+below for how, including a real process mistake this session made and
+fixed (a stacked-PR chain merged into feature branches instead of
+`main`, caught by `gh pr list`/a tree diff, not by trusting a verbal
+"merged"). Original commits, for reference:
 
 - `ops/close-v0.4.0-audit-fixes` (commit `b251da3`, based on `main` at
   `33956b1`): the Live Feed fix, Node wiring, `pyproject.toml` ->
-  `0.4.0`, `CHANGELOG.md`.
-- `feat/opt-in-usage-ping` (commit `cf35904`, stacked on top of the
-  above — **must merge after it, not independently**): the full usage-
-  ping feature, `pyproject.toml` -> `0.4.1`, `CHANGELOG.md`.
+  `0.4.0`, `CHANGELOG.md`. Merged via
+  [PR #37](https://github.com/domondi1/inferrail/pull/37).
+- `feat/opt-in-usage-ping` (commit `cf35904`, originally stacked on the
+  above): the full usage-ping feature, `pyproject.toml` -> `0.4.1`,
+  `CHANGELOG.md`. Landed on `main` via
+  [PR #40](https://github.com/domondi1/inferrail/pull/40), after PR #38
+  (its original stacked PR) merged into the wrong base.
 
 Both verified independently before committing: `ruff check .`, `mypy`
 (92 source files), `mypy hosted/ap_exceptions --strict
@@ -899,9 +905,11 @@ four v0.3.0 units are merged. The milestone is closed.**
 **Closed 2026-09-15** in a later closing-audit session (see this file's
 top section for the full record): the Live Feed backfill bug found and
 fixed, Node wired into `publish.yml`/`platform-verify.yml`, PyPI publish
-sequencing decided, `pyproject.toml` -> `0.4.0`. Committed locally as
-`ops/close-v0.4.0-audit-fixes` (commit `b251da3`), not yet pushed/merged
-— see "HUMAN ACTION NEEDED". The checklist below (units 1-6) predates
+sequencing decided, `pyproject.toml` -> `0.4.0`. Merged to `main` as
+[PR #37](https://github.com/domondi1/inferrail/pull/37), all 9 CI checks
+green — confirmed via `gh pr view 37 --json state,mergedAt` and a tree
+comparison against the exact locally-authored commit (`b251da3`), zero
+drift. The checklist below (units 1-6) predates
 that closing session and is preserved as the accurate build record.
 
 **Architectural decision (founder-directed this session): the dashboard
@@ -1464,7 +1472,7 @@ verified.
   section): both workflows now set up Node and assert the bundling
   themselves.
 
-## v0.4.1 — CLOSED (opt-in usage ping) — committed, not yet pushed/merged
+## v0.4.1 — CLOSED (opt-in usage ping) — merged to main
 
 Founder decision, 2026-09-15: build the opt-in usage ping for real now,
 replacing v0.4.0's own disabled Settings placeholder (the "1." item in
@@ -1596,117 +1604,105 @@ in this file's top section — this section is the build checklist.
       real, shippable milestone (a genuine feature, not an in-progress
       fragment), matching the same "only the unit that closes a
       milestone bumps the version" rule every prior milestone followed.
-- [ ] **Not yet pushed or merged** — this agent cannot push to this
-      repository (the same standing limitation logged for every prior
-      unit). Committed locally as `feat/opt-in-usage-ping` (commit
-      `cf35904`), **stacked on top of** `ops/close-v0.4.0-audit-fixes`
-      (commit `b251da3`) — the v0.4.0-closing branch must be pushed and
-      merged to `main` *first*; this branch's PR should target `main`
-      only after that merge (or target the other branch directly, then
-      be retargeted once it merges — see "HUMAN ACTION NEEDED" for the
-      exact commands either way).
+- [x] **Merged to `main`.** The original stacked PRs (#38 usage ping,
+      #39 this file's own record) were merged into their *feature*
+      branches rather than `main` — a real process mistake, not a
+      hypothetical one: `gh pr view` after those merges showed `main`
+      still missing both, confirmed by a tree diff. Fixed by rebasing
+      the combined content cleanly onto the real `main` (verified
+      tree-identical to what was reviewed in #38/#39 first, so nothing
+      changed silently) and opening
+      [PR #40](https://github.com/domondi1/inferrail/pull/40) directly
+      against `main` — merged, all 10 CI checks green on the exact
+      merged commit (`3f42c1b`), confirmed via `gh pr checks 40` and a
+      tree comparison against the exact locally-authored commit, zero
+      drift. **Lesson for future stacked PRs in this repo:** merging a
+      PR whose base is a feature branch (not `main`) only updates that
+      branch — it does not propagate to `main` on its own. Either
+      retarget every PR in the stack to `main` before merging, or plan
+      for one final PR from the stack's tip straight into `main`.
 
 ## Next session starts here
 
 1. **First action, before writing any new code:** confirm nothing
-   changed underneath since this session — check whether the founder
-   has pushed/merged `ops/close-v0.4.0-audit-fixes` and
-   `feat/opt-in-usage-ping` yet (see "HUMAN ACTION NEEDED" — this agent
-   committed both locally but cannot push). If merged, `main` should be
-   at `cf35904`'s content (or a squash-merge of it) on top of `main` at
-   `33956b1`. Verify with `gh pr list --json state,mergedAt` and `git
-   log`, never take a verbal report on trust — same discipline every
-   prior milestone used, including two specific past incidents in this
-   file where that discipline caught a real problem.
+   changed underneath since this session — `main` should be at
+   `3f42c1b` (PR #40's merge commit), `pyproject.toml` at `0.4.1`.
+   Verify with `git log origin/main -1` and `gh pr view 40 --json
+   state,mergedAt`, never take a verbal report on trust — same
+   discipline every prior milestone used, including *three* separate
+   past incidents in this file where that discipline caught a real
+   problem, the most recent being this session's own stacked-PR mistake
+   (see "v0.4.1 — CLOSED" above): PR #38/#39 merged into feature
+   branches, not `main`, and only a `gh pr list`/tree-diff check caught
+   it — a verbal "merged" alone would have missed it.
 2. **Check for a concurrent session on this same checkout before
    editing anything** (`ListAgents` or ask the founder) — prefer a
    separate git worktree over two sessions on one checkout at once
    (this file has two separate real incidents of that going wrong).
-3. **If the two branches above are merged:** v0.4.0 and v0.4.1 are both
-   closed. Remaining work, in the founder's own stated sequence
-   ("verify → fix → land v0.4.0 → bump → publish"):
-   - **PyPI publish is still a pending human action** (tag push — this
-     agent has no PyPI credentials and cannot push git tags either).
-     See "HUMAN ACTION NEEDED" for the exact command. Recommend tagging
-     `v0.4.1` (not `v0.4.0`) if both branches are merged by then, since
-     0.4.1 is a strict superset and there's no reason to publish an
-     intermediate release the moment it's superseded — but this is the
-     founder's call, not this agent's to decide unilaterally.
-   - **Deploy `hosted/usage_ping/service.py`** (built and tested this
-     session, not yet deployed anywhere) and report back the resulting
-     URL — see "HUMAN ACTION NEEDED" for exact steps. Once given a real
-     URL, a follow-up session should decide (with the founder) whether
-     to bake it in as this package's actual default
+3. v0.4.0 and v0.4.1 are both closed and merged to `main`. Two human
+   actions from this session remain genuinely open — check with the
+   founder whether either has happened since:
+   - **PyPI publish** (tag `v0.4.1`, push it, watch `publish.yml` run) —
+     see "HUMAN ACTION NEEDED". Confirm via
+     `pypi.org/pypi/inferrail/json` before assuming it happened.
+   - **Deploy `hosted/usage_ping/service.py`** and get a real URL back
+     — see "HUMAN ACTION NEEDED". Once given one, decide (with the
+     founder) whether to bake it in as this package's actual default
      `usage_ping.endpoint`, or leave it operator-configured-only.
    - Non-telemetry signal in the meantime: PyPI download counts
      (`pypistats.org/packages/inferrail` or the JSON API) and GitHub
      clone/star counts are free and already available post-publish —
      don't wait on the usage-ping collector to start watching those.
-4. **If the two branches above are NOT yet merged:** do not start new
-   feature work on `main` — either wait for the founder to push/merge,
-   or (if picking up unrelated work) use a separate git worktree so
-   this checkout's own uncommitted-nothing state (everything is
-   committed to the two branches, working tree is clean) isn't
-   disturbed.
-5. v0.5.0 (one-click desktop app — PyInstaller + Tauri, 3 OSes, code
+4. v0.5.0 (one-click desktop app — PyInstaller + Tauri, 3 OSes, code
    signing decision) is next per `MISSION.md`, once the above settles.
    Not started; the prior session's own risk note (v0.5.0 likely takes
    longer than its single milestone entry implies, and the
    signed-vs-unsigned-launch question has real lead time if signing
    isn't deferred to v0.9.0 as `MISSION.md` currently plans) still
    stands, unrevisited this session.
-6. Follow the same protocol throughout: build with tests at the
+5. Follow the same protocol throughout: build with tests at the
    existing rigor (`pytest` and `vitest`), run *all three* generator
    scripts before opening a PR if any backend file changes, commit
    locally, then hand the founder the exact `git push`/`gh pr create`
    commands (this agent cannot push to this repo). Do not self-merge.
+   **If opening a stacked PR chain again, retarget every PR in the
+   stack to `main` before merging, or plan one final PR from the
+   stack's tip straight into `main`** — see the lesson recorded in
+   "v0.4.1 — CLOSED" above.
 
 ## HUMAN ACTION NEEDED
 
-- **Two branches committed locally, neither pushed yet** (this agent
-  cannot push — the same 403/no-credentials limitation logged for
-  every prior unit in this file). Paste these into your own terminal,
-  in order (the second depends on the first's PR existing, since it's
-  stacked):
+- **v0.4.0 and v0.4.1 are merged to `main`** — [PR #37](https://github.com/domondi1/inferrail/pull/37)
+  and [PR #40](https://github.com/domondi1/inferrail/pull/40) (the
+  latter after fixing a real stacked-PR mistake — see "v0.4.1 — CLOSED"
+  above), both confirmed `MERGED` via `gh pr view --json
+  state,mergedAt`, all CI checks green on each exact merged commit
+  (10/10 on PR #40, including the new `usage-ping-collector` job and
+  all three `wheel-smoke` OSes), tree-verified against what was
+  actually authored/reviewed with zero drift. Nothing outstanding here.
 
-  ```
-  git push -u origin ops/close-v0.4.0-audit-fixes
-  gh pr create --base main --head ops/close-v0.4.0-audit-fixes \
-    --title "fix: Live Feed backfill, wire Node into release workflows, close v0.4.0 (0.4.0)" \
-    --body "See PROGRESS.md's top section (\"v0.4.0 closing audit + v0.4.1\") for the full audit record and what this closes."
-
-  git push -u origin feat/opt-in-usage-ping
-  gh pr create --base ops/close-v0.4.0-audit-fixes --head feat/opt-in-usage-ping \
-    --title "feat: opt-in, anonymous usage ping (0.4.1)" \
-    --body "Stacked on the v0.4.0-closing PR above -- see PROGRESS.md's top section for the full record. Founder decision: build the usage ping for real, now."
-  ```
-
-  Review and merge the first PR before the second (retarget the second
-  PR's base to `main` once the first merges, or merge them in sequence
-  as-is — either works; just don't merge the second one first, since it
-  contains the first one's commit too). Confirm each merge with `gh pr
-  view <n> --json state,mergedAt` before trusting it, per this file's
-  own standing discipline.
-
-- **PyPI publish is a pending human action, once the branches above are
-  merged.** This agent has no PyPI credentials and cannot push a git
-  tag either. `publish.yml` triggers on any `v*.*.*` tag push:
+- **PyPI publish is still a pending human action.** This agent has no
+  PyPI credentials and cannot push a git tag either. `publish.yml`
+  triggers on any `v*.*.*` tag push:
 
   ```
   git checkout main && git pull
-  git tag v0.4.1   # or v0.4.0, if publishing before the usage-ping PR merges
+  git tag v0.4.1
   git push origin v0.4.1
   ```
 
   Then watch the `Publish to PyPI` workflow run in the GitHub Actions
   tab — it re-runs the full CI suite and platform-verify matrix against
   the exact tagged commit before publishing, so a real failure there
-  should hold the release, not be pushed past.
+  should hold the release, not be pushed past. Confirm success via
+  `pypi.org/pypi/inferrail/json` afterward, the same independent check
+  used throughout this file — a workflow showing green is not the same
+  as confirming the package is actually live.
 
-- **Deploy the usage-ping collector** (`hosted/usage_ping/`, built and
-  tested this session, not yet deployed anywhere) — see
-  `hosted/usage_ping/README.md`'s own "Deploying it" section for the
-  exact steps (mirrors how `hosted/ap_exceptions` was deployed to
+- **Deploy the usage-ping collector** (`hosted/usage_ping/`, built,
+  tested, and merged to `main` this session, not yet deployed anywhere)
+  — see `hosted/usage_ping/README.md`'s own "Deploying it" section for
+  the exact steps (mirrors how `hosted/ap_exceptions` was deployed to
   Render). In short: new Render web service, root directory this repo,
   build command `pip install -r hosted/usage_ping/requirements.txt`,
   start command `python3 hosted/usage_ping/service.py`, attach a
@@ -1717,9 +1713,9 @@ in this file's top section — this section is the build checklist.
   can wire it in — either as `usage_ping.endpoint` in a self-hosted
   deployment's own `inferrail.yaml`, or (a separate, later decision)
   baked in as this package's actual default. Until this is done, the
-  usage ping is fully built and tested but produces zero real-world
-  signal — the Settings screen already says so honestly ("Not yet
-  active").
+  usage ping is fully built, tested, and merged, but produces zero
+  real-world signal — the Settings screen already says so honestly
+  ("Not yet active").
 - Everything below remains deferred per `MISSION.md`'s standing ledger,
   untouched and not yet due:
 - Render warm/upgrade decision (v0.2.1) — resolved, staying on free
