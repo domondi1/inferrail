@@ -13,13 +13,15 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from inferrail.cli.demo import RECEIPTS_PATH, run_demo
+from inferrail.cli.demo import DEMO_OUTCOMES_PATH, RECEIPTS_PATH, run_demo
 from inferrail.cli.work import DEFAULT_OUTCOMES_PATH
-from inferrail.work.builder import load_outcomes
+from inferrail.work.builder import append_outcome, load_outcomes
+from inferrail.work.schema import WorkOutcomeRecord
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +97,7 @@ def test_demo_persists_outcomes_then_reads_them_into_work_summaries(
 ) -> None:
     run_demo()
 
-    outcomes, skipped = load_outcomes(DEFAULT_OUTCOMES_PATH)
+    outcomes, skipped = load_outcomes(DEMO_OUTCOMES_PATH)
 
     assert skipped == 0
     assert {outcome.work_id for outcome in outcomes} == {
@@ -105,6 +107,31 @@ def test_demo_persists_outcomes_then_reads_them_into_work_summaries(
         "work-outcome-only-1",
     }
     assert "work-outcome-only-1" in capsys.readouterr().out
+
+
+def test_demo_never_touches_the_real_default_outcomes_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression test: `inferrail demo` used to write to (and `.unlink()`!)
+    # `cli.work.DEFAULT_OUTCOMES_PATH` directly -- the same file a real
+    # user's genuine `inferrail work outcome` records live in -- so running
+    # the demo after doing real work could silently delete that real
+    # history. Seed a real outcome record first, at the real default path,
+    # then confirm the demo leaves it completely untouched.
+    append_outcome(
+        DEFAULT_OUTCOMES_PATH,
+        WorkOutcomeRecord(
+            work_id="real-work-1", outcome_status="resolved", recorded_at=datetime.now(UTC)
+        ),
+    )
+
+    run_demo()
+    capsys.readouterr()
+
+    outcomes, skipped = load_outcomes(DEFAULT_OUTCOMES_PATH)
+    assert skipped == 0
+    assert {o.work_id for o in outcomes} == {"real-work-1"}
+    assert DEMO_OUTCOMES_PATH != DEFAULT_OUTCOMES_PATH
 
 
 def test_inferrail_demo_entry_point_does_not_silently_rot() -> None:

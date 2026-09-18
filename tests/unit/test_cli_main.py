@@ -5,6 +5,7 @@ path when no `inferrail.yaml` exists.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -177,19 +178,111 @@ def test_serve_app_mode_honors_inferrail_ap_db_override(
     assert app.state.ap_recovery_store.db_path == override_path
 
 
-def test_serve_quickstart_and_app_mode_together_is_rejected(
+def test_serve_quickstart_and_app_mode_combine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    # Providers/routes come from quickstart (no inferrail.yaml needed);
+    # receipts/budgets/dashboard/local API still relocate under app-data,
+    # exactly like plain --app-mode does — the two are independent axes,
+    # not mutually exclusive (see
+    # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    app_data = tmp_path / "appdata"
+    monkeypatch.setenv("XDG_DATA_HOME", str(app_data))
+    monkeypatch.setattr("sys.platform", "linux")
+
+    result = main(["serve", "--quickstart", "--app-mode"])
+
+    assert result == 0
+    assert len(_no_real_server) == 1
+    app = _no_real_server[0]["app"]
+    assert (app_data / "inferrail" / "receipts.db").exists()
+    assert (app_data / "inferrail" / "local-api-token").exists()
+    out = capsys.readouterr().out
+    assert "App-mode data directory" in out
+    assert "OpenAI SDK" in out and "Anthropic SDK" in out  # quickstart banner still printed
+    assert app.state.local_api_token in out
+
+
+def test_serve_quickstart_banner_prints_both_sdk_base_urls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     _no_real_server: list[dict[str, Any]],
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
 
-    result = main(["serve", "--quickstart", "--app-mode"])
+    result = main(["serve", "--quickstart", "--port", "9999"])
+
+    assert result == 0
+    out = capsys.readouterr().out
+    assert 'OpenAI(base_url="http://127.0.0.1:9999/v1")' in out
+    assert 'Anthropic(base_url="http://127.0.0.1:9999/v1")' in out
+    assert "OPENAI_BASE_URL=http://127.0.0.1:9999/v1" in out
+    assert "ANTHROPIC_BASE_URL=http://127.0.0.1:9999/v1" in out
+    assert "verify-payload-free" in out
+
+
+def test_serve_quickstart_daily_budget_creates_a_block_mode_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    from inferrail.budgets.store import BudgetStore
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+
+    result = main(["serve", "--quickstart", "--daily-budget-usd", "5.00"])
+
+    assert result == 0
+    store = BudgetStore(tmp_path / "inferrail-budgets.db")
+    budgets = store.list()
+    assert len(budgets) == 1
+    assert budgets[0].scope == "global"
+    assert budgets[0].window == "daily"
+    assert budgets[0].mode == "block"
+    assert str(budgets[0].limit_usd) == "5.00"
+    out = capsys.readouterr().out
+    assert "daily budget: $5.00" in out
+    assert "inferrail-receipts.db" in out  # sqlite switch, since --app-mode wasn't given
+
+
+def test_serve_quickstart_daily_budget_rejects_non_numeric_amount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+
+    result = main(["serve", "--quickstart", "--daily-budget-usd", "not-a-number"])
 
     assert result == 1
     assert _no_real_server == []
-    assert "not combinable" in capsys.readouterr().err
+    assert "not a valid number" in capsys.readouterr().err
+
+
+def test_serve_no_telemetry_sets_the_environment_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _no_real_server: list[dict[str, Any]],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.delenv("INFERRAIL_TELEMETRY", raising=False)
+
+    result = main(["serve", "--quickstart", "--no-telemetry"])
+
+    assert result == 0
+    assert os.environ.get("INFERRAIL_TELEMETRY") == "0"
 
 
 def test_report_falls_back_to_quickstart_receipts_path_without_config(

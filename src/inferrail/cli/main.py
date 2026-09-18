@@ -15,15 +15,19 @@ aren't implemented yet — see docs/PRODUCT.md.
 from __future__ import annotations
 
 import argparse
+import io
 import logging
 import os
 import sys
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
 from inferrail.appdata import ensure_app_data_dir
+from inferrail.budgets.schema import Budget, new_budget_id
+from inferrail.budgets.store import BudgetStore
 from inferrail.cli.ap import (
     run_ap_batch,
     run_ap_demo,
@@ -45,10 +49,12 @@ from inferrail.cli.telemetry import (
 )
 from inferrail.cli.transaction import run_transaction
 from inferrail.cli.try_cmd import run_try
+from inferrail.cli.verify import run_verify_payload_free
 from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work, run_work_outcome
 from inferrail.config.loader import load_config
 from inferrail.config.models import BudgetsConfig, InferrailConfig, ReceiptsConfig
 from inferrail.config.quickstart import (
+    QUICKSTART_ANTHROPIC_MODEL,
     QUICKSTART_MODEL,
     QUICKSTART_RECEIPTS_PATH,
     build_quickstart_config,
@@ -75,26 +81,58 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Skip inferrail.yaml entirely and serve with in-memory quickstart "
-            f"defaults (OpenAI/{QUICKSTART_MODEL}, receipts at {QUICKSTART_RECEIPTS_PATH}). "
-            "Requires OPENAI_API_KEY."
+            f"defaults (OpenAI/{QUICKSTART_MODEL} on /v1/chat/completions, "
+            f"Anthropic/{QUICKSTART_ANTHROPIC_MODEL} on /v1/messages, receipts at "
+            f"{QUICKSTART_RECEIPTS_PATH}). Combinable with --app-mode and/or "
+            "--daily-budget-usd."
         ),
     )
     serve.add_argument(
         "--app-mode",
         action="store_true",
         help=(
-            "Load providers/routes from --config as normal, but relocate "
-            "receipts and budgets under the OS app-data directory (forcing "
-            "receipts.sink: sqlite and budgets.enabled: true regardless of "
-            "what inferrail.yaml says) and mount the local control API "
-            "(/v1/local/*) guarded by a per-install token. See "
-            "docs/adr/0016-local-control-api.md. Not combinable with "
-            "--quickstart."
+            "Relocate receipts and budgets under the OS app-data directory "
+            "(forcing receipts.sink: sqlite and budgets.enabled: true "
+            "regardless of what inferrail.yaml says) and mount the local "
+            "control API (/v1/local/*) and dashboard, guarded by a "
+            "per-install token. See docs/adr/0016-local-control-api.md. "
+            "Combinable with --quickstart (providers/routes still come from "
+            "quickstart defaults; only receipts/budgets/dashboard relocate)."
+        ),
+    )
+    serve.add_argument(
+        "--daily-budget-usd",
+        default=None,
+        metavar="AMOUNT",
+        help=(
+            "Create (or update) a global, block-mode, daily spend cap of AMOUNT "
+            "before serving — the quickstart path's one-line way to never "
+            "overspend on work. Requires receipts.sink: sqlite, so combining "
+            "this with --quickstart alone (no --app-mode) switches quickstart's "
+            "receipts to a local SQLite file for this run; see the printed "
+            "startup banner for the exact path."
+        ),
+    )
+    serve.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help=(
+            "Disable the usage/presence beacon for this run, equivalent to "
+            "INFERRAIL_TELEMETRY=0. See docs/privacy/usage-ping.md."
         ),
     )
 
     subparsers.add_parser(
         "demo", help="Offline, zero-key walkthrough of the receipt/report pipeline."
+    )
+
+    subparsers.add_parser(
+        "verify-payload-free",
+        help=(
+            "Print the real receipt schema and prove structurally that no field can "
+            "hold a prompt, response, or other message content. Paste the output "
+            "into a security review."
+        ),
     )
 
     try_parser = subparsers.add_parser(
@@ -432,33 +470,138 @@ def _apply_app_mode(config: InferrailConfig) -> tuple[InferrailConfig, _AppModeP
     return config, paths
 
 
+_QUICKSTART_BUDGET_RECEIPTS_PATH = Path("./inferrail-receipts.db")
+_QUICKSTART_BUDGET_BUDGETS_PATH = Path("./inferrail-budgets.db")
+
+
+def _apply_quickstart_daily_budget(
+    config: InferrailConfig,
+    daily_budget_usd: str,
+    *,
+    app_mode_paths: _AppModePaths | None,
+) -> InferrailConfig:
+    """`--daily-budget-usd` needs `receipts.sink: sqlite` (budget
+    enforcement computes spend-so-far from an indexed store — same
+    requirement `--app-mode` already has, see `InferrailConfig`'s own
+    validator). If `--app-mode` is also given, its paths are already
+    sqlite/enabled and get reused; otherwise this switches quickstart's
+    own receipts to a dedicated local SQLite file for this run, distinct
+    from the plain-quickstart JSONL default so neither format silently
+    shadows the other in `inferrail report`'s default lookup.
+    """
+    try:
+        limit = Decimal(daily_budget_usd)
+    except InvalidOperation:
+        raise ConfigurationError(
+            f"--daily-budget-usd '{daily_budget_usd}' is not a valid number"
+        ) from None
+    if limit <= 0:
+        raise ConfigurationError("--daily-budget-usd must be a positive number")
+
+    if app_mode_paths is not None:
+        budgets_path = app_mode_paths.budgets
+    else:
+        config.receipts = ReceiptsConfig(sink="sqlite", path=str(_QUICKSTART_BUDGET_RECEIPTS_PATH))
+        config.budgets = BudgetsConfig(enabled=True, path=str(_QUICKSTART_BUDGET_BUDGETS_PATH))
+        budgets_path = _QUICKSTART_BUDGET_BUDGETS_PATH
+
+    store = BudgetStore(budgets_path)
+    budget_id = new_budget_id("global", None, "daily")
+    store.set(
+        Budget(
+            budget_id=budget_id,
+            scope="global",
+            scope_value=None,
+            window="daily",
+            mode="block",
+            limit_usd=limit,
+        )
+    )
+    return config
+
+
+def _print_quickstart_banner(
+    config: InferrailConfig,
+    *,
+    host: str,
+    port: int,
+    app_mode: bool,
+    daily_budget_usd: str | None,
+) -> None:
+    base_url = f"http://{host}:{port}/v1"
+    print("No inferrail.yaml used -- running with quickstart defaults:")
+    print(f"  OpenAI SDK:    any model id passes through, e.g. {QUICKSTART_MODEL}")
+    print(f"  Anthropic SDK: any model id passes through, e.g. {QUICKSTART_ANTHROPIC_MODEL}")
+    print()
+    print("Point your app at Inferrail -- one line, copy-pasteable:")
+    print()
+    print("  OpenAI SDK (Python):")
+    print(f'    client = OpenAI(base_url="{base_url}")')
+    print("  OpenAI SDK (env var, any language):")
+    print(f"    export OPENAI_BASE_URL={base_url}")
+    print()
+    print("  Anthropic SDK (Python):")
+    print(f'    client = Anthropic(base_url="{base_url}")')
+    print("  Anthropic SDK (env var, any language):")
+    print(f"    export ANTHROPIC_BASE_URL={base_url}")
+    print()
+    if daily_budget_usd is not None and not app_mode:
+        print(f"  receipts: {_QUICKSTART_BUDGET_RECEIPTS_PATH} (sqlite -- required by")
+        print("    --daily-budget-usd, instead of the usual JSONL default)")
+        print(f"    inferrail report --receipts {_QUICKSTART_BUDGET_RECEIPTS_PATH}")
+    elif not app_mode:
+        print(f"  receipts: {QUICKSTART_RECEIPTS_PATH}")
+        print("    inferrail report                 (all-up spend)")
+        print("    inferrail report --by customer    (needs X-Inferrail-Attribute-Customer)")
+        print("    inferrail work <work_id>          (needs X-Inferrail-Attribute-Work-Id)")
+    if daily_budget_usd is not None:
+        print(f"  daily budget: ${daily_budget_usd} (global, block mode -- a request that would")
+        print("    exceed it is rejected with HTTP 402 before any provider is contacted)")
+    print()
+    print("  inferrail verify-payload-free      (proof, for a security review, that no")
+    print("                                       receipt field can ever hold a prompt/response)")
+    print()
+    print("To persist/customize configuration: cp inferrail.example.yaml inferrail.yaml")
+    print()
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from inferrail.gateway.app import create_app
 
-    if args.quickstart and args.app_mode:
-        print("error: --quickstart and --app-mode are not combinable", file=sys.stderr)
-        return 1
+    # Line-buffer stdout for the whole process: without this, every print()
+    # below (the quickstart banner, the app-mode data-directory block) can
+    # sit in Python's block-buffer indefinitely once stdout isn't a TTY
+    # (piped to a file, `nohup`, a container's captured logs, ...) -- a real
+    # friction point found auditing the first-run experience, since the
+    # copy-pasteable connection lines below are useless if they never
+    # appear before the first request does.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+
+    if args.no_telemetry:
+        # Reuses usage_ping.client._disabled_by_environment's existing
+        # gate rather than adding a second code path -- set before any
+        # usage-ping call this process could ever make.
+        os.environ["INFERRAIL_TELEMETRY"] = "0"
 
     app_mode_paths = None
     try:
         if args.quickstart:
-            print("No inferrail.yaml used — running with quickstart defaults:")
-            print("  provider: OpenAI")
-            print(f"  models:   passthrough (any OpenAI model id works, e.g. {QUICKSTART_MODEL})")
-            print(f"  receipts: {QUICKSTART_RECEIPTS_PATH}")
-            print()
-            print("To persist/customize configuration: cp inferrail.example.yaml inferrail.yaml")
-            print()
             config = build_quickstart_config()
         else:
             config = load_config(args.config)
         if args.app_mode:
             config, app_mode_paths = _apply_app_mode(config)
+        if args.daily_budget_usd is not None:
+            config = _apply_quickstart_daily_budget(
+                config, args.daily_budget_usd, app_mode_paths=app_mode_paths
+            )
         app = create_app(
             config,
             app_mode=args.app_mode,
+            quickstart=args.quickstart,
             local_outcomes_path=app_mode_paths.outcomes if app_mode_paths else None,
             ap_recovery_path=app_mode_paths.ap_recovery if app_mode_paths else None,
         )
@@ -468,6 +611,15 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     host = args.host or config.server.host
     port = args.port or config.server.port
+
+    if args.quickstart:
+        _print_quickstart_banner(
+            config,
+            host=host,
+            port=port,
+            app_mode=args.app_mode,
+            daily_budget_usd=args.daily_budget_usd,
+        )
 
     if app_mode_paths is not None:
         print(f"App-mode data directory: {app_mode_paths.app_data_dir}")
@@ -487,6 +639,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         # after startup" means the printed link alone must be enough).
         if app.state.dashboard_dist is not None:
             print(f"Dashboard: http://{host}:{port}/dashboard/?token={app.state.local_api_token}")
+            print("  (receipts land here live -- the 'Live Feed' screen -- as requests arrive)")
         else:
             print(
                 "Dashboard: not built yet -- run 'cd app && npm install && npm run build', "
@@ -562,6 +715,11 @@ def _cmd_work(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def _cmd_demo(args: argparse.Namespace) -> int:
     del args  # no arguments
     return run_demo()
+
+
+def _cmd_verify_payload_free(args: argparse.Namespace) -> int:
+    del args  # no arguments
+    return run_verify_payload_free()
 
 
 def _cmd_receipts(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -682,6 +840,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_work(args, parser)
     if args.command == "demo":
         return _cmd_demo(args)
+    if args.command == "verify-payload-free":
+        return _cmd_verify_payload_free(args)
     if args.command == "try":
         return _cmd_try(args)
     if args.command == "ap":

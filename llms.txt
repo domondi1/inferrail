@@ -1,36 +1,48 @@
 # Inferrail
 
-> Inferrail's primary product, as of v0.2.0, is AP invoice-exception
-> recovery: for one eligible invoice-extraction exception, it decides
-> whether to make one permitted machine retry or send it to your
-> established human-review path, executes the retry through a supported
-> integration (your own adapter, or the bundled OpenAI reference
-> adapter), and records the resulting cost and outcome — durably,
-> idempotently, with invoice content and provider credentials staying in
-> your own process. `pip install inferrail && inferrail ap demo` for a
-> zero-key, fixture-based walkthrough. Full contract:
-> [docs/capabilities/ap-invoice-exception-recovery.md](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md).
->
-> Inferrail also ships, unchanged, the original open-source,
-> self-hosted, OpenAI-compatible gateway that measures the cost of every
-> LLM request and attributes it to the customer, workflow, or task that
-> drove it — without persisting the prompt or response in its local
-> receipt/telemetry records. Point your app's OpenAI client at Inferrail
-> instead of directly at your provider, and every call produces a
-> payload-free economic receipt: verified pricing, measured token usage,
-> and whatever business attribution you attach. A separate,
-> Anthropic-compatible `/v1/messages` passthrough (real streaming, tool
-> use, priced via the catalog — see
+> Inferrail's primary product is a self-hosted, OpenAI- and
+> Anthropic-compatible LLM gateway that turns every request into a
+> payload-free, attributable cost receipt: know what your AI work
+> costs, without keeping what it said. Point your app's OpenAI client
+> (or the Anthropic SDK, including Claude Code, via a genuine, separate
+> `/v1/messages` passthrough — real streaming, tool use, priced via an
+> independently-verified catalog, see
 > [docs/adr/0014](https://github.com/domondi1/inferrail/blob/main/docs/adr/0014-anthropic-messages-passthrough.md))
-> does the same for Claude Code or any Anthropic SDK client. Receipts sharing one
-> attribution tag can be rolled up into a single task-level transaction
-> (`inferrail transaction <task-id>`), including via an ambient
-> `inferrail.track_task(...)` helper that tags nested agent calls
-> automatically. Apache-2.0 licensed. Self-hosted with zero dependency on
-> any Inferrail-operated service. Inferrail also operates two
-> experimental, Base-Sepolia-testnet-only hosted capabilities (below)
-> that extend this same measurement toward capabilities a machine buyer
-> can discover and purchase directly.
+> at Inferrail instead of directly at the provider, and every call
+> produces a receipt with verified pricing, measured token usage, and
+> whatever business attribution you attach — never the prompt or
+> response itself; the receipt schema has no field capable of holding
+> one, a structural guarantee provable at runtime with `inferrail
+> verify-payload-free`, not a policy that could be misconfigured on.
+> The provider itself still receives the real prompt, exactly as it
+> would without Inferrail in the path — this is a receipt-storage
+> guarantee, not a network privacy boundary. `pip install inferrail &&
+> inferrail serve --quickstart` for a two-command start; `inferrail
+> demo` for a zero-key, offline walkthrough of the same real receipt
+> pipeline. Receipts sharing one `work_id` roll up into a single
+> work-level economic view (`inferrail work <work_id>`, or
+> `inferrail transaction <task-id>` for the legacy per-task rollup),
+> including via an ambient `inferrail.track_task(...)` helper that tags
+> nested agent calls automatically. Spend caps
+> (`inferrail budget set`, or `serve --daily-budget-usd`) block a
+> request with HTTP 402 before any provider is contacted once a
+> configured limit would be exceeded. Apache-2.0 licensed. Self-hosted
+> with zero dependency on any Inferrail-operated service.
+>
+> Built on that same receipt substrate, Inferrail also ships AP
+> invoice-exception recovery: for one eligible invoice-extraction
+> exception, it decides whether to make one permitted machine retry or
+> send it to your established human-review path, executes the retry
+> through a supported integration (your own adapter, or the bundled
+> OpenAI reference adapter), and records the resulting cost and outcome
+> — durably, idempotently, with invoice content and provider
+> credentials staying in your own process. `pip install inferrail &&
+> inferrail ap demo` for a zero-key, fixture-based walkthrough. Full
+> contract:
+> [docs/capabilities/ap-invoice-exception-recovery.md](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md).
+> Inferrail also operates two experimental, Base-Sepolia-testnet-only
+> hosted capabilities (below) that extend this same measurement toward
+> capabilities a machine buyer can discover and purchase directly.
 
 ## Docs
 

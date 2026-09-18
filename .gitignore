@@ -1,5 +1,6 @@
 # Secrets / local config
 .env
+.env.*
 inferrail.yaml
 *.local.yaml
 

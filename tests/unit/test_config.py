@@ -116,6 +116,29 @@ def test_default_provider_is_none_by_default(base_config: InferrailConfig) -> No
     assert base_config.default_provider is None
 
 
+def test_default_anthropic_provider_referencing_unknown_provider_fails_validation(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["default_anthropic_provider"] = "does-not-exist"
+
+    with pytest.raises(ValidationError, match="default_anthropic_provider 'does-not-exist'"):
+        InferrailConfig.model_validate(base_config_dict)
+
+
+def test_default_anthropic_provider_referencing_known_provider_is_valid(
+    base_config_dict: dict[str, Any],
+) -> None:
+    base_config_dict["default_anthropic_provider"] = "openai"
+
+    config = InferrailConfig.model_validate(base_config_dict)
+
+    assert config.default_anthropic_provider == "openai"
+
+
+def test_default_anthropic_provider_is_none_by_default(base_config: InferrailConfig) -> None:
+    assert base_config.default_anthropic_provider is None
+
+
 def test_jsonl_telemetry_requires_path() -> None:
     with pytest.raises(ValidationError, match="telemetry.path is required"):
         TelemetryConfig(sink="jsonl")
@@ -149,8 +172,10 @@ def test_budgets_disabled_is_valid_with_any_receipts_sink(
     assert config.budgets.enabled is False
 
 
-def test_usage_ping_disabled_and_unconfigured_by_default(base_config: InferrailConfig) -> None:
-    assert base_config.usage_ping.enabled is False
+def test_usage_ping_opt_out_by_default_but_unconfigured(base_config: InferrailConfig) -> None:
+    # ADR-0020: opt-out (enabled=True) by default, but still fully inert
+    # with no endpoint configured -- see UsagePingConfig's own docstring.
+    assert base_config.usage_ping.enabled is True
     assert base_config.usage_ping.endpoint is None
 
 

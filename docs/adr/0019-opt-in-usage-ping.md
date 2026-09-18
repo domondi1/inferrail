@@ -2,7 +2,15 @@
 
 ## Status
 
-Accepted
+Accepted, **default-off posture superseded 2026-09-18 by
+[0020](0020-quickstart-both-sdks-and-payload-free-verification.md)** —
+an explicit founder decision to switch to opt-out (on by default),
+recorded there plainly as a reversal, not silently changed here. This
+document is left otherwise unmodified as the historical record of the
+original decision and its reasoning; everything below except "default
+off" itself (the payload shape discipline, the no-baked-in-endpoint
+safeguard, fail-silent networking, `telemetry preview`) still describes
+current behavior — see ADR-0020 for the exact, itemized diff.
 
 ## Context
 

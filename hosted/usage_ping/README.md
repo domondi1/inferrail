@@ -1,11 +1,13 @@
 # Inferrail Usage Ping Collector
 
-The reference receiver for the opt-in, anonymous usage ping
-(`docs/adr/0019-opt-in-usage-ping.md`, `docs/privacy/usage-ping.md`).
-Its own process, its own SQLite file, no shared code path with
-`hosted/ap_exceptions` or `hosted/a2a_economic_authority` — and, unlike
-those two, **zero dependency on the `inferrail` package**: the payload
-this service accepts is small, fixed, and self-contained.
+The reference receiver for the anonymous, opt-out usage/presence beacon
+(`docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md`,
+superseding `docs/adr/0019-opt-in-usage-ping.md`'s "default off";
+`docs/privacy/usage-ping.md`). Its own process, its own SQLite file, no
+shared code path with `hosted/ap_exceptions` or
+`hosted/a2a_economic_authority` — and, unlike those two, **zero
+dependency on the `inferrail` package**: the payload this service
+accepts is small, fixed, and self-contained.
 
 Accepts one event type per request, at `POST /ping`, matching
 `inferrail.usage_ping.payload.build_payload` exactly:
@@ -13,16 +15,23 @@ Accepts one event type per request, at `POST /ping`, matching
 ```json
 {
   "install_id": "a1b2c3d4e5f6...",
-  "event": "first_run",
-  "os": "macos",
-  "inferrail_version": "0.4.1",
-  "ts": "2026-09-15T05:50:00.144354+00:00"
+  "event": "install",
+  "version": "0.4.1",
+  "os": "linux",
+  "python_version": "3.12"
 }
 ```
 
 Anything outside that exact shape is rejected with a `422` — this
 service enforces the privacy boundary server-side too, not just by
-trusting the client.
+trusting the client. No `ts` field — the server stamps `seen_at`/
+`last_seen_at` itself, never a client-supplied clock.
+
+Storage is two tables, matching `docs/adr/0020`'s exact spec: `installs`
+(one row per install, upserted on every beacon — `reached_first_receipt_at`
+set once, on the first `first_receipt` event, never overwritten after)
+and `events` (append-only, one row per beacon). See `service.py`'s own
+module docstring for the full schema and the Postgres-equivalent shape.
 
 ## What it deliberately does not do
 
@@ -31,9 +40,11 @@ trusting the client.
 - **Never logs or persists the connecting IP address**, anywhere.
 - Never returns per-install detail over HTTP — `GET /stats` (disabled
   entirely unless `USAGE_PING_ADMIN_TOKEN` is set) is aggregate counts
-  only ("how many," never "who").
+  only ("how many," never "who"). For a fuller breakdown (activation
+  rate, weekly cohorts, active-in-N-days), read the database directly
+  with `scripts/owner_stats.py --db <path>` instead.
 - Never executes anything on behalf of a caller — it only ever writes
-  one row per accepted event.
+  to `installs`/`events`.
 
 ## Running it locally
 
@@ -46,7 +57,7 @@ then, from another terminal:
 ```
 curl -s -X POST http://127.0.0.1:8600/ping \
   -H "Content-Type: application/json" \
-  -d '{"install_id":"test","event":"first_run","os":"linux","inferrail_version":"0.4.1","ts":"2026-09-15T00:00:00Z"}'
+  -d '{"install_id":"test","event":"install","version":"0.4.1","os":"linux","python_version":"3.12"}'
 
 curl -s http://127.0.0.1:8600/health
 ```
@@ -89,4 +100,9 @@ curl -s http://127.0.0.1:8600/health
 
 Additive-only schema (`CREATE TABLE IF NOT EXISTS`), no migrations yet.
 Redeploy the previous commit against the same `USAGE_PING_DB` disk;
-verify with `GET /health`.
+verify with `GET /health`. Deploying this version's schema onto a
+database still holding rows from before the `installs`/`events` rewrite
+would need a real migration (an old-shaped single `events` table with
+different columns) — none has ever been deployed publicly, so no
+migration path exists or is needed yet; treat any future real production
+deploy as starting from an empty database.

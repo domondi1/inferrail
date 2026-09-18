@@ -569,13 +569,16 @@ Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
 - `inferrail doctor` (port, pricing-catalog freshness, provider
   reachability) and `inferrail pricing update` (reports built-in
   catalog age; never fetches prices over the network).
-- An opt-in, anonymous usage ping (off by default, inert with no
-  collector configured): four lifecycle events only (install, tool
-  connected, first receipt, budget created), never a prompt, response,
-  model name, cost, or anything about your traffic. Preview the exact
-  payload with `inferrail telemetry preview`; see
+- An anonymous, opt-out usage/presence beacon (on by default, but still
+  inert with no collector configured): four lifecycle events only
+  (`install`, `serve_start`, `first_receipt`, `heartbeat` — at most once
+  per 24h), never a prompt, response, model name, cost, or anything
+  about your traffic. Turn it off with `inferrail telemetry disable`,
+  `INFERRAIL_TELEMETRY=0`, `serve --no-telemetry`, or `DO_NOT_TRACK=1`
+  (automatic under CI/the test suite). Preview the exact payload with
+  `inferrail telemetry preview`; see
   [docs/privacy/usage-ping.md](docs/privacy/usage-ping.md) and
-  [docs/adr/0019](docs/adr/0019-opt-in-usage-ping.md).
+  [docs/adr/0020](docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md).
 
 ## Not yet
 

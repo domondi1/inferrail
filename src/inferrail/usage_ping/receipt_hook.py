@@ -1,5 +1,5 @@
-"""Wraps a `ReceiptSink` to also fire the `first_receipt`/`tool_connected`
-usage-ping milestones, without touching `InferenceEngine` or
+"""Wraps a `ReceiptSink` to also fire the `first_receipt` usage-ping
+milestone, without touching `InferenceEngine` or
 `AnthropicInferenceEngine` at all.
 
 Every receipt, from either wire format or from `inferrail try`/`ap demo`
@@ -9,9 +9,12 @@ call site to each engine, and it can never see anything the sink itself
 doesn't already see (i.e. never a prompt/response, since `InferenceReceipt`
 never carries one -- see docs/adr/0005).
 
-Only installed for `--app-mode` (`gateway/app.py`), matching the other
-usage-ping integration points: the Settings toggle that turns this on
-only exists on the app-mode dashboard.
+Installed unconditionally for every `inferrail serve` invocation
+(`gateway/app.py`) as of
+docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md --
+previously `--app-mode`-only; the fires-at-most-once-per-install/
+inert-with-no-endpoint gates in `usage_ping.client.maybe_send_event`
+already make this safe to install everywhere.
 """
 
 from __future__ import annotations
@@ -27,10 +30,9 @@ from inferrail.usage_ping.client import maybe_send_event
 class UsagePingReceiptSink:
     """Forwards every `emit()` to `inner` unchanged, then -- cheaply and
     non-blockingly, see `usage_ping.client.maybe_send_event` -- checks
-    whether this receipt is this install's first ever (`first_receipt`)
-    and/or its first ever successful one (`tool_connected`, the signal
-    that some real client actually completed a request through the
-    gateway)."""
+    whether this receipt is this install's first ever (`first_receipt`,
+    which fires regardless of `status` — a receipt is still produced for
+    a failed/blocked request)."""
 
     def __init__(
         self, inner: ReceiptSink, *, app_data_dir: Path, config: UsagePingConfig
@@ -42,7 +44,3 @@ class UsagePingReceiptSink:
     def emit(self, receipt: InferenceReceipt) -> None:
         self._inner.emit(receipt)
         maybe_send_event("first_receipt", app_data_dir=self._app_data_dir, config=self._config)
-        if receipt.status == "success":
-            maybe_send_event(
-                "tool_connected", app_data_dir=self._app_data_dir, config=self._config
-            )

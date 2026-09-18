@@ -6,6 +6,77 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased — the payload-free cost-receipt promise, relaunched
+
+Founder-directed relaunch, 2026-09-18: reorganize the product and the
+website around Inferrail's founding claim ("know what your AI work
+costs, without keeping what it said"), which had drifted behind the
+newer AP capability on both. Full reasoning:
+`docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md`.
+Not yet assigned a version number or merged/published — see that ADR
+and this repo's own merge policy; `MISSION.md` already reserves
+`v0.5.0` for an unrelated milestone (the one-click desktop app), so
+this batch's version number is left for the founder to decide rather
+than guessed at here.
+
+### Added
+
+- `inferrail verify-payload-free` — introspects the real, running
+  `InferenceReceipt` schema and proves structurally (not by hardcoded
+  string) that no field can hold a prompt or response; suitable for
+  pasting into a security review.
+- `inferrail serve --quickstart` now registers **both** an OpenAI and
+  an Anthropic provider, passthrough-default for each wire format —
+  the startup banner prints the exact, copy-pasteable `base_url`/
+  `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` line for each SDK. Required a
+  new `default_anthropic_provider` config field (backward compatible)
+  since the two pipelines need separate passthrough defaults.
+- `inferrail serve --daily-budget-usd AMOUNT` — one flag creates a
+  global, block-mode daily budget before serving.
+- `inferrail serve --quickstart --app-mode` is now a supported
+  combination (previously rejected) — quickstart's providers plus the
+  dashboard/local-API/sqlite relocation `--app-mode` already provides.
+- `inferrail serve --no-telemetry`.
+- `ConsoleSummaryReceiptSink` — one compact line per receipt on stdout
+  under `--quickstart` (model, tokens, cost or `unknown`, `work_id` if
+  present).
+- `scripts/owner_stats.py` — PyPI download counts (always) plus,
+  optionally, the usage-ping collector's own installs/activation/
+  active-user numbers.
+
+### Changed
+
+- **The usage/presence beacon (`src/inferrail/usage_ping/`) switches
+  from opt-in (default off) to opt-out (default on)** — an explicit
+  founder decision, reversing ADR-0019's original default, recorded
+  plainly in ADR-0020. Still fully inert with no `usage_ping.endpoint`
+  configured. Event names/fields also changed to match the founder's
+  exact spec: `install`/`serve_start`/`first_receipt`/`heartbeat`
+  (`first_run`→`install`, `tool_connected` retired, `budget_created`
+  retired, `heartbeat` added), `inferrail_version`→`version`,
+  `python_version` added, `ts` dropped. Now fires for every
+  `inferrail serve`, not just `--app-mode`.
+- `hosted/usage_ping/service.py`'s schema rewritten to a two-table
+  `installs`/`events` shape tracking per-install activation
+  (`reached_first_receipt_at`), matching the founder's exact spec.
+- The homepage (`docs/index.html`) reorganized around the cost-receipt
+  promise — nothing removed, existing sections (AP sandbox, Work
+  Economics, Economic Authority) reused and moved lower. See
+  ADR-0020's audit notes for the before/after.
+
+### Fixed
+
+- `inferrail demo` used to write to, and unconditionally delete, the
+  *real* default work-outcomes file (`./inferrail-work-outcomes.jsonl`)
+  a genuine user's own `inferrail work outcome` records live in — real
+  data loss, not just noise. Now uses a dedicated demo-only path.
+- The quickstart startup banner could be silently lost entirely
+  whenever stdout wasn't a TTY (piped to a file, a container's
+  captured logs, ...) — stdout is now explicitly line-buffered for the
+  whole `serve` process.
+- Footer's "Privacy" link pointed at `SECURITY.md` (vulnerability
+  disclosure), not the actual privacy page.
+
 ## v0.4.1 — 2026-09-15
 
 ### Added

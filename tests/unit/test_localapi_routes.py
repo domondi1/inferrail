@@ -564,9 +564,14 @@ def test_usage_ping_routes_require_the_token(
     assert client.post("/v1/local/usage-ping", json={"enabled": True}).status_code == 401
 
 
-def test_create_budget_fires_the_budget_created_usage_ping_event(
+def test_create_budget_no_longer_fires_a_usage_ping_event(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # `budget_created` was retired by
+    # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md
+    # in favor of the exact four events that ADR specifies (install,
+    # serve_start, first_receipt, heartbeat) -- creating a budget is
+    # ordinary local API traffic now, not a usage-ping milestone.
     import httpx
 
     received: list[str] = []
@@ -578,6 +583,12 @@ def test_create_budget_fires_the_budget_created_usage_ping_event(
     )
     client, token = _make_client_with_config(monkeypatch, config, tmp_path)
 
+    import time
+
+    # Let create_app's own install/serve_start settle first.
+    time.sleep(0.1)
+    received.clear()
+
     response = client.post(
         "/v1/local/budgets",
         headers=_auth(token),
@@ -585,11 +596,5 @@ def test_create_budget_fires_the_budget_created_usage_ping_event(
     )
     assert response.status_code == 201
 
-    import time
-
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and "budget_created" not in received:
-        time.sleep(0.02)
-    # "first_run" also fires once, from create_app's own app-mode startup
-    # (unrelated to this test) -- only assert budget_created is among it.
-    assert "budget_created" in received
+    time.sleep(0.1)
+    assert received == []
