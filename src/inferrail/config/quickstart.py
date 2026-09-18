@@ -23,9 +23,12 @@ from inferrail.config.models import (
 )
 
 QUICKSTART_PROVIDER = "openai"
+QUICKSTART_ANTHROPIC_PROVIDER = "anthropic"
 QUICKSTART_ROUTE = "default"
 QUICKSTART_MODEL = "gpt-4o-mini"
+QUICKSTART_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 QUICKSTART_API_KEY_ENV = "OPENAI_API_KEY"
+QUICKSTART_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 QUICKSTART_RECEIPTS_PATH = "./inferrail-receipts.jsonl"
 
 
@@ -34,7 +37,17 @@ def build_quickstart_config(
     model: str = QUICKSTART_MODEL,
     telemetry_sink: Literal["console", "none"] = "console",
 ) -> InferrailConfig:
-    """Build the quickstart config: one OpenAI provider, one ``default`` route.
+    """Build the quickstart config: one OpenAI provider and one Anthropic
+    provider, each passthrough-default for its own wire format, so a caller
+    can point *either* the OpenAI SDK (at ``/v1/chat/completions``) or the
+    Anthropic SDK (at ``/v1/messages``) at this same server with zero
+    per-model configuration. Only the provider whose API key is actually
+    set will succeed a real request — both are registered unconditionally
+    (config parsing never touches the environment; see
+    ``providers.registry.build_providers``/``build_anthropic_providers``,
+    which resolve keys lazily and only raise when a request actually
+    reaches an unconfigured one) so `inferrail serve --quickstart` never
+    has to ask which provider you meant before it can start.
 
     ``telemetry_sink`` defaults to ``"console"`` to match
     :class:`~inferrail.config.models.TelemetryConfig`'s own default (what
@@ -48,14 +61,20 @@ def build_quickstart_config(
             QUICKSTART_PROVIDER: ProviderConfig(
                 type="openai", api_key_env=QUICKSTART_API_KEY_ENV
             ),
+            QUICKSTART_ANTHROPIC_PROVIDER: ProviderConfig(
+                type="anthropic", api_key_env=QUICKSTART_ANTHROPIC_API_KEY_ENV
+            ),
         },
         routes={
             QUICKSTART_ROUTE: RouteConfig(provider=QUICKSTART_PROVIDER, model=model),
         },
-        # There's exactly one provider in the quickstart path, so any model
-        # name the caller sends — not just the "default" route above — can
-        # go straight to it. See docs/adr/0007-model-passthrough-routing.md.
+        # Any OpenAI model id passes through to the openai provider; any
+        # Anthropic model id passes through to the anthropic provider — two
+        # independent passthrough defaults, one per wire format, since the
+        # two pipelines can't share one (see
+        # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md).
         default_provider=QUICKSTART_PROVIDER,
+        default_anthropic_provider=QUICKSTART_ANTHROPIC_PROVIDER,
         telemetry=TelemetryConfig(sink=telemetry_sink),
         receipts=ReceiptsConfig(sink="jsonl", path=QUICKSTART_RECEIPTS_PATH),
     )

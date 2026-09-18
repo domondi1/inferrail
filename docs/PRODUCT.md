@@ -228,12 +228,45 @@ inspectable config file and gives you a telemetry record for every request
   `inferrail transaction`, `inferrail work`, `inferrail demo` (offline, zero-key walkthrough
   of the receipt/report pipeline using a fake provider), `inferrail try`
   (one real request through the same `InferenceEngine` `inferrail serve`
-  uses, no config file required — needs `OPENAI_API_KEY`)
+  uses, no config file required — needs `OPENAI_API_KEY`),
+  `inferrail verify-payload-free` (introspects the real, running
+  `InferenceReceipt` schema at call time and proves structurally that no
+  field can hold a prompt/response — see "Verifying privacy claims
+  yourself" below)
 - A configless quickstart path: `inferrail try` and `inferrail serve
   --quickstart` both build the same `InferrailConfig` type `inferrail.yaml`
-  loads into, just from an in-memory default (OpenAI, `gpt-4o-mini`,
-  receipts at `./inferrail-receipts.jsonl`) instead of a file — not a
-  second config system, and it never silently writes a config file to disk
+  loads into, just from an in-memory default instead of a file — not a
+  second config system, and it never silently writes a config file to disk.
+  As of
+  `docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md`,
+  quickstart registers **both** an OpenAI provider (`OPENAI_API_KEY`,
+  passthrough default for `/v1/chat/completions`) and an Anthropic
+  provider (`ANTHROPIC_API_KEY`, passthrough default for `/v1/messages`)
+  unconditionally — only the one whose key is actually set will succeed a
+  real request. Receipts default to `./inferrail-receipts.jsonl`. The
+  startup banner prints the exact, copy-pasteable `base_url`/
+  `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` line for each SDK, and stdout is
+  explicitly line-buffered for the whole process so that banner can never
+  be silently lost when it isn't a TTY (piped to a file, a container's
+  captured logs, ...).
+- `inferrail serve --quickstart` also wraps the receipt sink with
+  `ConsoleSummaryReceiptSink` (`src/inferrail/receipts/console_summary.py`):
+  one compact line per receipt — model, tokens, cost or `unknown`,
+  `work_id` if present, and an explicit "no prompt/response ever
+  recorded" reminder — printed to stdout the instant each request
+  completes. Only installed under `--quickstart`; a self-hosted operator
+  running a real `inferrail.yaml` deployment doesn't get an extra,
+  unrequested stdout line per production request.
+- `inferrail serve --daily-budget-usd AMOUNT` (combinable with
+  `--quickstart`, `--app-mode`, both, or neither) creates a global,
+  block-mode, daily budget at that limit before serving — the
+  quickstart path's one-line way to never overspend on work. Combined
+  with `--app-mode`, it reuses that mode's already-sqlite budgets store;
+  combined with plain `--quickstart` alone, it switches receipts to a
+  dedicated local SQLite file for that run
+  (`./inferrail-receipts.db`, distinct from the plain-quickstart JSONL
+  default) since budget enforcement structurally requires an indexed
+  store — the banner states this plainly.
 - Optional shared-secret gateway auth: if `INFERRAIL_GATEWAY_TOKEN` is set,
   `/v1/chat/completions` requires a matching `Authorization: Bearer`
   header. Unset by default (localhost-dev mode) — see README's
@@ -325,8 +358,12 @@ fleet "control plane" `docs/adr/0004` anticipates):
   forcing `receipts.sink: sqlite` and `budgets.enabled: true`
   regardless of what the file says, and mounts a second HTTP surface —
   `/v1/local/*` — guarded by a mandatory per-install token (printed on
-  startup, also saved under the app-data directory). Not combinable
-  with `--quickstart`.
+  startup, also saved under the app-data directory). **Combinable with
+  `--quickstart`** as of ADR-0020 — quickstart still supplies
+  providers/routes; `--app-mode` still relocates receipts/budgets/
+  dashboard the same way it does with a real `inferrail.yaml`. This is
+  the fastest path to seeing a receipt land in the dashboard's Live Feed
+  with zero config file.
 - `GET /v1/local/receipts` (paginated, filterable by
   work_id/project/model), `GET /v1/local/work` / `GET
   /v1/local/work/{work_id}` (rollups), `GET /v1/local/budgets` / `POST
@@ -402,20 +439,30 @@ local control API when `--app-mode` is on — see
   update`/`doctor` already share — never a network fetch); and a real
   "Usage ping" toggle (`GET`/`POST /v1/local/usage-ping`) — see below.
 
-### Opt-in usage ping
+### Usage/presence beacon (opt-out)
 
 A real feature, not a placeholder (`src/inferrail/usage_ping/`,
-`docs/adr/0019-opt-in-usage-ping.md`, `docs/privacy/usage-ping.md`). Off
-by default, and inert with no `usage_ping.endpoint` configured in
-`inferrail.yaml` regardless of the toggle — Inferrail ships with no
-built-in default endpoint, so an install is never able to send anything
-until an operator explicitly configures one. Four lifecycle events only,
-each sent at most once per install: `first_run`, `tool_connected`,
-`first_receipt`, `budget_created`. Never a prompt, response, model name,
-cost, work_id, project name, or anything about actual traffic. Sending
-never blocks, slows, or can fail the gateway — it happens on a
-best-effort background thread with a short timeout, and any failure
-(offline, unreachable, timeout) is swallowed.
+`docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md`,
+`docs/privacy/usage-ping.md`). **On by default** (a deliberate reversal
+of the original opt-in design — see ADR-0020, which supersedes
+`docs/adr/0019-opt-in-usage-ping.md`'s "default off" only), but still
+inert with no `usage_ping.endpoint` configured in `inferrail.yaml`
+regardless of the toggle — Inferrail ships with no built-in default
+endpoint, so an install is never able to send anything until an operator
+explicitly configures one. Fires for every `inferrail serve` invocation
+now, not just `--app-mode` (quickstart and plain config-based deployments
+included). Four lifecycle events only: `install` (once ever),
+`serve_start` (every process start), `first_receipt` (once ever),
+`heartbeat` (at most once per 24 hours while serving). Never a prompt,
+response, model name, cost, work_id, project name, or anything about
+actual traffic. Sending never blocks, slows, or can fail the gateway —
+it happens on a best-effort background thread with a short timeout, and
+any failure (offline, unreachable, timeout) is swallowed.
+
+Turned off with `inferrail telemetry disable`, the Settings screen's
+toggle, `INFERRAIL_TELEMETRY=0`, `serve --no-telemetry`, or
+`DO_NOT_TRACK=1` — and automatically under common CI environment
+variables and this project's own test suite, no configuration needed.
 
 Two ways to verify what would be sent without trusting this
 documentation: `inferrail telemetry preview` (prints the exact payload
@@ -424,12 +471,17 @@ sending anything) and the Settings screen's own link to
 `docs/privacy/usage-ping.md`. `inferrail telemetry status|enable|disable`
 work standalone, without `--app-mode` or even an `inferrail.yaml`.
 
-A reference collector (`hosted/usage_ping/`) is proposed and built —
-own process, own SQLite storage, zero dependency on the `inferrail`
-package, never logs or persists the connecting IP address, admin-gated
-aggregate `/stats` (disabled entirely unless an admin token is set).
-Deploying an instance and configuring `usage_ping.endpoint` to point at
-it is a human action — see `PROGRESS.md`'s "HUMAN ACTION NEEDED".
+A reference collector (`hosted/usage_ping/`) is built — own process, own
+SQLite storage (an `installs` table tracking activation via
+`reached_first_receipt_at`, plus an append-only `events` log), zero
+dependency on the `inferrail` package, never logs or persists the
+connecting IP address, admin-gated aggregate `/stats` (disabled entirely
+unless an admin token is set). `scripts/owner_stats.py` reads PyPI
+download counts (always, no telemetry needed) plus, if pointed at a
+deployed collector's database with `--db`, real install/activation/
+active-user numbers. Deploying a collector instance and configuring
+`usage_ping.endpoint` to point at it is a human action — see
+`PROGRESS.md`'s "HUMAN ACTION NEEDED".
 - **The dashboard is bundled into every wheel this project's CI
   builds — including the actual PyPI-published artifact and the
   three-OS `platform-verify.yml` wheels.** A hatchling build hook

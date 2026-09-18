@@ -117,7 +117,7 @@ def test_messages_passthrough_unmatched_model(
     monkeypatch: pytest.MonkeyPatch, anthropic_config_dict: dict[str, Any]
 ) -> None:
     config = InferrailConfig.model_validate(
-        {**anthropic_config_dict, "default_provider": "anthropic"}
+        {**anthropic_config_dict, "default_anthropic_provider": "anthropic"}
     )
     client = _make_anthropic_client(monkeypatch, config, AnthropicFakeProvider())
 

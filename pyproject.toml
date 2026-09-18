@@ -106,6 +106,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: requires real, explicitly-provided provider credentials",
+    "real_env_gate: exercises the real usage_ping environment-disable gate, unpatched",
 ]
 
 [tool.ruff]

@@ -53,11 +53,12 @@ from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.anthropic_base import AnthropicMessagesProvider
 from inferrail.providers.base import Provider
 from inferrail.providers.registry import build_anthropic_providers, build_providers
+from inferrail.receipts.console_summary import ConsoleSummaryReceiptSink
 from inferrail.receipts.sinks import ReceiptSink, build_receipt_sink
 from inferrail.receipts.sqlite_store import ReceiptsStore
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import build_telemetry_sink
-from inferrail.usage_ping.client import maybe_send_event
+from inferrail.usage_ping.client import maybe_send_event, start_heartbeat_thread
 from inferrail.usage_ping.receipt_hook import UsagePingReceiptSink
 
 _logger = logging.getLogger("inferrail.gateway")
@@ -112,6 +113,7 @@ def create_app(
     config: InferrailConfig,
     *,
     app_mode: bool = False,
+    quickstart: bool = False,
     local_outcomes_path: Path | None = None,
     ap_recovery_path: Path | None = None,
 ) -> FastAPI:
@@ -122,9 +124,14 @@ def create_app(
     is completely unaffected — no new route, no new state, no new file
     touched on disk. When `app_mode` is true, `config` must already have
     `receipts.sink: sqlite` and `budgets.enabled: true` (the CLI's
-    `--app-mode` setup guarantees both); `local_outcomes_path` is where
-    `inferrail work outcome` records live for the `/v1/local/work*`
-    routes to read back.
+    `--app-mode` setup guarantees both, whether or not `--quickstart` is
+    also given); `local_outcomes_path` is where `inferrail work outcome`
+    records live for the `/v1/local/work*` routes to read back.
+
+    `quickstart` wraps the receipt sink with `ConsoleSummaryReceiptSink`
+    (one compact line per receipt on stdout) — independent of `app_mode`;
+    either, both, or neither may be set. See
+    docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
     """
     # require_keys=False: the server (and /health) must be able to start
     # even before a provider's secret is configured. A missing key only
@@ -135,11 +142,19 @@ def create_app(
     anthropic_providers: dict[str, AnthropicMessagesProvider] = build_anthropic_providers(
         config, require_keys=False
     )
-    # Shared across both wire-format pipelines (docs/adr/0014): routing,
-    # pricing, receipts, and telemetry are all already provider/format-
-    # agnostic — one routes: section and one ledger serve /v1/chat/completions
-    # and /v1/messages alike.
+    # Pricing, receipts, and telemetry are shared across both wire-format
+    # pipelines (docs/adr/0014) — one ledger serves /v1/chat/completions and
+    # /v1/messages alike. Routing needs two separate Router instances,
+    # though: each pipeline's passthrough default has to name a provider
+    # that pipeline can actually see (an `openai`-type provider is invisible
+    # to the Anthropic pipeline and vice versa — see
+    # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md),
+    # so one shared `default_provider` could never correctly passthrough for
+    # both at once. Both Router instances still share `config.routes`
+    # verbatim — a named route is still looked up the same way on either
+    # pipeline; only the *unmatched-model* fallback provider differs.
     router = Router(config.routes, default_provider=config.default_provider)
+    anthropic_router = Router(config.routes, default_provider=config.default_anthropic_provider)
     telemetry = build_telemetry_sink(config.telemetry)
     pricing_resolver = PricingResolver(config.providers, config.pricing)
     receipts = build_receipt_sink(config.receipts)
@@ -160,21 +175,34 @@ def create_app(
     # onto whichever ReceiptSink they're given for the life of the app.
     # Reused, not recomputed, by app_mode's own setup further down.
     app_data = Path(config.budgets.path).parent
+    # Usage-ping's storage (install id, on/off state, sent-event markers)
+    # reuses `app_data` -- under --app-mode this is already the real OS
+    # app-data directory (`_apply_app_mode` points `budgets.path` there);
+    # otherwise it's `budgets.path`'s own parent, cwd by default, matching
+    # every other quickstart/plain-serve file convention (receipts, demo
+    # output, ...). See
+    # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
+    usage_ping_app_data = app_data
     engine_receipts: ReceiptSink = receipts
-    if app_mode:
-        # Only `--app-mode` ever has a Settings toggle to turn this on, so
-        # only it ever wraps the sink; every other `create_app` caller
-        # (including every existing test) is unaffected. `receipts` itself
-        # (unwrapped) is still what `budget_enforcer`/the local API use —
-        # they need real `ReceiptsStore.query()`, not just `.emit()`.
-        engine_receipts = UsagePingReceiptSink(
-            receipts, app_data_dir=app_data, config=config.usage_ping
-        )
+    if quickstart:
+        # Only `inferrail serve --quickstart` ever wraps the sink this way
+        # — a self-hosted operator running a real `inferrail.yaml` doesn't
+        # get an extra, unrequested stdout line per request. See
+        # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
+        engine_receipts = ConsoleSummaryReceiptSink(engine_receipts)
+    # Wrapped for every `inferrail serve` invocation, not just --app-mode
+    # (ADR-0020 reverses ADR-0019's app-mode-only scoping too) -- always
+    # safe: `maybe_send_event` is a no-op unless both `usage_ping.enabled`
+    # and `usage_ping.endpoint` are actually set, which almost no test or
+    # default install ever does.
+    engine_receipts = UsagePingReceiptSink(
+        engine_receipts, app_data_dir=usage_ping_app_data, config=config.usage_ping
+    )
     engine = InferenceEngine(
         router, providers, telemetry, pricing_resolver, engine_receipts, budgets=budget_enforcer
     )
     anthropic_engine = AnthropicInferenceEngine(
-        router, anthropic_providers, telemetry, pricing_resolver, engine_receipts,
+        anthropic_router, anthropic_providers, telemetry, pricing_resolver, engine_receipts,
         budgets=budget_enforcer,
     )
 
@@ -197,6 +225,17 @@ def create_app(
     app.state.gateway_token = os.environ.get("INFERRAIL_GATEWAY_TOKEN") or None
     app.include_router(api_router)
 
+    # Usage ping (docs/adr/0020): fires for every `inferrail serve`
+    # invocation now, not just --app-mode. `install` is once-ever per
+    # install; `serve_start` fires every process start (never deduped);
+    # the heartbeat thread only actually spawns when usage-ping could
+    # possibly be active (see `start_heartbeat_thread`'s own gate).
+    app.state.usage_ping_app_data = usage_ping_app_data
+    app.state.usage_ping_config = config.usage_ping
+    maybe_send_event("install", app_data_dir=usage_ping_app_data, config=config.usage_ping)
+    maybe_send_event("serve_start", app_data_dir=usage_ping_app_data, config=config.usage_ping)
+    start_heartbeat_thread(app_data_dir=usage_ping_app_data, config=config.usage_ping)
+
     if app_mode:
         if not isinstance(receipts, ReceiptsStore) or budget_store is None:
             raise ConfigurationError(
@@ -217,13 +256,6 @@ def create_app(
         app.state.ap_recovery_store = RecoveryStore(
             ap_recovery_path or (app_data / "ap-recovery.db")
         )
-        # Usage ping (docs/adr/0019): the local API's `/v1/local/usage-ping`
-        # routes read/write this same app-data dir + config; storing both
-        # on app.state, rather than re-deriving them per-request, mirrors
-        # every other app-mode store above.
-        app.state.usage_ping_app_data = app_data
-        app.state.usage_ping_config = config.usage_ping
-        maybe_send_event("first_run", app_data_dir=app_data, config=config.usage_ping)
         app.include_router(local_api_router)
 
         # The dashboard (docs/adr/0017) is a static SPA -- mounted only

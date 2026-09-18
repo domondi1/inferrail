@@ -29,7 +29,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from inferrail.cli.report import run_report
-from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work
+from inferrail.cli.work import run_work
 from inferrail.config.models import PriceEntry, RouteConfig
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest
@@ -42,6 +42,14 @@ from inferrail.work.builder import append_outcome
 from inferrail.work.schema import WorkOutcomeRecord
 
 RECEIPTS_PATH = Path("./inferrail-demo-receipts.jsonl")
+# Deliberately its own file, never `cli.work.DEFAULT_OUTCOMES_PATH`
+# (`./inferrail-work-outcomes.jsonl`), the path a user's *real*
+# `inferrail work outcome` records live in — this used to write (and
+# unlink!) that shared default, so running `inferrail demo` could
+# silently delete a real user's outcome history and replace it with
+# synthetic rows. Found and fixed auditing the first-run experience; see
+# docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
+DEMO_OUTCOMES_PATH = Path("./inferrail-demo-work-outcomes.jsonl")
 
 _DEMO_PRICE_SOURCE = "DEMO — a made-up round number, not a real provider price"
 _DEMO_PRICE_DATE = date.today()
@@ -179,8 +187,8 @@ def _build_engine() -> InferenceEngine:
 async def _run() -> None:
     if RECEIPTS_PATH.exists():
         RECEIPTS_PATH.unlink()  # fresh, reproducible output on every run
-    if DEFAULT_OUTCOMES_PATH.exists():
-        DEFAULT_OUTCOMES_PATH.unlink()
+    if DEMO_OUTCOMES_PATH.exists():
+        DEMO_OUTCOMES_PATH.unlink()
 
     print("=" * 72)
     print("INFERRAIL DEMO — canned responses, not real provider billing")
@@ -225,7 +233,7 @@ async def _run() -> None:
         ("work-outcome-only-1", "escalated"),
     ]:
         append_outcome(
-            DEFAULT_OUTCOMES_PATH,
+            DEMO_OUTCOMES_PATH,
             WorkOutcomeRecord(
                 work_id=work_id, outcome_status=status, recorded_at=datetime.now(UTC)
             ),
@@ -236,7 +244,7 @@ async def _run() -> None:
     print("the outcomes below are customer-declared.")
     print("WORK ECONOMICS — receipts + shared work_id + declared outcome")
     print("-" * 72)
-    run_work(RECEIPTS_PATH, DEFAULT_OUTCOMES_PATH, None, all_work=True, as_json=False)
+    run_work(RECEIPTS_PATH, DEMO_OUTCOMES_PATH, None, all_work=True, as_json=False)
     print("\nSYNTHETIC SUPPORT EXAMPLE")
     print("In this synthetic support example, the application defines 'resolved' as success.")
     print("\nReady to see a real cost number instead of a demo one?")

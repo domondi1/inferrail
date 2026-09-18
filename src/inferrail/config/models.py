@@ -126,30 +126,38 @@ class BudgetsConfig(BaseModel):
 
 
 class UsagePingConfig(BaseModel):
-    """The opt-in, anonymous usage ping (docs/adr/0019-opt-in-usage-ping.md).
+    """The anonymous usage/presence beacon
+    (docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md,
+    superseding docs/adr/0019-opt-in-usage-ping.md's "default off").
 
-    Off by default, and inert with no `endpoint` configured regardless of
-    `enabled` — there is no built-in default endpoint baked into this
+    **Opt-out by default** (`enabled: bool = True`) — a deliberate,
+    explicit reversal of ADR-0019's original "default off" decision, at
+    the founder's direction, recorded in ADR-0020 rather than silently
+    changed. Still fully inert with no `endpoint` configured regardless
+    of `enabled` — there is no built-in default endpoint baked into this
     package; an operator (or, for the desktop dashboard's toggle, the
-    person running `inferrail serve --app-mode` on their own machine)
-    must explicitly point this at a real collector before anything can
-    ever be sent. The payload is fixed and minimal (see
+    person running `inferrail serve` on their own machine) must
+    explicitly point this at a real collector before anything can ever be
+    sent. The payload is fixed and minimal (see
     `usage_ping.payload.build_payload`): a locally-generated random
-    install id, OS, Inferrail version, event name, timestamp — never a
-    prompt, response, model name, cost, work_id, project name, or
-    anything about the traffic this install actually handles.
+    install id, event name, Inferrail version, OS, Python major.minor —
+    never a prompt, response, model name, cost, work_id, project name,
+    IP address, or anything about the traffic this install actually
+    handles. See `docs/privacy/usage-ping.md` for the full disclosure,
+    and `INFERRAIL_TELEMETRY=0` / `--no-telemetry` / `DO_NOT_TRACK=1` /
+    running under CI or the test suite for how to turn it off.
 
     `enabled` here is only the *config-file* default. Once
-    `inferrail serve --app-mode` has run once, the dashboard's Settings
-    toggle (and `inferrail telemetry enable|disable`) control a separate,
-    mutable on/off state under the OS app-data directory that takes over
-    from this default — the same "config seeds it, a store owns it after
+    `inferrail serve` has run once, the dashboard's Settings toggle (and
+    `inferrail telemetry enable|disable`) control a separate, mutable
+    on/off state under the OS app-data directory that takes over from
+    this default — the same "config seeds it, a store owns it after
     that" pattern `budgets`/`receipts` already use under `--app-mode`.
     """
 
     model_config = {"extra": "forbid"}
 
-    enabled: bool = False
+    enabled: bool = True
     endpoint: str | None = None
 
 
@@ -180,7 +188,19 @@ class InferrailConfig(BaseModel):
     # not rejected — it's forwarded to this provider with `model` passed
     # through unchanged, instead of requiring every upstream model id to be
     # pre-registered as a route. See docs/adr/0007-model-passthrough-routing.md.
+    # Applies to the `/v1/chat/completions` (OpenAI-shaped) pipeline only.
     default_provider: str | None = None
+    # Same passthrough behavior as `default_provider`, but for the separate
+    # `/v1/messages` (Anthropic-shaped) pipeline — see
+    # docs/adr/0014-anthropic-messages-passthrough.md. Kept as its own field
+    # rather than reusing `default_provider` because the two pipelines each
+    # build their own `Router` against disjoint provider sets (an
+    # `openai`-type provider is invisible to the Anthropic pipeline and vice
+    # versa — see `providers.registry.build_providers`/
+    # `build_anthropic_providers`), so one shared default could never
+    # correctly passthrough for both wire formats at once. See
+    # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
+    default_anthropic_provider: str | None = None
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
@@ -224,5 +244,13 @@ class InferrailConfig(BaseModel):
             raise ValueError(
                 f"default_provider '{self.default_provider}' is not a configured provider; "
                 f"known providers: {sorted(self.providers)}"
+            )
+        if (
+            self.default_anthropic_provider is not None
+            and self.default_anthropic_provider not in self.providers
+        ):
+            raise ValueError(
+                f"default_anthropic_provider '{self.default_anthropic_provider}' is not a "
+                f"configured provider; known providers: {sorted(self.providers)}"
             )
         return self

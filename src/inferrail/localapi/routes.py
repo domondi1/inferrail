@@ -41,7 +41,6 @@ from inferrail.localapi.schemas import (
     UsagePingUpdate,
 )
 from inferrail.receipts.sqlite_store import ReceiptsStore
-from inferrail.usage_ping.client import maybe_send_event
 from inferrail.usage_ping.install_id import ensure_install_id
 from inferrail.usage_ping.state import load_state as load_usage_ping_state
 from inferrail.usage_ping.state import save_state as save_usage_ping_state
@@ -195,11 +194,6 @@ async def create_budget(request: Request, payload: BudgetCreate) -> Budget:
     except ValidationError as exc:
         raise HTTPException(400, str(exc)) from exc
     _budget_store(request).set(budget)
-    maybe_send_event(
-        "budget_created",
-        app_data_dir=request.app.state.usage_ping_app_data,
-        config=request.app.state.usage_ping_config,
-    )
     return budget
 
 

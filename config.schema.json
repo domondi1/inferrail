@@ -212,10 +212,10 @@
     },
     "UsagePingConfig": {
       "additionalProperties": false,
-      "description": "The opt-in, anonymous usage ping (docs/adr/0019-opt-in-usage-ping.md).\n\nOff by default, and inert with no `endpoint` configured regardless of\n`enabled` \u2014 there is no built-in default endpoint baked into this\npackage; an operator (or, for the desktop dashboard's toggle, the\nperson running `inferrail serve --app-mode` on their own machine)\nmust explicitly point this at a real collector before anything can\never be sent. The payload is fixed and minimal (see\n`usage_ping.payload.build_payload`): a locally-generated random\ninstall id, OS, Inferrail version, event name, timestamp \u2014 never a\nprompt, response, model name, cost, work_id, project name, or\nanything about the traffic this install actually handles.\n\n`enabled` here is only the *config-file* default. Once\n`inferrail serve --app-mode` has run once, the dashboard's Settings\ntoggle (and `inferrail telemetry enable|disable`) control a separate,\nmutable on/off state under the OS app-data directory that takes over\nfrom this default \u2014 the same \"config seeds it, a store owns it after\nthat\" pattern `budgets`/`receipts` already use under `--app-mode`.",
+      "description": "The anonymous usage/presence beacon\n(docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md,\nsuperseding docs/adr/0019-opt-in-usage-ping.md's \"default off\").\n\n**Opt-out by default** (`enabled: bool = True`) \u2014 a deliberate,\nexplicit reversal of ADR-0019's original \"default off\" decision, at\nthe founder's direction, recorded in ADR-0020 rather than silently\nchanged. Still fully inert with no `endpoint` configured regardless\nof `enabled` \u2014 there is no built-in default endpoint baked into this\npackage; an operator (or, for the desktop dashboard's toggle, the\nperson running `inferrail serve` on their own machine) must\nexplicitly point this at a real collector before anything can ever be\nsent. The payload is fixed and minimal (see\n`usage_ping.payload.build_payload`): a locally-generated random\ninstall id, event name, Inferrail version, OS, Python major.minor \u2014\nnever a prompt, response, model name, cost, work_id, project name,\nIP address, or anything about the traffic this install actually\nhandles. See `docs/privacy/usage-ping.md` for the full disclosure,\nand `INFERRAIL_TELEMETRY=0` / `--no-telemetry` / `DO_NOT_TRACK=1` /\nrunning under CI or the test suite for how to turn it off.\n\n`enabled` here is only the *config-file* default. Once\n`inferrail serve` has run once, the dashboard's Settings toggle (and\n`inferrail telemetry enable|disable`) control a separate, mutable\non/off state under the OS app-data directory that takes over from\nthis default \u2014 the same \"config seeds it, a store owns it after\nthat\" pattern `budgets`/`receipts` already use under `--app-mode`.",
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "title": "Enabled",
           "type": "boolean"
         },
@@ -241,6 +241,18 @@
   "properties": {
     "budgets": {
       "$ref": "#/$defs/BudgetsConfig"
+    },
+    "default_anthropic_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Default Anthropic Provider"
     },
     "default_provider": {
       "anyOf": [

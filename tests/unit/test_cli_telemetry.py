@@ -50,7 +50,9 @@ def test_status_with_no_config_file_reports_unconfigured(
 
     assert result == 0
     out = capsys.readouterr().out
-    assert "enabled:    False" in out
+    # ADR-0020: opt-out by default -- "enabled: True" even with no config
+    # file, but still "not configured" (no endpoint) so nothing can send.
+    assert "enabled:    True" in out
     assert "not configured" in out
 
 
@@ -89,7 +91,7 @@ def test_preview_prints_every_known_event_without_sending(
     assert len(payload_lines) == len(KNOWN_EVENTS)
     for line in payload_lines:
         payload = json.loads(line)
-        assert set(payload) == {"install_id", "event", "os", "inferrail_version", "ts"}
+        assert set(payload) == {"install_id", "event", "version", "os", "python_version"}
     assert sent == []  # preview must never actually send anything
 
 
@@ -126,4 +128,4 @@ def test_cli_telemetry_preview_via_main(
     result = main(["telemetry", "preview"])
 
     assert result == 0
-    assert "first_run" in capsys.readouterr().out
+    assert "install" in capsys.readouterr().out
