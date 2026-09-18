@@ -6,18 +6,16 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased — the payload-free cost-receipt promise, relaunched
+## v0.4.3 — 2026-09-18 — the payload-free cost-receipt promise, relaunched
 
-Founder-directed relaunch, 2026-09-18: reorganize the product and the
-website around Inferrail's founding claim ("know what your AI work
-costs, without keeping what it said"), which had drifted behind the
-newer AP capability on both. Full reasoning:
+Founder-directed relaunch: reorganize the product and the website
+around Inferrail's founding claim ("know what your AI work costs,
+without keeping what it said"), which had drifted behind the newer AP
+capability on both. Full reasoning:
 `docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md`.
-Not yet assigned a version number or merged/published — see that ADR
-and this repo's own merge policy; `MISSION.md` already reserves
-`v0.5.0` for an unrelated milestone (the one-click desktop app), so
-this batch's version number is left for the founder to decide rather
-than guessed at here.
+Deliberately versioned `0.4.3`, not `0.5.0` — `MISSION.md` already
+reserves `v0.5.0` for an unrelated milestone (the one-click desktop
+app), confirmed with the founder rather than guessed at.
 
 ### Added
 
