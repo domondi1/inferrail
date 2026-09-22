@@ -10,9 +10,12 @@ Each tenant gets **two** SQLite files, mirroring the same split the local
 CLI/dashboard already uses (`inferrail serve --app-mode`, see
 docs/adr/0016): one `ReceiptsStore` (the payload-free receipt ledger) and
 one `BudgetStore` (the tenant's own daily spend cap, wired to a
-`BudgetEnforcer` so a trial cannot burn real money). Both are opened
-lazily and cached for the life of the process; `purge_tenant` deletes
-every file (plus WAL/SHM/journal sidecars) for both.
+`BudgetEnforcer` so a trial cannot burn real money), plus one plain JSONL
+file for work-outcome declarations (`inferrail.work.builder`'s own
+append-only sink, same format `inferrail work outcome` writes locally --
+see docs/adr/0008/local `work/` module). All three are opened lazily and
+cached for the life of the process; `purge_tenant` deletes every file
+(plus WAL/SHM/journal sidecars for the two SQLite ones) for all three.
 
 Never shares a directory, process, or connection with `hosted/work_economics`,
 `hosted/a2a_economic_authority`, or `hosted/ap_exceptions` -- see this
@@ -40,13 +43,20 @@ requests. Configurable via `COST_GATEWAY_DAILY_BUDGET_USD` (service.py)."""
 
 class TenantStores:
     """Everything one tenant needs to run real or demo traffic: its own
-    receipts ledger, its own budget store, and a `BudgetEnforcer` wired
-    to both."""
+    receipts ledger, its own budget store, a `BudgetEnforcer` wired to
+    both, and the path to its own work-outcomes JSONL file."""
 
-    def __init__(self, receipts: ReceiptsStore, budgets: BudgetStore, enforcer: BudgetEnforcer):
+    def __init__(
+        self,
+        receipts: ReceiptsStore,
+        budgets: BudgetStore,
+        enforcer: BudgetEnforcer,
+        outcomes_path: Path,
+    ):
         self.receipts = receipts
         self.budgets = budgets
         self.enforcer = enforcer
+        self.outcomes_path = outcomes_path
 
 
 class TenantStoreRegistry:
@@ -83,15 +93,17 @@ class TenantStoreRegistry:
                     )
                 )
             enforcer = BudgetEnforcer(budgets, receipts, self._pricing_resolver)
-            stores = TenantStores(receipts, budgets, enforcer)
+            outcomes_path = self._data_dir / f"{tenant_id}-work-outcomes.jsonl"
+            stores = TenantStores(receipts, budgets, enforcer, outcomes_path)
             self._stores[tenant_id] = stores
             return stores
 
     def purge_tenant(self, tenant_id: str) -> None:
         """Irreversibly deletes one tenant's receipts and budget SQLite
-        files (plus sidecars) and drops it from the in-process cache.
-        Neither store holds a long-lived connection open (both open/close
-        per call), so there is nothing to close first."""
+        files (plus sidecars) and its work-outcomes JSONL file, and drops
+        it from the in-process cache. Neither SQLite store holds a
+        long-lived connection open (both open/close per call), so there
+        is nothing to close first."""
         with self._lock:
             self._stores.pop(tenant_id, None)
         for stem in (f"{tenant_id}-receipts.sqlite3", f"{tenant_id}-budgets.sqlite3"):
@@ -99,3 +111,4 @@ class TenantStoreRegistry:
             for suffix in ("", "-wal", "-shm", "-journal"):
                 candidate = db_path.parent / (db_path.name + suffix)
                 candidate.unlink(missing_ok=True)
+        (self._data_dir / f"{tenant_id}-work-outcomes.jsonl").unlink(missing_ok=True)

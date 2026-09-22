@@ -48,10 +48,12 @@ import asyncio
 import contextlib
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 from auth import RateLimiter, authenticate, rate_limiter_from_env
 from demo_provider import (
     DEMO_MODEL_NAME,
@@ -95,9 +97,18 @@ from inferrail.gateway.schemas import (
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.anthropic import AnthropicProvider
 from inferrail.providers.openai import OpenAIProvider
+from inferrail.receipts.aggregation import summarize_receipts
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import NullTelemetrySink
+from inferrail.transactions.builder import build_transaction
+from inferrail.work.builder import (
+    aggregate_work_summaries,
+    append_outcome,
+    build_work_summary,
+    load_outcomes,
+)
+from inferrail.work.schema import WorkOutcomeRecord, WorkSummary
 
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("COST_GATEWAY_REQUEST_TIMEOUT_SECONDS", "120"))
 """Known Phase 1 limitation, documented rather than hidden: this wraps the
@@ -170,6 +181,26 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
     return None
 
 
+def openai_client_factory() -> httpx.AsyncClient | None:
+    """Returns the `httpx.AsyncClient` to inject into a per-request
+    `OpenAIProvider`, or `None` for its own real default. Exists purely
+    as a monkeypatch seam for tests -- `OpenAIProvider.__init__` already
+    accepts an injectable client specifically "so tests can pass an
+    httpx.MockTransport instead of hitting the network, while exercising
+    the exact same request-building and error-normalization code paths"
+    (its own docstring); this module-level function is what lets a test
+    reach that seam without service.py exposing a public test-only
+    parameter on `create_app`. See
+    tests/unit/hosted/test_cost_gateway_service.py's real-provider-parity
+    tests."""
+    return None
+
+
+def anthropic_client_factory() -> httpx.AsyncClient | None:
+    """Same seam as `openai_client_factory`, for `AnthropicProvider`."""
+    return None
+
+
 def _shared_pricing_resolver() -> PricingResolver:
     """One `PricingResolver`, shared across every tenant -- it is pure
     and stateless (a function of provider *type*, never of a tenant's
@@ -201,6 +232,20 @@ class SubmitKeysRequest(BaseModel):
 
     openai_key: str | None = None
     anthropic_key: str | None = None
+
+
+class OutcomeRequest(BaseModel):
+    """Module-level, not nested inside `create_app` -- with `from
+    __future__ import annotations` active in this file, a route handler's
+    string annotation for a body parameter can only be resolved against
+    the module's globals; a function-locally-defined Pydantic model isn't
+    reachable there, and FastAPI silently falls back to treating the
+    parameter as an (always-missing) query param instead of a request
+    body. Caught by `test_work_outcome_and_summary_roundtrip`."""
+
+    model_config = {"extra": "forbid"}
+
+    outcome_status: str
 
 
 def _validate_key_shape(value: str, *, field_name: str) -> str:
@@ -252,6 +297,26 @@ def _receipt_json(receipt: InferenceReceipt) -> dict[str, Any]:
         "attributes": receipt.attributes,
         "total_latency_ms": receipt.total_latency_ms,
         "retry_count": receipt.retry_count,
+    }
+
+
+def _work_summary_json(summary: WorkSummary) -> dict[str, Any]:
+    return {
+        "work_id": summary.work_id,
+        "outcome_status": summary.outcome_status,
+        "outcome_recorded_at": (
+            summary.outcome_recorded_at.isoformat() if summary.outcome_recorded_at else None
+        ),
+        "started_at": summary.started_at.isoformat() if summary.started_at else None,
+        "ended_at": summary.ended_at.isoformat() if summary.ended_at else None,
+        "receipt_count": summary.receipt_count,
+        "known_attributed_inference_cost_usd": (
+            str(summary.known_attributed_inference_cost_usd)
+            if summary.known_attributed_inference_cost_usd is not None
+            else None
+        ),
+        "unknown_cost_count": summary.unknown_cost_count,
+        "inference_status": summary.inference_status,
     }
 
 
@@ -518,6 +583,119 @@ def create_app(data_dir: Path) -> FastAPI:
             "offset": offset,
         }
 
+    @app.post("/v1/work/{work_id}/outcome")
+    async def record_work_outcome(
+        work_id: str,
+        body: OutcomeRequest,
+        tenant: Tenant = _require_auth,
+    ) -> dict[str, Any]:
+        """Declares a customer-defined outcome for `work_id` -- the hosted
+        equivalent of `inferrail work outcome`. Reuses
+        `inferrail.work.builder.append_outcome`/`WorkOutcomeRecord`
+        directly (same append-only JSONL sink shape the local CLI
+        writes), so the aggregation semantics (last-appended-wins,
+        evidence never overwritten) are identical, not reimplemented."""
+        stores = _stores_for(tenant)
+        if not body.outcome_status.strip():
+            raise HTTPException(status_code=422, detail="outcome_status must not be empty")
+        record = WorkOutcomeRecord(
+            work_id=work_id, outcome_status=body.outcome_status, recorded_at=datetime.now(UTC)
+        )
+        append_outcome(stores.outcomes_path, record)
+        return {"work_id": work_id, "outcome_status": record.outcome_status}
+
+    @app.get("/v1/work/{work_id}")
+    async def get_work_summary(
+        work_id: str, tenant: Tenant = _require_auth
+    ) -> dict[str, Any]:
+        """Hosted equivalent of `inferrail work <work_id>`: receipts
+        sharing this `work_id` (via the `X-Inferrail-Attribute-Work-Id`
+        header, exactly as self-hosted) joined with the latest declared
+        outcome for it. Reuses `inferrail.work.builder.build_work_summary`
+        unmodified."""
+        stores = _stores_for(tenant)
+        receipts = stores.receipts.query(work_id=work_id)
+        outcomes, _skipped = load_outcomes(stores.outcomes_path)
+        matching_outcomes = [o for o in outcomes if o.work_id == work_id]
+        summary = build_work_summary(work_id, receipts, matching_outcomes)
+        if summary is None:
+            raise HTTPException(status_code=404, detail=f"no work found for work_id={work_id!r}")
+        return _work_summary_json(summary)
+
+    @app.get("/v1/work")
+    async def list_work_summaries(tenant: Tenant = _require_auth) -> dict[str, Any]:
+        """Hosted equivalent of `inferrail work --all`."""
+        stores = _stores_for(tenant)
+        receipts = stores.receipts.query()
+        outcomes, _skipped = load_outcomes(stores.outcomes_path)
+        summaries = aggregate_work_summaries(receipts, outcomes)
+        return {"work": [_work_summary_json(s) for s in summaries]}
+
+    @app.get("/v1/transaction/{task_id}")
+    async def get_transaction(
+        task_id: str, attribute_name: str = "task_id", tenant: Tenant = _require_auth
+    ) -> dict[str, Any]:
+        """Hosted equivalent of `inferrail transaction <task_id>`: every
+        receipt sharing one attribution-attribute value (default
+        `task_id`, same as the CLI), aggregated into one
+        `TaskTransaction`. Reuses
+        `inferrail.transactions.builder.build_transaction` unmodified."""
+        stores = _stores_for(tenant)
+        receipts = stores.receipts.query()
+        transaction = build_transaction(task_id, receipts, attribute_name=attribute_name)
+        if transaction is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no receipts found with {attribute_name}={task_id!r}",
+            )
+        return {
+            "transaction_id": transaction.transaction_id,
+            "task_id": transaction.task_id,
+            "events": [
+                {
+                    "event_type": e.event_type,
+                    "event_id": e.event_id,
+                    "cost_usd": str(e.cost_usd) if e.cost_usd is not None else None,
+                    "status": e.status,
+                }
+                for e in transaction.events
+            ],
+            "known_total_cost_usd": str(transaction.known_total_cost_usd),
+            "unknown_cost_event_count": transaction.unknown_cost_event_count,
+            "status": transaction.status,
+            "started_at": transaction.started_at.isoformat(),
+            "ended_at": transaction.ended_at.isoformat(),
+        }
+
+    @app.get("/v1/report")
+    async def report(by: str, tenant: Tenant = _require_auth) -> dict[str, Any]:
+        """Hosted equivalent of `inferrail report --by <attribute>`:
+        groups every receipt by `attributes.get(by)` (receipts missing
+        that attribute are grouped under `"(unattributed)"`, the same
+        label the CLI uses) and summarizes each group's known cost via
+        `inferrail.receipts.aggregation.summarize_receipts` -- the same
+        primitive `inferrail work`/`inferrail transaction` build on, so
+        every rollup surface in this service agrees on one definition of
+        "known cost"."""
+        stores = _stores_for(tenant)
+        receipts = stores.receipts.query()
+        groups: dict[str, list[InferenceReceipt]] = {}
+        for r in receipts:
+            groups.setdefault(r.attributes.get(by, "(unattributed)"), []).append(r)
+        rows = []
+        for key in sorted(groups):
+            economics = summarize_receipts(groups[key])
+            rows.append(
+                {
+                    "group": key,
+                    "receipt_count": len(groups[key]),
+                    "known_cost_usd": str(economics.known_cost_usd),
+                    "unknown_cost_count": economics.unknown_cost_count,
+                    "status": economics.status,
+                }
+            )
+        return {"by": by, "rows": rows}
+
     @app.post("/v1/demo/chat/completions")
     async def demo_chat_completions(
         payload: ChatCompletionRequest,
@@ -586,6 +764,7 @@ def create_app(data_dir: Path) -> FastAPI:
             api_key=api_key,
             base_url="https://api.openai.com/v1",
             is_verified_openai=True,
+            client=openai_client_factory(),
         )
         router = Router(routes={}, default_provider="openai")
         engine = InferenceEngine(
@@ -623,7 +802,10 @@ def create_app(data_dir: Path) -> FastAPI:
         stores = _stores_for(tenant)
         api_key = _require_anthropic_key(tenant)
         provider = AnthropicProvider(
-            name="anthropic", api_key=api_key, base_url="https://api.anthropic.com/v1"
+            name="anthropic",
+            api_key=api_key,
+            base_url="https://api.anthropic.com/v1",
+            client=anthropic_client_factory(),
         )
         router = Router(routes={}, default_provider="anthropic")
         engine = AnthropicInferenceEngine(
