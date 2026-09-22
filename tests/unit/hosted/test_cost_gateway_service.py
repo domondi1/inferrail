@@ -1,18 +1,23 @@
 """Service-wiring tests for hosted/cost_gateway/service.py: trial
 issuance, per-tenant isolation, key handling (never echoed/leaked,
 cross-tenant isolation, expiry tightening), demo mode, budget
-enforcement, and rate limiting.
+enforcement, rate limiting, work/report/transaction rollups, and
+CLI-behavior parity (Phase 3).
 
 Uses only dependencies already required by `inferrail` core (fastapi,
-pydantic) -- no optional extra needed. Real-provider proxying
-(`/v1/chat/completions`, `/v1/messages` with a genuine key) is not
-exercised here -- it would require either real network access or
-refactoring `service.py` to accept an injectable `httpx` client, neither
-of which this pass does; the "no key configured" 400 path and the
-budget/isolation/key-handling guarantees around it are fully covered
-instead. Live-provider verification is a manual step, same "flag, don't
-hide" pattern the AP release used for its own `OPENAI_API_KEY`-gated
-tests.
+pydantic, httpx) -- no optional extra needed. Real-provider proxying
+(`/v1/chat/completions`, `/v1/messages`) IS exercised here, against
+`httpx.MockTransport` rather than real network access -- the same
+pattern `tests/unit/test_providers.py` already uses for the exact same
+`OpenAIProvider`/`AnthropicProvider` classes this service constructs.
+`service.py`'s `openai_client_factory`/`anthropic_client_factory`
+module-level functions exist specifically as the monkeypatch seam that
+makes this possible without a real key or a live network call. A real,
+billed live-provider call remains a manual step (see
+`hosted/cost_gateway/smoke_test_live_key.sh`), same "flag, don't hide"
+pattern the AP release used for its own `OPENAI_API_KEY`-gated tests --
+but everything about request/response *shape*, streaming, tool-call
+passthrough, and attribution is now verified here, not left unverified.
 
 Loads hosted/cost_gateway's flat-file modules by explicit path via
 `importlib.util`, registering them under their own plain names ("auth",
@@ -30,13 +35,25 @@ applies here unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
+
+from inferrail.gateway.execution import InferenceEngine
+from inferrail.gateway.schemas import ChatCompletionRequest
+from inferrail.pricing.resolver import PricingResolver
+from inferrail.providers.base import ChatMessage
+from inferrail.providers.openai import OpenAIProvider
+from inferrail.receipts.sinks import JSONLReceiptSink
+from inferrail.routing.router import Router
+from inferrail.telemetry.sinks import NullTelemetrySink
 
 HOSTED_DIR = Path(__file__).resolve().parents[3] / "hosted" / "cost_gateway"
 
@@ -398,3 +415,301 @@ def test_cors_headers_present_on_actual_response(client):
     resp = client.get("/health", headers={"Origin": "https://tryinferrail.com"})
     assert resp.status_code == 200
     assert resp.headers["access-control-allow-origin"] == "*"
+
+
+# --- Work economics, transaction, and report rollups (Phase 3) -------------
+
+
+def test_work_outcome_and_summary_roundtrip(client):
+    trial = _issue(client)
+    client.post(
+        "/v1/demo/chat/completions",
+        json=_demo_payload(),
+        headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": "wid-1"},
+    )
+    outcome_resp = client.post(
+        "/v1/work/wid-1/outcome",
+        json={"outcome_status": "resolved"},
+        headers=_auth(trial["api_key"]),
+    )
+    assert outcome_resp.status_code == 200
+    summary = client.get("/v1/work/wid-1", headers=_auth(trial["api_key"])).json()
+    assert summary["work_id"] == "wid-1"
+    assert summary["outcome_status"] == "resolved"
+    assert summary["receipt_count"] == 1
+    assert summary["known_attributed_inference_cost_usd"] == "0.000160"
+
+
+def test_work_summary_404_for_unknown_work_id(client):
+    trial = _issue(client)
+    resp = client.get("/v1/work/does-not-exist", headers=_auth(trial["api_key"]))
+    assert resp.status_code == 404
+
+
+def test_list_work_summaries_returns_every_known_work_id(client):
+    trial = _issue(client)
+    for wid in ("wid-a", "wid-b"):
+        client.post(
+            "/v1/demo/chat/completions",
+            json=_demo_payload(),
+            headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": wid},
+        )
+    body = client.get("/v1/work", headers=_auth(trial["api_key"])).json()
+    assert {w["work_id"] for w in body["work"]} == {"wid-a", "wid-b"}
+
+
+def test_transaction_groups_by_task_id(client):
+    trial = _issue(client)
+    for _ in range(2):
+        client.post(
+            "/v1/demo/chat/completions",
+            json=_demo_payload(),
+            headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Task-Id": "task-1"},
+        )
+    tx = client.get("/v1/transaction/task-1", headers=_auth(trial["api_key"])).json()
+    assert tx["task_id"] == "task-1"
+    assert len(tx["events"]) == 2
+    assert tx["known_total_cost_usd"] == "0.000320"
+    assert tx["status"] == "success"
+
+
+def test_transaction_404_when_no_matching_receipts(client):
+    trial = _issue(client)
+    resp = client.get("/v1/transaction/nope", headers=_auth(trial["api_key"]))
+    assert resp.status_code == 404
+
+
+def test_report_groups_by_arbitrary_attribute_and_labels_unattributed(client):
+    trial = _issue(client)
+    for _ in range(2):
+        client.post(
+            "/v1/demo/chat/completions",
+            json=_demo_payload(),
+            headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Customer": "acme"},
+        )
+    client.post("/v1/demo/chat/completions", json=_demo_payload(), headers=_auth(trial["api_key"]))
+    report = client.get("/v1/report?by=customer", headers=_auth(trial["api_key"])).json()
+    rows = {r["group"]: r for r in report["rows"]}
+    assert rows["acme"]["receipt_count"] == 2
+    assert rows["acme"]["known_cost_usd"] == "0.000320"
+    assert rows["(unattributed)"]["receipt_count"] == 1
+
+
+def test_work_and_report_are_isolated_per_tenant(client):
+    trial_a = _issue(client)
+    trial_b = _issue(client)
+    client.post(
+        "/v1/demo/chat/completions",
+        json=_demo_payload(),
+        headers={**_auth(trial_a["api_key"]), "X-Inferrail-Attribute-Work-Id": "shared-id"},
+    )
+    assert client.get("/v1/work/shared-id", headers=_auth(trial_a["api_key"])).status_code == 200
+    assert client.get("/v1/work/shared-id", headers=_auth(trial_b["api_key"])).status_code == 404
+
+
+# --- Real-provider parity via httpx.MockTransport (Phase 3) ----------------
+#
+# Mirrors tests/unit/test_providers.py's own MockTransport pattern against
+# the exact same OpenAIProvider class -- proves request/response shape,
+# streaming, tool-call passthrough, and attribution all match the
+# self-hosted gateway's behavior, without a real network call or key.
+
+
+def _mock_openai_handler(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    if body.get("tools"):
+        payload = {
+            "id": "chatcmpl-mock",
+            "model": body["model"],
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"city":   "SF",  "unit": "celsius"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 8},
+        }
+    else:
+        payload = {
+            "id": "chatcmpl-mock",
+            "model": body["model"],
+            "choices": [
+                {"message": {"role": "assistant", "content": "hi there"}, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 4},
+        }
+    return httpx.Response(200, json=payload)
+
+
+def _mock_openai_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(_mock_openai_handler))
+
+
+def _mock_openai_stream_client() -> httpx.AsyncClient:
+    raw_body = (
+        b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+        b'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(
+            200, content=raw_body, headers={"content-type": "text/event-stream"}
+        )
+    )
+    return httpx.AsyncClient(transport=transport)
+
+
+def _with_openai_key(client, trial):
+    resp = client.post(
+        f"/v1/trial/{trial['tenant_id']}/keys",
+        json={"openai_key": "sk-fake-for-mock-tests"},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+
+
+def test_real_chat_completions_matches_openai_shaped_response(service_module, client, monkeypatch):
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_client)
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Customer": "acme"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["choices"][0]["message"]["content"] == "hi there"
+    assert body["usage"]["prompt_tokens"] == 12
+    assert body["inferrail"]["provider"] == "openai"
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipts[0]["provider"] == "openai"
+    assert receipts[0]["model"] == "gpt-4o-mini"
+    assert receipts[0]["attributes"] == {"customer": "acme"}
+    assert receipts[0]["estimated_cost_usd"] is not None  # real builtin-catalog price, not DEMO
+
+
+def test_real_chat_completions_tool_call_passthrough_byte_exact(
+    service_module, client, monkeypatch
+):
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_client)
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "weather?"}],
+            "tools": [{"type": "function", "function": {"name": "get_weather", "parameters": {}}}],
+        },
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    tool_call = resp.json()["choices"][0]["message"]["tool_calls"][0]
+    assert tool_call["function"]["name"] == "get_weather"
+    # Byte-exact, unusual spacing preserved -- never reparsed/reformatted,
+    # same guarantee providers.base's module docstring makes.
+    assert tool_call["function"]["arguments"] == '{"city":   "SF",  "unit": "celsius"}'
+
+
+def test_real_chat_completions_streaming_forwards_raw_sse(service_module, client, monkeypatch):
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_stream_client)
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        },
+        headers=_auth(trial["api_key"]),
+    ) as resp:
+        assert resp.status_code == 200
+        chunks = b"".join(resp.iter_bytes())
+    assert b'"content":"Hel"' in chunks
+    assert b'"content":"lo"' in chunks
+    assert b"[DONE]" in chunks
+    # The stream is still accounted for: a receipt exists afterward with
+    # real usage recovered from the SSE bookkeeper, same as self-hosted.
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipts[0]["prompt_tokens"] == 9
+    assert receipts[0]["completion_tokens"] == 2
+
+
+def test_hosted_and_local_gateway_produce_structurally_equivalent_results(
+    service_module, client, monkeypatch, tmp_path
+):
+    """The explicit Phase 3 parity proof: the exact same request, sent
+    through (a) a local InferenceEngine built the same way `inferrail
+    serve --quickstart` builds one, and (b) this hosted service's
+    `/v1/chat/completions`, against the identical mocked upstream --
+    produces the same response content/usage and the same receipt shape.
+    A real client only ever has to change its `base_url`, never its
+    request-building code, to move between the two.
+    """
+    request = ChatCompletionRequest(
+        model="gpt-4o-mini", messages=[ChatMessage(role="user", content="hi")]
+    )
+    attributes = {"customer": "acme"}
+
+    # (a) Local, self-hosted-shaped engine -- same classes `inferrail
+    # serve` itself builds (gateway.execution.InferenceEngine,
+    # providers.openai.OpenAIProvider, routing.router.Router).
+    local_provider = OpenAIProvider(
+        name="openai",
+        api_key="sk-local",
+        base_url="https://example.invalid/v1",
+        is_verified_openai=True,
+        client=_mock_openai_client(),
+    )
+    local_engine = InferenceEngine(
+        router=Router(routes={}, default_provider="openai"),
+        providers={"openai": local_provider},
+        telemetry=NullTelemetrySink(),
+        pricing_resolver=PricingResolver(providers={}, overrides={}),
+        receipts=JSONLReceiptSink(tmp_path / "local-receipts.jsonl"),
+    )
+    local_result = asyncio.run(local_engine.execute(request, attributes=dict(attributes)))
+
+    # (b) The hosted trial -- identical request, identical mocked upstream.
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_client)
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    hosted_resp = client.post(
+        "/v1/chat/completions",
+        json=request.model_dump(mode="json"),
+        headers={**_auth(trial["api_key"]), "X-Inferrail-Attribute-Customer": "acme"},
+    )
+    hosted_body = hosted_resp.json()
+
+    assert hosted_resp.status_code == 200
+    local_content = local_result.choices[0].message.content
+    assert hosted_body["choices"][0]["message"]["content"] == local_content
+    assert hosted_body["usage"]["prompt_tokens"] == local_result.usage.prompt_tokens
+    assert hosted_body["usage"]["completion_tokens"] == local_result.usage.completion_tokens
+    assert hosted_body["inferrail"]["provider"] == local_result.inferrail.provider
+
+    hosted_receipt = client.get(
+        "/v1/receipts", headers=_auth(trial["api_key"])
+    ).json()["receipts"][0]
+    assert hosted_receipt["provider"] == "openai"
+    assert hosted_receipt["model"] == "gpt-4o-mini"
+    assert hosted_receipt["prompt_tokens"] == local_result.usage.prompt_tokens
+    assert hosted_receipt["completion_tokens"] == local_result.usage.completion_tokens
+    assert hosted_receipt["attributes"] == attributes

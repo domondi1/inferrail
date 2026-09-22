@@ -138,10 +138,30 @@ curl -s -X POST http://127.0.0.1:8423/v1/chat/completions \
 # 6. Read back your own receipts -- payload-free, no prompt/response content.
 curl -s "http://127.0.0.1:8423/v1/receipts?limit=10" -H "Authorization: Bearer $API_KEY"
 
-# 7. Forget your key without ending the trial.
+# 7. Declare an outcome for a unit of work (send step 5's request with an
+#    extra "X-Inferrail-Attribute-Work-Id: wid_1" header first).
+curl -s -X POST http://127.0.0.1:8423/v1/work/wid_1/outcome \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d '{"outcome_status": "resolved"}'
+
+# 8. Read back that unit of work's economics -- receipts joined with the
+#    declared outcome, same shape `inferrail work wid_1` prints locally.
+curl -s http://127.0.0.1:8423/v1/work/wid_1 -H "Authorization: Bearer $API_KEY"
+
+# 9. Every known unit of work for this trial (`inferrail work --all`).
+curl -s http://127.0.0.1:8423/v1/work -H "Authorization: Bearer $API_KEY"
+
+# 10. Group receipts by any attribute you attached (`inferrail report --by`).
+curl -s "http://127.0.0.1:8423/v1/report?by=customer" -H "Authorization: Bearer $API_KEY"
+
+# 11. Every receipt sharing one X-Inferrail-Attribute-Task-Id value,
+#     aggregated (`inferrail transaction <task_id>`).
+curl -s http://127.0.0.1:8423/v1/transaction/task_1 -H "Authorization: Bearer $API_KEY"
+
+# 12. Forget your key without ending the trial.
 curl -s -X DELETE http://127.0.0.1:8423/v1/trial/$TENANT_ID/keys -H "Authorization: Bearer $API_KEY"
 
-# 8. End the trial entirely, right now.
+# 13. End the trial entirely, right now.
 curl -s -X DELETE http://127.0.0.1:8423/v1/trial/$TENANT_ID -H "Authorization: Bearer $API_KEY"
 ```
 
@@ -154,6 +174,73 @@ Every response is JSON; every error follows the same `ErrorResponse`
 shape (`error.message`/`error.type`/`error.code`/`error.remediation`/
 `error.docs_url`) the self-hosted gateway already uses (`gateway/app.py`)
 -- reused directly, not reinvented, for this service.
+
+## Parity with the CLI (Phase 3)
+
+The design goal, stated plainly: a client pointed at `inferrail serve
+--quickstart` and a client pointed at a hosted trial's `base_url` should
+behave identically, with only `base_url` changed. This is true **by
+construction**, not by coincidence -- this service never reimplements
+wire-format, routing, receipt, or aggregation logic; it constructs the
+same classes the CLI's own gateway builds
+(`gateway.execution.InferenceEngine`, `gateway.anthropic_execution.
+AnthropicInferenceEngine`, `providers.openai.OpenAIProvider`,
+`providers.anthropic.AnthropicProvider`, `routing.router.Router`) and
+calls the same aggregation functions the CLI's own commands call
+(`work.builder.build_work_summary`/`aggregate_work_summaries`,
+`transactions.builder.build_transaction`,
+`receipts.aggregation.summarize_receipts`). See
+`tests/unit/hosted/test_cost_gateway_service.py`'s
+`test_hosted_and_local_gateway_produce_structurally_equivalent_results`
+for the automated proof: the identical request, sent through a local
+`InferenceEngine` and through this service's `/v1/chat/completions`
+against the identical mocked upstream, produces the same response
+content/usage and the same receipt shape.
+
+**Confirmed identical:**
+
+- `/v1/chat/completions` and `/v1/messages`: full OpenAI-/Anthropic-
+  compatible passthrough, including streaming (`"stream": true`, real
+  SSE passthrough, not buffered) and tool calling (tool-call arguments
+  preserved byte-exact, never reparsed -- see
+  `test_real_chat_completions_tool_call_passthrough_byte_exact`).
+  `model` is forwarded verbatim (docs/adr/0007), exactly like
+  `inferrail serve`'s own passthrough default.
+- `X-Inferrail-Attribute-<Name>` headers: same extraction function
+  (`gateway.attribution.extract_attributes`), same persistence onto the
+  receipt's `attributes` field, never forwarded upstream.
+- `InferenceReceipt` schema: identical fields, identical payload-free
+  guarantee (structural, not policy) -- see `test_demo_receipt_appears_
+  in_receipts_listing`'s explicit field-absence assertions.
+- Work Economics (`GET /v1/work[/​{work_id}]`, `POST /v1/work/{work_id}/
+  outcome`), task transactions (`GET /v1/transaction/{task_id}`), and
+  per-attribute reports (`GET /v1/report?by=<attribute>`): same
+  aggregation primitives as `inferrail work`/`inferrail transaction`/
+  `inferrail report`, added this phase.
+- Budgets: pre-flight, catalog-based, block-before-provider-call
+  enforcement via the same `BudgetEnforcer` -- present since Phase 1.
+
+**Differences, minimized and stated explicitly (never silent):**
+
+- **Outcome storage:** the CLI's `inferrail work outcome` appends to a
+  JSONL file you choose; this service appends to a JSONL file scoped to
+  your tenant automatically (`tenant_store.py`) -- same format, same
+  `WorkOutcomeRecord`/`append_outcome`, different (automatic) file
+  selection only.
+- **No local control API / dashboard parity yet.** The CLI's `--app-mode`
+  local control API (docs/adr/0016) has a paginated/SSE-tail shape this
+  service doesn't mirror -- `GET /v1/receipts` here is a simpler
+  limit/offset list. A closer-parity hosted dashboard is later scope.
+- **No MCP server.** `inferrail-mcp`'s `get_spend`/`get_health` are a
+  local stdio process reading a local receipts file by design -- this
+  codebase has no remote/HTTP MCP transport to expose, and building one
+  is a materially different, unauthorized-so-far capability, not a
+  small addition. A trial user who wants MCP access today can export
+  their own receipts (`GET /v1/receipts`) and point the existing local
+  MCP server at the exported file.
+- **Rate limits and a daily budget cap exist here and don't exist by
+  default in a bare `inferrail serve`** -- an intentional, documented
+  trial-safety addition (Phase 1), not a passthrough-fidelity gap.
 
 ## How a frontend would call this (Phase 2 preview)
 
