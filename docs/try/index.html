@@ -173,12 +173,12 @@
     (() => {
       'use strict';
 
-      // Set this to the real deployed hosted/cost_gateway URL once it
-      // exists (see hosted/cost_gateway/README.md — no Inferrail-operated
-      // instance is deployed yet as of this page shipping). A `?base_url=`
-      // query param overrides this for local development/testing, e.g.
+      // hosted/cost_gateway deployed on Render's free tier, 2026-09-22 --
+      // see hosted/cost_gateway/README.md and ops notes for the deploy
+      // record. A `?base_url=` query param overrides this for local
+      // development/testing, e.g.
       // http://127.0.0.1:5500/docs/try/?base_url=http://127.0.0.1:8423
-      const DEFAULT_BASE_URL = 'https://cost-gateway.tryinferrail.com';
+      const DEFAULT_BASE_URL = 'https://inferrail-cost-gateway.onrender.com';
       const BASE_URL = (new URLSearchParams(location.search).get('base_url') || DEFAULT_BASE_URL).replace(/\/$/, '');
 
       const $ = (id) => document.getElementById(id);
