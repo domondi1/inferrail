@@ -90,7 +90,7 @@
       <p class="supporting-line">A hosted, isolated trial instance — demo receipts immediately, your own OpenAI or Anthropic key if you want a real one. Prefer to keep everything on your own machine instead? <a href="/#steps">Self-host it</a> — same receipt schema, zero trust required in any hosted process.</p>
       <div class="cta-wrap">
         <button class="button-primary" id="start-trial-btn" type="button">Try free — instant gateway</button>
-        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all.</p>
+        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all. First request after a quiet period may take up to a minute to wake up.</p>
       </div>
       <div class="error-banner hidden" id="unreachable-banner" role="alert">
         <strong>This hosted trial isn't reachable right now.</strong>
@@ -372,8 +372,16 @@
         const btn = $('start-trial-btn');
         btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
         $('unreachable-banner').classList.add('hidden');
+        // Free-tier hosting spins down when idle -- a cold start can take
+        // up to about a minute. Rather than let the button sit on a
+        // generic "setting up" message that starts to look stuck, say so
+        // plainly once it's taking longer than a normal warm request would.
+        const coldStartTimer = setTimeout(() => {
+          btn.textContent = 'Waking up the trial service (cold start, up to ~60s)…';
+        }, 4000);
         try {
           trial = await apiFetch('/v1/trial', { method: 'POST' });
+          clearTimeout(coldStartTimer);
           $('trial-panel').classList.remove('hidden');
           $('base-url-code').textContent = trial.base_url;
           $('trial-notice').textContent = trial.notice;
@@ -383,6 +391,7 @@
           btn.textContent = 'Gateway ready ✓';
           $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) {
+          clearTimeout(coldStartTimer);
           $('unreachable-banner').classList.remove('hidden');
           btn.disabled = false; btn.textContent = 'Try free — instant gateway';
         }
