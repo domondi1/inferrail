@@ -376,3 +376,25 @@ def test_daily_budget_blocks_demo_requests_when_exceeded(
     )
     assert resp.status_code == 402
     assert resp.json()["error"]["code"]
+
+
+# --- CORS (required for the Phase 2 browser-based frontend) ----------------
+
+
+def test_cors_preflight_allows_browser_frontend(client):
+    resp = client.options(
+        "/v1/trial",
+        headers={
+            "Origin": "https://tryinferrail.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"
+
+
+def test_cors_headers_present_on_actual_response(client):
+    resp = client.get("/health", headers={"Origin": "https://tryinferrail.com"})
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"

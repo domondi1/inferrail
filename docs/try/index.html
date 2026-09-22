@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Try Inferrail free — instant hosted gateway</title>
+  <meta name="description" content="Start a free, no-account Inferrail trial in your browser: a personal base_url, zero-key demo receipts immediately, and an optional real OpenAI/Anthropic key for a real payload-free receipt.">
+  <link rel="canonical" href="https://tryinferrail.com/try/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --good:#3E6B4F; }
+    * { box-sizing:border-box; }
+    html { background:var(--paper); scroll-behavior:smooth; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:clamp(15px,1.05vw,19px); line-height:1.55; }
+    a { color:inherit; }
+    a:focus-visible,button:focus-visible,input:focus-visible { outline:2px solid var(--stamp); outline-offset:3px; }
+    .wrap { width:100%; max-width:1040px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
+    .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); flex-wrap:wrap; gap:10px; }
+    .wordmark,.eyebrow,.button,.copy { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
+    .wordmark { font-size:clamp(16px,1.4vw,22px); }
+    .nav { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:clamp(10px,2.8vw,28px); font-size:clamp(13px,1vw,16px); }
+    .nav a { text-underline-offset:4px; }
+    .hero { padding:clamp(32px,4vw,64px) 0 clamp(20px,3vw,36px); text-align:center; }
+    h1,h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; line-height:1; letter-spacing:-.02em; text-transform:uppercase; }
+    h1 { font-size:clamp(30px,5.4vw,64px); max-width:24ch; margin:0 auto; }
+    .tagline-2 { display:block; color:var(--ink-2); }
+    .supporting-line { max-width:56ch; margin:clamp(14px,1.8vw,22px) auto 0; color:var(--ink-2); font-size:clamp(14px,1.1vw,19px); }
+    .cta-wrap { display:grid; justify-items:center; gap:12px; margin-top:clamp(22px,2.6vw,36px); }
+    .button-primary { display:inline-block; padding:clamp(16px,1.6vw,22px) clamp(34px,3.6vw,54px); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.1em; font-size:clamp(15px,1.4vw,20px); line-height:1; cursor:pointer; color:var(--paper); background:var(--stamp); border:1px solid var(--stamp); box-shadow:6px 6px 0 rgba(20,32,27,.14); }
+    .button-primary:hover:not(:disabled) { background:#8f2c22; }
+    .button-primary:disabled { opacity:.6; cursor:progress; }
+    .cta-hint { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
+    .card { max-width:100%; padding:clamp(20px,2.2vw,30px); margin-top:clamp(18px,2vw,26px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); text-align:left; }
+    .eyebrow { margin:0 0 8px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
+    .card h3 { margin:0 0 10px; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(17px,1.7vw,22px); font-weight:700; text-transform:uppercase; line-height:1.2; }
+    .card-copy { max-width:70ch; margin:0 0 14px; color:var(--ink-2); font-size:clamp(13.5px,1vw,16px); line-height:1.5; }
+    .install-wrap { margin:12px 0; }
+    .install { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:clamp(10px,1vw,14px); background:var(--ink); color:var(--paper); overflow-x:auto; }
+    .install code { font-family:inherit; font-size:clamp(11.5px,.92vw,14.5px); white-space:pre; }
+    .copy { flex:none; padding:5px 8px; color:var(--paper); background:transparent; border:1px solid var(--paper); font:500 clamp(10px,.7vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
+    .step-note { margin:6px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
+    .countdown-row { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:10px 14px; background:var(--bar); border:1px solid var(--rule); flex-wrap:wrap; }
+    .countdown-label { color:var(--ink-2); font-size:clamp(11px,.85vw,13px); text-transform:uppercase; letter-spacing:.08em; }
+    .countdown-value { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:clamp(16px,1.6vw,22px); font-variant-numeric:tabular-nums; }
+    .countdown-value.low { color:var(--stamp); }
+    .status-badge { display:inline-block; padding:3px 9px; font:700 clamp(10px,.75vw,12px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.1em; border:1px solid currentColor; }
+    .status-badge.demo { color:var(--ink-2); }
+    .status-badge.real { color:var(--good); }
+    .key-form { display:grid; gap:10px; margin:12px 0; }
+    .key-field { display:grid; gap:4px; }
+    .key-field label { font-size:clamp(11px,.85vw,13px); color:var(--ink-2); text-transform:uppercase; letter-spacing:.06em; }
+    .key-field input { font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); }
+    .key-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .button-ghost { display:inline-block; text-decoration:none; padding:9px 16px; font:700 clamp(12px,.9vw,14px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); background:transparent; border:1px solid var(--ink); cursor:pointer; }
+    .button-ghost:hover { background:var(--ink); color:var(--paper); }
+    .button-ghost:disabled { opacity:.5; cursor:not-allowed; }
+    .key-privacy-note { margin:2px 0 0; color:var(--ink-3); font-size:clamp(11px,.78vw,12.5px); line-height:1.5; }
+    .receipt-row { display:flex; justify-content:space-between; gap:18px; padding:4px 9px; font-size:clamp(13px,1vw,15px); }
+    .receipt-row:nth-of-type(even) { background:var(--bar); }
+    .receipt-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+    .budget-track { height:14px; background:var(--bar); border:1px solid var(--rule); margin:8px 0; overflow:hidden; }
+    .budget-fill { height:100%; background:var(--stamp); transition:width .3s ease; }
+    .feed-list { display:grid; gap:0; margin-top:10px; max-height:280px; overflow-y:auto; border:1px solid var(--rule); }
+    .feed-empty { padding:14px; color:var(--ink-3); font-size:13px; text-align:center; }
+    .error-banner { margin-top:16px; padding:14px 16px; background:#fff; border:1px solid var(--stamp); color:var(--ink); }
+    .error-banner strong { color:var(--stamp); }
+    .hidden { display:none !important; }
+    .section-break { height:4px; margin:clamp(28px,4vw,52px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
+    footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; margin-top:clamp(40px,5vw,72px); border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
+    footer nav { display:flex; flex-wrap:wrap; gap:18px; }
+    @media (max-width:600px) { .masthead{min-height:58px} footer{display:block} footer nav{margin-top:10px} .install code{white-space:pre-wrap; word-break:break-word} }
+  </style>
+</head>
+<body>
+  <header class="masthead wrap">
+    <a class="wordmark" href="/">Inferrail</a>
+    <nav class="nav" aria-label="Primary navigation">
+      <a href="/#steps">Self-hosted</a>
+      <a href="/#ap-hosted">Real job</a>
+      <a href="/try/" aria-current="page">Try free</a>
+      <a href="https://github.com/domondi1/inferrail">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title">Try Inferrail free.<span class="tagline-2">No account. Personal gateway in seconds.</span></h1>
+      <p class="supporting-line">A hosted, isolated trial instance — demo receipts immediately, your own OpenAI or Anthropic key if you want a real one. Prefer to keep everything on your own machine instead? <a href="/#steps">Self-host it</a> — same receipt schema, zero trust required in any hosted process.</p>
+      <div class="cta-wrap">
+        <button class="button-primary" id="start-trial-btn" type="button">Try free — instant gateway</button>
+        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all.</p>
+      </div>
+      <div class="error-banner hidden" id="unreachable-banner" role="alert">
+        <strong>This hosted trial isn't reachable right now.</strong>
+        <p class="card-copy" style="margin-top:8px">Either it hasn't been deployed yet, or this instance is temporarily unavailable. Nothing is broken on your end — <a href="/#steps">self-host Inferrail instead</a> (<code>pip install inferrail &amp;&amp; inferrail serve --quickstart</code>), or try again shortly.</p>
+      </div>
+    </section>
+
+    <section class="card hidden" id="trial-panel" aria-labelledby="trial-panel-title">
+      <p class="eyebrow" id="trial-panel-title">Your personal gateway</p>
+      <div class="countdown-row">
+        <span class="countdown-label">Deletes in</span>
+        <span class="countdown-value" id="countdown-value">--:--:--</span>
+        <span class="status-badge demo" id="mode-badge">Demo mode</span>
+      </div>
+      <p class="step-note" id="trial-notice"></p>
+
+      <div class="install-wrap">
+        <div class="install"><code id="base-url-code"></code><button class="copy" type="button" data-copy-target="base-url-code">Copy</button></div>
+        <p class="step-note">Your personal <code>base_url</code> — point any OpenAI- or Anthropic-compatible client at it.</p>
+      </div>
+
+      <h3 style="margin-top:20px">Send a test request</h3>
+      <p class="card-copy">Zero-key demo mode always works. Add a real key below to test with your own account instead.</p>
+      <div class="key-actions">
+        <button class="button-ghost" id="send-demo-btn" type="button">Send a demo request</button>
+        <button class="button-ghost hidden" id="send-real-btn" type="button">Send a real request (your key)</button>
+      </div>
+      <div id="test-result"></div>
+
+      <h3 style="margin-top:24px">Optional: add your own key</h3>
+      <p class="card-copy">Held in this server's memory only for the life of this trial (at most 4 hours from when you add it) — never written to disk, never logged, never included in any receipt. Skip this entirely and stay in demo mode if you'd rather not.</p>
+      <form class="key-form" id="key-form">
+        <div class="key-field">
+          <label for="openai-key-input">OpenAI API key (optional)</label>
+          <input type="password" id="openai-key-input" autocomplete="off" placeholder="sk-...">
+        </div>
+        <div class="key-field">
+          <label for="anthropic-key-input">Anthropic API key (optional)</label>
+          <input type="password" id="anthropic-key-input" autocomplete="off" placeholder="sk-ant-...">
+        </div>
+        <div class="key-actions">
+          <button class="button-ghost" type="submit" id="submit-keys-btn">Add key(s)</button>
+          <button class="button-ghost" type="button" id="forget-keys-btn">Forget stored key(s)</button>
+        </div>
+        <p class="key-privacy-note">Your key never leaves your control except to proxy your own requests to the provider you gave it for — Inferrail never uses it for anything else, and this trial (and the key) is deleted automatically within 4 hours of adding it. Prefer never handing a key to any hosted process at all? <a href="/#steps">Self-host instead</a> — that's the zero-custody option.</p>
+      </form>
+      <p id="key-status" class="step-note"></p>
+
+      <h3 style="margin-top:24px">Copy-paste into your own code</h3>
+      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">curl</p><div class="install"><code id="snippet-curl"></code><button class="copy" type="button" data-copy-target="snippet-curl">Copy</button></div></div>
+      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">OpenAI Python SDK</p><div class="install"><code id="snippet-openai-py"></code><button class="copy" type="button" data-copy-target="snippet-openai-py">Copy</button></div></div>
+      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">Anthropic Python SDK</p><div class="install"><code id="snippet-anthropic-py"></code><button class="copy" type="button" data-copy-target="snippet-anthropic-py">Copy</button></div></div>
+      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">LangChain (ChatOpenAI)</p><div class="install"><code id="snippet-langchain"></code><button class="copy" type="button" data-copy-target="snippet-langchain">Copy</button></div></div>
+      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">Plain fetch</p><div class="install"><code id="snippet-fetch"></code><button class="copy" type="button" data-copy-target="snippet-fetch">Copy</button></div></div>
+
+      <h3 style="margin-top:24px">Live feed</h3>
+      <p class="card-copy">Every receipt this trial has produced — payload-free: counts, cost, and whatever attribution you attached, never a prompt or response.</p>
+      <div class="feed-list" id="feed-list"><div class="feed-empty">No receipts yet — send a test request above.</div></div>
+
+      <h3 style="margin-top:24px">Budget burn</h3>
+      <div class="receipt-row"><span>Spent today</span><span id="budget-spent">$0.00</span></div>
+      <div class="budget-track"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
+      <div class="receipt-row"><span>Daily cap (this trial)</span><span id="budget-cap">$1.00</span></div>
+
+      <p class="key-privacy-note" style="margin-top:18px">Done exploring? <button class="copy" type="button" id="end-trial-btn" style="color:var(--ink);border-color:var(--ink)">End trial now and delete everything</button></p>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <span>Inferrail — know what your AI work costs, without keeping what it said</span>
+    <nav aria-label="Footer navigation">
+      <a href="/">Home</a>
+      <a href="https://github.com/domondi1/inferrail">GitHub</a>
+      <a href="https://github.com/domondi1/inferrail/blob/main/hosted/cost_gateway/README.md">How this trial works</a>
+      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
+    </nav>
+  </footer>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // Set this to the real deployed hosted/cost_gateway URL once it
+      // exists (see hosted/cost_gateway/README.md — no Inferrail-operated
+      // instance is deployed yet as of this page shipping). A `?base_url=`
+      // query param overrides this for local development/testing, e.g.
+      // http://127.0.0.1:5500/docs/try/?base_url=http://127.0.0.1:8423
+      const DEFAULT_BASE_URL = 'https://cost-gateway.tryinferrail.com';
+      const BASE_URL = (new URLSearchParams(location.search).get('base_url') || DEFAULT_BASE_URL).replace(/\/$/, '');
+
+      const $ = (id) => document.getElementById(id);
+      const copyToClipboard = async (text) => {
+        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
+        const area = document.createElement('textarea');
+        area.value = text; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0';
+        document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+      };
+
+      let trial = null; // { tenant_id, api_key, base_url, expires_at, ... }
+      let countdownTimer = null;
+      let pollTimer = null;
+
+      async function apiFetch(path, options) {
+        const res = await fetch(BASE_URL + path, options);
+        let body = null;
+        try { body = await res.json(); } catch (_e) { /* no body */ }
+        if (!res.ok) {
+          const message = (body && body.detail) || (body && body.error && body.error.message) || res.statusText;
+          throw new Error(message);
+        }
+        return body;
+      }
+
+      function authHeaders() {
+        return { Authorization: 'Bearer ' + trial.api_key, 'Content-Type': 'application/json' };
+      }
+
+      function fmtSeconds(total) {
+        total = Math.max(0, Math.round(total));
+        const h = String(Math.floor(total / 3600)).padStart(2, '0');
+        const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+        const s = String(total % 60).padStart(2, '0');
+        return h + ':' + m + ':' + s;
+      }
+
+      function renderSnippets() {
+        const url = trial.base_url, key = trial.api_key;
+        $('snippet-curl').textContent = `curl -s -X POST ${url}/v1/demo/chat/completions \\\n  -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" \\\n  -d '{"model": "default", "messages": [{"role": "user", "content": "hello"}]}'`;
+        $('snippet-openai-py').textContent = `from openai import OpenAI\nclient = OpenAI(base_url="${url}/v1", api_key="${key}")\nclient.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": "hello"}])`;
+        $('snippet-anthropic-py').textContent = `import anthropic\nclient = anthropic.Anthropic(base_url="${url}", api_key="${key}")\nclient.messages.create(model="claude-3-5-haiku-20241022", max_tokens=256, messages=[{"role": "user", "content": "hello"}])`;
+        $('snippet-langchain').textContent = `from langchain_openai import ChatOpenAI\nllm = ChatOpenAI(base_url="${url}/v1", api_key="${key}", model="gpt-4o-mini")\nllm.invoke("hello")`;
+        $('snippet-fetch').textContent = `fetch("${url}/v1/demo/chat/completions", {\n  method: "POST",\n  headers: { Authorization: "Bearer ${key}", "Content-Type": "application/json" },\n  body: JSON.stringify({ model: "default", messages: [{ role: "user", content: "hello" }] }),\n})`;
+      }
+
+      function renderModeBadge() {
+        const badge = $('mode-badge');
+        if (trial.mode === 'real_key') { badge.textContent = 'Real-key mode'; badge.classList.remove('demo'); badge.classList.add('real'); }
+        else { badge.textContent = 'Demo mode'; badge.classList.add('demo'); badge.classList.remove('real'); }
+      }
+
+      function renderKeyStatus() {
+        const parts = [];
+        if (trial.openai_configured) parts.push('OpenAI key configured');
+        if (trial.anthropic_configured) parts.push('Anthropic key configured');
+        $('key-status').textContent = parts.length ? parts.join(' · ') : 'No key configured yet — demo mode only.';
+        $('send-real-btn').classList.toggle('hidden', !(trial.openai_configured || trial.anthropic_configured));
+      }
+
+      function renderBudget() {
+        const spent = parseFloat(trial.spent_today_usd || '0');
+        const cap = parseFloat(trial.daily_budget_usd || '1');
+        $('budget-spent').textContent = '$' + spent.toFixed(6);
+        $('budget-cap').textContent = '$' + cap.toFixed(2);
+        $('budget-fill').style.width = Math.min(100, (spent / cap) * 100).toFixed(1) + '%';
+      }
+
+      function tickCountdown() {
+        if (!trial) return;
+        const remaining = (new Date(trial.expires_at).getTime() - Date.now()) / 1000;
+        const el = $('countdown-value');
+        el.textContent = fmtSeconds(remaining);
+        el.classList.toggle('low', remaining < 600);
+        if (remaining <= 0) {
+          clearInterval(countdownTimer); clearInterval(pollTimer);
+          $('trial-notice').textContent = 'This trial has expired and its data has been deleted. Start a new one above.';
+        }
+      }
+
+      async function refreshStatus() {
+        try {
+          const status = await apiFetch(`/v1/trial/${trial.tenant_id}`, { headers: authHeaders() });
+          trial = Object.assign(trial, status);
+          renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
+        } catch (e) { /* transient poll failure -- next tick retries, nothing to show the user for one miss */ }
+      }
+
+      async function refreshReceipts() {
+        try {
+          const page = await apiFetch('/v1/receipts?limit=20', { headers: authHeaders() });
+          const list = $('feed-list');
+          if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet — send a test request above.</div>'; return; }
+          list.innerHTML = page.receipts.slice().reverse().map((r) => `
+            <div class="receipt-row"><span>${r.provider} / ${r.model}</span><span>${r.status}</span></div>
+            <div class="receipt-row"><span>${r.prompt_tokens ?? '?'} in / ${r.completion_tokens ?? '?'} out</span><span>${r.estimated_cost_usd !== null ? '$' + r.estimated_cost_usd : 'unknown'}</span></div>
+          `).join('');
+        } catch (e) { /* transient poll failure */ }
+      }
+
+      function startPolling() {
+        clearInterval(countdownTimer); clearInterval(pollTimer);
+        countdownTimer = setInterval(tickCountdown, 1000);
+        pollTimer = setInterval(() => { refreshStatus(); refreshReceipts(); }, 5000);
+        tickCountdown();
+      }
+
+      function renderReceiptResult(label, response) {
+        const meta = response.inferrail || {};
+        $('test-result').innerHTML = `
+          <div class="card" style="margin-top:12px">
+            <p class="eyebrow">${label}</p>
+            <div class="receipt-row"><span>reply</span><span style="text-align:left">${(response.choices && response.choices[0] && response.choices[0].message.content) || '(no content)'}</span></div>
+            <div class="receipt-row"><span>provider / model</span><span>${meta.provider || '?'} / ${response.model || '?'}</span></div>
+            <div class="receipt-row"><span>tokens (prompt / completion)</span><span>${(response.usage && response.usage.prompt_tokens) ?? '?'} / ${(response.usage && response.usage.completion_tokens) ?? '?'}</span></div>
+            <div class="receipt-row"><span>latency</span><span>${meta.total_latency_ms ? meta.total_latency_ms.toFixed(0) + ' ms' : '?'}</span></div>
+          </div>`;
+      }
+
+      async function sendDemoRequest() {
+        try {
+          const response = await apiFetch('/v1/demo/chat/completions', {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
+          });
+          renderReceiptResult('Demo receipt (DEMO-priced, no real key used)', response);
+          refreshReceipts(); refreshStatus();
+        } catch (e) { $('test-result').textContent = 'Demo request failed: ' + e.message; }
+      }
+
+      async function sendRealRequest() {
+        try {
+          let response, label;
+          if (trial.openai_configured) {
+            response = await apiFetch('/v1/chat/completions', {
+              method: 'POST', headers: authHeaders(),
+              body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
+            });
+            label = 'Real receipt — your OpenAI key';
+          } else {
+            response = await apiFetch('/v1/messages', {
+              method: 'POST', headers: authHeaders(),
+              body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 64, messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
+            });
+            label = 'Real receipt — your Anthropic key';
+            response = { choices: [{ message: { content: (response.content && response.content[0] && response.content[0].text) || '' } }], usage: { prompt_tokens: response.usage && response.usage.input_tokens, completion_tokens: response.usage && response.usage.output_tokens }, model: response.model, inferrail: response.inferrail };
+          }
+          renderReceiptResult(label, response);
+          refreshReceipts(); refreshStatus();
+        } catch (e) { $('test-result').textContent = 'Real request failed: ' + e.message; }
+      }
+
+      async function submitKeys(ev) {
+        ev.preventDefault();
+        const openai = $('openai-key-input').value.trim();
+        const anthropic = $('anthropic-key-input').value.trim();
+        if (!openai && !anthropic) { $('key-status').textContent = 'Enter at least one key first.'; return; }
+        try {
+          const body = {};
+          if (openai) body.openai_key = openai;
+          if (anthropic) body.anthropic_key = anthropic;
+          const status = await apiFetch(`/v1/trial/${trial.tenant_id}/keys`, {
+            method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
+          });
+          trial = Object.assign(trial, status);
+          $('openai-key-input').value = ''; $('anthropic-key-input').value = '';
+          renderModeBadge(); renderKeyStatus(); renderSnippets(); tickCountdown();
+        } catch (e) { $('key-status').textContent = 'Could not add key(s): ' + e.message; }
+      }
+
+      async function forgetKeys() {
+        try {
+          await apiFetch(`/v1/trial/${trial.tenant_id}/keys`, { method: 'DELETE', headers: authHeaders() });
+          trial.openai_configured = false; trial.anthropic_configured = false; trial.mode = 'demo';
+          renderModeBadge(); renderKeyStatus();
+        } catch (e) { $('key-status').textContent = 'Could not forget key(s): ' + e.message; }
+      }
+
+      async function endTrial() {
+        if (!confirm('End this trial and delete everything now?')) return;
+        try {
+          await apiFetch(`/v1/trial/${trial.tenant_id}`, { method: 'DELETE', headers: authHeaders() });
+          clearInterval(countdownTimer); clearInterval(pollTimer);
+          $('trial-panel').classList.add('hidden');
+          $('start-trial-btn').disabled = false; $('start-trial-btn').textContent = 'Try free — instant gateway';
+          $('start-trial-hint').textContent = 'Trial ended and deleted. Start a new one any time.';
+        } catch (e) { alert('Could not end trial: ' + e.message); }
+      }
+
+      async function startTrial() {
+        const btn = $('start-trial-btn');
+        btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
+        $('unreachable-banner').classList.add('hidden');
+        try {
+          trial = await apiFetch('/v1/trial', { method: 'POST' });
+          $('trial-panel').classList.remove('hidden');
+          $('base-url-code').textContent = trial.base_url;
+          $('trial-notice').textContent = trial.notice;
+          renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
+          startPolling();
+          $('start-trial-hint').textContent = 'Your gateway is ready below.';
+          btn.textContent = 'Gateway ready ✓';
+          $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+          $('unreachable-banner').classList.remove('hidden');
+          btn.disabled = false; btn.textContent = 'Try free — instant gateway';
+        }
+      }
+
+      $('start-trial-btn').addEventListener('click', startTrial);
+      $('send-demo-btn').addEventListener('click', sendDemoRequest);
+      $('send-real-btn').addEventListener('click', sendRealRequest);
+      $('key-form').addEventListener('submit', submitKeys);
+      $('forget-keys-btn').addEventListener('click', forgetKeys);
+      $('end-trial-btn').addEventListener('click', endTrial);
+      document.querySelectorAll('[data-copy-target]').forEach((btn) => {
+        const original = btn.textContent;
+        btn.addEventListener('click', async () => {
+          const code = document.getElementById(btn.getAttribute('data-copy-target'));
+          if (!code) return;
+          try { await copyToClipboard(code.textContent); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = original; }, 1600); }
+          catch { btn.textContent = 'Copy failed'; }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

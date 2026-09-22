@@ -60,6 +60,7 @@ from demo_provider import (
     demo_pricing_overrides,
 )
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from keys import KeyVault
 from pydantic import BaseModel
@@ -113,6 +114,23 @@ MAX_KEY_LENGTH = 4096
 constraint) so a too-long value is rejected without FastAPI's default
 validation-error response ever echoing it back -- see `SubmitKeysRequest`
 and `_validate_key_shape`."""
+
+
+def _cors_origins_from_env() -> list[str]:
+    """The Phase 2 website (tryinferrail.com, or a local static-file
+    server while developing it) calls this API directly from a browser,
+    which requires CORS. Defaults to `*` -- safe here specifically
+    because every route that reads or changes anything is gated on a
+    bearer token an attacker cannot obtain by getting a victim's browser
+    to make a cross-origin request (there is no cookie-based or
+    ambient-credential auth anywhere in this service for a permissive
+    CORS policy to expose). Narrow via `COST_GATEWAY_CORS_ORIGINS`
+    (comma-separated) for a production deployment that wants to restrict
+    this to its own known frontend origin(s)."""
+    raw = os.environ.get("COST_GATEWAY_CORS_ORIGINS", "*").strip()
+    if raw == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
@@ -256,6 +274,17 @@ async def _stream_and_close(inner: AsyncIterator[bytes], provider: Any) -> Async
 
 def create_app(data_dir: Path) -> FastAPI:
     app = FastAPI(title="Inferrail Cost Gateway", version="1")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins_from_env(),
+        allow_methods=["GET", "POST", "DELETE"],
+        # "*" rather than an exact allowlist: attribution headers are
+        # caller-named (X-Inferrail-Attribute-<anything>, see
+        # gateway.attribution), so a fixed header list can't cover them.
+        # Safe for the same reason allow_origins=* is safe here -- see
+        # `_cors_origins_from_env`'s docstring.
+        allow_headers=["*"],
+    )
     pricing_resolver = _shared_pricing_resolver()
     daily_budget_usd = Decimal(
         os.environ.get("COST_GATEWAY_DAILY_BUDGET_USD", str(DEFAULT_DAILY_BUDGET_USD))
