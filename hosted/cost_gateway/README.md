@@ -103,6 +103,7 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_DAILY_BUDGET_USD` | `1.00` | Each tenant's own daily spend cap, block mode -- enforced pre-flight before any real provider is ever called, via the same `BudgetEnforcer` `inferrail serve`'s budgets use. |
 | `COST_GATEWAY_REQUEST_TIMEOUT_SECONDS` | `120` | Whole-request timeout, including a streaming response's full duration -- see "Known limitations" below. |
 | `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. |
+| `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
 
 ## API contract
 
