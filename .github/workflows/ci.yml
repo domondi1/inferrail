@@ -124,6 +124,36 @@ jobs:
           pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
             tests/integration/test_ap_crash_recovery.py -v
 
+  cost-gateway:
+    # Dedicated job for the hosted Cost Gateway (self-serve trial), same
+    # reasoning as the `ap-exceptions` job above: lints/type-checks
+    # hosted/cost_gateway/, which is deliberately excluded from the main
+    # `mypy` invocation's package list, same as every other `hosted/*`
+    # service.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Install hosted/cost_gateway dependencies
+        run: pip install -r hosted/cost_gateway/requirements.txt
+
+      - name: Lint (ruff) -- hosted/cost_gateway, tests
+        run: |
+          ruff check hosted/cost_gateway tests/unit/hosted/test_cost_gateway_service.py
+
+      - name: Type-check (mypy) -- hosted/cost_gateway
+        run: mypy hosted/cost_gateway --strict --ignore-missing-imports
+
+      - name: Test -- Cost Gateway hosted-service tests
+        run: pytest tests/unit/hosted/test_cost_gateway_service.py -v
+
   usage-ping-collector:
     # hosted/usage_ping/ (docs/adr/0019) has zero dependency on the
     # `inferrail` package, so its tests already run in the main `test`

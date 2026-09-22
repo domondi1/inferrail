@@ -1,0 +1,8 @@
+# Minimal runtime dependencies for service.py's hosted deployment.
+# This service also imports the main `inferrail` package (gateway engines,
+# providers, receipts, budgets, pricing) -- install the repo itself
+# (`pip install -e .` from the repo root, or `pip install inferrail>=0.2.0`
+# once published) in addition to these.
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.5
