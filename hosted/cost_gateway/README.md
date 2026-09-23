@@ -104,6 +104,7 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_REQUEST_TIMEOUT_SECONDS` | `120` | Whole-request timeout, including a streaming response's full duration -- see "Known limitations" below. |
 | `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. |
 | `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
+| `COST_GATEWAY_ADMIN_TOKEN` | unset | Enables `GET /v1/admin/stats` and `GET /v1/admin/feedback` (usage counters + submitted feedback), gated on `Authorization: Bearer <this value>`. **Unset by default -- both routes return `404` (not `401`) until this is explicitly set**, so a deployment with no admin token configured reveals nothing about their existence. Generate a real secret yourself (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and set it as a platform secret; never commit it or share it with an assistant session. |
 
 ## API contract
 
@@ -251,6 +252,34 @@ immediately show `base_url` + a "send a test request" button wired to
 `POST /v1/trial/{tenant_id}/keys` for the optional real-key step, and a
 live countdown driven by polling `GET /v1/trial/{tenant_id}` (or, in a
 later phase, a push-based equivalent) for `seconds_remaining`.
+
+## Feedback and usage visibility (founder-facing)
+
+Every trial-authenticated visitor can `POST /v1/feedback` (free-text
+`message`, optional `contact`) -- surfaced in the "Try Free" page as a
+plain "Report an issue" form. Feedback is stored globally
+(`feedback.jsonl` in `COST_GATEWAY_DATA_DIR`), keyed by the reporting
+tenant but **not deleted when that tenant's trial ends or expires** --
+a bug report must outlive the trial that filed it.
+
+To see it yourself: set `COST_GATEWAY_ADMIN_TOKEN` (see the env var
+table above), then:
+
+```bash
+curl -s https://<your-deployment>/v1/admin/feedback -H "Authorization: Bearer <admin-token>"
+curl -s https://<your-deployment>/v1/admin/stats -H "Authorization: Bearer <admin-token>"
+```
+
+`/v1/admin/stats` reports `trials_issued_total` and `trials_live_now`.
+**Read honestly: this counts trials issued, not unique people** -- there
+is no account system yet (that's Phase 4 scope), so nothing here can
+tell one visitor starting two trials apart from two different visitors.
+Both counters are **process-local and reset on every restart/redeploy**
+-- not a durable historical record. If you want a real, persistent
+usage history across redeploys, that needs a small durable store (a
+SQLite counter file, same pattern as everything else in this service)
+-- not built yet; flagged here as the natural next step if this number
+starts mattering for real decisions.
 
 ## Known Phase 1 limitations, documented rather than hidden
 

@@ -46,7 +46,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
+import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -248,6 +250,19 @@ class OutcomeRequest(BaseModel):
     outcome_status: str
 
 
+class FeedbackRequest(BaseModel):
+    """Module-level for the same reason `OutcomeRequest` is -- see its
+    docstring."""
+
+    model_config = {"extra": "forbid"}
+
+    message: str
+    contact: str | None = None
+    """Optional -- an email or any other way the founder could reply.
+    Never required: a visitor can report a problem without identifying
+    themselves."""
+
+
 def _validate_key_shape(value: str, *, field_name: str) -> str:
     """Raises a generic `HTTPException` whose message never includes
     `value` -- the one place a malformed key could otherwise leak into an
@@ -320,6 +335,38 @@ def _work_summary_json(summary: WorkSummary) -> dict[str, Any]:
     }
 
 
+def _append_feedback(path: Path, record: dict[str, Any]) -> None:
+    """Appends one feedback record as a JSONL line -- a global file (not
+    per-tenant), so a report about a bug survives the trial that filed
+    it expiring or being ended; same append-only-file discipline as
+    `inferrail.work.builder.append_outcome`, reimplemented inline here
+    since the shape (free-text feedback, not a WorkOutcomeRecord) is
+    different enough not to share that function directly."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = (json.dumps(record) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
+def _read_feedback(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
 async def _stream_and_close(inner: AsyncIterator[bytes], provider: Any) -> AsyncIterator[bytes]:
     """Wraps a provider-backed streaming response so the ephemeral,
     per-request `Provider` (holding the tenant's real key in its own
@@ -359,6 +406,12 @@ def create_app(data_dir: Path) -> FastAPI:
     )
     key_vault = KeyVault()
     limiter: RateLimiter = rate_limiter_from_env()
+    feedback_path = data_dir / "feedback.jsonl"
+    # A global file, not per-tenant: unset by default. Admin routes are
+    # entirely disabled (404, not just unauthenticated) unless an
+    # operator explicitly sets this -- fail closed, never expose
+    # visitor feedback or usage counts with no auth configured.
+    admin_token = os.environ.get("COST_GATEWAY_ADMIN_TOKEN") or None
 
     def _on_purge(tenant_id: str) -> None:
         # Wipes both the tenant's storage AND any real key held for it --
@@ -435,6 +488,22 @@ def create_app(data_dir: Path) -> FastAPI:
     # dataclass) can't otherwise: see ruff's own suggested fix for
     # "function-call-in-default-argument".
     _require_auth = Depends(_authenticated_tenant)
+
+    def _authenticated_admin(request: Request) -> None:
+        """A second, separate credential from trial tokens -- admin
+        routes read across every tenant (feedback, usage counts), which
+        no trial token should ever be able to do. `404`, not `401`, when
+        no admin token is configured at all: this tells a would-be
+        prober nothing about whether admin functionality exists on this
+        deployment."""
+        if admin_token is None:
+            raise HTTPException(status_code=404)
+        header = request.headers.get("authorization", "")
+        provided = header[len("Bearer ") :].strip() if header.lower().startswith("bearer ") else ""
+        if not provided or not secrets.compare_digest(provided, admin_token):
+            raise HTTPException(status_code=401, detail="invalid or missing admin token")
+
+    _require_admin = Depends(_authenticated_admin)
 
     def _stores_for(tenant: Tenant) -> TenantStores:
         return tenant_stores.get(tenant.tenant_id)
@@ -695,6 +764,56 @@ def create_app(data_dir: Path) -> FastAPI:
                 }
             )
         return {"by": by, "rows": rows}
+
+    @app.post("/v1/feedback")
+    async def submit_feedback(
+        body: FeedbackRequest, tenant: Tenant = _require_auth
+    ) -> dict[str, Any]:
+        """Free-text feedback/bug report, tied to the reporting tenant
+        for context but stored globally (`feedback.jsonl` in
+        `COST_GATEWAY_DATA_DIR`) so it survives that tenant's trial
+        ending or expiring. Never includes a provider key -- there is no
+        field for one, and this handler never touches `key_vault`."""
+        message = body.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="message must not be empty")
+        if len(message) > 4000:
+            raise HTTPException(status_code=422, detail="message exceeds the 4000-character limit")
+        contact = body.contact.strip() if body.contact else None
+        record = {
+            "feedback_id": f"fb_{secrets.token_urlsafe(12)}",
+            "tenant_id": tenant.tenant_id,
+            "message": message,
+            "contact": contact,
+            "submitted_at": datetime.now(UTC).isoformat(),
+        }
+        _append_feedback(feedback_path, record)
+        return {"feedback_id": record["feedback_id"], "received": True}
+
+    @app.get("/v1/admin/feedback")
+    async def list_feedback(_admin: None = _require_admin) -> dict[str, Any]:
+        """Operator-only: every piece of feedback ever submitted, most
+        recent first. Requires `COST_GATEWAY_ADMIN_TOKEN` -- see
+        `_authenticated_admin`."""
+        rows = _read_feedback(feedback_path)
+        return {"feedback": list(reversed(rows)), "total": len(rows)}
+
+    @app.get("/v1/admin/stats")
+    async def admin_stats(_admin: None = _require_admin) -> dict[str, Any]:
+        """Operator-only, basic usage counters -- deliberately not public:
+        even aggregate numbers are worth keeping off an unauthenticated
+        route. Counts *trials issued*, not unique people (no account
+        system exists yet to tell those apart) -- see
+        `trial.TrialRegistry.total_issued_count`'s own docstring."""
+        return {
+            "trials_issued_total": trial_registry.total_issued_count(),
+            "trials_live_now": trial_registry.live_tenant_count(),
+            "feedback_count": len(_read_feedback(feedback_path)),
+            "process_local_note": (
+                "These counters reset on every process restart/redeploy -- "
+                "they are not a durable historical record."
+            ),
+        }
 
     @app.post("/v1/demo/chat/completions")
     async def demo_chat_completions(
