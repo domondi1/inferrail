@@ -176,6 +176,23 @@
       <div class="budget-track"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
       <div class="receipt-row"><span>Daily cap (this trial)</span><span id="budget-cap">$1.00</span></div>
 
+      <h3 style="margin-top:24px">Report an issue</h3>
+      <p class="card-copy">Something broken, confusing, or worth telling us? This goes straight to the team — no account needed.</p>
+      <form class="key-form" id="feedback-form" autocomplete="off">
+        <div class="key-field">
+          <label for="feedback-message">What happened?</label>
+          <textarea id="feedback-message" rows="3" maxlength="4000" placeholder="Describe the issue..." style="font-family:'IBM Plex Mono',monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); resize:vertical;"></textarea>
+        </div>
+        <div class="key-field">
+          <label for="feedback-contact">Your email (optional, if you want a reply)</label>
+          <input type="email" id="feedback-contact" autocomplete="off" placeholder="you@example.com">
+        </div>
+        <div class="key-actions">
+          <button class="button-ghost" type="submit" id="submit-feedback-btn">Send feedback</button>
+        </div>
+      </form>
+      <p id="feedback-status" class="step-note"></p>
+
       <p class="key-privacy-note" style="margin-top:18px">Done exploring? <button class="copy" type="button" id="end-trial-btn" style="color:var(--ink);border-color:var(--ink)">End trial now and delete everything</button></p>
     </section>
   </main>
@@ -282,6 +299,9 @@
           '<div class="feed-empty">No receipts yet — send a test request above.</div>';
         $('budget-spent').textContent = '$0.00';
         $('budget-fill').style.width = '0%';
+        $('feedback-message').value = '';
+        $('feedback-contact').value = '';
+        $('feedback-status').textContent = '';
       }
 
       function renderModeBadge() {
@@ -474,6 +494,31 @@
         }
       }
 
+      async function submitFeedback(ev) {
+        ev.preventDefault();
+        const message = $('feedback-message').value.trim();
+        if (!message) { $('feedback-status').textContent = 'Write something first.'; return; }
+        const contact = $('feedback-contact').value.trim();
+        const btn = $('submit-feedback-btn');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Sending…';
+        try {
+          await apiFetch('/v1/feedback', {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({ message, contact: contact || null }),
+          });
+          $('feedback-message').value = '';
+          $('feedback-contact').value = '';
+          $('feedback-status').textContent = 'Thanks — that was sent to the team.';
+        } catch (e) {
+          $('feedback-status').textContent = 'Could not send feedback: ' + e.message;
+        } finally {
+          btn.disabled = false; btn.textContent = original;
+        }
+      }
+
       async function startTrial() {
         const btn = $('start-trial-btn');
         btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
@@ -523,6 +568,7 @@
       $('key-form').addEventListener('submit', submitKeys);
       $('forget-keys-btn').addEventListener('click', forgetKeys);
       $('end-trial-btn').addEventListener('click', endTrial);
+      $('feedback-form').addEventListener('submit', submitFeedback);
       document.querySelectorAll('[data-toggle-visibility]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const input = $(btn.getAttribute('data-toggle-visibility'));

@@ -713,3 +713,82 @@ def test_hosted_and_local_gateway_produce_structurally_equivalent_results(
     assert hosted_receipt["prompt_tokens"] == local_result.usage.prompt_tokens
     assert hosted_receipt["completion_tokens"] == local_result.usage.completion_tokens
     assert hosted_receipt["attributes"] == attributes
+
+
+# --- Feedback + admin usage stats -------------------------------------------
+
+
+def test_submit_feedback_requires_auth(client):
+    resp = client.post("/v1/feedback", json={"message": "hi"})
+    assert resp.status_code == 401
+
+
+def test_submit_feedback_rejects_empty_message(client):
+    trial = _issue(client)
+    resp = client.post(
+        "/v1/feedback", json={"message": "   "}, headers=_auth(trial["api_key"])
+    )
+    assert resp.status_code == 422
+
+
+def test_admin_routes_404_when_no_admin_token_configured(client):
+    # No COST_GATEWAY_ADMIN_TOKEN set in this fixture's environment.
+    assert client.get("/v1/admin/stats").status_code == 404
+    assert client.get("/v1/admin/feedback").status_code == 404
+
+
+def test_admin_stats_and_feedback_require_correct_token(service_module, tmp_path, monkeypatch):
+    monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "super-secret-admin-token")
+    app = service_module.create_app(tmp_path / "data")
+    from fastapi.testclient import TestClient
+
+    admin_client = TestClient(app)
+    trial = _issue(admin_client)
+    admin_client.post(
+        "/v1/feedback",
+        json={"message": "the demo button felt slow", "contact": "user@example.com"},
+        headers=_auth(trial["api_key"]),
+    )
+
+    # Wrong/missing token -- rejected, not just silently empty.
+    assert admin_client.get("/v1/admin/stats").status_code == 401
+    assert (
+        admin_client.get(
+            "/v1/admin/stats", headers={"Authorization": "Bearer wrong"}
+        ).status_code
+        == 401
+    )
+
+    stats = admin_client.get(
+        "/v1/admin/stats", headers={"Authorization": "Bearer super-secret-admin-token"}
+    ).json()
+    assert stats["trials_issued_total"] == 1
+    assert stats["trials_live_now"] == 1
+    assert stats["feedback_count"] == 1
+
+    feedback = admin_client.get(
+        "/v1/admin/feedback", headers={"Authorization": "Bearer super-secret-admin-token"}
+    ).json()
+    assert feedback["total"] == 1
+    row = feedback["feedback"][0]
+    assert row["message"] == "the demo button felt slow"
+    assert row["contact"] == "user@example.com"
+    assert row["tenant_id"] == trial["tenant_id"]
+
+
+def test_feedback_survives_trial_ending(service_module, tmp_path, monkeypatch):
+    monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "another-secret")
+    app = service_module.create_app(tmp_path / "data")
+    from fastapi.testclient import TestClient
+
+    admin_client = TestClient(app)
+    trial = _issue(admin_client)
+    admin_client.post(
+        "/v1/feedback", json={"message": "found a bug"}, headers=_auth(trial["api_key"])
+    )
+    admin_client.delete(f"/v1/trial/{trial['tenant_id']}", headers=_auth(trial["api_key"]))
+    feedback = admin_client.get(
+        "/v1/admin/feedback", headers={"Authorization": "Bearer another-secret"}
+    ).json()
+    assert feedback["total"] == 1
+    assert feedback["feedback"][0]["message"] == "found a bug"

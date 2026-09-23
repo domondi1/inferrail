@@ -114,6 +114,14 @@ class TrialRegistry:
         self._tenants: dict[str, Tenant] = {}  # key_hash -> tenant
         self._issue_history: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._total_issued = 0
+        """All-time counter, process-local (reset on restart, same as
+        every other in-memory state in this service -- see the README's
+        "Known limitations"). Deliberately a count of *trials issued*,
+        not "unique users": there is no account system yet, so nothing
+        in this service can distinguish one visitor starting two trials
+        from two different visitors. State that plainly wherever this
+        number is surfaced -- see `service.py`'s `/v1/admin/stats`."""
 
     def issue(self, *, client_ip: str) -> tuple[str, Tenant]:
         """Returns `(api_key, tenant)`. Raises `HTTPException` (503/429)
@@ -160,6 +168,7 @@ class TrialRegistry:
             )
             self._tenants[key_hash] = tenant
             history.append(now_mono)
+            self._total_issued += 1
             return api_key, tenant
 
     def lookup(self, api_key: str) -> Tenant | None:
@@ -220,6 +229,10 @@ class TrialRegistry:
     def live_tenant_count(self) -> int:
         with self._lock:
             return sum(1 for t in self._tenants.values() if not t.is_expired())
+
+    def total_issued_count(self) -> int:
+        with self._lock:
+            return self._total_issued
 
 
 def trial_registry_from_env(*, on_purge: Callable[[str], None] | None = None) -> TrialRegistry:
