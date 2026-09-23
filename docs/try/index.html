@@ -51,7 +51,11 @@
     .key-form { display:grid; gap:10px; margin:12px 0; }
     .key-field { display:grid; gap:4px; }
     .key-field label { font-size:clamp(11px,.85vw,13px); color:var(--ink-2); text-transform:uppercase; letter-spacing:.06em; }
-    .key-field input { font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); }
+    .key-input-row { display:flex; gap:6px; align-items:stretch; }
+    .key-input-row input { flex:1; min-width:0; font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); }
+    .key-field-btn { flex:none; padding:5px 10px; color:var(--ink); background:transparent; border:1px solid var(--rule); font:500 clamp(10px,.75vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
+    .key-field-btn:hover:not(:disabled) { background:var(--bar); }
+    .key-field-btn:disabled { opacity:.5; cursor:not-allowed; }
     .key-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     .button-ghost { display:inline-block; text-decoration:none; padding:9px 16px; font:700 clamp(12px,.9vw,14px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); background:transparent; border:1px solid var(--ink); cursor:pointer; }
     .button-ghost:hover { background:var(--ink); color:var(--paper); }
@@ -93,8 +97,9 @@
         <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all. First request after a quiet period may take up to a minute to wake up.</p>
       </div>
       <div class="error-banner hidden" id="unreachable-banner" role="alert">
-        <strong>This hosted trial isn't reachable right now.</strong>
-        <p class="card-copy" style="margin-top:8px">Either it hasn't been deployed yet, or this instance is temporarily unavailable. Nothing is broken on your end — <a href="/#steps">self-host Inferrail instead</a> (<code>pip install inferrail &amp;&amp; inferrail serve --quickstart</code>), or try again shortly.</p>
+        <strong id="unreachable-banner-title">This hosted trial isn't reachable right now.</strong>
+        <p class="card-copy" id="unreachable-banner-detail" style="margin-top:8px">Either it hasn't been deployed yet, or this instance is temporarily unavailable.</p>
+        <p class="card-copy" style="margin-top:4px">Nothing is broken on your end — <a href="/#steps">self-host Inferrail instead</a> (<code>pip install inferrail &amp;&amp; inferrail serve --quickstart</code>), or try again shortly.</p>
       </div>
     </section>
 
@@ -122,14 +127,30 @@
 
       <h3 style="margin-top:24px">Optional: add your own key</h3>
       <p class="card-copy">Held in this server's memory only for the life of this trial (at most 4 hours from when you add it) — never written to disk, never logged, never included in any receipt. Skip this entirely and stay in demo mode if you'd rather not.</p>
-      <form class="key-form" id="key-form">
+      <form class="key-form" id="key-form" autocomplete="off">
         <div class="key-field">
           <label for="openai-key-input">OpenAI API key (optional)</label>
-          <input type="password" id="openai-key-input" autocomplete="off" placeholder="sk-...">
+          <div class="key-input-row">
+            <input
+              type="password" id="openai-key-input" name="inferrail-openai-key-not-a-login-password"
+              autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
+              data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+              placeholder="sk-...">
+            <button type="button" class="key-field-btn" data-toggle-visibility="openai-key-input">Show</button>
+            <button type="button" class="key-field-btn" data-clear-field="openai-key-input">Clear</button>
+          </div>
         </div>
         <div class="key-field">
           <label for="anthropic-key-input">Anthropic API key (optional)</label>
-          <input type="password" id="anthropic-key-input" autocomplete="off" placeholder="sk-ant-...">
+          <div class="key-input-row">
+            <input
+              type="password" id="anthropic-key-input" name="inferrail-anthropic-key-not-a-login-password"
+              autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
+              data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+              placeholder="sk-ant-...">
+            <button type="button" class="key-field-btn" data-toggle-visibility="anthropic-key-input">Show</button>
+            <button type="button" class="key-field-btn" data-clear-field="anthropic-key-input">Clear</button>
+          </div>
         </div>
         <div class="key-actions">
           <button class="button-ghost" type="submit" id="submit-keys-btn">Add key(s)</button>
@@ -199,7 +220,15 @@
         try { body = await res.json(); } catch (_e) { /* no body */ }
         if (!res.ok) {
           const message = (body && body.detail) || (body && body.error && body.error.message) || res.statusText;
-          throw new Error(message);
+          const err = new Error(message);
+          // Marks this as "we reached the server and it gave a real
+          // answer" (rate-limited, out of capacity, ...) as opposed to a
+          // genuine connectivity failure (DNS/connection-refused/CORS,
+          // which leaves this property unset) -- startTrial()'s catch
+          // block uses this to show the *real* reason instead of always
+          // assuming the service isn't deployed.
+          err.httpStatus = res.status;
+          throw err;
         }
         return body;
       }
@@ -223,6 +252,36 @@
         $('snippet-anthropic-py').textContent = `import anthropic\nclient = anthropic.Anthropic(base_url="${url}", api_key="${key}")\nclient.messages.create(model="claude-3-5-haiku-20241022", max_tokens=256, messages=[{"role": "user", "content": "hello"}])`;
         $('snippet-langchain').textContent = `from langchain_openai import ChatOpenAI\nllm = ChatOpenAI(base_url="${url}/v1", api_key="${key}", model="gpt-4o-mini")\nllm.invoke("hello")`;
         $('snippet-fetch').textContent = `fetch("${url}/v1/demo/chat/completions", {\n  method: "POST",\n  headers: { Authorization: "Bearer ${key}", "Content-Type": "application/json" },\n  body: JSON.stringify({ model: "default", messages: [{ role: "user", content: "hello" }] }),\n})`;
+      }
+
+      function resetKeyFields() {
+        // Clears both key inputs' actual DOM value (never just their
+        // visual masking) and resets any "Show" toggle back to hidden --
+        // called after every successful submit/forget, when a trial ends
+        // or expires, and when a fresh trial starts, so a key never
+        // visibly lingers past the moment it stopped being valid.
+        ['openai-key-input', 'anthropic-key-input'].forEach((id) => {
+          const input = $(id);
+          input.value = '';
+          input.type = 'password';
+        });
+        document.querySelectorAll('[data-toggle-visibility]').forEach((btn) => {
+          btn.textContent = 'Show';
+        });
+      }
+
+      function resetTrialUI() {
+        // Full panel reset -- key fields, the last test-request result,
+        // the live feed, and the budget bar -- so ending one trial and
+        // starting another (or a natural expiry) never leaves stale
+        // data from the previous trial visible, even for a moment.
+        resetKeyFields();
+        $('key-status').textContent = '';
+        $('test-result').innerHTML = '';
+        $('feed-list').innerHTML =
+          '<div class="feed-empty">No receipts yet — send a test request above.</div>';
+        $('budget-spent').textContent = '$0.00';
+        $('budget-fill').style.width = '0%';
       }
 
       function renderModeBadge() {
@@ -255,6 +314,7 @@
         el.classList.toggle('low', remaining < 600);
         if (remaining <= 0) {
           clearInterval(countdownTimer); clearInterval(pollTimer);
+          resetTrialUI();
           $('trial-notice').textContent = 'This trial has expired and its data has been deleted. Start a new one above.';
         }
       }
@@ -299,6 +359,11 @@
       }
 
       async function sendDemoRequest() {
+        const btn = $('send-demo-btn');
+        if (btn.disabled) return; // guards a fast double-click, not just a slow one
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Sending…';
         try {
           const response = await apiFetch('/v1/demo/chat/completions', {
             method: 'POST', headers: authHeaders(),
@@ -307,9 +372,18 @@
           renderReceiptResult('Demo receipt (DEMO-priced, no real key used)', response);
           refreshReceipts(); refreshStatus();
         } catch (e) { $('test-result').textContent = 'Demo request failed: ' + e.message; }
+        finally { btn.disabled = false; btn.textContent = original; }
       }
 
       async function sendRealRequest() {
+        const btn = $('send-real-btn');
+        // A real request may spend the visitor's own real money -- a
+        // double-click here is worse than on the demo button, so this
+        // guard matters even more.
+        if (btn.disabled) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Sending…';
         try {
           let response, label;
           if (trial.openai_configured) {
@@ -329,6 +403,7 @@
           renderReceiptResult(label, response);
           refreshReceipts(); refreshStatus();
         } catch (e) { $('test-result').textContent = 'Real request failed: ' + e.message; }
+        finally { btn.disabled = false; btn.textContent = original; }
       }
 
       async function submitKeys(ev) {
@@ -336,6 +411,11 @@
         const openai = $('openai-key-input').value.trim();
         const anthropic = $('anthropic-key-input').value.trim();
         if (!openai && !anthropic) { $('key-status').textContent = 'Enter at least one key first.'; return; }
+        const btn = $('submit-keys-btn');
+        if (btn.disabled) return; // guards a fast double-click
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Adding…';
         try {
           const body = {};
           if (openai) body.openai_key = openai;
@@ -344,28 +424,54 @@
             method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
           });
           trial = Object.assign(trial, status);
-          $('openai-key-input').value = ''; $('anthropic-key-input').value = '';
+          // The key was just accepted by the server -- clear it from the
+          // browser immediately and completely (value + any "Show" state),
+          // not just visually. This is the one moment a real secret sat in
+          // this page's DOM; it must not still be there a moment later.
+          resetKeyFields();
           renderModeBadge(); renderKeyStatus(); renderSnippets(); tickCountdown();
-        } catch (e) { $('key-status').textContent = 'Could not add key(s): ' + e.message; }
+          $('key-status').textContent += ' — cleared from this page.';
+        } catch (e) {
+          // Deliberately NOT cleared on failure: the visitor may want to
+          // fix a typo and resubmit without retyping the whole key.
+          $('key-status').textContent = 'Could not add key(s): ' + e.message;
+        } finally {
+          btn.disabled = false; btn.textContent = original;
+        }
       }
 
       async function forgetKeys() {
+        const btn = $('forget-keys-btn');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Forgetting…';
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}/keys`, { method: 'DELETE', headers: authHeaders() });
           trial.openai_configured = false; trial.anthropic_configured = false; trial.mode = 'demo';
+          resetKeyFields();
           renderModeBadge(); renderKeyStatus();
         } catch (e) { $('key-status').textContent = 'Could not forget key(s): ' + e.message; }
+        finally { btn.disabled = false; btn.textContent = original; }
       }
 
       async function endTrial() {
         if (!confirm('End this trial and delete everything now?')) return;
+        const btn = $('end-trial-btn');
+        if (btn.disabled) return;
+        btn.disabled = true;
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}`, { method: 'DELETE', headers: authHeaders() });
           clearInterval(countdownTimer); clearInterval(pollTimer);
+          resetTrialUI();
           $('trial-panel').classList.add('hidden');
           $('start-trial-btn').disabled = false; $('start-trial-btn').textContent = 'Try free — instant gateway';
           $('start-trial-hint').textContent = 'Trial ended and deleted. Start a new one any time.';
-        } catch (e) { alert('Could not end trial: ' + e.message); }
+        } catch (e) {
+          alert('Could not end trial: ' + e.message);
+        } finally {
+          btn.disabled = false;
+        }
       }
 
       async function startTrial() {
@@ -382,6 +488,7 @@
         try {
           trial = await apiFetch('/v1/trial', { method: 'POST' });
           clearTimeout(coldStartTimer);
+          resetTrialUI(); // wipe any leftover UI from a previous trial before showing this one
           $('trial-panel').classList.remove('hidden');
           $('base-url-code').textContent = trial.base_url;
           $('trial-notice').textContent = trial.notice;
@@ -392,6 +499,19 @@
           $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) {
           clearTimeout(coldStartTimer);
+          if (e.httpStatus !== undefined) {
+            // We reached the service and it gave a real answer -- show
+            // that answer, not a generic "not deployed" guess.
+            $('unreachable-banner-title').textContent =
+              e.httpStatus === 429
+                ? "You've hit the trial rate limit for this network."
+                : `The trial service returned an error (HTTP ${e.httpStatus}).`;
+            $('unreachable-banner-detail').textContent = e.message;
+          } else {
+            $('unreachable-banner-title').textContent = "This hosted trial isn't reachable right now.";
+            $('unreachable-banner-detail').textContent =
+              'Either it hasn’t been deployed yet, or this instance is temporarily unavailable.';
+          }
           $('unreachable-banner').classList.remove('hidden');
           btn.disabled = false; btn.textContent = 'Try free — instant gateway';
         }
@@ -403,6 +523,28 @@
       $('key-form').addEventListener('submit', submitKeys);
       $('forget-keys-btn').addEventListener('click', forgetKeys);
       $('end-trial-btn').addEventListener('click', endTrial);
+      document.querySelectorAll('[data-toggle-visibility]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const input = $(btn.getAttribute('data-toggle-visibility'));
+          if (!input) return;
+          const willShow = input.type === 'password';
+          input.type = willShow ? 'text' : 'password';
+          btn.textContent = willShow ? 'Hide' : 'Show';
+        });
+      });
+      document.querySelectorAll('[data-clear-field]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const input = $(btn.getAttribute('data-clear-field'));
+          if (!input) return;
+          input.value = '';
+          input.type = 'password';
+          const toggle = document.querySelector(
+            `[data-toggle-visibility="${input.id}"]`
+          );
+          if (toggle) toggle.textContent = 'Show';
+          input.focus();
+        });
+      });
       document.querySelectorAll('[data-copy-target]').forEach((btn) => {
         const original = btn.textContent;
         btn.addEventListener('click', async () => {
