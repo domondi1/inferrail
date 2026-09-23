@@ -19,28 +19,39 @@ Frontend: `docs/try/index.html` (+ a homepage CTA in `docs/index.html`).
 - Phase 0 (ADR), Phase 1 (trial provisioning + key handling), Phase 2
   (the `/try/` page + homepage CTA), Phase 3 (work economics/reports/
   transactions, CLI-parity tests) — all merged, all deployed, all
-  live-verified. Backend running on Render free tier at
+  live-verified.
+- The key-entry-form bug fixes (PR #48) and feedback capture +
+  founder-facing usage stats (PR #49, includes #48's commit) — **merged
+  into `main` and deployed**; `COST_GATEWAY_ADMIN_TOKEN` is set on the
+  live Render instance and `/v1/admin/stats`/`/v1/admin/feedback` are
+  confirmed working live.
+- Backend running on Render free tier at
   `https://inferrail-cost-gateway.onrender.com`.
 
-**Committed locally, branch(es) pushed to `origin`, PR(s) open,
-awaiting founder review/merge — not yet live:**
+**Known live gotcha, found right after deploying #49:** the free tier
+has no persistent disk, so `feedback.jsonl` (and every trial's SQLite
+files) get wiped on every redeploy/restart — confirmed directly:
+feedback submitted during testing was gone after the next redeploy.
+This is why the GitHub Issues integration below exists.
 
-1. **`fix/cost-gateway-key-form-bugs`** (commit `5c5bc28`) — fixes a
-   real reported bug (the "Forget stored key(s)" button never actually
-   cleared the visible password field) plus four related bugs found in
-   the same audit: weak autofill protection, stale UI surviving a
-   trial end/restart, no double-submit guard on 4 buttons (one of which
-   risked double-billing a real provider call), and a misleading
-   "not deployed" banner shown even for a real rate-limit response.
-   Added Show/Clear controls on each key field.
-2. **`feat/cost-gateway-feedback-and-usage-stats`** (commit `f69b278`)
-   — adds `POST /v1/feedback` (a "Report an issue" form on the trial
-   page) and founder-only `GET /v1/admin/feedback` / `GET
-   /v1/admin/stats`, gated on a new `COST_GATEWAY_ADMIN_TOKEN` env var
-   (unset by default; routes 404 until it's set). **This branch already
-   includes fix #1's commit** (cherry-picked), so it's self-contained —
-   merging just this one branch gets you both fixes. If #1 gets merged
-   first instead, merge #2 normally afterward; no conflict either way.
+**Committed locally, not yet pushed (same recurring push-permission gap
+— see below), branch `feat/cost-gateway-feedback-github-issues`:**
+
+- Adds a **second, durable destination** for feedback: `POST
+  /v1/feedback` now also files a GitHub Issue (labeled
+  `cost-gateway-feedback`) on `COST_GATEWAY_GITHUB_REPO`
+  (`domondi1/inferrail`), via a new `COST_GATEWAY_GITHUB_TOKEN` secret
+  (fine-grained PAT, Issues-only scope). Best-effort: if GitHub is
+  unreachable or the token's wrong, the feedback submission still
+  succeeds and still gets the local (ephemeral) write — GitHub never
+  blocks the local one. The existing `/v1/admin/feedback` Render-side
+  view is unchanged and still works for whatever's arrived since the
+  last redeploy.
+- 3 new tests (41 total), ruff/mypy/boundary-check clean.
+- **Not yet deployed or verified live** — needs push, PR, merge,
+  `COST_GATEWAY_GITHUB_TOKEN` set on Render (a fine-grained PAT scoped
+  to Issues-write on `domondi1/inferrail` only), redeploy, then a real
+  end-to-end check (submit feedback, confirm a real Issue appears).
 
 **To get these live:** push the branch(es), open PR(s) (or update the
 existing ones), get CI green, merge, then **set
