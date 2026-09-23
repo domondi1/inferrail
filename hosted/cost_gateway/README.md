@@ -105,6 +105,8 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. |
 | `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
 | `COST_GATEWAY_ADMIN_TOKEN` | unset | Enables `GET /v1/admin/stats` and `GET /v1/admin/feedback` (usage counters + submitted feedback), gated on `Authorization: Bearer <this value>`. **Unset by default -- both routes return `404` (not `401`) until this is explicitly set**, so a deployment with no admin token configured reveals nothing about their existence. Generate a real secret yourself (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and set it as a platform secret; never commit it or share it with an assistant session. |
+| `COST_GATEWAY_GITHUB_TOKEN` | unset | A fine-grained GitHub PAT, scoped to **only** `COST_GATEWAY_GITHUB_REPO` with **Issues: write** permission and nothing else. When set, every `POST /v1/feedback` also files a GitHub Issue -- the durable copy, since it survives a Render redeploy and the local `feedback.jsonl` doesn't. Unset by default (feedback is still saved locally either way). See "Feedback and usage visibility" below for how to generate one. |
+| `COST_GATEWAY_GITHUB_REPO` | `domondi1/inferrail` | Which repo `COST_GATEWAY_GITHUB_TOKEN` files issues against, as `owner/repo`. |
 
 ## API contract
 
@@ -257,13 +259,38 @@ later phase, a push-based equivalent) for `seconds_remaining`.
 
 Every trial-authenticated visitor can `POST /v1/feedback` (free-text
 `message`, optional `contact`) -- surfaced in the "Try Free" page as a
-plain "Report an issue" form. Feedback is stored globally
-(`feedback.jsonl` in `COST_GATEWAY_DATA_DIR`), keyed by the reporting
-tenant but **not deleted when that tenant's trial ends or expires** --
-a bug report must outlive the trial that filed it.
+plain "Report an issue" form. Feedback is written to two places:
 
-To see it yourself: set `COST_GATEWAY_ADMIN_TOKEN` (see the env var
-table above), then:
+1. **`feedback.jsonl` in `COST_GATEWAY_DATA_DIR`** -- always, keyed by
+   the reporting tenant, **not deleted when that tenant's trial ends or
+   expires.** On Render's free tier this file lives on ephemeral
+   storage, though -- **it does not survive a redeploy/restart.**
+2. **A GitHub Issue on `COST_GATEWAY_GITHUB_REPO`** (default
+   `domondi1/inferrail`), labeled `cost-gateway-feedback` -- best-effort,
+   only if `COST_GATEWAY_GITHUB_TOKEN` is set. This is the durable copy:
+   it survives every redeploy, since GitHub -- not Render -- holds it.
+   If the GitHub call fails for any reason (missing/bad token, GitHub
+   unreachable), the feedback is still saved to (1) and the submission
+   still succeeds -- see `_create_github_issue`'s own docstring.
+
+**Setting up the GitHub Issues path** (recommended -- this is the
+durable one):
+
+1. Create a **fine-grained personal access token** at
+   github.com/settings/personal-access-tokens/new, scoped to **only**
+   the `domondi1/inferrail` repository, with **Issues: Read and write**
+   permission and nothing else. Never a classic PAT with broad repo
+   access for this -- narrow scope limits what a leaked token could do.
+2. Set it as `COST_GATEWAY_GITHUB_TOKEN` on Render (same process as
+   `COST_GATEWAY_ADMIN_TOKEN` above), redeploy.
+3. From then on, new feedback appears as a normal GitHub Issue, labeled
+   `cost-gateway-feedback` -- filter the repo's Issues tab by that label
+   to see just these. No curl command needed for this path.
+
+**The Render-side admin view (`/v1/admin/feedback`) still works exactly
+as before**, and is useful for whatever's arrived since the last
+redeploy even if you haven't set up the GitHub token. Set
+`COST_GATEWAY_ADMIN_TOKEN` (see the env var table above), then:
 
 ```bash
 curl -s https://<your-deployment>/v1/admin/feedback -H "Authorization: Bearer <admin-token>"

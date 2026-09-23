@@ -792,3 +792,104 @@ def test_feedback_survives_trial_ending(service_module, tmp_path, monkeypatch):
     ).json()
     assert feedback["total"] == 1
     assert feedback["feedback"][0]["message"] == "found a bug"
+
+
+# --- Feedback -> GitHub Issues (best-effort, never blocks the submission) --
+
+
+def test_feedback_without_github_token_configured_skips_silently(client):
+    trial = _issue(client)
+    resp = client.post(
+        "/v1/feedback", json={"message": "no github token set"}, headers=_auth(trial["api_key"])
+    )
+    assert resp.status_code == 200
+    assert resp.json()["received"] is True
+    assert resp.json()["github_issue_url"] is None
+
+
+def test_feedback_creates_github_issue_when_configured(service_module, monkeypatch, tmp_path):
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", "domondi1/inferrail")
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("authorization")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={"html_url": "https://github.com/domondi1/inferrail/issues/999"}
+        )
+
+    # Patch httpx.AsyncClient itself for this one test -- _create_github_issue
+    # constructs its own client internally rather than accepting an
+    # injectable one (unlike the provider client-factory seam), since it
+    # has no per-tenant identity to key an injection point on.
+    real_async_client = httpx.AsyncClient
+
+    def mock_async_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_async_client)
+
+    app = service_module.create_app(tmp_path / "data")
+    from fastapi.testclient import TestClient
+
+    gh_client = TestClient(app)
+    trial = _issue(gh_client)
+    resp = gh_client.post(
+        "/v1/feedback",
+        json={"message": "found a real bug\nwith details", "contact": "me@example.com"},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["github_issue_url"] == "https://github.com/domondi1/inferrail/issues/999"
+    assert captured["url"] == "https://api.github.com/repos/domondi1/inferrail/issues"
+    assert captured["auth"] == "Bearer fake-github-token"
+    assert captured["body"]["title"] == "[Cost Gateway feedback] found a real bug"
+    assert "with details" in captured["body"]["body"]
+    assert "me@example.com" in captured["body"]["body"]
+    assert captured["body"]["labels"] == ["cost-gateway-feedback"]
+
+    # The local write still happened too -- GitHub is additive, not a
+    # replacement for the always-on local record.
+    monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "admin-secret-for-this-test")
+    # Recreate the app so the admin route picks up the freshly-set env var
+    # (admin_token is read once at create_app() time).
+    app2 = service_module.create_app(tmp_path / "data")
+    admin_client = TestClient(app2)
+    feedback = admin_client.get(
+        "/v1/admin/feedback", headers={"Authorization": "Bearer admin-secret-for-this-test"}
+    ).json()
+    assert feedback["total"] == 1
+
+
+def test_feedback_submission_still_succeeds_if_github_api_fails(
+    service_module, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    real_async_client = httpx.AsyncClient
+
+    def mock_async_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(failing_handler)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_async_client)
+
+    app = service_module.create_app(tmp_path / "data")
+    from fastapi.testclient import TestClient
+
+    gh_client = TestClient(app)
+    trial = _issue(gh_client)
+    resp = gh_client.post(
+        "/v1/feedback", json={"message": "still saved locally even if github fails"},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["received"] is True
+    assert resp.json()["github_issue_url"] is None

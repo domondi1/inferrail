@@ -335,6 +335,61 @@ def _work_summary_json(summary: WorkSummary) -> dict[str, Any]:
     }
 
 
+async def _create_github_issue(record: dict[str, Any]) -> str | None:
+    """Best-effort: files `record` as a GitHub Issue on
+    `COST_GATEWAY_GITHUB_REPO` (default `domondi1/inferrail`), so
+    feedback survives a Render redeploy even though the local
+    `feedback.jsonl` file (on Render's free tier, with no persistent
+    disk) does not. Returns the created issue's URL, or `None` if
+    `COST_GATEWAY_GITHUB_TOKEN` isn't configured or the API call fails
+    for any reason.
+
+    Deliberately never raises and never blocks a feedback submission
+    from succeeding: this is an enhancement over the always-on local
+    write in `_append_feedback`, not a replacement for it, and a
+    visitor's feedback must still be recorded even if GitHub is
+    unreachable or the token is misconfigured.
+
+    The token needs only "Issues: write" on this one repository -- a
+    fine-grained GitHub personal access token scoped that narrowly,
+    never a classic PAT with broader repo access, minimizes what a
+    leaked token could do.
+    """
+    token = os.environ.get("COST_GATEWAY_GITHUB_TOKEN")
+    if not token:
+        return None
+    repo = os.environ.get("COST_GATEWAY_GITHUB_REPO", "domondi1/inferrail")
+    title_source = record["message"].splitlines()[0][:80]
+    title = f"[Cost Gateway feedback] {title_source}"
+    body_lines = [
+        record["message"],
+        "",
+        "---",
+        f"Submitted: {record['submitted_at']}",
+        f"Tenant: `{record['tenant_id']}`",
+        f"Contact: {record['contact'] or '(none given)'}",
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://api.github.com/repos/{repo}/issues",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={
+                    "title": title,
+                    "body": "\n".join(body_lines),
+                    "labels": ["cost-gateway-feedback"],
+                },
+            )
+        if resp.status_code == 201:
+            return str(resp.json().get("html_url"))
+    except httpx.HTTPError:
+        pass
+    return None
+
+
 def _append_feedback(path: Path, record: dict[str, Any]) -> None:
     """Appends one feedback record as a JSONL line -- a global file (not
     per-tenant), so a report about a bug survives the trial that filed
@@ -788,7 +843,16 @@ def create_app(data_dir: Path) -> FastAPI:
             "submitted_at": datetime.now(UTC).isoformat(),
         }
         _append_feedback(feedback_path, record)
-        return {"feedback_id": record["feedback_id"], "received": True}
+        # Local write above always happens and always succeeds first --
+        # GitHub is a best-effort second destination for durability
+        # across redeploys, never a dependency for this route returning
+        # success. See _create_github_issue's own docstring.
+        github_issue_url = await _create_github_issue(record)
+        return {
+            "feedback_id": record["feedback_id"],
+            "received": True,
+            "github_issue_url": github_issue_url,
+        }
 
     @app.get("/v1/admin/feedback")
     async def list_feedback(_admin: None = _require_admin) -> dict[str, Any]:
