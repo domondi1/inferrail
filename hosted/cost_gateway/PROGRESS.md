@@ -114,6 +114,27 @@ download contents with no prompt text, reload, link in a fresh browser,
 fragment stripped, ended-trial link, 375px and 1280px with no
 horizontal scroll, zero console errors).
 
+## Fix: Anthropic real requests on /try/ (2026-09-24)
+
+Branch `fix/try-page-anthropic-model-discovery`. **Root cause:** the
+/try/ page hardcoded `claude-3-5-haiku-20241022` for its real Anthropic
+request (and its copy-paste snippet); Anthropic retired that model, so
+every real Anthropic request returned `404 model: ...`. The provider
+adapter and auth were fine.
+
+**Fix:** new `GET /v1/trial/{tenant_id}/models?provider=anthropic` asks
+Anthropic's `GET /v1/models` which models the visitor's key can use --
+server-side, with the in-memory key, returning model ids only. The
+lightest family (Haiku, then Sonnet, then Opus; unknown families rank
+with Sonnet) and newest release within it is selected
+(`select_anthropic_test_model`); no dated model id is hardcoded
+anywhere. The page discovers once a key is added, uses the selected
+model for the real request and the snippet, shows which model was used,
+and shows distinct messages for a rejected key (400
+`provider_key_rejected`), a failed lookup (502 `model_discovery_failed`),
+or no usable model. `models` is returned whole, so a model picker can be
+added later by just setting the page's `models.anthropic.selected`.
+
 ## The recurring blocker every pass hits: no push access
 
 This session's git credentials cannot push to `domondi1/inferrail`

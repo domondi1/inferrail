@@ -103,7 +103,7 @@ from inferrail.gateway.schemas import (
     ErrorResponse,
 )
 from inferrail.pricing.resolver import PricingResolver
-from inferrail.providers.anthropic import AnthropicProvider
+from inferrail.providers.anthropic import _ANTHROPIC_API_VERSION, AnthropicProvider
 from inferrail.providers.openai import OpenAIProvider
 from inferrail.receipts.aggregation import summarize_receipts
 from inferrail.receipts.schema import InferenceReceipt
@@ -739,6 +739,88 @@ def _read_feedback(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+
+NO_COMPATIBLE_MODEL_MESSAGE = (
+    "Anthropic key connected, but no compatible text model was available for this test."
+)
+
+_ANTHROPIC_FAMILY_RANK = (("haiku", 0), ("sonnet", 1), ("opus", 2))
+"""Lightest (cheapest) family first. Anthropic's model list carries no
+price or size field, so the family name in the model id is the one
+signal that reasonably indicates cost. An id matching none of these
+ranks alongside Sonnet: usable, but not preferred over a known-light
+model."""
+
+
+def select_anthropic_test_model(models: list[dict[str, Any]]) -> str | None:
+    """Picks the model the /try/ page uses for its one-line test request,
+    from what Anthropic reports *this key* can use -- never a hardcoded,
+    dated model id, so a model's retirement can't break the test.
+
+    Every Claude model accepts a plain-text `/v1/messages` request, so
+    "compatible" means: a `model` entry whose id is a Claude model. Among
+    those, the lightest family wins, then the newest release (by
+    `created_at`) within it. Returns `None` if nothing usable was listed.
+    """
+    usable = [
+        m
+        for m in models
+        if m.get("type", "model") == "model" and str(m.get("id", "")).startswith("claude")
+    ]
+
+    def family_rank(model: dict[str, Any]) -> int:
+        model_id = str(model["id"]).lower()
+        return next((rank for name, rank in _ANTHROPIC_FAMILY_RANK if name in model_id), 1)
+
+    # Two stable sorts: newest first, then lightest family first.
+    usable.sort(key=lambda m: str(m.get("created_at", "")), reverse=True)
+    usable.sort(key=family_rank)
+    return str(usable[0]["id"]) if usable else None
+
+
+class ModelDiscoveryError(Exception):
+    """Model discovery failed. `key_rejected` separates "Anthropic says
+    this key is invalid or not allowed" (401/403) from "we couldn't get an
+    answer" (network error, 5xx, unexpected response) -- the page shows
+    different advice for each. Messages are fixed text: nothing from the
+    upstream response, and never the key, is ever included."""
+
+    def __init__(self, *, key_rejected: bool, upstream_status: int | None) -> None:
+        self.key_rejected = key_rejected
+        self.upstream_status = upstream_status
+        super().__init__("key rejected" if key_rejected else "discovery failed")
+
+
+async def discover_anthropic_models(api_key: str) -> list[dict[str, Any]]:
+    """Asks Anthropic which models `api_key` can use (`GET /v1/models`),
+    server-side, so the key never goes back to the browser. Uses the same
+    `x-api-key` + `anthropic-version` headers as `AnthropicProvider`, and
+    the same `anthropic_client_factory` test seam."""
+    client = anthropic_client_factory() or httpx.AsyncClient(timeout=10.0)
+    try:
+        resp = await client.get(
+            ANTHROPIC_MODELS_URL,
+            params={"limit": 1000},
+            headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_API_VERSION},
+        )
+    except httpx.HTTPError as exc:
+        raise ModelDiscoveryError(key_rejected=False, upstream_status=None) from exc
+    finally:
+        await client.aclose()
+    if resp.status_code in (401, 403):
+        raise ModelDiscoveryError(key_rejected=True, upstream_status=resp.status_code)
+    if resp.status_code != 200:
+        raise ModelDiscoveryError(key_rejected=False, upstream_status=resp.status_code)
+    try:
+        data = resp.json().get("data")
+    except ValueError as exc:
+        raise ModelDiscoveryError(key_rejected=False, upstream_status=200) from exc
+    if not isinstance(data, list):
+        raise ModelDiscoveryError(key_rejected=False, upstream_status=200)
+    return [m for m in data if isinstance(m, dict)]
+
+
 async def _stream_and_close(inner: AsyncIterator[bytes], provider: Any) -> AsyncIterator[bytes]:
     """Wraps a provider-backed streaming response so the ephemeral,
     per-request `Provider` (holding the tenant's real key in its own
@@ -1011,6 +1093,63 @@ def create_app(data_dir: Path) -> FastAPI:
         _require_path_tenant(tenant_id, tenant)
         removed = key_vault.forget(tenant.tenant_id)
         return {"tenant_id": tenant.tenant_id, "keys_removed": removed}
+
+    @app.get("/v1/trial/{tenant_id}/models")
+    async def list_models(
+        tenant_id: str, provider: str = "anthropic", tenant: Tenant = _require_auth
+    ) -> dict[str, Any]:
+        """Which models this trial's own provider key can use, plus the one
+        the /try/ page should use for its test request (`selected_model`).
+        Discovery runs here, server-side, with the key held in this
+        process -- the response carries model ids only, never the key.
+        `models` is returned in full so a page can later offer a picker;
+        `selected_model` is `null` (with `message`) when nothing usable was
+        listed. Only `provider=anthropic` is supported so far."""
+        _require_path_tenant(tenant_id, tenant)
+        if provider != "anthropic":
+            raise HTTPException(
+                status_code=400, detail="only provider=anthropic is supported"
+            )
+        api_key = _require_anthropic_key(tenant)
+        try:
+            models = await discover_anthropic_models(api_key)
+        except ModelDiscoveryError as exc:
+            if exc.key_rejected:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "provider_key_rejected",
+                        "message": (
+                            f"Anthropic rejected this key (HTTP {exc.upstream_status}) -- "
+                            "check that it's correct and still active, then add it again."
+                        ),
+                    },
+                ) from None
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "model_discovery_failed",
+                    "message": (
+                        "Couldn't get the list of models from Anthropic"
+                        + (f" (HTTP {exc.upstream_status})" if exc.upstream_status else "")
+                        + " -- your key may be fine; try again shortly."
+                    ),
+                },
+            ) from None
+        selected = select_anthropic_test_model(models)
+        return {
+            "provider": "anthropic",
+            "models": [
+                {
+                    "id": m.get("id"),
+                    "display_name": m.get("display_name"),
+                    "created_at": m.get("created_at"),
+                }
+                for m in models
+            ],
+            "selected_model": selected,
+            "message": None if selected else NO_COMPATIBLE_MODEL_MESSAGE,
+        }
 
     @app.delete("/v1/trial/{tenant_id}")
     async def end_trial(

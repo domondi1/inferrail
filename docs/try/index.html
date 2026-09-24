@@ -287,6 +287,11 @@
       };
 
       let trial = null; // { tenant_id, api_key, base_url, expires_at, ... }
+      // Per-provider model state, filled by server-side discovery from the
+      // visitor's own key. `selected` is what real requests use; `list`
+      // is kept whole so a model picker can later just set `selected`.
+      const models = { anthropic: { list: [], selected: null, message: null } };
+      const resetModels = () => { models.anthropic = { list: [], selected: null, message: null }; };
       let countdownTimer = null;
       let pollTimer = null;
 
@@ -295,8 +300,13 @@
         let body = null;
         try { body = await res.json(); } catch (_e) { /* no body */ }
         if (!res.ok) {
-          const message = (body && body.detail) || (body && body.error && body.error.message) || res.statusText;
+          const detail = body && body.detail;
+          const message = (detail && typeof detail === 'object' ? detail.message : detail) ||
+            (body && body.error && body.error.message) || res.statusText;
           const err = new Error(message);
+          // Machine-readable reason, when the server gives one (e.g.
+          // model discovery: provider_key_rejected vs model_discovery_failed).
+          err.code = detail && typeof detail === 'object' ? detail.code : undefined;
           // Marks this as "we reached the server and it gave a real
           // answer" (rate-limited, out of capacity, ...) as opposed to a
           // genuine connectivity failure (DNS/connection-refused/CORS,
@@ -345,7 +355,11 @@
         const url = trial.base_url, key = trial.api_key;
         $('snippet-curl').textContent = `curl -s -X POST ${url}/v1/demo/chat/completions \\\n  -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" \\\n  -d '{"model": "default", "messages": [{"role": "user", "content": "hello"}]}'`;
         $('snippet-openai-py').textContent = `from openai import OpenAI\nclient = OpenAI(base_url="${url}/v1", api_key="${key}")\nclient.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": "hello"}])`;
-        $('snippet-anthropic-py').textContent = `import anthropic\nclient = anthropic.Anthropic(base_url="${url}", api_key="${key}")\nclient.messages.create(model="claude-3-5-haiku-20241022", max_tokens=256, messages=[{"role": "user", "content": "hello"}])`;
+        const anthropicModel = models.anthropic.selected;
+        $('snippet-anthropic-py').textContent = `import anthropic\nclient = anthropic.Anthropic(base_url="${url}", api_key="${key}")\n` +
+          (anthropicModel
+            ? `client.messages.create(model="${anthropicModel}", max_tokens=256, messages=[{"role": "user", "content": "hello"}])`
+            : `# Add your Anthropic key above and this fills in a model your key can use.\nclient.messages.create(model="YOUR_MODEL_ID", max_tokens=256, messages=[{"role": "user", "content": "hello"}])`);
         $('snippet-langchain').textContent = `from langchain_openai import ChatOpenAI\nllm = ChatOpenAI(base_url="${url}/v1", api_key="${key}", model="gpt-4o-mini")\nllm.invoke("hello")`;
         $('snippet-fetch').textContent = `fetch("${url}/v1/demo/chat/completions", {\n  method: "POST",\n  headers: { Authorization: "Bearer ${key}", "Content-Type": "application/json" },\n  body: JSON.stringify({ model: "default", messages: [{ role: "user", content: "hello" }] }),\n})`;
       }
@@ -371,7 +385,7 @@
         // the live feed, and the budget bar -- so ending one trial and
         // starting another (or a natural expiry) never leaves stale
         // data from the previous trial visible, even for a moment.
-        resetKeyFields();
+        resetKeyFields(); resetModels();
         $('key-status').textContent = '';
         $('test-result').innerHTML = '';
         $('feed-list').innerHTML =
@@ -578,6 +592,24 @@
         finally { btn.disabled = false; btn.textContent = original; }
       }
 
+      async function discoverAnthropicModels() {
+        // Asks the gateway -- which asks Anthropic, with the key it holds --
+        // which models this key can use. The key itself never comes back.
+        const result = await apiFetch(
+          `/v1/trial/${trial.tenant_id}/models?provider=anthropic`, { headers: authHeaders() }
+        );
+        models.anthropic = { list: result.models, selected: result.selected_model, message: result.message };
+        renderSnippets();
+        return models.anthropic;
+      }
+
+      function modelProblem(e) {
+        // The gateway's messages already say which case this is (key
+        // rejected vs. discovery failed); anything without a code never
+        // got a real answer from the gateway at all.
+        return e.code ? e.message : 'Could not find out which Anthropic models your key can use: ' + e.message;
+      }
+
       async function sendRealRequest() {
         const btn = $('send-real-btn');
         // A real request may spend the visitor's own real money -- a
@@ -596,11 +628,17 @@
             });
             label = 'Real receipt — your OpenAI key';
           } else {
+            if (!models.anthropic.selected) {
+              try { await discoverAnthropicModels(); }
+              catch (e) { $('test-result').textContent = modelProblem(e); return; }
+            }
+            const model = models.anthropic.selected;
+            if (!model) { $('test-result').textContent = models.anthropic.message; return; }
             response = await apiFetch('/v1/messages', {
               method: 'POST', headers: taggedHeaders(),
-              body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 64, messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
+              body: JSON.stringify({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
             });
-            label = 'Real receipt — your Anthropic key';
+            label = `Real receipt — your Anthropic key · model ${model} (picked automatically from the models your key can use)`;
             response = { choices: [{ message: { content: (response.content && response.content[0] && response.content[0].text) || '' } }], usage: { prompt_tokens: response.usage && response.usage.input_tokens, completion_tokens: response.usage && response.usage.output_tokens }, model: response.model, inferrail: response.inferrail };
           }
           renderReceiptResult(label, response);
@@ -634,6 +672,15 @@
           resetKeyFields();
           renderModeBadge(); renderKeyStatus(); renderSnippets(); tickCountdown();
           $('key-status').textContent += ' — cleared from this page.';
+          if (anthropic) {
+            resetModels();
+            try {
+              const found = await discoverAnthropicModels();
+              $('key-status').textContent += found.selected
+                ? ` Anthropic test model: ${found.selected}.`
+                : ' ' + found.message;
+            } catch (err) { $('key-status').textContent += ' ' + modelProblem(err); }
+          }
         } catch (e) {
           // Deliberately NOT cleared on failure: the visitor may want to
           // fix a typo and resubmit without retyping the whole key.
@@ -652,8 +699,8 @@
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}/keys`, { method: 'DELETE', headers: authHeaders() });
           trial.openai_configured = false; trial.anthropic_configured = false; trial.mode = 'demo';
-          resetKeyFields();
-          renderModeBadge(); renderKeyStatus();
+          resetKeyFields(); resetModels();
+          renderModeBadge(); renderKeyStatus(); renderSnippets();
         } catch (e) { $('key-status').textContent = 'Could not forget key(s): ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
@@ -711,6 +758,7 @@
         renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
         saveSession();
         startPolling(); refreshReceipts(); refreshWork();
+        if (trial.anthropic_configured) discoverAnthropicModels().catch(() => { /* retried on the next real request */ });
         $('start-trial-btn').disabled = true;
         $('start-trial-btn').textContent = 'Gateway ready ✓';
       }

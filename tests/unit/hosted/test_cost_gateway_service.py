@@ -1461,3 +1461,241 @@ def test_dashboard_url_base_is_configurable(service_module, monkeypatch, tmp_pat
     client = TestClient(service_module.create_app(tmp_path / "data"))
     trial = _issue(client)
     assert trial["dashboard_url"].startswith("http://127.0.0.1:5500/docs/try/#t=trial_")
+
+
+# --- Anthropic model discovery for the /try/ real request ------------------
+#
+# The /try/ page used to hardcode a dated Anthropic model id; once Anthropic
+# retired it, every real Anthropic request 404'd. The page now asks the
+# gateway which models the visitor's own key can use and picks one.
+
+RETIRED_MODEL = "claude-3-5-haiku-20241022"
+ANTHROPIC_SECRET = "sk-ant-api03-SECRETMARKER-do-not-leak-0123456789"
+
+_MODELS_LIST = [
+    {"type": "model", "id": "claude-opus-4-1-20250805", "display_name": "Claude Opus 4.1",
+     "created_at": "2025-08-05T00:00:00Z"},
+    {"type": "model", "id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5",
+     "created_at": "2025-09-29T00:00:00Z"},
+    {"type": "model", "id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5",
+     "created_at": "2025-10-01T00:00:00Z"},
+    {"type": "model", "id": "claude-3-haiku-20240307", "display_name": "Claude Haiku 3",
+     "created_at": "2024-03-07T00:00:00Z"},
+]
+
+
+def _mock_anthropic(monkeypatch, service_module, *, models=None, models_status=200,
+                    models_exc=None):
+    """Routes the hosted service's Anthropic traffic (model list + messages)
+    through a MockTransport via the existing `anthropic_client_factory`
+    seam; returns every captured request."""
+    captured: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.method == "GET" and request.url.path == "/v1/models":
+            if models_exc is not None:
+                raise models_exc
+            if models_status != 200:
+                return httpx.Response(
+                    models_status,
+                    json={"type": "error", "error": {"type": "authentication_error",
+                                                     "message": "invalid x-api-key"}},
+                )
+            return httpx.Response(200, json={"data": _MODELS_LIST if models is None else models,
+                                             "has_more": False})
+        if request.method == "POST" and request.url.path == "/v1/messages":
+            body = json.loads(request.content)
+            return httpx.Response(200, json={
+                "id": "msg_mock", "type": "message", "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "Hello there, nice to meet."}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 12, "output_tokens": 7},
+            })
+        return httpx.Response(404)
+
+    monkeypatch.setattr(
+        service_module, "anthropic_client_factory",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    return captured
+
+
+def _trial_with_anthropic_key(client) -> dict:
+    trial = _issue(client)
+    resp = client.post(
+        f"/v1/trial/{trial['tenant_id']}/keys",
+        json={"anthropic_key": ANTHROPIC_SECRET},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    return trial
+
+
+def _discover(client, trial):
+    return client.get(
+        f"/v1/trial/{trial['tenant_id']}/models?provider=anthropic",
+        headers=_auth(trial["api_key"]),
+    )
+
+
+def test_anthropic_model_discovery_success(service_module, client, monkeypatch):
+    captured = _mock_anthropic(monkeypatch, service_module)
+    trial = _trial_with_anthropic_key(client)
+    resp = _discover(client, trial)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "anthropic"
+    assert [m["id"] for m in body["models"]] == [m["id"] for m in _MODELS_LIST]
+    assert body["message"] is None
+    # Asked Anthropic's real endpoint, with the visitor's key, server-side.
+    [req] = captured
+    assert str(req.url).startswith("https://api.anthropic.com/v1/models")
+    assert req.headers["x-api-key"] == ANTHROPIC_SECRET
+    assert req.headers["anthropic-version"]
+
+
+def test_anthropic_selection_prefers_newest_lightest_model(service_module, client, monkeypatch):
+    """Several models returned: the lightest family (Haiku) wins, and the
+    newest Haiku within it -- chosen from the list, not a fixed id."""
+    _mock_anthropic(monkeypatch, service_module)
+    trial = _trial_with_anthropic_key(client)
+    assert _discover(client, trial).json()["selected_model"] == "claude-haiku-4-5-20251001"
+
+
+def test_anthropic_selection_rules(service_module):
+    select = service_module.select_anthropic_test_model
+    no_haiku = [m for m in _MODELS_LIST if "haiku" not in m["id"]]
+    assert select(no_haiku) == "claude-sonnet-4-5-20250929"
+    only_opus = [m for m in _MODELS_LIST if "opus" in m["id"]]
+    assert select(only_opus) == "claude-opus-4-1-20250805"
+    unknown_family = [{"type": "model", "id": "claude-newfamily-5", "created_at": "2026-01-01"}]
+    assert select(unknown_family) == "claude-newfamily-5"
+    not_claude = [{"type": "model", "id": "embedding-thing", "created_at": "2026-01-01"}]
+    assert select(not_claude) is None
+    assert select([]) is None
+
+
+def test_anthropic_no_models_returned(service_module, client, monkeypatch):
+    _mock_anthropic(monkeypatch, service_module, models=[])
+    trial = _trial_with_anthropic_key(client)
+    body = _discover(client, trial).json()
+    assert body["selected_model"] is None
+    assert body["message"] == (
+        "Anthropic key connected, but no compatible text model was available for this test."
+    )
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_anthropic_discovery_key_rejected(service_module, client, monkeypatch, status):
+    _mock_anthropic(monkeypatch, service_module, models_status=status)
+    trial = _trial_with_anthropic_key(client)
+    resp = _discover(client, trial)
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] == "provider_key_rejected"
+    assert f"HTTP {status}" in detail["message"]
+    assert ANTHROPIC_SECRET not in resp.text
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"models_status": 500}, {"models_status": 529},
+     {"models_exc": httpx.ConnectError("connection refused")}],
+)
+def test_anthropic_discovery_upstream_failure(service_module, client, monkeypatch, kwargs):
+    """Distinct from a rejected key: the page tells the visitor their key
+    may be fine and to retry."""
+    _mock_anthropic(monkeypatch, service_module, **kwargs)
+    trial = _trial_with_anthropic_key(client)
+    resp = _discover(client, trial)
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "model_discovery_failed"
+    assert ANTHROPIC_SECRET not in resp.text
+
+
+def test_anthropic_discovery_requires_a_configured_key(client):
+    trial = _issue(client)
+    resp = _discover(client, trial)
+    assert resp.status_code == 400
+    assert "no Anthropic key configured" in resp.json()["detail"]
+
+
+def test_anthropic_discovery_is_tenant_scoped(service_module, client, monkeypatch):
+    _mock_anthropic(monkeypatch, service_module)
+    owner = _trial_with_anthropic_key(client)
+    other = _issue(client)
+    resp = client.get(
+        f"/v1/trial/{owner['tenant_id']}/models?provider=anthropic",
+        headers=_auth(other["api_key"]),
+    )
+    assert resp.status_code == 403
+
+
+def test_real_anthropic_request_uses_discovered_model(service_module, client, monkeypatch):
+    """The page's flow end to end at the API level: discover, then send
+    /v1/messages with the selected model -- which is what reaches
+    Anthropic, and what the receipt records."""
+    captured = _mock_anthropic(monkeypatch, service_module)
+    trial = _trial_with_anthropic_key(client)
+    selected = _discover(client, trial).json()["selected_model"]
+    resp = client.post(
+        "/v1/messages",
+        json={"model": selected, "max_tokens": 64,
+              "messages": [{"role": "user", "content": "Say hello in five words."}]},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    sent = [json.loads(r.content) for r in captured if r.method == "POST"]
+    assert [b["model"] for b in sent] == [selected]
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipts[0]["model"] == selected
+    assert receipts[0]["provider"] == "anthropic"
+
+
+def test_anthropic_key_never_in_discovery_messages_or_receipts(service_module, client, monkeypatch):
+    _mock_anthropic(monkeypatch, service_module)
+    trial = _trial_with_anthropic_key(client)
+    headers = _auth(trial["api_key"])
+    bodies = [_discover(client, trial).text]
+    bodies.append(client.post(
+        "/v1/messages",
+        json={"model": "claude-haiku-4-5-20251001", "max_tokens": 64,
+              "messages": [{"role": "user", "content": "hi"}]},
+        headers=headers,
+    ).text)
+    bodies.append(client.get("/v1/receipts", headers=headers).text)
+    bodies.append(client.get(f"/v1/trial/{trial['tenant_id']}", headers=headers).text)
+    for text in bodies:
+        assert ANTHROPIC_SECRET not in text
+
+
+def test_retired_anthropic_model_not_in_try_page_path():
+    """Neither the page nor the hosted service may depend on the retired
+    id again -- nor on any single hardcoded dated Anthropic id."""
+    import re
+
+    page = (HOSTED_DIR.parents[1] / "docs" / "try" / "index.html").read_text()
+    service_src = (HOSTED_DIR / "service.py").read_text()
+    for text in (page, service_src):
+        assert RETIRED_MODEL not in text
+        assert not re.search(r"claude-[a-z0-9.-]*-20\d{6}", text)
+
+
+def test_openai_real_request_unchanged_alongside_anthropic(service_module, client, monkeypatch):
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_client)
+    _mock_anthropic(monkeypatch, service_module)
+    trial = _issue(client)
+    client.post(
+        f"/v1/trial/{trial['tenant_id']}/keys",
+        json={"openai_key": "sk-fake-openai", "anthropic_key": ANTHROPIC_SECRET},
+        headers=_auth(trial["api_key"]),
+    )
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "hi there"
