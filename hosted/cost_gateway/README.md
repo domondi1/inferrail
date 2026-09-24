@@ -105,8 +105,10 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. |
 | `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
 | `COST_GATEWAY_ADMIN_TOKEN` | unset | Enables `GET /v1/admin/stats` and `GET /v1/admin/feedback` (usage counters + submitted feedback), gated on `Authorization: Bearer <this value>`. **Unset by default -- both routes return `404` (not `401`) until this is explicitly set**, so a deployment with no admin token configured reveals nothing about their existence. Generate a real secret yourself (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and set it as a platform secret; never commit it or share it with an assistant session. |
-| `COST_GATEWAY_GITHUB_TOKEN` | unset | A fine-grained GitHub PAT, scoped to **only** `COST_GATEWAY_GITHUB_REPO` with **Issues: write** permission and nothing else. When set, every `POST /v1/feedback` also files a GitHub Issue -- the durable copy, since it survives a Render redeploy and the local `feedback.jsonl` doesn't. Unset by default (feedback is still saved locally either way). See "Feedback and usage visibility" below for how to generate one. |
-| `COST_GATEWAY_GITHUB_REPO` | `domondi1/inferrail` | Which repo `COST_GATEWAY_GITHUB_TOKEN` files issues against, as `owner/repo`. |
+| `COST_GATEWAY_GITHUB_TOKEN` | unset | A fine-grained GitHub PAT, scoped to **only** `COST_GATEWAY_GITHUB_REPO` with **Issues: write** permission and nothing else. When set (together with `COST_GATEWAY_GITHUB_REPO`), every `POST /v1/feedback` also files a GitHub Issue -- the durable copy, since it survives a Render redeploy and the local `feedback.jsonl` doesn't. Unset by default (feedback is still saved locally either way). See "Feedback and usage visibility" below for how to generate one. |
+| `COST_GATEWAY_GITHUB_REPO` | unset | Which repo feedback Issues are filed on, as `owner/repo`. **Must be a private repository** -- the service checks this via the GitHub API before every filing (until confirmed once) and files nothing to a public repo. No default: nothing is filed unless this is set. |
+| `COST_GATEWAY_FEEDBACK_MAX_PER_TENANT` | `5` | Spam guard: max feedback submissions per trial; further ones get `429`. |
+| `COST_GATEWAY_FEEDBACK_ISSUES_MAX_PER_HOUR` | `20` | Global cap on GitHub Issues filed per rolling hour. Past it, feedback is still accepted and saved locally; only the GitHub copy is skipped. |
 
 ## API contract
 
@@ -265,27 +267,42 @@ plain "Report an issue" form. Feedback is written to two places:
    the reporting tenant, **not deleted when that tenant's trial ends or
    expires.** On Render's free tier this file lives on ephemeral
    storage, though -- **it does not survive a redeploy/restart.**
-2. **A GitHub Issue on `COST_GATEWAY_GITHUB_REPO`** (default
-   `domondi1/inferrail`), labeled `cost-gateway-feedback` -- best-effort,
-   only if `COST_GATEWAY_GITHUB_TOKEN` is set. This is the durable copy:
-   it survives every redeploy, since GitHub -- not Render -- holds it.
-   If the GitHub call fails for any reason (missing/bad token, GitHub
-   unreachable), the feedback is still saved to (1) and the submission
-   still succeeds -- see `_create_github_issue`'s own docstring.
+2. **A GitHub Issue on `COST_GATEWAY_GITHUB_REPO`**, labeled
+   `cost-gateway-feedback` -- best-effort, only if both
+   `COST_GATEWAY_GITHUB_TOKEN` and `COST_GATEWAY_GITHUB_REPO` are set.
+   This is the durable copy: it survives every redeploy, since GitHub --
+   not Render -- holds it. If the GitHub call fails for any reason
+   (missing/bad token, GitHub unreachable, hourly cap reached), the
+   feedback is still saved to (1) and the submission still succeeds --
+   see `_GitHubFeedbackSink`'s own docstring.
+
+**Feedback only ever goes to a private repository.** It can contain a
+visitor's email address and whatever they chose to write; someone
+filling in a form on a website hasn't agreed to publish that on a public
+issue tracker. The service checks that `COST_GATEWAY_GITHUB_REPO` is
+private (via the GitHub API) before filing, and files nothing if it
+isn't. If a report describes a real bug worth tracking in the open, the
+operator opens a separate, cleaned-up public issue by hand.
 
 **Setting up the GitHub Issues path** (recommended -- this is the
 durable one):
 
-1. Create a **fine-grained personal access token** at
+1. Create a **private** repository to receive feedback -- a dedicated
+   one, holding nothing else, so the token below can't reach anything
+   sensitive.
+2. Create a **fine-grained personal access token** at
    github.com/settings/personal-access-tokens/new, scoped to **only**
-   the `domondi1/inferrail` repository, with **Issues: Read and write**
-   permission and nothing else. Never a classic PAT with broad repo
-   access for this -- narrow scope limits what a leaked token could do.
-2. Set it as `COST_GATEWAY_GITHUB_TOKEN` on Render (same process as
+   that repository, with **Issues: Read and write** permission and
+   nothing else (GitHub adds read-only "Metadata" automatically; the
+   service uses it for the private-repo check). Never a classic PAT with
+   broad repo access for this -- narrow scope limits what a leaked token
+   could do.
+3. Set `COST_GATEWAY_GITHUB_REPO` (`owner/repo`) and
+   `COST_GATEWAY_GITHUB_TOKEN` on Render (same process as
    `COST_GATEWAY_ADMIN_TOKEN` above), redeploy.
-3. From then on, new feedback appears as a normal GitHub Issue, labeled
-   `cost-gateway-feedback` -- filter the repo's Issues tab by that label
-   to see just these. No curl command needed for this path.
+4. From then on, new feedback appears as a normal GitHub Issue in that
+   private repo, labeled `cost-gateway-feedback`. No curl command needed
+   for this path.
 
 **The Render-side admin view (`/v1/admin/feedback`) still works exactly
 as before**, and is useful for whatever's arrived since the last
