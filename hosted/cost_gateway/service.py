@@ -47,9 +47,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import secrets
+import sys
 import time
+import uuid
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -113,6 +116,152 @@ from inferrail.work.builder import (
     load_outcomes,
 )
 from inferrail.work.schema import WorkOutcomeRecord, WorkSummary
+
+log = logging.getLogger("inferrail.cost_gateway")
+
+_LOG_FIELDS = frozenset(
+    {
+        "request_id",
+        "method",
+        "route",
+        "status",
+        "duration_ms",
+        "tenant_id",
+        "error_type",
+        "error_location",
+        "reason",
+        "http_status",
+        "github_feedback_configured",
+        "admin_enabled",
+        "client_ip_header",
+    }
+)
+"""Every field any log line in this service may carry. **Key-free and
+payload-free by structure, not policy** (see `keys.py`'s threat model):
+log lines are built only from these names, never from a request object,
+header map, body, or exception message -- so a provider key, a trial
+bearer token, a prompt, or a visitor's feedback text/email has no path
+into a log. `_log_event` rejects any other field name outright, and
+`test_logs_never_contain_secrets_or_payloads` checks it end to end."""
+
+
+def _log_event(level: int, event: str, **fields: str | int | float | bool | None) -> None:
+    unknown = set(fields) - _LOG_FIELDS
+    if unknown:
+        raise ValueError(f"log field(s) not in the allow-list: {sorted(unknown)}")
+    log.log(level, event, extra={"cg_fields": fields})
+
+
+class _JsonLogFormatter(logging.Formatter):
+    """One JSON object per line -- what Render's log viewer (and any log
+    drain) can search and filter on."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        line: dict[str, Any] = {
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "level": record.levelname.lower(),
+            "event": record.getMessage(),
+        }
+        line.update(getattr(record, "cg_fields", {}))
+        return json.dumps(line)
+
+
+def configure_logging() -> None:
+    """Production shape only (`__main__`): JSON lines to stdout at INFO.
+    Tests capture records through pytest's own handler instead."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_JsonLogFormatter())
+    log.handlers[:] = [handler]
+    log.setLevel(logging.INFO)
+    log.propagate = False
+
+
+def _route_template(scope: Any) -> str:
+    """The matched route's *template* (`/v1/trial/{tenant_id}`), never
+    the raw path -- a raw path carries caller-chosen text (work ids, task
+    ids, or anything pasted into a URL by mistake)."""
+    route = scope.get("route")
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) else "unmatched"
+
+
+def _error_location(exc: BaseException) -> str:
+    """`file.py:line` of the innermost frame -- enough to find the bug,
+    without the exception's message (which can embed request data)."""
+    tb = exc.__traceback__
+    if tb is None:
+        return "unknown"
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    return f"{Path(tb.tb_frame.f_code.co_filename).name}:{tb.tb_lineno}"
+
+
+class _AccessLogMiddleware:
+    """Outermost middleware: gives every request an `X-Request-ID`
+    (returned to the caller, so a visitor's bug report can be matched to
+    a log line), logs one allow-listed `request` line per request, and
+    turns an unhandled exception into a logged `unhandled_error` plus a
+    generic JSON 500 -- instead of the server's default traceback dump,
+    whose exception text could carry request data."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = uuid.uuid4().hex
+        state = scope.setdefault("state", {})
+        state["request_id"] = request_id
+        started_at = time.monotonic()
+        status = 500
+        response_started = False
+
+        async def send_with_request_id(message: Any) -> None:
+            nonlocal status, response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+                status = message["status"]
+                message = {
+                    **message,
+                    "headers": [
+                        *message.get("headers", []),
+                        (b"x-request-id", request_id.encode()),
+                    ],
+                }
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        except Exception as exc:
+            _log_event(
+                logging.ERROR,
+                "unhandled_error",
+                request_id=request_id,
+                method=scope.get("method"),
+                route=_route_template(scope),
+                error_type=type(exc).__name__,
+                error_location=_error_location(exc),
+            )
+            if not response_started:
+                response = JSONResponse(
+                    status_code=500,
+                    content={"detail": "internal server error", "request_id": request_id},
+                )
+                await response(scope, receive, send_with_request_id)
+        finally:
+            _log_event(
+                logging.INFO,
+                "request",
+                request_id=request_id,
+                method=scope.get("method"),
+                route=_route_template(scope),
+                status=status,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+                tenant_id=state.get("tenant_id"),
+            )
+
 
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("COST_GATEWAY_REQUEST_TIMEOUT_SECONDS", "120"))
 """Known Phase 1 limitation, documented rather than hidden: this wraps the
@@ -459,10 +608,25 @@ class _GitHubFeedbackSink:
     """
 
     def __init__(self) -> None:
-        self._token = os.environ.get("COST_GATEWAY_GITHUB_TOKEN") or None
+        # Stripped: a token pasted into a platform's env-var form with a
+        # trailing newline would otherwise make every request fail.
+        self._token = os.environ.get("COST_GATEWAY_GITHUB_TOKEN", "").strip() or None
         self._repo = os.environ.get("COST_GATEWAY_GITHUB_REPO", "").strip() or None
         self._verified_private = False
         self._filed_at: deque[float] = deque()
+
+    @property
+    def configured(self) -> bool:
+        return self._token is not None and self._repo is not None
+
+    @staticmethod
+    def _skipped(reason: str, http_status: int | None = None) -> None:
+        # Logged so an operator can see *why* nothing was filed (the
+        # route itself always succeeds, by design) -- a reason code and
+        # GitHub's status only, never the feedback text or the token.
+        _log_event(
+            logging.WARNING, "feedback_github_skipped", reason=reason, http_status=http_status
+        )
 
     def _under_hourly_cap(self) -> bool:
         now = time.monotonic()
@@ -477,15 +641,25 @@ class _GitHubFeedbackSink:
         if self._verified_private:
             return True
         resp = await client.get(f"https://api.github.com/repos/{self._repo}", headers=headers)
-        if resp.status_code == 200 and resp.json().get("private") is True:
-            self._verified_private = True
-        return self._verified_private
+        if resp.status_code != 200:
+            # 404 here usually means the token can't see the repo (not
+            # granted to it) or the repo name is wrong.
+            self._skipped("repo_check_failed", resp.status_code)
+            return False
+        if resp.json().get("private") is not True:
+            self._skipped("repo_not_private")
+            return False
+        self._verified_private = True
+        return True
 
     async def file(self, record: dict[str, Any]) -> str | None:
         """Returns the created issue's URL, or `None` if not configured,
         the repo isn't private, the hourly cap is reached, or the API call
         fails for any reason."""
-        if self._token is None or self._repo is None or not self._under_hourly_cap():
+        if not self.configured:
+            return None
+        if not self._under_hourly_cap():
+            self._skipped("hourly_cap")
             return None
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -516,8 +690,9 @@ class _GitHubFeedbackSink:
             if resp.status_code == 201:
                 self._filed_at.append(time.monotonic())
                 return str(resp.json().get("html_url"))
-        except (httpx.HTTPError, ValueError):
-            pass
+            self._skipped("issue_create_failed", resp.status_code)
+        except (httpx.HTTPError, ValueError) as exc:
+            self._skipped(f"request_error:{type(exc).__name__}")
         return None
 
 
@@ -649,6 +824,7 @@ def create_app(data_dir: Path) -> FastAPI:
 
     def _authenticated_tenant(request: Request) -> Tenant:
         tenant = authenticate(request, trial_registry)
+        request.state.tenant_id = tenant.tenant_id
         limiter.check(tenant.tenant_id)
         return tenant
 
@@ -742,6 +918,7 @@ def create_app(data_dir: Path) -> FastAPI:
         client_ip, ip_source = _client_ip(request)
         ip_source_counts[ip_source] += 1
         api_key, tenant = trial_registry.issue(client_ip=client_ip)
+        request.state.tenant_id = tenant.tenant_id
         payload = _status_payload(tenant, base_url=_base_url(request), stores=None)
         payload["api_key"] = api_key
         return payload
@@ -1146,12 +1323,20 @@ def create_app(data_dir: Path) -> FastAPI:
         finally:
             await provider.aclose()
 
+    # Registered last so it wraps every other middleware: its request line
+    # and request id cover 413s, 504s, and CORS preflights too.
+    app.add_middleware(_AccessLogMiddleware)
+    _log_event(
+        logging.INFO,
+        "startup",
+        github_feedback_configured=github_feedback.configured,
+        admin_enabled=admin_token is not None,
+        client_ip_header=CLIENT_IP_HEADER or None,
+    )
     return app
 
 
 if __name__ == "__main__":
-    import sys
-
     import uvicorn
 
     # A bare `python3 service.py` (no CLI args) is the production/hosted
@@ -1166,6 +1351,7 @@ if __name__ == "__main__":
     )
     port = int(sys.argv[2]) if len(sys.argv) > 2 else int(os.environ.get("PORT", 8423))
     host = "127.0.0.1" if explicit_args else "0.0.0.0"
+    configure_logging()
     app = create_app(data_dir)
     print(f"Inferrail Cost Gateway listening on http://{host}:{port} (data_dir={data_dir})")
     uvicorn.run(

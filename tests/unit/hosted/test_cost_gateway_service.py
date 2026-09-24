@@ -1141,3 +1141,210 @@ def test_issue_history_pruned_after_window(service_module, monkeypatch):
     monkeypatch.setattr(trial_mod.time, "monotonic", lambda: real_monotonic() + 11)
     registry.purge_expired()
     assert registry.tracked_ip_count() == 0
+
+
+# --- Observability: allow-listed logs, request ids, error logging ---------
+
+
+def _formatted_logs(service_module, caplog) -> list[dict]:
+    formatter = service_module._JsonLogFormatter()
+    return [
+        json.loads(formatter.format(r))
+        for r in caplog.records
+        if r.name == "inferrail.cost_gateway"
+    ]
+
+
+def test_logs_never_contain_secrets_or_payloads(service_module, monkeypatch, tmp_path, caplog):
+    """End to end: a provider key, the trial bearer token, prompt text,
+    feedback text, a contact email, a caller-chosen URL segment, and an
+    exception message that embeds the key -- none may reach any log line,
+    and every line may carry only allow-listed fields."""
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    provider_key = "sk-LEAKCANARY-provider-key-0123456789"
+    prompt = "PROMPTCANARY what is the secret plan"
+    feedback_text = "FEEDBACKCANARY something broke"
+    contact = "contactcanary@example.com"
+    url_segment = "URLCANARY-work-id"
+
+    client = TestClient(service_module.create_app(tmp_path / "data"), raise_server_exceptions=False)
+    trial = _issue(client)
+    headers = _auth(trial["api_key"])
+    client.post(
+        f"/v1/trial/{trial['tenant_id']}/keys", json={"openai_key": provider_key}, headers=headers
+    )
+    client.post(
+        "/v1/demo/chat/completions",
+        json={"model": "x", "messages": [{"role": "user", "content": prompt}]},
+        headers=headers,
+    )
+    monkeypatch.setattr(service_module, "openai_client_factory", _mock_openai_client)
+    client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}]},
+        headers=headers,
+    )
+    client.post(
+        "/v1/feedback", json={"message": feedback_text, "contact": contact}, headers=headers
+    )
+    client.get(f"/v1/work/{url_segment}", headers=headers)
+    client.get("/v1/receipts", headers={"Authorization": "Bearer trial_not-a-real-token"})
+
+    def exploding_factory():
+        raise RuntimeError(f"boom while holding {provider_key} for {prompt}")
+
+    monkeypatch.setattr(service_module, "openai_client_factory", exploding_factory)
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}]},
+        headers=headers,
+    )
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "internal server error"
+    assert provider_key not in resp.text
+
+    lines = _formatted_logs(service_module, caplog)
+    assert lines, "expected log output"
+    raw = "\n".join(json.dumps(line) for line in lines)
+    for canary in (
+        provider_key,
+        trial["api_key"],
+        "trial_not-a-real-token",
+        "PROMPTCANARY",
+        "FEEDBACKCANARY",
+        contact,
+        url_segment,
+    ):
+        assert canary not in raw, f"{canary!r} leaked into logs"
+
+    allowed = service_module._LOG_FIELDS | {"ts", "level", "event"}
+    for line in lines:
+        assert set(line) <= allowed, line
+
+    errors = [line for line in lines if line["event"] == "unhandled_error"]
+    assert len(errors) == 1
+    assert errors[0]["error_type"] == "RuntimeError"
+    assert errors[0]["route"] == "/v1/chat/completions"
+    assert errors[0]["error_location"].startswith("test_cost_gateway_service.py:")
+    work_lines = [line for line in lines if line.get("route") == "/v1/work/{work_id}"]
+    assert work_lines and work_lines[0]["status"] == 404
+
+
+def test_every_response_has_request_id_matching_its_log_line(service_module, tmp_path, caplog):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+    resp = client.get(f"/v1/trial/{trial['tenant_id']}", headers=_auth(trial["api_key"]))
+    request_id = resp.headers["x-request-id"]
+    [line] = [
+        line
+        for line in _formatted_logs(service_module, caplog)
+        if line.get("request_id") == request_id
+    ]
+    assert line["event"] == "request"
+    assert line["method"] == "GET"
+    assert line["route"] == "/v1/trial/{tenant_id}"
+    assert line["status"] == 200
+    assert line["tenant_id"] == trial["tenant_id"]
+    assert isinstance(line["duration_ms"], float)
+
+
+def test_rejections_before_routing_are_logged_too(service_module, tmp_path, caplog, monkeypatch):
+    """The access log wraps every other middleware, so a 413 from the body
+    limit still gets a request id and a log line."""
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    monkeypatch.setattr(service_module, "MAX_REQUEST_BODY_BYTES", 16)
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    resp = client.post("/v1/trial", content=b"x" * 64)
+    assert resp.status_code == 413
+    request_id = resp.headers["x-request-id"]
+    [line] = [
+        line
+        for line in _formatted_logs(service_module, caplog)
+        if line.get("request_id") == request_id
+    ]
+    assert line["status"] == 413
+    assert line["route"] == "unmatched"
+
+
+def test_log_event_rejects_fields_outside_allow_list(service_module):
+    with pytest.raises(ValueError, match="allow-list"):
+        service_module._log_event(20, "request", authorization="Bearer x")
+
+
+def test_feedback_skip_reason_is_logged(service_module, monkeypatch, tmp_path, caplog):
+    """When the token can't see the repo, the operator gets a reason code
+    in the logs instead of a silent `github_issue_url: null`."""
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+
+    def not_found(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    real_async_client = httpx.AsyncClient
+
+    def mock_async_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(not_found)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_async_client)
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+    resp = client.post(
+        "/v1/feedback", json={"message": "SKIPCANARY"}, headers=_auth(trial["api_key"])
+    )
+    assert resp.json()["github_issue_url"] is None
+    lines = _formatted_logs(service_module, caplog)
+    [skip] = [line for line in lines if line["event"] == "feedback_github_skipped"]
+    assert skip["reason"] == "repo_check_failed"
+    assert skip["http_status"] == 404
+    assert "SKIPCANARY" not in json.dumps(lines)
+
+
+def test_github_token_whitespace_is_stripped(service_module, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "  fake-github-token\n")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+    captured = _mock_github(monkeypatch)
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+    resp = client.post("/v1/feedback", json={"message": "hi"}, headers=_auth(trial["api_key"]))
+    assert resp.json()["github_issue_url"] is not None
+    assert all(r.headers["authorization"] == "Bearer fake-github-token" for r in captured)
+
+
+def test_startup_line_reports_configuration_not_secrets(
+    service_module, monkeypatch, tmp_path, caplog
+):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "ADMINCANARY")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "GHCANARY")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+    service_module.create_app(tmp_path / "data")
+    lines = _formatted_logs(service_module, caplog)
+    [startup] = [line for line in lines if line["event"] == "startup"]
+    assert startup["admin_enabled"] is True
+    assert startup["github_feedback_configured"] is True
+    assert startup["client_ip_header"] == "true-client-ip"
+    raw = json.dumps(lines)
+    assert "ADMINCANARY" not in raw and "GHCANARY" not in raw
