@@ -1348,3 +1348,91 @@ def test_startup_line_reports_configuration_not_secrets(
     assert startup["client_ip_header"] == "true-client-ip"
     raw = json.dumps(lines)
     assert "ADMINCANARY" not in raw and "GHCANARY" not in raw
+
+
+# --- Launch readiness: purge loop under lifespan, quiet health checks ------
+
+
+def _events(service_module, caplog, name: str) -> list[dict]:
+    return [line for line in _formatted_logs(service_module, caplog) if line["event"] == name]
+
+
+def _fast_purge_env(monkeypatch) -> None:
+    monkeypatch.setenv("COST_GATEWAY_DEMO_TTL_SECONDS", "0.1")
+    monkeypatch.setenv("COST_GATEWAY_PURGE_GRACE_SECONDS", "0")
+    monkeypatch.setenv("COST_GATEWAY_PURGE_INTERVAL_SECONDS", "0.05")
+
+
+def test_purge_loop_runs_and_discards_expired_trial_keys(
+    service_module, monkeypatch, tmp_path, caplog
+):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    _fast_purge_env(monkeypatch)
+    app = service_module.create_app(tmp_path / "data")
+    with TestClient(app) as client:  # context manager runs the lifespan
+        trial = _issue(client)
+        client.post(
+            f"/v1/trial/{trial['tenant_id']}/keys",
+            json={"openai_key": "sk-fake-for-purge-test"},
+            headers=_auth(trial["api_key"]),
+        )
+        assert app.state.key_vault.status(trial["tenant_id"]).openai_configured
+        deadline = time.monotonic() + 3
+        while not _events(service_module, caplog, "purge") and time.monotonic() < deadline:
+            time.sleep(0.05)
+    [purge] = _events(service_module, caplog, "purge")[:1]
+    assert purge["purged_count"] >= 1
+    assert not app.state.key_vault.status(trial["tenant_id"]).openai_configured
+
+
+def test_purge_loop_survives_a_failing_sweep(service_module, monkeypatch, tmp_path, caplog):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    _fast_purge_env(monkeypatch)
+    trial_cls = sys.modules["trial"].TrialRegistry
+    real_purge = trial_cls.purge_expired
+    calls = {"n": 0}
+
+    def flaky_purge(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk hiccup")
+        return real_purge(self)
+
+    monkeypatch.setattr(trial_cls, "purge_expired", flaky_purge)
+    app = service_module.create_app(tmp_path / "data")
+    with TestClient(app) as client:
+        _issue(client)
+        deadline = time.monotonic() + 3
+        while not _events(service_module, caplog, "purge") and time.monotonic() < deadline:
+            time.sleep(0.05)
+    [error] = _events(service_module, caplog, "purge_error")
+    assert error["error_type"] == "OSError"
+    assert "disk hiccup" not in json.dumps(error)
+    assert _events(service_module, caplog, "purge"), "loop must keep running after a failure"
+
+
+def test_successful_health_checks_are_not_logged(service_module, tmp_path, caplog):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert "x-request-id" in resp.headers
+    assert not [
+        line for line in _events(service_module, caplog, "request") if line["route"] == "/health"
+    ]
+    client.post("/v1/trial")
+    assert [
+        line for line in _events(service_module, caplog, "request") if line["route"] == "/v1/trial"
+    ]

@@ -134,6 +134,7 @@ _LOG_FIELDS = frozenset(
         "github_feedback_configured",
         "admin_enabled",
         "client_ip_header",
+        "purged_count",
     }
 )
 """Every field any log line in this service may carry. **Key-free and
@@ -251,16 +252,21 @@ class _AccessLogMiddleware:
                 )
                 await response(scope, receive, send_with_request_id)
         finally:
-            _log_event(
-                logging.INFO,
-                "request",
-                request_id=request_id,
-                method=scope.get("method"),
-                route=_route_template(scope),
-                status=status,
-                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
-                tenant_id=state.get("tenant_id"),
-            )
+            route = _route_template(scope)
+            # Render's health checker calls /health every few seconds;
+            # logging each success would bury every other line. A failing
+            # health check is still logged.
+            if not (route == "/health" and status == 200):
+                _log_event(
+                    logging.INFO,
+                    "request",
+                    request_id=request_id,
+                    method=scope.get("method"),
+                    route=route,
+                    status=status,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+                    tenant_id=state.get("tenant_id"),
+                )
 
 
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("COST_GATEWAY_REQUEST_TIMEOUT_SECONDS", "120"))
@@ -746,7 +752,40 @@ async def _stream_and_close(inner: AsyncIterator[bytes], provider: Any) -> Async
 
 
 def create_app(data_dir: Path) -> FastAPI:
-    app = FastAPI(title="Inferrail Cost Gateway", version="1")
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """Runs the periodic expired-trial purge for the process's
+        lifetime. (`trial_registry` is assigned further down in
+        `create_app`; it exists by the time the app starts.)"""
+        interval = float(os.environ.get("COST_GATEWAY_PURGE_INTERVAL_SECONDS", "60"))
+        task = asyncio.create_task(_purge_loop(interval))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _purge_loop(interval: float) -> None:
+        # One failed sweep must never end the loop: purging is what
+        # discards expired trials' data *and their in-memory provider
+        # keys*, so a silently dead loop would keep keys past their TTL.
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                purged = trial_registry.purge_expired()
+            except Exception as exc:
+                _log_event(
+                    logging.ERROR,
+                    "purge_error",
+                    error_type=type(exc).__name__,
+                    error_location=_error_location(exc),
+                )
+                continue
+            if purged:
+                _log_event(logging.INFO, "purge", purged_count=len(purged))
+
+    app = FastAPI(title="Inferrail Cost Gateway", version="1", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins_from_env(),
@@ -769,6 +808,7 @@ def create_app(data_dir: Path) -> FastAPI:
         data_dir, daily_budget_usd=daily_budget_usd, pricing_resolver=pricing_resolver
     )
     key_vault = KeyVault()
+    app.state.key_vault = key_vault
     limiter: RateLimiter = rate_limiter_from_env()
     app.state.limiter = limiter
     feedback_path = data_dir / "feedback.jsonl"
@@ -802,25 +842,6 @@ def create_app(data_dir: Path) -> FastAPI:
                 status_code=504,
                 content={"detail": f"request exceeded {REQUEST_TIMEOUT_SECONDS:.0f}s timeout"},
             )
-
-    @app.on_event("startup")
-    async def _start_purge_loop() -> None:
-        interval = float(os.environ.get("COST_GATEWAY_PURGE_INTERVAL_SECONDS", "60"))
-
-        async def _loop() -> None:
-            while True:
-                await asyncio.sleep(interval)
-                trial_registry.purge_expired()
-
-        app.state.purge_task = asyncio.create_task(_loop())
-
-    @app.on_event("shutdown")
-    async def _stop_purge_loop() -> None:
-        task = getattr(app.state, "purge_task", None)
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
 
     def _authenticated_tenant(request: Request) -> Tenant:
         tenant = authenticate(request, trial_registry)

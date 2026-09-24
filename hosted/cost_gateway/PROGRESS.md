@@ -52,7 +52,7 @@ deployed, and live-verified. No open PRs, no known bugs, nothing
 committed-but-unpushed.** Next work is genuinely new scope — see
 "Not started yet" below.
 
-## Phase 5 (hardening) -- in progress, started 2026-09-24
+## Phase 5 (hardening) -- started 2026-09-24
 
 Split into small PRs, in this order:
 
@@ -71,15 +71,22 @@ Split into small PRs, in this order:
   then 429; a spoofed `True-Client-IP` also -> 429 (Cloudflare
   overwrites it); 400 KB upload -> 413; `/v1/admin/stats` showed
   `trial_issuance_ip_source: {"true-client-ip": 7}`, no `peer`.
-- **C. Observability** (branch `feat/cost-gateway-observability`):
-  JSON log lines from a fixed field allow-list (`request`, `startup`,
-  `unhandled_error`, `feedback_github_skipped`); `X-Request-ID` on every
-  response; unhandled exceptions logged by type and `file:line` only and
-  returned as a generic JSON 500; GitHub token whitespace stripped. See
-  README's "Logs" section. **Verify live after deploy:** Render's Logs
-  tab shows a `startup` line with the expected config and one `request`
-  line per request; response headers include `X-Request-ID`.
-- **D. Launch checklist + security review write-up** -- not started.
+- **C. Observability -- merged (PR #55), deployed, verified live
+  2026-09-24.** Render logs showed the `startup` line with all three
+  settings configured, and one allow-listed `request` line per test
+  request, each matching its `X-Request-ID`; no keys, tokens, or raw
+  URLs. Also showed `/health` logged every ~5s by Render's health
+  checker (fixed in D).
+- **D. Launch readiness** (branch `chore/cost-gateway-launch-readiness`):
+  `LAUNCH.md` -- security review (each protection mapped to its test),
+  launch checklist, incident runbook. Plus: FastAPI `lifespan` instead
+  of deprecated `on_event`; the purge loop now survives a failed sweep
+  (previously one exception would stop all future purges, keeping
+  expired trials' keys in memory); successful `/health` checks no
+  longer logged.
+
+**After D:** Phase 5 engineering is done. Remaining items are operator
+tasks/decisions listed in `LAUNCH.md`'s checklist.
 
 ## The recurring blocker every pass hits: no push access
 
@@ -121,7 +128,7 @@ not just after asking for a push.
   testing — either wait, or spin up a local instance with
   `COST_GATEWAY_ISSUE_MAX_PER_IP` raised for testing purposes.
 
-## Not started yet (original Phase 4 / Phase 5 scope)
+## Not started yet (original Phase 4 scope)
 
 - **Accounts**: no way to "claim" a trial and persist it past its TTL.
   No auth beyond the bearer-token-per-trial model that already exists.
@@ -135,11 +142,6 @@ not just after asking for a push.
   README's new "Feedback and usage visibility" section as the natural
   next step once the in-memory `trials_issued_total` stops being enough
   (it resets on every restart/redeploy).
-- **Phase 5 (hardening/observability/launch checklist)**: no
-  structured-logging/metrics/error-tracking pass has been done on this
-  service specifically; no formal security review beyond what's already
-  documented inline; no cost-control review beyond the existing
-  per-tenant daily budget default ($1.00).
 - **A hosted dashboard reusing the local React app** (the ADR's original
   Phase 2 aspiration) was descoped in favor of the plain-HTML `/try/`
   page that shipped instead — documented as a deliberate difference in
@@ -149,21 +151,16 @@ not just after asking for a push.
 
 1. Confirm what's actually on `main`/live by the time you read this
    (`git log origin/main --oneline -10`, plus a real `curl .../health`)
-   — don't trust this file blindly; it was accurate as of PR #50
-   (commit `f53bc4a`, 2026-09-23), but re-verify rather than assume nothing's
-   changed since.
-2. As of that point, everything in Phases 0–3 plus the key-form fixes,
-   admin feedback/stats, and GitHub Issues integration was merged,
-   deployed, and live-verified — no open PRs, nothing pending.
-3. Ask the founder directly which of these two directions they want
-   next — don't assume:
-   - **Phase 4** (accounts to persist a trial past its TTL, opt-in email
-     digest, transparent update channel, richer data export) — genuinely
-     new scope, not started at all.
-   - **Phase 5** (hardening/observability/launch checklist) — treating
-     what's live now as a real v1 and making it production-solid instead
-     of adding features.
-4. Whichever it is, keep the same verification discipline every pass in
-   this feature's history has used: curl the real live endpoint, then
+   — don't trust this file blindly; re-verify rather than assume
+   nothing's changed since it was written.
+2. If PR D (launch readiness) is merged, Phase 5 engineering is done:
+   check the operator items in `LAUNCH.md`'s checklist with the founder
+   rather than assuming them done.
+3. Next direction is a founder call — ask, don't assume: **Phase 4**
+   (accounts to persist a trial past its TTL, opt-in email digest,
+   transparent update channel, richer data export -- see "Not started
+   yet" above) or something else entirely.
+4. Keep the same verification discipline every pass in this feature's
+   history has used: curl the real live endpoint, check the logs, and
    drive the real page in a real headless browser — don't just trust
    that code merged means code works.
