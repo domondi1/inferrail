@@ -56,18 +56,31 @@ committed-but-unpushed.** Next work is genuinely new scope — see
 
 Split into small PRs, in this order:
 
-- **A. Feedback privacy** (branch `fix/cost-gateway-private-feedback`):
-  feedback used to be filed as an Issue on the *public* repo, including
-  a visitor's optional email. Now: no default repo; files only to a
-  repo the GitHub API confirms is private; per-trial feedback cap (5)
-  and global Issue cap (20/hour). **Operator follow-up after merge:**
-  create a dedicated private feedback repo, a fine-grained PAT scoped
-  to Issues-write on it only, set `COST_GATEWAY_GITHUB_REPO` +
-  `COST_GATEWAY_GITHUB_TOKEN` on Render, redeploy, then verify live.
-  Until `COST_GATEWAY_GITHUB_REPO` is set, feedback is saved locally
-  only (lost on redeploy).
-- **B. Abuse hardening** -- not started: request-limit and
-  client-identification hardening (details in the PR once fixed).
+- **A. Feedback privacy -- merged (PR #53), deployed, verified live
+  2026-09-24.** Feedback used to be filed as an Issue on the *public*
+  repo, including a visitor's optional email. Now: no default repo;
+  files only to a repo the GitHub API confirms is private; per-trial
+  feedback cap (5) and global Issue cap (20/hour). Live check: a real
+  submission through the live API produced an Issue in the operator's
+  private feedback repo (404 when viewed logged-out), and nothing new
+  on the public repo.
+- **B. Abuse hardening** (branch `fix/cost-gateway-abuse-hardening`):
+  - Per-IP trial throttle read the client address from the leftmost
+    `X-Forwarded-For` entry (uvicorn `forwarded_allow_ips="*"`), which
+    the client controls -- a random header value bought a fresh
+    allowance. Now reads `True-Client-IP` (set by Cloudflare in front of
+    Render, not client-controllable); `/v1/admin/stats` reports which
+    source was used per issuance.
+  - Body-size limit now counts bytes actually received, so chunked
+    uploads (no `Content-Length`) are capped too.
+  - Rate-limiter entries are dropped when a trial is purged; per-IP
+    issuance history is pruned once outside its window.
+  - **Verify live after deploy:** `trial_issuance_ip_source` in
+    `/v1/admin/stats` should be almost entirely `true-client-ip`. A
+    growing `peer` count means the header isn't arriving, so the
+    throttle has fallen back to the old (spoofable) behavior -- not a
+    regression, but the fix isn't in effect; investigate which header
+    Render/Cloudflare actually sends.
 - **C. Observability** -- not started: allow-listed structured logs,
   request IDs, unhandled-exception logging, key-never-logged test.
 - **D. Launch checklist + security review write-up** -- not started.

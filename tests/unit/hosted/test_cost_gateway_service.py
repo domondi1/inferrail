@@ -995,3 +995,149 @@ def test_feedback_submission_still_succeeds_if_github_api_fails(
     assert resp.status_code == 200
     assert resp.json()["received"] is True
     assert resp.json()["github_issue_url"] is None
+
+
+# --- Abuse hardening: client IP, body size, bounded in-memory tables ------
+
+
+def _strict_issuance_client(service_module, tmp_path, monkeypatch, *, max_per_ip: int):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("COST_GATEWAY_ISSUE_MAX_PER_IP", str(max_per_ip))
+    return TestClient(service_module.create_app(tmp_path / "data"))
+
+
+def test_trial_throttle_ignores_spoofed_x_forwarded_for(service_module, tmp_path, monkeypatch):
+    """A client-chosen X-Forwarded-For must not buy a fresh per-IP
+    allowance. Wrapped in uvicorn's ProxyHeadersMiddleware with the same
+    trust-all setting production runs with (`service.py`'s `__main__`),
+    since that middleware is what turns X-Forwarded-For into
+    `request.client` -- a bare TestClient would never exercise it."""
+    from fastapi.testclient import TestClient
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    monkeypatch.setenv("COST_GATEWAY_ISSUE_MAX_PER_IP", "2")
+    app = ProxyHeadersMiddleware(service_module.create_app(tmp_path / "data"), trusted_hosts="*")
+    client = TestClient(app)
+    real = {"True-Client-IP": "198.51.100.7"}
+    statuses = [
+        client.post(
+            "/v1/trial", headers={**real, "X-Forwarded-For": f"203.0.113.{i}"}
+        ).status_code
+        for i in range(3)
+    ]
+    assert statuses == [200, 200, 429]
+
+
+def test_trial_throttle_is_per_real_client(service_module, tmp_path, monkeypatch):
+    """Different real clients (different True-Client-IP) each get their own
+    allowance -- the fix must not lump every visitor together."""
+    client = _strict_issuance_client(service_module, tmp_path, monkeypatch, max_per_ip=1)
+    assert client.post("/v1/trial", headers={"True-Client-IP": "198.51.100.1"}).status_code == 200
+    assert client.post("/v1/trial", headers={"True-Client-IP": "198.51.100.1"}).status_code == 429
+    assert client.post("/v1/trial", headers={"True-Client-IP": "198.51.100.2"}).status_code == 200
+
+
+def test_admin_stats_reports_client_ip_source(service_module, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "adm")
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    client.post("/v1/trial", headers={"True-Client-IP": "198.51.100.1"})
+    client.post("/v1/trial")
+    stats = client.get("/v1/admin/stats", headers={"Authorization": "Bearer adm"}).json()
+    assert stats["trial_issuance_ip_source"] == {"true-client-ip": 1, "peer": 1}
+
+
+def test_chunked_body_over_limit_is_rejected(service_module, tmp_path, monkeypatch):
+    """No Content-Length (chunked upload) must not bypass the body limit."""
+    monkeypatch.setattr(service_module, "MAX_REQUEST_BODY_BYTES", 1024)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+
+    def chunks():
+        for _ in range(8):
+            yield b"x" * 512
+
+    resp = client.post(
+        "/v1/feedback",
+        content=chunks(),
+        headers={**_auth(trial["api_key"]), "content-type": "application/json"},
+    )
+    assert resp.status_code == 413
+    assert "1024-byte limit" in resp.json()["detail"]
+
+
+def test_declared_content_length_over_limit_is_rejected(service_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(service_module, "MAX_REQUEST_BODY_BYTES", 1024)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    resp = client.post("/v1/trial", content=b"x" * 2048)
+    assert resp.status_code == 413
+
+
+def test_body_under_limit_still_reaches_route(service_module, tmp_path, monkeypatch):
+    """The buffered body is replayed intact to the app."""
+    monkeypatch.setattr(service_module, "MAX_REQUEST_BODY_BYTES", 4096)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+
+    def chunks():
+        yield b'{"message": "chunked but '
+        yield b'small enough"}'
+
+    resp = client.post(
+        "/v1/feedback",
+        content=chunks(),
+        headers={**_auth(trial["api_key"]), "content-type": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["received"] is True
+
+
+def test_rate_limiter_forgets_tenant():
+    auth = sys.modules["auth"] if "auth" in sys.modules else _load("auth", "auth.py")
+    limiter = auth.RateLimiter(max_requests=5, window_seconds=60)
+    limiter.check("t1")
+    limiter.check("t2")
+    assert limiter.tracked_count() == 2
+    limiter.forget("t1")
+    assert limiter.tracked_count() == 1
+
+
+def test_purged_tenant_leaves_no_rate_limiter_state(service_module, tmp_path):
+    from fastapi.testclient import TestClient
+
+    app = service_module.create_app(tmp_path / "data")
+    client = TestClient(app)
+    trial = _issue(client)
+    tenant_id = trial["tenant_id"]
+    client.get(f"/v1/trial/{tenant_id}", headers=_auth(trial["api_key"]))
+    assert app.state.limiter.tracked_count() == 1
+    client.delete(f"/v1/trial/{tenant_id}", headers=_auth(trial["api_key"]))
+    assert app.state.limiter.tracked_count() == 0
+
+
+def test_issue_history_pruned_after_window(service_module, monkeypatch):
+    trial_mod = sys.modules["trial"]
+    registry = trial_mod.TrialRegistry(
+        enabled=True,
+        demo_ttl_seconds=3600,
+        real_key_ttl_seconds=60,
+        max_live_tenants=100,
+        issue_max_per_ip=5,
+        issue_window_seconds=10,
+        purge_grace_seconds=0,
+    )
+    registry.issue(client_ip="198.51.100.1")
+    registry.issue(client_ip="198.51.100.2")
+    assert registry.tracked_ip_count() == 2
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(trial_mod.time, "monotonic", lambda: real_monotonic() + 11)
+    registry.purge_expired()
+    assert registry.tracked_ip_count() == 0

@@ -214,7 +214,25 @@ class TrialRegistry:
                 self._on_purge(tenant.tenant_id)
             return True
 
+    def _prune_issue_history_locked(self) -> None:
+        """Drops per-IP issuance histories with nothing left inside the
+        window, so this table's size tracks recent issuers rather than
+        every address ever seen."""
+        now_mono = time.monotonic()
+        stale = [
+            ip
+            for ip, history in self._issue_history.items()
+            if not history or now_mono - history[-1] > self._issue_window_seconds
+        ]
+        for ip in stale:
+            del self._issue_history[ip]
+
+    def tracked_ip_count(self) -> int:
+        with self._lock:
+            return len(self._issue_history)
+
     def _purge_expired_locked(self) -> list[str]:
+        self._prune_issue_history_locked()
         now = time.time()
         purge_cutoff = now - self._purge_grace_seconds
         stale_hashes = [h for h, t in self._tenants.items() if t.expires_at <= purge_cutoff]

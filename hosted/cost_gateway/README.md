@@ -98,11 +98,12 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_REAL_KEY_TTL_SECONDS` | `14400` (4h) | Real-key trial expiry from the moment a key is submitted, founder-confirmed default -- always tightens, never extends, the demo-mode expiry. |
 | `COST_GATEWAY_MAX_LIVE_TENANTS` | `500` | Global ceiling on not-yet-expired trial tenants. |
 | `COST_GATEWAY_ISSUE_MAX_PER_IP` / `COST_GATEWAY_ISSUE_WINDOW_SECONDS` | `5` / `3600` | Per-IP throttle on `POST /v1/trial` issuance itself. |
+| `COST_GATEWAY_CLIENT_IP_HEADER` | `true-client-ip` | Header the per-IP throttle reads the real client address from. `True-Client-IP` is set by Cloudflare, which fronts every Render service, and overwrites any client-supplied value. `X-Forwarded-For` is deliberately not used: Render appends to it without clearing a client-supplied value, so it's spoofable. Falls back to the socket peer address when the header is absent. **Set to empty if deploying somewhere not behind Cloudflare**, or a client could set this header itself. `/v1/admin/stats` → `trial_issuance_ip_source` shows which source was used, so you can confirm it in production. |
 | `COST_GATEWAY_PURGE_GRACE_SECONDS` / `COST_GATEWAY_PURGE_INTERVAL_SECONDS` | `300` / `60` | Expired-tenant purge grace period and background sweep interval. |
 | `COST_GATEWAY_RATE_LIMIT_MAX_REQUESTS` / `COST_GATEWAY_RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | Per-tenant request-rate limit across every authenticated route. |
 | `COST_GATEWAY_DAILY_BUDGET_USD` | `1.00` | Each tenant's own daily spend cap, block mode -- enforced pre-flight before any real provider is ever called, via the same `BudgetEnforcer` `inferrail serve`'s budgets use. |
 | `COST_GATEWAY_REQUEST_TIMEOUT_SECONDS` | `120` | Whole-request timeout, including a streaming response's full duration -- see "Known limitations" below. |
-| `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. |
+| `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. Counts bytes actually received, so a chunked upload with no `Content-Length` is capped too. |
 | `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
 | `COST_GATEWAY_ADMIN_TOKEN` | unset | Enables `GET /v1/admin/stats` and `GET /v1/admin/feedback` (usage counters + submitted feedback), gated on `Authorization: Bearer <this value>`. **Unset by default -- both routes return `404` (not `401`) until this is explicitly set**, so a deployment with no admin token configured reveals nothing about their existence. Generate a real secret yourself (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and set it as a platform secret; never commit it or share it with an assistant session. |
 | `COST_GATEWAY_GITHUB_TOKEN` | unset | A fine-grained GitHub PAT, scoped to **only** `COST_GATEWAY_GITHUB_REPO` with **Issues: write** permission and nothing else. When set (together with `COST_GATEWAY_GITHUB_REPO`), every `POST /v1/feedback` also files a GitHub Issue -- the durable copy, since it survives a Render redeploy and the local `feedback.jsonl` doesn't. Unset by default (feedback is still saved locally either way). See "Feedback and usage visibility" below for how to generate one. |
@@ -334,6 +335,11 @@ starts mattering for real decisions.
   of this service against the same `COST_GATEWAY_DATA_DIR` without
   addressing this first (same constraint `hosted/ap_exceptions` already
   documents for the same reason).
+- **In-memory abuse-guard tables are bounded by live state, not by
+  history.** A purged trial's rate-limit entry is dropped with it, and
+  per-IP issuance history is pruned once it falls outside the issuance
+  window -- so memory tracks current traffic, not every visitor ever
+  seen.
 - **A key does not survive a process restart.** By design (see the
   threat model above) -- not a bug to fix later, a deliberate custody
   minimization.
