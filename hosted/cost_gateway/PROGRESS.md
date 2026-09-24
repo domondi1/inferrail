@@ -64,25 +64,21 @@ Split into small PRs, in this order:
   submission through the live API produced an Issue in the operator's
   private feedback repo (404 when viewed logged-out), and nothing new
   on the public repo.
-- **B. Abuse hardening** (branch `fix/cost-gateway-abuse-hardening`):
-  - Per-IP trial throttle read the client address from the leftmost
-    `X-Forwarded-For` entry (uvicorn `forwarded_allow_ips="*"`), which
-    the client controls -- a random header value bought a fresh
-    allowance. Now reads `True-Client-IP` (set by Cloudflare in front of
-    Render, not client-controllable); `/v1/admin/stats` reports which
-    source was used per issuance.
-  - Body-size limit now counts bytes actually received, so chunked
-    uploads (no `Content-Length`) are capped too.
-  - Rate-limiter entries are dropped when a trial is purged; per-IP
-    issuance history is pruned once outside its window.
-  - **Verify live after deploy:** `trial_issuance_ip_source` in
-    `/v1/admin/stats` should be almost entirely `true-client-ip`. A
-    growing `peer` count means the header isn't arriving, so the
-    throttle has fallen back to the old (spoofable) behavior -- not a
-    regression, but the fix isn't in effect; investigate which header
-    Render/Cloudflare actually sends.
-- **C. Observability** -- not started: allow-listed structured logs,
-  request IDs, unhandled-exception logging, key-never-logged test.
+- **B. Abuse hardening -- merged (PR #54), deployed, verified live
+  2026-09-24.** Trial throttle keys on `True-Client-IP`; body limit
+  counts received bytes; limiter tables pruned. Live check: 6 trial
+  requests with different spoofed `X-Forwarded-For` values -> 200 x5
+  then 429; a spoofed `True-Client-IP` also -> 429 (Cloudflare
+  overwrites it); 400 KB upload -> 413; `/v1/admin/stats` showed
+  `trial_issuance_ip_source: {"true-client-ip": 7}`, no `peer`.
+- **C. Observability** (branch `feat/cost-gateway-observability`):
+  JSON log lines from a fixed field allow-list (`request`, `startup`,
+  `unhandled_error`, `feedback_github_skipped`); `X-Request-ID` on every
+  response; unhandled exceptions logged by type and `file:line` only and
+  returned as a generic JSON 500; GitHub token whitespace stripped. See
+  README's "Logs" section. **Verify live after deploy:** Render's Logs
+  tab shows a `startup` line with the expected config and one `request`
+  line per request; response headers include `X-Request-ID`.
 - **D. Launch checklist + security review write-up** -- not started.
 
 ## The recurring blocker every pass hits: no push access

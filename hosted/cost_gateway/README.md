@@ -326,6 +326,33 @@ SQLite counter file, same pattern as everything else in this service)
 -- not built yet; flagged here as the natural next step if this number
 starts mattering for real decisions.
 
+## Logs (what's recorded, and what never is)
+
+The service writes one JSON object per line to stdout (Render's **Logs**
+tab shows them; any log drain can filter on the fields). Every field
+comes from a fixed allow-list in `service.py` (`_LOG_FIELDS`) --
+**key-free and payload-free by structure**: no line is ever built from a
+request's headers, body, URL, or an exception's message, so provider
+keys, trial tokens, prompts, responses, and feedback text/emails have no
+path into a log. `test_logs_never_contain_secrets_or_payloads` checks
+this end to end.
+
+| `event` | When | Fields |
+|---|---|---|
+| `startup` | Process start | `admin_enabled`, `github_feedback_configured`, `client_ip_header` |
+| `request` | Every request, including 413/504 rejections | `request_id`, `method`, `route` (the route *template*, e.g. `/v1/trial/{tenant_id}`, or `unmatched`), `status`, `duration_ms`, `tenant_id` |
+| `unhandled_error` | A bug raised an exception | `request_id`, `method`, `route`, `error_type`, `error_location` (`file.py:line`) -- never the exception message |
+| `feedback_github_skipped` | Feedback wasn't copied to GitHub | `reason` (`hourly_cap`, `repo_check_failed`, `repo_not_private`, `issue_create_failed`, `request_error:<type>`), `http_status` |
+
+Every response carries an **`X-Request-ID`** header matching its
+`request` log line, and a 500 from an unhandled error returns it in the
+body too -- so a visitor's bug report can be matched to the exact log
+line.
+
+**Useful searches in Render's log viewer:** `"unhandled_error"` (bugs),
+`"feedback_github_skipped"` (feedback not reaching the private repo, with
+the reason), `"status": 5` (server errors), or a specific `request_id`.
+
 ## Known Phase 1 limitations, documented rather than hidden
 
 - **Single-instance only.** In-memory trial/rate-limit state
