@@ -49,6 +49,8 @@ import contextlib
 import json
 import os
 import secrets
+import time
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -335,59 +337,105 @@ def _work_summary_json(summary: WorkSummary) -> dict[str, Any]:
     }
 
 
-async def _create_github_issue(record: dict[str, Any]) -> str | None:
-    """Best-effort: files `record` as a GitHub Issue on
-    `COST_GATEWAY_GITHUB_REPO` (default `domondi1/inferrail`), so
-    feedback survives a Render redeploy even though the local
-    `feedback.jsonl` file (on Render's free tier, with no persistent
-    disk) does not. Returns the created issue's URL, or `None` if
-    `COST_GATEWAY_GITHUB_TOKEN` isn't configured or the API call fails
-    for any reason.
+FEEDBACK_MAX_PER_TENANT = int(os.environ.get("COST_GATEWAY_FEEDBACK_MAX_PER_TENANT", "5"))
+"""Spam guard: a trial is free and needs no account, so without a cap one
+visitor could flood the operator's feedback inbox. Excess submissions get
+a 429 instead of being stored anywhere."""
 
-    Deliberately never raises and never blocks a feedback submission
-    from succeeding: this is an enhancement over the always-on local
-    write in `_append_feedback`, not a replacement for it, and a
-    visitor's feedback must still be recorded even if GitHub is
-    unreachable or the token is misconfigured.
+FEEDBACK_ISSUES_MAX_PER_HOUR = int(
+    os.environ.get("COST_GATEWAY_FEEDBACK_ISSUES_MAX_PER_HOUR", "20")
+)
+"""Global, across every tenant: at most this many GitHub Issues are filed
+per rolling hour. Past it, feedback is still accepted and written locally
+(`feedback.jsonl`) -- only the GitHub copy is skipped."""
 
-    The token needs only "Issues: write" on this one repository -- a
-    fine-grained GitHub personal access token scoped that narrowly,
-    never a classic PAT with broader repo access, minimizes what a
-    leaked token could do.
+
+class _GitHubFeedbackSink:
+    """Best-effort durable copy of feedback as an Issue on
+    `COST_GATEWAY_GITHUB_REPO`, so feedback survives a Render redeploy
+    even though the local `feedback.jsonl` file (on Render's free tier,
+    with no persistent disk) does not.
+
+    **Private repositories only, enforced, not just documented.** Feedback
+    can contain a visitor's email address (the optional `contact` field)
+    and whatever they chose to write -- a visitor filling in a form on a
+    website has not agreed to publish that on a public issue tracker.
+    Before filing, this checks via the GitHub API that the target repo is
+    private, and files nothing if it is public or the check fails. There
+    is deliberately no default repo: nothing is filed unless an operator
+    explicitly configures one.
+
+    Never raises and never blocks a feedback submission from succeeding:
+    this is an enhancement over the always-on local write in
+    `_append_feedback`, not a replacement for it.
+
+    The token needs only "Issues: write" (plus the implicit "Metadata:
+    read") on that one private repository -- a fine-grained personal
+    access token scoped that narrowly, never a classic PAT, minimizes
+    what a leaked token could do.
     """
-    token = os.environ.get("COST_GATEWAY_GITHUB_TOKEN")
-    if not token:
+
+    def __init__(self) -> None:
+        self._token = os.environ.get("COST_GATEWAY_GITHUB_TOKEN") or None
+        self._repo = os.environ.get("COST_GATEWAY_GITHUB_REPO", "").strip() or None
+        self._verified_private = False
+        self._filed_at: deque[float] = deque()
+
+    def _under_hourly_cap(self) -> bool:
+        now = time.monotonic()
+        while self._filed_at and now - self._filed_at[0] > 3600:
+            self._filed_at.popleft()
+        return len(self._filed_at) < FEEDBACK_ISSUES_MAX_PER_HOUR
+
+    async def _repo_is_private(self, client: httpx.AsyncClient, headers: dict[str, str]) -> bool:
+        # Only a confirmed-private result is cached: a repo that was
+        # public (or unreachable) is re-checked next time, so fixing the
+        # configuration takes effect without a restart.
+        if self._verified_private:
+            return True
+        resp = await client.get(f"https://api.github.com/repos/{self._repo}", headers=headers)
+        if resp.status_code == 200 and resp.json().get("private") is True:
+            self._verified_private = True
+        return self._verified_private
+
+    async def file(self, record: dict[str, Any]) -> str | None:
+        """Returns the created issue's URL, or `None` if not configured,
+        the repo isn't private, the hourly cap is reached, or the API call
+        fails for any reason."""
+        if self._token is None or self._repo is None or not self._under_hourly_cap():
+            return None
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Accept": "application/vnd.github+json",
+        }
+        title_source = record["message"].splitlines()[0][:80]
+        body_lines = [
+            record["message"],
+            "",
+            "---",
+            f"Submitted: {record['submitted_at']}",
+            f"Tenant: `{record['tenant_id']}`",
+            f"Contact: {record['contact'] or '(none given)'}",
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                if not await self._repo_is_private(client, headers):
+                    return None
+                resp = await client.post(
+                    f"https://api.github.com/repos/{self._repo}/issues",
+                    headers=headers,
+                    json={
+                        "title": f"[Cost Gateway feedback] {title_source}",
+                        "body": "\n".join(body_lines),
+                        "labels": ["cost-gateway-feedback"],
+                    },
+                )
+            if resp.status_code == 201:
+                self._filed_at.append(time.monotonic())
+                return str(resp.json().get("html_url"))
+        except (httpx.HTTPError, ValueError):
+            pass
         return None
-    repo = os.environ.get("COST_GATEWAY_GITHUB_REPO", "domondi1/inferrail")
-    title_source = record["message"].splitlines()[0][:80]
-    title = f"[Cost Gateway feedback] {title_source}"
-    body_lines = [
-        record["message"],
-        "",
-        "---",
-        f"Submitted: {record['submitted_at']}",
-        f"Tenant: `{record['tenant_id']}`",
-        f"Contact: {record['contact'] or '(none given)'}",
-    ]
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"https://api.github.com/repos/{repo}/issues",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
-                json={
-                    "title": title,
-                    "body": "\n".join(body_lines),
-                    "labels": ["cost-gateway-feedback"],
-                },
-            )
-        if resp.status_code == 201:
-            return str(resp.json().get("html_url"))
-    except httpx.HTTPError:
-        pass
-    return None
 
 
 def _append_feedback(path: Path, record: dict[str, Any]) -> None:
@@ -467,6 +515,8 @@ def create_app(data_dir: Path) -> FastAPI:
     # operator explicitly sets this -- fail closed, never expose
     # visitor feedback or usage counts with no auth configured.
     admin_token = os.environ.get("COST_GATEWAY_ADMIN_TOKEN") or None
+    github_feedback = _GitHubFeedbackSink()
+    feedback_counts: dict[str, int] = defaultdict(int)
 
     def _on_purge(tenant_id: str) -> None:
         # Wipes both the tenant's storage AND any real key held for it --
@@ -475,6 +525,7 @@ def create_app(data_dir: Path) -> FastAPI:
         # or an explicit DELETE /v1/trial/{tenant_id}.
         tenant_stores.purge_tenant(tenant_id)
         key_vault.forget(tenant_id)
+        feedback_counts.pop(tenant_id, None)
 
     trial_registry: TrialRegistry = trial_registry_from_env(on_purge=_on_purge)
 
@@ -834,6 +885,12 @@ def create_app(data_dir: Path) -> FastAPI:
             raise HTTPException(status_code=422, detail="message must not be empty")
         if len(message) > 4000:
             raise HTTPException(status_code=422, detail="message exceeds the 4000-character limit")
+        if feedback_counts[tenant.tenant_id] >= FEEDBACK_MAX_PER_TENANT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"feedback limit reached: max {FEEDBACK_MAX_PER_TENANT} per trial",
+            )
+        feedback_counts[tenant.tenant_id] += 1
         contact = body.contact.strip() if body.contact else None
         record = {
             "feedback_id": f"fb_{secrets.token_urlsafe(12)}",
@@ -846,8 +903,8 @@ def create_app(data_dir: Path) -> FastAPI:
         # Local write above always happens and always succeeds first --
         # GitHub is a best-effort second destination for durability
         # across redeploys, never a dependency for this route returning
-        # success. See _create_github_issue's own docstring.
-        github_issue_url = await _create_github_issue(record)
+        # success. See _GitHubFeedbackSink's own docstring.
+        github_issue_url = await github_feedback.file(record)
         return {
             "feedback_id": record["feedback_id"],
             "received": True,

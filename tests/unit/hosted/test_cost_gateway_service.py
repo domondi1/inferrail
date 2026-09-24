@@ -807,24 +807,26 @@ def test_feedback_without_github_token_configured_skips_silently(client):
     assert resp.json()["github_issue_url"] is None
 
 
-def test_feedback_creates_github_issue_when_configured(service_module, monkeypatch, tmp_path):
-    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
-    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", "domondi1/inferrail")
+FEEDBACK_REPO = "example-owner/private-feedback"
 
-    captured = {}
+
+def _mock_github(monkeypatch, *, private: bool = True, issue_status: int = 201) -> list:
+    """Routes every httpx.AsyncClient the feedback sink builds through a
+    MockTransport standing in for the GitHub API; returns the list of
+    captured requests. `_GitHubFeedbackSink` constructs its own client
+    internally rather than accepting an injectable one (unlike the
+    provider client-factory seam), since it has no per-tenant identity to
+    key an injection point on."""
+    captured: list = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["auth"] = request.headers.get("authorization")
-        captured["body"] = json.loads(request.content)
+        captured.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"full_name": FEEDBACK_REPO, "private": private})
         return httpx.Response(
-            201, json={"html_url": "https://github.com/domondi1/inferrail/issues/999"}
+            issue_status, json={"html_url": f"https://github.com/{FEEDBACK_REPO}/issues/999"}
         )
 
-    # Patch httpx.AsyncClient itself for this one test -- _create_github_issue
-    # constructs its own client internally rather than accepting an
-    # injectable one (unlike the provider client-factory seam), since it
-    # has no per-tenant identity to key an injection point on.
     real_async_client = httpx.AsyncClient
 
     def mock_async_client(*args, **kwargs):
@@ -832,11 +834,21 @@ def test_feedback_creates_github_issue_when_configured(service_module, monkeypat
         return real_async_client(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", mock_async_client)
+    return captured
 
-    app = service_module.create_app(tmp_path / "data")
+
+def _feedback_client(service_module, tmp_path):
     from fastapi.testclient import TestClient
 
-    gh_client = TestClient(app)
+    return TestClient(service_module.create_app(tmp_path / "data"))
+
+
+def test_feedback_creates_github_issue_when_configured(service_module, monkeypatch, tmp_path):
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+    captured = _mock_github(monkeypatch)
+
+    gh_client = _feedback_client(service_module, tmp_path)
     trial = _issue(gh_client)
     resp = gh_client.post(
         "/v1/feedback",
@@ -844,31 +856,121 @@ def test_feedback_creates_github_issue_when_configured(service_module, monkeypat
         headers=_auth(trial["api_key"]),
     )
     assert resp.status_code == 200
-    assert resp.json()["github_issue_url"] == "https://github.com/domondi1/inferrail/issues/999"
-    assert captured["url"] == "https://api.github.com/repos/domondi1/inferrail/issues"
-    assert captured["auth"] == "Bearer fake-github-token"
-    assert captured["body"]["title"] == "[Cost Gateway feedback] found a real bug"
-    assert "with details" in captured["body"]["body"]
-    assert "me@example.com" in captured["body"]["body"]
-    assert captured["body"]["labels"] == ["cost-gateway-feedback"]
+    assert resp.json()["github_issue_url"] == f"https://github.com/{FEEDBACK_REPO}/issues/999"
+
+    # Privacy check first, then the issue itself.
+    check, create = captured
+    assert check.method == "GET"
+    assert str(check.url) == f"https://api.github.com/repos/{FEEDBACK_REPO}"
+    assert create.method == "POST"
+    assert str(create.url) == f"https://api.github.com/repos/{FEEDBACK_REPO}/issues"
+    assert create.headers.get("authorization") == "Bearer fake-github-token"
+    body = json.loads(create.content)
+    assert body["title"] == "[Cost Gateway feedback] found a real bug"
+    assert "with details" in body["body"]
+    assert "me@example.com" in body["body"]
+    assert body["labels"] == ["cost-gateway-feedback"]
 
     # The local write still happened too -- GitHub is additive, not a
     # replacement for the always-on local record.
     monkeypatch.setenv("COST_GATEWAY_ADMIN_TOKEN", "admin-secret-for-this-test")
     # Recreate the app so the admin route picks up the freshly-set env var
     # (admin_token is read once at create_app() time).
-    app2 = service_module.create_app(tmp_path / "data")
-    admin_client = TestClient(app2)
+    admin_client = _feedback_client(service_module, tmp_path)
     feedback = admin_client.get(
         "/v1/admin/feedback", headers={"Authorization": "Bearer admin-secret-for-this-test"}
     ).json()
     assert feedback["total"] == 1
 
 
+def test_feedback_never_filed_to_a_public_repo(service_module, monkeypatch, tmp_path):
+    """Feedback can contain a visitor's email -- it must never land on a
+    public issue tracker, even if the operator misconfigures the repo."""
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+    captured = _mock_github(monkeypatch, private=False)
+
+    gh_client = _feedback_client(service_module, tmp_path)
+    trial = _issue(gh_client)
+    resp = gh_client.post(
+        "/v1/feedback",
+        json={"message": "private details", "contact": "me@example.com"},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["received"] is True
+    assert resp.json()["github_issue_url"] is None
+    assert [r.method for r in captured] == ["GET"]
+
+
+def test_feedback_not_filed_without_an_explicit_repo(service_module, monkeypatch, tmp_path):
+    """No default repo: a token alone never causes an issue to be filed
+    anywhere."""
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.delenv("COST_GATEWAY_GITHUB_REPO", raising=False)
+    captured = _mock_github(monkeypatch)
+
+    gh_client = _feedback_client(service_module, tmp_path)
+    trial = _issue(gh_client)
+    resp = gh_client.post(
+        "/v1/feedback", json={"message": "hello"}, headers=_auth(trial["api_key"])
+    )
+    assert resp.status_code == 200
+    assert resp.json()["github_issue_url"] is None
+    assert captured == []
+
+
+def test_feedback_per_trial_cap(service_module, monkeypatch, tmp_path):
+    monkeypatch.setattr(service_module, "FEEDBACK_MAX_PER_TENANT", 2)
+    fb_client = _feedback_client(service_module, tmp_path)
+    trial = _issue(fb_client)
+    for i in range(2):
+        resp = fb_client.post(
+            "/v1/feedback", json={"message": f"report {i}"}, headers=_auth(trial["api_key"])
+        )
+        assert resp.status_code == 200
+    resp = fb_client.post(
+        "/v1/feedback", json={"message": "one too many"}, headers=_auth(trial["api_key"])
+    )
+    assert resp.status_code == 429
+
+    # The cap is per trial, not global.
+    other = _issue(fb_client)
+    resp = fb_client.post(
+        "/v1/feedback", json={"message": "different trial"}, headers=_auth(other["api_key"])
+    )
+    assert resp.status_code == 200
+
+
+def test_feedback_github_issues_capped_per_hour(service_module, monkeypatch, tmp_path):
+    """Past the global hourly cap, feedback is still accepted and saved
+    locally -- only the GitHub copy is skipped."""
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
+    monkeypatch.setattr(service_module, "FEEDBACK_ISSUES_MAX_PER_HOUR", 1)
+    captured = _mock_github(monkeypatch)
+
+    gh_client = _feedback_client(service_module, tmp_path)
+    first = _issue(gh_client)
+    second = _issue(gh_client)
+    resp1 = gh_client.post(
+        "/v1/feedback", json={"message": "first"}, headers=_auth(first["api_key"])
+    )
+    resp2 = gh_client.post(
+        "/v1/feedback", json={"message": "second"}, headers=_auth(second["api_key"])
+    )
+    assert resp1.json()["github_issue_url"] is not None
+    assert resp2.status_code == 200
+    assert resp2.json()["received"] is True
+    assert resp2.json()["github_issue_url"] is None
+    assert [r.method for r in captured] == ["GET", "POST"]
+
+
 def test_feedback_submission_still_succeeds_if_github_api_fails(
     service_module, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("COST_GATEWAY_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setenv("COST_GATEWAY_GITHUB_REPO", FEEDBACK_REPO)
 
     def failing_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "Bad credentials"})

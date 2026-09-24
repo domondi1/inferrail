@@ -52,6 +52,26 @@ deployed, and live-verified. No open PRs, no known bugs, nothing
 committed-but-unpushed.** Next work is genuinely new scope — see
 "Not started yet" below.
 
+## Phase 5 (hardening) -- in progress, started 2026-09-24
+
+Split into small PRs, in this order:
+
+- **A. Feedback privacy** (branch `fix/cost-gateway-private-feedback`):
+  feedback used to be filed as an Issue on the *public* repo, including
+  a visitor's optional email. Now: no default repo; files only to a
+  repo the GitHub API confirms is private; per-trial feedback cap (5)
+  and global Issue cap (20/hour). **Operator follow-up after merge:**
+  create a dedicated private feedback repo, a fine-grained PAT scoped
+  to Issues-write on it only, set `COST_GATEWAY_GITHUB_REPO` +
+  `COST_GATEWAY_GITHUB_TOKEN` on Render, redeploy, then verify live.
+  Until `COST_GATEWAY_GITHUB_REPO` is set, feedback is saved locally
+  only (lost on redeploy).
+- **B. Abuse hardening** -- not started: request-limit and
+  client-identification hardening (details in the PR once fixed).
+- **C. Observability** -- not started: allow-listed structured logs,
+  request IDs, unhandled-exception logging, key-never-logged test.
+- **D. Launch checklist + security review write-up** -- not started.
+
 ## The recurring blocker every pass hits: no push access
 
 This session's git credentials cannot push to `domondi1/inferrail`
