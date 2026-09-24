@@ -114,6 +114,37 @@ download contents with no prompt text, reload, link in a fresh browser,
 fragment stripped, ended-trial link, 375px and 1280px with no
 horizontal scroll, zero console errors).
 
+## Fix: provider model discovery on /try/ (2026-09-24)
+
+Branch `fix/try-page-anthropic-model-discovery`. **Root cause:** the
+/try/ page hardcoded `claude-3-5-haiku-20241022` for its real Anthropic
+request (and snippet); Anthropic retired it, so every real Anthropic
+request returned `404 model: ...`. The OpenAI path had the same latent
+problem with a hardcoded `gpt-4o-mini`.
+
+**Fix:** `GET /v1/trial/{tenant_id}/models?provider=openai|anthropic`
+asks the provider's `GET /v1/models` which models the visitor's key can
+use -- server-side, with the in-memory key, returning model ids only,
+same response shape for both. One shared request/error path; per
+provider only the URL, auth headers, client seam, and selection rule
+differ (`_DISCOVERY` in service.py).
+
+- Anthropic: Claude models only; lightest family (Haiku > Sonnet >
+  Opus), newest within it.
+- OpenAI (no capability metadata in the list, so conservative by name):
+  `gpt-*` only, excluding audio/realtime/tts/transcribe/image/search/
+  embedding/moderation/instruct/codex/computer-use/deep-research/
+  preview/-pro; then nano > mini > others; undated alias over dated
+  snapshot; newest.
+
+The page discovers each provider once its key is added, uses that
+provider's own `selected_model` for real requests and snippets, shows
+"N models found", and shows distinct messages for a rejected key (400
+`provider_key_rejected`), a failed lookup (502
+`model_discovery_failed`), or no usable model. No fixed OpenAI or
+Anthropic model id remains in the page. Model state is kept per
+provider with the full list, so a picker can be added later.
+
 ## The recurring blocker every pass hits: no push access
 
 This session's git credentials cannot push to `domondi1/inferrail`
