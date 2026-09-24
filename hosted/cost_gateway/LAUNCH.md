@@ -22,6 +22,8 @@ Reviewed 2026-09-24, against `main` after the Phase 5 hardening PRs.
 | **Logs** | JSON lines built only from a fixed field allow-list -- no headers, bodies, raw URLs, or exception messages -- so keys, tokens, prompts, and feedback text have no path into a log. Every response carries `X-Request-ID`. | `test_logs_never_contain_secrets_or_payloads`, `test_log_event_rejects_fields_outside_allow_list`, `test_every_response_has_request_id_matching_its_log_line` |
 | **Feedback privacy** | Feedback (which may include an email) is copied only to a repository the GitHub API confirms is private; there is no default repository. Per-trial and hourly caps limit spam. | `test_feedback_never_filed_to_a_public_repo`, `test_feedback_not_filed_without_an_explicit_repo`, `test_feedback_per_trial_cap`, `test_feedback_github_issues_capped_per_hour` |
 | **Memory growth** | Rate-limit and issuance-history tables are pruned as trials are purged and windows pass, so they track current traffic rather than every visitor ever seen. | `test_purged_tenant_leaves_no_rate_limiter_state`, `test_issue_history_pruned_after_window` |
+| **Dashboard link** | Each trial's link carries its key only in the URL fragment (never sent to any server or in a `Referer`); the page strips it from the address bar on load and keeps the trial only for that tab (`sessionStorage`). Returned once -- the service stores only a hash of the key. The page warns that anyone with the link can use the trial. | `test_dashboard_link_only_returned_at_creation`; browser check in `TEST_SCRIPT.md` step 5 |
+| **Page rendering** | The `/try/` page escapes every value it displays from an API response (model names, work/task ids, model replies), so caller- or model-controlled text is shown as text, never run as markup. | Browser check (work id `<img onerror=…>` rendered as text, no script run) |
 | **CORS** | `*` by default -- safe because every route is bearer-token authenticated, with no cookies or ambient credentials for a cross-origin page to ride on. Narrow with `COST_GATEWAY_CORS_ORIGINS` if desired. | `test_cors_preflight_allows_browser_frontend` |
 
 ### Accepted limitations (deliberate, documented)
@@ -52,8 +54,8 @@ Items marked done were completed and verified live during Phase 5.
       (`COST_GATEWAY_GITHUB_REPO`) with a fine-grained token scoped to
       Issues on that repository only; the startup log line shows
       `"github_feedback_configured": true`.
-- [ ] Any older GitHub token that could write to a **public**
-      repository has been revoked.
+- [x] Any older GitHub token that could write to a **public**
+      repository has been revoked (confirmed 2026-09-24).
 - [ ] Calendar reminders set for the GitHub token's and admin token's
       expiry/rotation -- when the GitHub token expires, feedback quietly
       falls back to the local log only (visible in logs as
@@ -66,7 +68,8 @@ Items marked done were completed and verified live during Phase 5.
 - [ ] `GET /health` returns `200` with an `X-Request-ID` header.
 - [ ] The `startup` log line shows the expected configuration.
 - [ ] One trial through `/try/`: demo request works, receipts appear,
-      the trial can be ended.
+      the trial can be ended. For a full check anyone can run, use
+      [`TEST_SCRIPT.md`](TEST_SCRIPT.md).
 - [ ] `/v1/admin/stats` → `trial_issuance_ip_source` is all
       `true-client-ip` (any `peer` means the trusted header isn't
       arriving).

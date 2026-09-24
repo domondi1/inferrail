@@ -125,7 +125,9 @@ def test_create_trial_returns_api_key_and_defaults_to_demo_mode(client):
     assert trial["openai_configured"] is False
     assert trial["anthropic_configured"] is False
     assert trial["seconds_remaining"] > 0
-    assert trial["dashboard_url"] is None
+    assert trial["dashboard_url"] == (
+        f"https://tryinferrail.com/try/#t={trial['tenant_id']}&k={trial['api_key']}"
+    )
 
 
 # --- auth ----------------------------------------------------------------
@@ -1436,3 +1438,26 @@ def test_successful_health_checks_are_not_logged(service_module, tmp_path, caplo
     assert [
         line for line in _events(service_module, caplog, "request") if line["route"] == "/v1/trial"
     ]
+
+
+# --- Phase 2 gaps: personal dashboard link --------------------------------
+
+
+def test_dashboard_link_only_returned_at_creation(client):
+    """The status route can't rebuild the link (the key is kept only as a
+    hash) and must never echo the key back."""
+    trial = _issue(client)
+    status = client.get(
+        f"/v1/trial/{trial['tenant_id']}", headers=_auth(trial["api_key"])
+    ).json()
+    assert status["dashboard_url"] is None
+    assert trial["api_key"] not in json.dumps(status)
+
+
+def test_dashboard_url_base_is_configurable(service_module, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(service_module, "DASHBOARD_URL", "http://127.0.0.1:5500/docs/try/")
+    client = TestClient(service_module.create_app(tmp_path / "data"))
+    trial = _issue(client)
+    assert trial["dashboard_url"].startswith("http://127.0.0.1:5500/docs/try/#t=trial_")

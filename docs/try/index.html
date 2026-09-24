@@ -71,10 +71,23 @@
     .error-banner { margin-top:16px; padding:14px 16px; background:#fff; border:1px solid var(--stamp); color:var(--ink); }
     .error-banner strong { color:var(--stamp); }
     .hidden { display:none !important; }
+    .tag-row { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px; }
+    .tag-row .key-field { flex:1 1 180px; }
+    .tag-row input { font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:8px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); min-width:0; }
+    .work-summary { padding:10px 14px; background:var(--bar); border:1px solid var(--rule); font-size:clamp(13px,1vw,15px); }
+    .work-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:clamp(12px,.95vw,14.5px); }
+    .work-table th { text-align:left; font:700 clamp(10px,.75vw,12px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-2); padding:6px 8px; border-bottom:1px solid var(--ink); }
+    .work-table td { padding:6px 8px; border-bottom:1px solid var(--rule); vertical-align:top; overflow-wrap:anywhere; }
+    .work-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .work-table .outcome-btns { display:flex; gap:6px; flex-wrap:wrap; }
+    .outcome-btn { padding:3px 8px; font:500 clamp(10px,.72vw,12px) "IBM Plex Mono",monospace; color:var(--ink); background:transparent; border:1px solid var(--rule); cursor:pointer; }
+    .outcome-btn:hover:not(:disabled) { background:var(--bar); }
+    .outcome-btn:disabled { opacity:.5; cursor:not-allowed; }
+    .warn-note { margin:6px 0 0; color:var(--stamp); font-size:clamp(11px,.8vw,13px); }
     .section-break { height:4px; margin:clamp(28px,4vw,52px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
     footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; margin-top:clamp(40px,5vw,72px); border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
     footer nav { display:flex; flex-wrap:wrap; gap:18px; }
-    @media (max-width:600px) { .masthead{min-height:58px} footer{display:block} footer nav{margin-top:10px} .install code{white-space:pre-wrap; word-break:break-word} }
+    @media (max-width:600px) { .masthead{min-height:58px} footer{display:block} footer nav{margin-top:10px} .install code{white-space:pre-wrap; word-break:break-word} .work-table th:nth-child(2),.work-table td:nth-child(2){display:none} }
   </style>
 </head>
 <body>
@@ -96,6 +109,7 @@
         <button class="button-primary" id="start-trial-btn" type="button">Try free — instant gateway</button>
         <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all. First request after a quiet period may take up to a minute to wake up.</p>
       </div>
+      <p class="step-note hidden" id="restore-note" role="status"></p>
       <div class="error-banner hidden" id="unreachable-banner" role="alert">
         <strong id="unreachable-banner-title">This hosted trial isn't reachable right now.</strong>
         <p class="card-copy" id="unreachable-banner-detail" style="margin-top:8px">Either it hasn't been deployed yet, or this instance is temporarily unavailable.</p>
@@ -117,8 +131,19 @@
         <p class="step-note">Your personal <code>base_url</code> — point any OpenAI- or Anthropic-compatible client at it.</p>
       </div>
 
+      <div class="install-wrap">
+        <p class="step-note" style="margin:0 0 4px">Your dashboard link — reopens this trial in any tab or device</p>
+        <div class="install"><code id="dashboard-link-code"></code><button class="copy" type="button" data-copy-target="dashboard-link-code">Copy</button></div>
+        <p class="warn-note">Keep this link private: anyone who has it can use this trial — including any key you add, up to this trial's daily cap — until it expires.</p>
+      </div>
+
       <h3 style="margin-top:20px">Send a test request</h3>
       <p class="card-copy">Zero-key demo mode always works. Add a real key below to test with your own account instead.</p>
+      <p class="card-copy" style="margin-bottom:4px">Optional: say which job a request belongs to. That's how Inferrail answers "what did this piece of work cost?" — see the section further down.</p>
+      <div class="tag-row">
+        <div class="key-field"><label for="work-id-input">Work (e.g. one support ticket)</label><input id="work-id-input" maxlength="80" value="support-ticket-1" autocomplete="off"></div>
+        <div class="key-field"><label for="task-id-input">Task (a step within it)</label><input id="task-id-input" maxlength="80" value="draft-reply" autocomplete="off"></div>
+      </div>
       <div class="key-actions">
         <button class="button-ghost" id="send-demo-btn" type="button">Send a demo request</button>
         <button class="button-ghost hidden" id="send-real-btn" type="button">Send a real request (your key)</button>
@@ -176,6 +201,27 @@
       <div class="budget-track"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
       <div class="receipt-row"><span>Daily cap (this trial)</span><span id="budget-cap">$1.00</span></div>
 
+      <h3 style="margin-top:24px">What does this work cost?</h3>
+      <p class="card-copy">Every request tagged with the same Work adds up to one unit of work. Mark how it turned out, and you get cost per successful outcome — not just a token bill.</p>
+      <div class="work-summary" id="work-summary">No tagged work yet — send a test request above with a Work filled in.</div>
+      <table class="work-table hidden" id="work-table">
+        <thead><tr><th>Work</th><th>Requests</th><th>Known cost</th><th>Outcome</th></tr></thead>
+        <tbody id="work-rows"></tbody>
+      </table>
+      <p class="step-note" style="margin-top:14px">By task</p>
+      <table class="work-table hidden" id="task-table">
+        <thead><tr><th>Task</th><th>Requests</th><th>Known cost</th><th>Status</th></tr></thead>
+        <tbody id="task-rows"></tbody>
+      </table>
+
+      <h3 style="margin-top:24px">Keep your data</h3>
+      <p class="card-copy">This trial and everything in it are deleted when the countdown ends. Download a copy first if you want one — receipts, work, and task totals as JSON (never prompts or replies; those are never stored).</p>
+      <div class="key-actions"><button class="button-ghost" type="button" id="download-data-btn">Download my data (JSON)</button></div>
+      <p id="download-status" class="step-note"></p>
+      <p class="card-copy" style="margin-top:12px">Want it to keep running? Run the same gateway on your own machine — free and open source, and your data never leaves it:</p>
+      <div class="install"><code id="self-host-code">pip install inferrail &amp;&amp; inferrail serve --quickstart</code><button class="copy" type="button" data-copy-target="self-host-code">Copy</button></div>
+      <p class="step-note">Hosted accounts that keep a trial past its expiry aren't available yet.</p>
+
       <h3 style="margin-top:24px">Report an issue</h3>
       <p class="card-copy">Something broken, confusing, or worth telling us? This goes privately to the team — it's never posted publicly, and no account is needed.</p>
       <form class="key-form" id="feedback-form" autocomplete="off">
@@ -220,6 +266,19 @@
       const BASE_URL = (new URLSearchParams(location.search).get('base_url') || DEFAULT_BASE_URL).replace(/\/$/, '');
 
       const $ = (id) => document.getElementById(id);
+      // Everything rendered from an API response goes through esc():
+      // model names, attribution values, and model replies are all
+      // caller- or model-controlled text and must never become markup.
+      const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+      const fmtUsd = (value) => (value === null || value === undefined ? 'unknown' : '$' + value);
+      // Per-tab only (sessionStorage): lets a reload keep the trial
+      // without writing the trial token anywhere longer-lived. Wrapped,
+      // since storage can be unavailable (private mode, blocked).
+      const SESSION_KEY = 'inferrail-trial';
+      const saveSession = () => { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify({ t: trial.tenant_id, k: trial.api_key })); } catch (_e) { /* storage unavailable */ } };
+      const clearSession = () => { try { sessionStorage.removeItem(SESSION_KEY); } catch (_e) { /* storage unavailable */ } };
       const copyToClipboard = async (text) => {
         if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
         const area = document.createElement('textarea');
@@ -252,6 +311,26 @@
 
       function authHeaders() {
         return { Authorization: 'Bearer ' + trial.api_key, 'Content-Type': 'application/json' };
+      }
+
+      function taggedHeaders() {
+        // The same attribution headers any client can send
+        // (X-Inferrail-Attribute-<Name>) -- nothing page-specific.
+        const headers = authHeaders();
+        const work = $('work-id-input').value.trim();
+        const task = $('task-id-input').value.trim();
+        if (work) headers['X-Inferrail-Attribute-Work-Id'] = work;
+        if (task) headers['X-Inferrail-Attribute-Task-Id'] = task;
+        return headers;
+      }
+
+      function dashboardLink() {
+        // The trial key rides in the URL *fragment* (after #), which
+        // browsers never send to any server -- not this site's host, not
+        // the gateway, not in a Referer header. The page strips it from
+        // the address bar as soon as it loads (see restoreTrial).
+        return location.origin + location.pathname + location.search +
+          '#t=' + encodeURIComponent(trial.tenant_id) + '&k=' + encodeURIComponent(trial.api_key);
       }
 
       function fmtSeconds(total) {
@@ -302,6 +381,11 @@
         $('feedback-message').value = '';
         $('feedback-contact').value = '';
         $('feedback-status').textContent = '';
+        $('work-summary').textContent = 'No tagged work yet — send a test request above with a Work filled in.';
+        $('work-rows').innerHTML = ''; $('task-rows').innerHTML = '';
+        $('work-table').classList.add('hidden'); $('task-table').classList.add('hidden');
+        $('download-status').textContent = '';
+        $('dashboard-link-code').textContent = '';
       }
 
       function renderModeBadge() {
@@ -334,7 +418,7 @@
         el.classList.toggle('low', remaining < 600);
         if (remaining <= 0) {
           clearInterval(countdownTimer); clearInterval(pollTimer);
-          resetTrialUI();
+          resetTrialUI(); clearSession();
           $('trial-notice').textContent = 'This trial has expired and its data has been deleted. Start a new one above.';
         }
       }
@@ -353,16 +437,115 @@
           const list = $('feed-list');
           if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet — send a test request above.</div>'; return; }
           list.innerHTML = page.receipts.slice().reverse().map((r) => `
-            <div class="receipt-row"><span>${r.provider} / ${r.model}</span><span>${r.status}</span></div>
-            <div class="receipt-row"><span>${r.prompt_tokens ?? '?'} in / ${r.completion_tokens ?? '?'} out</span><span>${r.estimated_cost_usd !== null ? '$' + r.estimated_cost_usd : 'unknown'}</span></div>
+            <div class="receipt-row"><span>${esc(r.provider)} / ${esc(r.model)}${r.attributes && r.attributes.work_id ? ' · ' + esc(r.attributes.work_id) : ''}</span><span>${esc(r.status)}</span></div>
+            <div class="receipt-row"><span>${esc(r.prompt_tokens ?? '?')} in / ${esc(r.completion_tokens ?? '?')} out</span><span>${esc(fmtUsd(r.estimated_cost_usd))}</span></div>
           `).join('');
         } catch (e) { /* transient poll failure */ }
+      }
+
+      function renderWork(work, taskReport) {
+        const rows = work.work || [];
+        const table = $('work-table');
+        if (!rows.length) {
+          $('work-summary').textContent = 'No tagged work yet — send a test request above with a Work filled in.';
+          table.classList.add('hidden');
+        } else {
+          let known = 0, unknown = 0, succeeded = 0;
+          rows.forEach((w) => {
+            if (w.known_attributed_inference_cost_usd !== null) known += parseFloat(w.known_attributed_inference_cost_usd);
+            unknown += w.unknown_cost_count || 0;
+            if (w.outcome_status === 'succeeded') succeeded += 1;
+          });
+          let summary = `${rows.length} unit${rows.length === 1 ? '' : 's'} of work · $${known.toFixed(6)} known cost`;
+          if (unknown) summary += ` (+${unknown} request${unknown === 1 ? '' : 's'} with unknown cost)`;
+          summary += succeeded
+            ? ` · ${succeeded} succeeded → $${(known / succeeded).toFixed(6)} per successful outcome` +
+              (succeeded < rows.length ? ' (includes the cost of work that didn\'t succeed)' : '')
+            : ' · mark an outcome below to see cost per successful outcome';
+          $('work-summary').textContent = summary;
+          $('work-rows').innerHTML = rows.map((w) => `
+            <tr>
+              <td>${esc(w.work_id)}</td>
+              <td class="num">${esc(w.receipt_count)}</td>
+              <td class="num">${esc(fmtUsd(w.known_attributed_inference_cost_usd))}</td>
+              <td>${w.outcome_status ? esc(w.outcome_status) + ' ' : ''}<span class="outcome-btns">
+                <button class="outcome-btn" type="button" data-work-id="${esc(w.work_id)}" data-outcome="succeeded">Succeeded</button>
+                <button class="outcome-btn" type="button" data-work-id="${esc(w.work_id)}" data-outcome="failed">Failed</button>
+              </span></td>
+            </tr>`).join('');
+          table.classList.remove('hidden');
+        }
+        const taskRows = (taskReport.rows || []).filter((r) => r.group !== '(unattributed)');
+        $('task-table').classList.toggle('hidden', !taskRows.length);
+        $('task-rows').innerHTML = taskRows.map((r) => `
+          <tr><td>${esc(r.group)}</td><td class="num">${esc(r.receipt_count)}</td><td class="num">$${esc(r.known_cost_usd)}${r.unknown_cost_count ? ' (+' + esc(r.unknown_cost_count) + ' unknown)' : ''}</td><td>${esc(r.status)}</td></tr>`).join('');
+      }
+
+      async function refreshWork() {
+        try {
+          const [work, taskReport] = await Promise.all([
+            apiFetch('/v1/work', { headers: authHeaders() }),
+            apiFetch('/v1/report?by=task_id', { headers: authHeaders() }),
+          ]);
+          renderWork(work, taskReport);
+        } catch (e) { /* transient poll failure */ }
+      }
+
+      async function markOutcome(btn) {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+          await apiFetch(`/v1/work/${encodeURIComponent(btn.dataset.workId)}/outcome`, {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({ outcome_status: btn.dataset.outcome }),
+          });
+          await refreshWork();
+        } catch (e) {
+          $('work-summary').textContent = 'Could not record outcome: ' + e.message;
+          btn.disabled = false;
+        }
+      }
+
+      async function downloadData() {
+        const btn = $('download-data-btn');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        $('download-status').textContent = 'Collecting…';
+        try {
+          const receipts = [];
+          for (let offset = 0; ; offset += 200) {
+            const page = await apiFetch(`/v1/receipts?limit=200&offset=${offset}`, { headers: authHeaders() });
+            receipts.push(...page.receipts);
+            if (!page.receipts.length || receipts.length >= page.total) break;
+          }
+          const [work, byTask] = await Promise.all([
+            apiFetch('/v1/work', { headers: authHeaders() }),
+            apiFetch('/v1/report?by=task_id', { headers: authHeaders() }),
+          ]);
+          const bundle = {
+            exported_at: new Date().toISOString(),
+            tenant_id: trial.tenant_id,
+            note: 'Payload-free: receipts never contain prompts or replies.',
+            receipts, work: work.work, cost_by_task: byTask.rows,
+          };
+          const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `inferrail-trial-${trial.tenant_id}.json`;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          $('download-status').textContent = `Downloaded ${receipts.length} receipt${receipts.length === 1 ? '' : 's'}.`;
+        } catch (e) {
+          $('download-status').textContent = 'Could not download: ' + e.message;
+        } finally {
+          btn.disabled = false;
+        }
       }
 
       function startPolling() {
         clearInterval(countdownTimer); clearInterval(pollTimer);
         countdownTimer = setInterval(tickCountdown, 1000);
-        pollTimer = setInterval(() => { refreshStatus(); refreshReceipts(); }, 5000);
+        pollTimer = setInterval(() => { refreshStatus(); refreshReceipts(); refreshWork(); }, 5000);
         tickCountdown();
       }
 
@@ -370,11 +553,11 @@
         const meta = response.inferrail || {};
         $('test-result').innerHTML = `
           <div class="card" style="margin-top:12px">
-            <p class="eyebrow">${label}</p>
-            <div class="receipt-row"><span>reply</span><span style="text-align:left">${(response.choices && response.choices[0] && response.choices[0].message.content) || '(no content)'}</span></div>
-            <div class="receipt-row"><span>provider / model</span><span>${meta.provider || '?'} / ${response.model || '?'}</span></div>
-            <div class="receipt-row"><span>tokens (prompt / completion)</span><span>${(response.usage && response.usage.prompt_tokens) ?? '?'} / ${(response.usage && response.usage.completion_tokens) ?? '?'}</span></div>
-            <div class="receipt-row"><span>latency</span><span>${meta.total_latency_ms ? meta.total_latency_ms.toFixed(0) + ' ms' : '?'}</span></div>
+            <p class="eyebrow">${esc(label)}</p>
+            <div class="receipt-row"><span>reply</span><span style="text-align:left">${esc((response.choices && response.choices[0] && response.choices[0].message.content) || '(no content)')}</span></div>
+            <div class="receipt-row"><span>provider / model</span><span>${esc(meta.provider || '?')} / ${esc(response.model || '?')}</span></div>
+            <div class="receipt-row"><span>tokens (prompt / completion)</span><span>${esc((response.usage && response.usage.prompt_tokens) ?? '?')} / ${esc((response.usage && response.usage.completion_tokens) ?? '?')}</span></div>
+            <div class="receipt-row"><span>latency</span><span>${meta.total_latency_ms ? esc(meta.total_latency_ms.toFixed(0)) + ' ms' : '?'}</span></div>
           </div>`;
       }
 
@@ -386,11 +569,11 @@
         btn.textContent = 'Sending…';
         try {
           const response = await apiFetch('/v1/demo/chat/completions', {
-            method: 'POST', headers: authHeaders(),
+            method: 'POST', headers: taggedHeaders(),
             body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
           });
           renderReceiptResult('Demo receipt (DEMO-priced, no real key used)', response);
-          refreshReceipts(); refreshStatus();
+          refreshReceipts(); refreshStatus(); refreshWork();
         } catch (e) { $('test-result').textContent = 'Demo request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
@@ -408,20 +591,20 @@
           let response, label;
           if (trial.openai_configured) {
             response = await apiFetch('/v1/chat/completions', {
-              method: 'POST', headers: authHeaders(),
+              method: 'POST', headers: taggedHeaders(),
               body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
             });
             label = 'Real receipt — your OpenAI key';
           } else {
             response = await apiFetch('/v1/messages', {
-              method: 'POST', headers: authHeaders(),
+              method: 'POST', headers: taggedHeaders(),
               body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 64, messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
             });
             label = 'Real receipt — your Anthropic key';
             response = { choices: [{ message: { content: (response.content && response.content[0] && response.content[0].text) || '' } }], usage: { prompt_tokens: response.usage && response.usage.input_tokens, completion_tokens: response.usage && response.usage.output_tokens }, model: response.model, inferrail: response.inferrail };
           }
           renderReceiptResult(label, response);
-          refreshReceipts(); refreshStatus();
+          refreshReceipts(); refreshStatus(); refreshWork();
         } catch (e) { $('test-result').textContent = 'Real request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
@@ -483,7 +666,7 @@
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}`, { method: 'DELETE', headers: authHeaders() });
           clearInterval(countdownTimer); clearInterval(pollTimer);
-          resetTrialUI();
+          resetTrialUI(); clearSession();
           $('trial-panel').classList.add('hidden');
           $('start-trial-btn').disabled = false; $('start-trial-btn').textContent = 'Try free — instant gateway';
           $('start-trial-hint').textContent = 'Trial ended and deleted. Start a new one any time.';
@@ -519,6 +702,51 @@
         }
       }
 
+      function showTrial() {
+        resetTrialUI(); // wipe any leftover UI from a previous trial before showing this one
+        $('trial-panel').classList.remove('hidden');
+        $('base-url-code').textContent = trial.base_url;
+        $('dashboard-link-code').textContent = dashboardLink();
+        $('trial-notice').textContent = trial.notice;
+        renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
+        saveSession();
+        startPolling(); refreshReceipts(); refreshWork();
+        $('start-trial-btn').disabled = true;
+        $('start-trial-btn').textContent = 'Gateway ready ✓';
+      }
+
+      async function restoreTrial() {
+        // Two ways back into an existing trial: the dashboard link
+        // (#t=<tenant>&k=<key>), or a reload of this tab (sessionStorage).
+        let saved = null;
+        const hash = new URLSearchParams(location.hash.slice(1));
+        if (hash.get('t') && hash.get('k')) {
+          saved = { t: hash.get('t'), k: hash.get('k') };
+          // Remove the key from the address bar (and so from anything
+          // copied out of it) straight away.
+          history.replaceState(null, '', location.pathname + location.search);
+        } else {
+          try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch (_e) { saved = null; }
+        }
+        if (!saved || !saved.t || !saved.k) return;
+        const note = $('restore-note');
+        note.textContent = 'Reopening your trial…';
+        note.classList.remove('hidden');
+        try {
+          const status = await apiFetch(`/v1/trial/${encodeURIComponent(saved.t)}`, {
+            headers: { Authorization: 'Bearer ' + saved.k },
+          });
+          trial = Object.assign({}, status, { api_key: saved.k });
+          showTrial();
+          note.classList.add('hidden');
+        } catch (e) {
+          clearSession(); trial = null;
+          note.textContent = e.httpStatus === 401 || e.httpStatus === 403
+            ? 'That trial has expired or was ended — its data is gone. Start a new one below.'
+            : 'Could not reopen that trial: ' + e.message;
+        }
+      }
+
       async function startTrial() {
         const btn = $('start-trial-btn');
         btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
@@ -533,14 +761,8 @@
         try {
           trial = await apiFetch('/v1/trial', { method: 'POST' });
           clearTimeout(coldStartTimer);
-          resetTrialUI(); // wipe any leftover UI from a previous trial before showing this one
-          $('trial-panel').classList.remove('hidden');
-          $('base-url-code').textContent = trial.base_url;
-          $('trial-notice').textContent = trial.notice;
-          renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
-          startPolling();
+          showTrial();
           $('start-trial-hint').textContent = 'Your gateway is ready below.';
-          btn.textContent = 'Gateway ready ✓';
           $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) {
           clearTimeout(coldStartTimer);
@@ -569,6 +791,11 @@
       $('forget-keys-btn').addEventListener('click', forgetKeys);
       $('end-trial-btn').addEventListener('click', endTrial);
       $('feedback-form').addEventListener('submit', submitFeedback);
+      $('download-data-btn').addEventListener('click', downloadData);
+      $('work-rows').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-outcome]');
+        if (btn) markOutcome(btn);
+      });
       document.querySelectorAll('[data-toggle-visibility]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const input = $(btn.getAttribute('data-toggle-visibility'));
@@ -600,6 +827,7 @@
           catch { btn.textContent = 'Copy failed'; }
         });
       });
+      restoreTrial();
     })();
   </script>
 </body>
