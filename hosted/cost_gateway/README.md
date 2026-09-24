@@ -21,6 +21,10 @@ Lives outside `src/inferrail`, exactly like `hosted/work_economics`,
 `inferrail serve` CLI path has zero dependency on this service and is
 completely unaffected by its existence.
 
+**Operating it:** see [`LAUNCH.md`](LAUNCH.md) for the security review
+(what protects visitors, and which test checks each item), the launch
+checklist, and an incident runbook.
+
 ## Isolation from other hosted services
 
 This service never reads, writes, or shares a process, directory, or
@@ -340,8 +344,9 @@ this end to end.
 | `event` | When | Fields |
 |---|---|---|
 | `startup` | Process start | `admin_enabled`, `github_feedback_configured`, `client_ip_header` |
-| `request` | Every request, including 413/504 rejections | `request_id`, `method`, `route` (the route *template*, e.g. `/v1/trial/{tenant_id}`, or `unmatched`), `status`, `duration_ms`, `tenant_id` |
+| `request` | Every request, including 413/504 rejections -- except successful `/health` checks, which the host's health checker sends every few seconds (a failing one is logged) | `request_id`, `method`, `route` (the route *template*, e.g. `/v1/trial/{tenant_id}`, or `unmatched`), `status`, `duration_ms`, `tenant_id` |
 | `unhandled_error` | A bug raised an exception | `request_id`, `method`, `route`, `error_type`, `error_location` (`file.py:line`) -- never the exception message |
+| `purge` / `purge_error` | The background sweep removed expired trials / a sweep failed (the loop keeps running) | `purged_count` / `error_type`, `error_location` |
 | `feedback_github_skipped` | Feedback wasn't copied to GitHub | `reason` (`hourly_cap`, `repo_check_failed`, `repo_not_private`, `issue_create_failed`, `request_error:<type>`), `http_status` |
 
 Every response carries an **`X-Request-ID`** header matching its
