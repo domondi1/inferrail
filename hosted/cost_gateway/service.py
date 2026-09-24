@@ -59,6 +59,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from auth import RateLimiter, authenticate, rate_limiter_from_env
@@ -279,6 +280,10 @@ this is revisited."""
 MAX_REQUEST_BODY_BYTES = int(
     os.environ.get("COST_GATEWAY_MAX_REQUEST_BODY_BYTES", str(256 * 1024))
 )
+DASHBOARD_URL = os.environ.get("COST_GATEWAY_DASHBOARD_URL", "https://tryinferrail.com/try/")
+"""The web page that renders a trial (`docs/try/index.html`) -- used to
+build each trial's personal dashboard link."""
+
 MAX_KEY_LENGTH = 4096
 """A plain length guard, checked in Python (never a pydantic field
 constraint) so a too-long value is rejected without FastAPI's default
@@ -891,7 +896,10 @@ def create_app(data_dir: Path) -> FastAPI:
             "tenant_id": tenant.tenant_id,
             "base_url": base_url,
             "dashboard_url": None,
-            "dashboard_status": "not yet available -- Phase 2 adds the hosted dashboard",
+            "dashboard_status": (
+                "returned once, by POST /v1/trial -- it contains the trial key, "
+                "which this service never stores"
+            ),
             "mode": "real_key" if tenant.has_real_key else "demo",
             "expires_at": iso(tenant.expires_at),
             "seconds_remaining": round(tenant.seconds_remaining(), 1),
@@ -942,6 +950,16 @@ def create_app(data_dir: Path) -> FastAPI:
         request.state.tenant_id = tenant.tenant_id
         payload = _status_payload(tenant, base_url=_base_url(request), stores=None)
         payload["api_key"] = api_key
+        # The key goes in the URL *fragment*, which browsers never send to
+        # a server (nor in a Referer header); the /try/ page strips it from
+        # the address bar on load. Only available here, at creation: the
+        # key itself is kept only as a hash after this response.
+        payload["dashboard_url"] = (
+            f"{DASHBOARD_URL}#t={quote(tenant.tenant_id)}&k={quote(api_key)}"
+        )
+        payload["dashboard_status"] = (
+            "anyone with this link can use this trial until it expires -- keep it private"
+        )
         return payload
 
     @app.get("/v1/trial/{tenant_id}")

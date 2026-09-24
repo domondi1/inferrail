@@ -88,6 +88,32 @@ Split into small PRs, in this order:
 **After D:** Phase 5 engineering is done. Remaining items are operator
 tasks/decisions listed in `LAUNCH.md`'s checklist.
 
+## Phase 2 gaps closed + non-technical test script (2026-09-24)
+
+Branch `feat/cost-gateway-phase2-gaps`. Closes what the original
+Phase 2 spec asked for that hadn't shipped:
+
+- **Work/task views + "what does this work cost?"** on `/try/`: tag test
+  requests with a Work and Task (standard `X-Inferrail-Attribute-*`
+  headers); per-work rows with Succeeded/Failed outcome buttons; a
+  summary with known cost and cost per successful outcome; a by-task
+  breakdown. Built on the existing `/v1/work` and `/v1/report`.
+- **Personal dashboard link** (`dashboard_url`, previously always
+  `null`): key in the URL fragment only, stripped on load, returned
+  once; reload keeps the trial for that tab.
+- **Keep your data**: JSON download of receipts/work/task totals, plus
+  the self-host command. Accounts are still Phase 4 -- the page says
+  they aren't available, without promising a date.
+- **Escaping**: the page previously inserted model names and model
+  replies as raw HTML; everything rendered is now escaped.
+- **`TEST_SCRIPT.md`**: an 11-step, browser-only test anyone can follow.
+
+Verified with a headless-browser run against a local instance (15
+checks: work/task rows, outcome math, HTML-in-work-id shown as text,
+download contents with no prompt text, reload, link in a fresh browser,
+fragment stripped, ended-trial link, 375px and 1280px with no
+horizontal scroll, zero console errors).
+
 ## The recurring blocker every pass hits: no push access
 
 This session's git credentials cannot push to `domondi1/inferrail`

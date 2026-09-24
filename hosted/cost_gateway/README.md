@@ -108,6 +108,7 @@ python3 hosted/cost_gateway/service.py /tmp/cost_gateway_data 8423
 | `COST_GATEWAY_DAILY_BUDGET_USD` | `1.00` | Each tenant's own daily spend cap, block mode -- enforced pre-flight before any real provider is ever called, via the same `BudgetEnforcer` `inferrail serve`'s budgets use. |
 | `COST_GATEWAY_REQUEST_TIMEOUT_SECONDS` | `120` | Whole-request timeout, including a streaming response's full duration -- see "Known limitations" below. |
 | `COST_GATEWAY_MAX_REQUEST_BODY_BYTES` | `262144` (256 KiB) | Request body size guard, applied to every route including the unauthenticated `POST /v1/trial`. Counts bytes actually received, so a chunked upload with no `Content-Length` is capped too. |
+| `COST_GATEWAY_DASHBOARD_URL` | `https://tryinferrail.com/try/` | The page that renders a trial; used to build each trial's `dashboard_url`. Point it at a local static server when developing the page. |
 | `COST_GATEWAY_CORS_ORIGINS` | `*` | Comma-separated allowed origins for browser CORS (Phase 2's website calls this API directly from a browser). `*` is safe here because every route is bearer-token-gated, not cookie-authenticated -- see `service.py`'s `_cors_origins_from_env`. Narrow this for a production deployment if desired. |
 | `COST_GATEWAY_ADMIN_TOKEN` | unset | Enables `GET /v1/admin/stats` and `GET /v1/admin/feedback` (usage counters + submitted feedback), gated on `Authorization: Bearer <this value>`. **Unset by default -- both routes return `404` (not `401`) until this is explicitly set**, so a deployment with no admin token configured reveals nothing about their existence. Generate a real secret yourself (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) and set it as a platform secret; never commit it or share it with an assistant session. |
 | `COST_GATEWAY_GITHUB_TOKEN` | unset | A fine-grained GitHub PAT, scoped to **only** `COST_GATEWAY_GITHUB_REPO` with **Issues: write** permission and nothing else. When set (together with `COST_GATEWAY_GITHUB_REPO`), every `POST /v1/feedback` also files a GitHub Issue -- the durable copy, since it survives a Render redeploy and the local `feedback.jsonl` doesn't. Unset by default (feedback is still saved locally either way). See "Feedback and usage visibility" below for how to generate one. |
@@ -252,6 +253,26 @@ content/usage and the same receipt shape.
   default in a bare `inferrail serve`** -- an intentional, documented
   trial-safety addition (Phase 1), not a passthrough-fidelity gap.
 
+## Personal dashboard link
+
+`POST /v1/trial` returns `dashboard_url`, e.g.
+`https://tryinferrail.com/try/#t=<tenant_id>&k=<trial_api_key>`.
+Opening it reopens that trial on any device.
+
+- The trial key is in the URL **fragment** (after `#`). Browsers never
+  send a fragment to any server -- not the site's host, not this
+  gateway, not in a `Referer` header -- so it never reaches a server log.
+- The page removes the fragment from the address bar as soon as it
+  loads, and keeps the trial for reloads of that tab only
+  (`sessionStorage`, never `localStorage`).
+- It's returned **once**: this service keeps only a hash of the trial
+  key, so `GET /v1/trial/{tenant_id}` can't rebuild it (`dashboard_url:
+  null` there).
+- **Anyone with the link can use the trial** -- including any provider
+  key added to it, up to the trial's daily budget -- until it expires.
+  The page says so next to the link. Ending the trial makes the link
+  useless immediately.
+
 ## How a frontend would call this (Phase 2 preview)
 
 Phase 2 builds the actual one-click website flow. The contract above is
@@ -380,9 +401,12 @@ the reason), `"status": 5` (server errors), or a specific `request_id`.
   to the client -- a very long real completion could be cut off at
   `COST_GATEWAY_REQUEST_TIMEOUT_SECONDS`. Raise the env var if this
   becomes a real problem before it's revisited properly.
-- **No hosted dashboard yet.** `GET /v1/receipts` is the only way to
-  read back a tenant's own data in Phase 1; the hosted dashboard (reusing
-  the existing local dashboard, made multi-tenant) is Phase 2 scope.
+- **The hosted dashboard is the `/try/` page, not the local React
+  dashboard.** It shows the live feed, budget burn, work and task costs
+  (with outcomes and cost per successful outcome), and a JSON download.
+  Each trial's personal link (`dashboard_url`, returned once by
+  `POST /v1/trial`) reopens it anywhere -- see "Personal dashboard link"
+  below. A closer port of the local React dashboard remains later scope.
 - **No account/claim path yet.** A trial's data is genuinely gone once
   it expires or is ended -- there is no way to persist it beyond the TTL
   in Phase 1. That is Phase 4 scope (optional accounts).
