@@ -28,37 +28,29 @@ Frontend: `docs/try/index.html` (+ a homepage CTA in `docs/index.html`).
 - Backend running on Render free tier at
   `https://inferrail-cost-gateway.onrender.com`.
 
-**Known live gotcha, found right after deploying #49:** the free tier
-has no persistent disk, so `feedback.jsonl` (and every trial's SQLite
-files) get wiped on every redeploy/restart — confirmed directly:
-feedback submitted during testing was gone after the next redeploy.
-This is why the GitHub Issues integration below exists.
+**Known gotcha, found and fixed the same day:** the free tier has no
+persistent disk, so `feedback.jsonl` (and every trial's SQLite files)
+get wiped on every redeploy/restart — confirmed directly: feedback
+submitted during testing was gone after the next redeploy. Fixed by
+the GitHub Issues integration below.
 
-**Committed locally, not yet pushed (same recurring push-permission gap
-— see below), branch `feat/cost-gateway-feedback-github-issues`:**
+**Also merged, deployed, and live-verified: PR #50** (branch was
+`feat/cost-gateway-feedback-github-issues`) — `POST /v1/feedback` now
+also files a GitHub Issue (labeled `cost-gateway-feedback`) on
+`domondi1/inferrail`, via `COST_GATEWAY_GITHUB_TOKEN` (a fine-grained
+PAT, Issues-write-only scope), already set on the live Render instance.
+Best-effort: if GitHub is unreachable, the feedback submission still
+succeeds via the local write. **Confirmed live** by actually submitting
+feedback through the real API and checking the resulting GitHub Issue
+existed with the right title/labels/body
+(github.com/domondi1/inferrail/issues/51 — a test issue, closed after
+verification). The `/v1/admin/feedback`/`/v1/admin/stats` Render-side
+view is unaffected and still works the same way.
 
-- Adds a **second, durable destination** for feedback: `POST
-  /v1/feedback` now also files a GitHub Issue (labeled
-  `cost-gateway-feedback`) on `COST_GATEWAY_GITHUB_REPO`
-  (`domondi1/inferrail`), via a new `COST_GATEWAY_GITHUB_TOKEN` secret
-  (fine-grained PAT, Issues-only scope). Best-effort: if GitHub is
-  unreachable or the token's wrong, the feedback submission still
-  succeeds and still gets the local (ephemeral) write — GitHub never
-  blocks the local one. The existing `/v1/admin/feedback` Render-side
-  view is unchanged and still works for whatever's arrived since the
-  last redeploy.
-- 3 new tests (41 total), ruff/mypy/boundary-check clean.
-- **Not yet deployed or verified live** — needs push, PR, merge,
-  `COST_GATEWAY_GITHUB_TOKEN` set on Render (a fine-grained PAT scoped
-  to Issues-write on `domondi1/inferrail` only), redeploy, then a real
-  end-to-end check (submit feedback, confirm a real Issue appears).
-
-**To get these live:** push the branch(es), open PR(s) (or update the
-existing ones), get CI green, merge, then **set
-`COST_GATEWAY_ADMIN_TOKEN`** as a new Render secret and redeploy (the
-admin routes stay 404'd/harmless until you do). Generate it yourself,
-e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` —
-never share it with an assistant session.
+**As of this update, everything built in this feature is merged,
+deployed, and live-verified. No open PRs, no known bugs, nothing
+committed-but-unpushed.** Next work is genuinely new scope — see
+"Not started yet" below.
 
 ## The recurring blocker every pass hits: no push access
 
@@ -126,15 +118,23 @@ not just after asking for a push.
 
 ## Suggested next session's first move
 
-1. Confirm what actually got merged since this was written (`git log
-   origin/main --oneline -10`) — don't assume the two branches above
-   are still unmerged by the time you read this.
-2. If they're merged: set `COST_GATEWAY_ADMIN_TOKEN`, redeploy, verify
-   `/v1/admin/stats` and the "Report an issue" form live, same
-   discipline every prior pass in this feature's history used (curl the
-   real endpoint, then drive the real page in a real headless browser —
-   don't just trust the code).
-3. Then either continue toward Phase 4 (accounts) if the founder wants
-   to keep building, or treat what's live now as a real v1 and shift to
-   Phase 5 hardening/launch-readiness — that's a founder call, not an
-   engineering one; ask rather than assume.
+1. Confirm what's actually on `main`/live by the time you read this
+   (`git log origin/main --oneline -10`, plus a real `curl .../health`)
+   — don't trust this file blindly; it was accurate as of PR #50
+   (commit `f53bc4a`, 2026-09-23), but re-verify rather than assume nothing's
+   changed since.
+2. As of that point, everything in Phases 0–3 plus the key-form fixes,
+   admin feedback/stats, and GitHub Issues integration was merged,
+   deployed, and live-verified — no open PRs, nothing pending.
+3. Ask the founder directly which of these two directions they want
+   next — don't assume:
+   - **Phase 4** (accounts to persist a trial past its TTL, opt-in email
+     digest, transparent update channel, richer data export) — genuinely
+     new scope, not started at all.
+   - **Phase 5** (hardening/observability/launch checklist) — treating
+     what's live now as a real v1 and making it production-solid instead
+     of adding features.
+4. Whichever it is, keep the same verification discipline every pass in
+   this feature's history has used: curl the real live endpoint, then
+   drive the real page in a real headless browser — don't just trust
+   that code merged means code works.
