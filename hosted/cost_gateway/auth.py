@@ -79,6 +79,14 @@ class RateLimiter:
             )
         window.append(now)
 
+    def forget(self, tenant_id: str) -> None:
+        """Drops a purged tenant's request history, so this table's size
+        tracks live tenants rather than every tenant ever issued."""
+        self._requests.pop(tenant_id, None)
+
+    def tracked_count(self) -> int:
+        return len(self._requests)
+
 
 def rate_limiter_from_env() -> RateLimiter:
     import os

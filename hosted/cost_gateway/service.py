@@ -226,6 +226,70 @@ def _shared_pricing_resolver() -> PricingResolver:
     )
 
 
+class _BodySizeLimitMiddleware:
+    """Enforces `MAX_REQUEST_BODY_BYTES` on every route, including the
+    unauthenticated `POST /v1/trial`, by counting the bytes actually
+    received -- not just trusting a declared `Content-Length`, which a
+    chunked upload (`Transfer-Encoding: chunked`) omits entirely. The body
+    is buffered up to the limit before the app sees it; that is at most
+    `MAX_REQUEST_BODY_BYTES` per request, and lets an oversized body get a
+    clean 413 instead of a mid-parse failure."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = MAX_REQUEST_BODY_BYTES
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None:
+            try:
+                declared_size = int(declared)
+            except ValueError:
+                declared_size = 0
+            if declared_size > limit:
+                await self._reject(
+                    send, f"request body of {declared_size} bytes exceeds the {limit}-byte limit"
+                )
+                return
+
+        chunks: list[bytes] = []
+        received = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body = message.get("body", b"")
+            received += len(body)
+            if received > limit:
+                await self._reject(send, f"request body exceeds the {limit}-byte limit")
+                return
+            chunks.append(body)
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+    @staticmethod
+    async def _reject(send: Any, detail: str) -> None:
+        response = JSONResponse(status_code=413, content={"detail": detail})
+        await send(
+            {"type": "http.response.start", "status": 413, "headers": response.raw_headers}
+        )
+        await send({"type": "http.response.body", "body": response.body})
+
+
 class SubmitKeysRequest(BaseModel):
     """Deliberately unconstrained beyond type (`str | None`, `extra:
     forbid`) -- see `MAX_KEY_LENGTH`'s docstring for why real validation
@@ -285,12 +349,31 @@ def _validate_key_shape(value: str, *, field_name: str) -> str:
     return stripped
 
 
-def _client_ip(request: Request) -> str:
-    """Reflects the real client address when this process is run with
-    `uvicorn.run(..., proxy_headers=True, forwarded_allow_ips="*")`
-    behind a reverse proxy (e.g. Render) -- same reasoning as
-    `hosted/ap_exceptions/service.py`'s identical helper."""
-    return request.client.host if request.client is not None else "unknown"
+CLIENT_IP_HEADER = os.environ.get("COST_GATEWAY_CLIENT_IP_HEADER", "true-client-ip").strip().lower()
+"""Which request header carries the real client address, for the per-IP
+trial-issuance throttle. Defaults to `True-Client-IP`, which Cloudflare --
+in front of every Render service -- sets from the connecting address and
+overwrites if a client sends its own.
+
+`X-Forwarded-For` is deliberately *not* used: Render appends to it
+without clearing a client-supplied value, so its leftmost entry is
+whatever the client chose to send (spoofable), and its rightmost is a
+shared Cloudflare edge address (would lump unrelated visitors together).
+
+When the header is absent (local runs, tests), the socket peer address is
+used. Set this to empty for a deployment that isn't behind Cloudflare --
+there, a client could otherwise set `True-Client-IP` itself."""
+
+
+def _client_ip(request: Request) -> tuple[str, str]:
+    """Returns `(address, source)`, where `source` is the header name or
+    `"peer"` -- surfaced as a counter in `/v1/admin/stats` so an operator
+    can confirm the trusted header is actually arriving in production."""
+    if CLIENT_IP_HEADER:
+        value = request.headers.get(CLIENT_IP_HEADER, "").strip()
+        if value:
+            return value, CLIENT_IP_HEADER
+    return (request.client.host if request.client is not None else "unknown"), "peer"
 
 
 def _base_url(request: Request) -> str:
@@ -500,6 +583,9 @@ def create_app(data_dir: Path) -> FastAPI:
         # `_cors_origins_from_env`'s docstring.
         allow_headers=["*"],
     )
+    # Added after CORS, so it runs outermost: an oversized body is
+    # rejected before anything else reads it.
+    app.add_middleware(_BodySizeLimitMiddleware)
     pricing_resolver = _shared_pricing_resolver()
     daily_budget_usd = Decimal(
         os.environ.get("COST_GATEWAY_DAILY_BUDGET_USD", str(DEFAULT_DAILY_BUDGET_USD))
@@ -509,6 +595,7 @@ def create_app(data_dir: Path) -> FastAPI:
     )
     key_vault = KeyVault()
     limiter: RateLimiter = rate_limiter_from_env()
+    app.state.limiter = limiter
     feedback_path = data_dir / "feedback.jsonl"
     # A global file, not per-tenant: unset by default. Admin routes are
     # entirely disabled (404, not just unauthenticated) unless an
@@ -517,6 +604,7 @@ def create_app(data_dir: Path) -> FastAPI:
     admin_token = os.environ.get("COST_GATEWAY_ADMIN_TOKEN") or None
     github_feedback = _GitHubFeedbackSink()
     feedback_counts: dict[str, int] = defaultdict(int)
+    ip_source_counts: dict[str, int] = defaultdict(int)
 
     def _on_purge(tenant_id: str) -> None:
         # Wipes both the tenant's storage AND any real key held for it --
@@ -526,6 +614,7 @@ def create_app(data_dir: Path) -> FastAPI:
         tenant_stores.purge_tenant(tenant_id)
         key_vault.forget(tenant_id)
         feedback_counts.pop(tenant_id, None)
+        limiter.forget(tenant_id)
 
     trial_registry: TrialRegistry = trial_registry_from_env(on_purge=_on_purge)
 
@@ -538,29 +627,6 @@ def create_app(data_dir: Path) -> FastAPI:
                 status_code=504,
                 content={"detail": f"request exceeded {REQUEST_TIMEOUT_SECONDS:.0f}s timeout"},
             )
-
-    @app.middleware("http")
-    async def request_size_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
-        """Applies to every route, including the unauthenticated
-        `POST /v1/trial` -- same reasoning as
-        `hosted/ap_exceptions/service.py`'s identical middleware."""
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                declared_size = int(content_length)
-            except ValueError:
-                declared_size = 0
-            if declared_size > MAX_REQUEST_BODY_BYTES:
-                return JSONResponse(
-                    status_code=413,
-                    content={
-                        "detail": (
-                            f"request body of {declared_size} bytes exceeds the "
-                            f"{MAX_REQUEST_BODY_BYTES}-byte limit"
-                        )
-                    },
-                )
-        return await call_next(request)
 
     @app.on_event("startup")
     async def _start_purge_loop() -> None:
@@ -673,7 +739,9 @@ def create_app(data_dir: Path) -> FastAPI:
     async def create_trial(request: Request) -> dict[str, Any]:
         """No authentication required -- the self-serve entry point. See
         module docstring."""
-        api_key, tenant = trial_registry.issue(client_ip=_client_ip(request))
+        client_ip, ip_source = _client_ip(request)
+        ip_source_counts[ip_source] += 1
+        api_key, tenant = trial_registry.issue(client_ip=client_ip)
         payload = _status_payload(tenant, base_url=_base_url(request), stores=None)
         payload["api_key"] = api_key
         return payload
@@ -930,6 +998,13 @@ def create_app(data_dir: Path) -> FastAPI:
             "trials_issued_total": trial_registry.total_issued_count(),
             "trials_live_now": trial_registry.live_tenant_count(),
             "feedback_count": len(_read_feedback(feedback_path)),
+            # Which source the per-IP trial throttle read the client
+            # address from, per issuance attempt. In production this
+            # should be almost entirely CLIENT_IP_HEADER; a large "peer"
+            # count means the trusted header isn't arriving and the
+            # throttle has fallen back to the peer address (behind
+            # uvicorn's proxy_headers, the spoofable X-Forwarded-For).
+            "trial_issuance_ip_source": dict(ip_source_counts),
             "process_local_note": (
                 "These counters reset on every process restart/redeploy -- "
                 "they are not a durable historical record."
