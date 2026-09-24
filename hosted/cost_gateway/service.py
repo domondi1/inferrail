@@ -49,12 +49,14 @@ import contextlib
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -739,12 +741,6 @@ def _read_feedback(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-
-NO_COMPATIBLE_MODEL_MESSAGE = (
-    "Anthropic key connected, but no compatible text model was available for this test."
-)
-
 _ANTHROPIC_FAMILY_RANK = (("haiku", 0), ("sonnet", 1), ("opus", 2))
 """Lightest (cheapest) family first. Anthropic's model list carries no
 price or size field, so the family name in the model id is the one
@@ -754,9 +750,10 @@ model."""
 
 
 def select_anthropic_test_model(models: list[dict[str, Any]]) -> str | None:
-    """Picks the model the /try/ page uses for its one-line test request,
-    from what Anthropic reports *this key* can use -- never a hardcoded,
-    dated model id, so a model's retirement can't break the test.
+    """Picks the model the /try/ page uses for its one-line Anthropic test
+    request, from what Anthropic reports *this key* can use -- never a
+    hardcoded, dated model id, so a model's retirement can't break the
+    test.
 
     Every Claude model accepts a plain-text `/v1/messages` request, so
     "compatible" means: a `model` entry whose id is a Claude model. Among
@@ -779,12 +776,118 @@ def select_anthropic_test_model(models: list[dict[str, Any]]) -> str | None:
     return str(usable[0]["id"]) if usable else None
 
 
+_OPENAI_EXCLUDED_MARKERS = (
+    "instruct",  # legacy /v1/completions-only
+    "audio",
+    "realtime",
+    "tts",
+    "transcribe",
+    "image",
+    "search",
+    "embedding",
+    "moderation",
+    "codex",
+    "computer-use",
+    "deep-research",
+    "preview",
+    "-pro",
+)
+"""Substrings that mark an OpenAI model as unsuitable for the page's
+plain `/v1/chat/completions` text test: a different endpoint, modality,
+or request shape, or a preview/premium tier. OpenAI's model list gives
+only `id`, `created` and `owned_by` -- no capability or price fields --
+so this is a conservative name-based filter, not a guarantee."""
+
+_OPENAI_SIZE_RANK = (("nano", 0), ("mini", 1))
+"""Smaller-is-cheaper size markers in OpenAI model ids; anything else
+ranks after them."""
+
+_DATED_SNAPSHOT = re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{4})$")
+
+
+def select_openai_test_model(models: list[dict[str, Any]]) -> str | None:
+    """Picks the model the /try/ page uses for its one-line OpenAI test
+    request, from what OpenAI reports *this key* can use.
+
+    Conservative by design, since the list has no capability metadata:
+    only `gpt-*` ids are considered (the chat-model family; fine-tunes are
+    `ft:*` and never match), minus any id containing an
+    `_OPENAI_EXCLUDED_MARKERS` entry. Among the rest: smallest size marker
+    first (`nano`, then `mini`, then others); then an undated alias (which
+    OpenAI points at the current snapshot) over a dated snapshot; then the
+    newest by `created`. Returns `None` if nothing passes the filter.
+    """
+    usable = [
+        m
+        for m in models
+        if str(m.get("id", "")).startswith("gpt-")
+        and not any(marker in str(m["id"]).lower() for marker in _OPENAI_EXCLUDED_MARKERS)
+    ]
+
+    def rank(model: dict[str, Any]) -> tuple[int, int, float]:
+        model_id = str(model["id"]).lower()
+        size = next((r for marker, r in _OPENAI_SIZE_RANK if marker in model_id), 2)
+        dated = 1 if _DATED_SNAPSHOT.search(model_id) else 0
+        created = model.get("created")
+        return (size, dated, -float(created) if isinstance(created, (int, float)) else 0.0)
+
+    usable.sort(key=rank)
+    return str(usable[0]["id"]) if usable else None
+
+
+@dataclass(frozen=True)
+class _DiscoverySpec:
+    """What differs between providers for model discovery. Everything
+    else -- the request, error classification, response shape, and the
+    route -- is shared."""
+
+    label: str
+    models_url: str
+    auth_headers: Callable[[str], dict[str, str]]
+    client_factory: Callable[[], httpx.AsyncClient | None]
+    select: Callable[[list[dict[str, Any]]], str | None]
+    created_field: str
+    params: dict[str, int]
+
+
+_DISCOVERY: dict[str, _DiscoverySpec] = {
+    "openai": _DiscoverySpec(
+        label="OpenAI",
+        models_url="https://api.openai.com/v1/models",
+        auth_headers=lambda key: {"Authorization": f"Bearer {key}"},
+        client_factory=lambda: openai_client_factory(),
+        select=select_openai_test_model,
+        created_field="created",
+        params={},  # OpenAI's list is unpaginated
+    ),
+    "anthropic": _DiscoverySpec(
+        label="Anthropic",
+        models_url="https://api.anthropic.com/v1/models",
+        auth_headers=lambda key: {
+            "x-api-key": key,
+            "anthropic-version": _ANTHROPIC_API_VERSION,
+        },
+        client_factory=lambda: anthropic_client_factory(),
+        select=select_anthropic_test_model,
+        created_field="created_at",
+        params={"limit": 1000},  # Anthropic pages at 20 by default
+    ),
+}
+"""The client factories are looked up at call time (via the lambdas) so
+tests can monkeypatch `openai_client_factory`/`anthropic_client_factory`,
+the same seam the proxy routes use."""
+
+
+def no_compatible_model_message(label: str) -> str:
+    return f"{label} key connected, but no compatible text model was available for this test."
+
+
 class ModelDiscoveryError(Exception):
-    """Model discovery failed. `key_rejected` separates "Anthropic says
+    """Model discovery failed. `key_rejected` separates "the provider says
     this key is invalid or not allowed" (401/403) from "we couldn't get an
-    answer" (network error, 5xx, unexpected response) -- the page shows
-    different advice for each. Messages are fixed text: nothing from the
-    upstream response, and never the key, is ever included."""
+    answer" (network error, 429, 5xx, unexpected response) -- the page
+    shows different advice for each. Messages are fixed text: nothing from
+    the upstream response, and never the key, is ever included."""
 
     def __init__(self, *, key_rejected: bool, upstream_status: int | None) -> None:
         self.key_rejected = key_rejected
@@ -792,17 +895,14 @@ class ModelDiscoveryError(Exception):
         super().__init__("key rejected" if key_rejected else "discovery failed")
 
 
-async def discover_anthropic_models(api_key: str) -> list[dict[str, Any]]:
-    """Asks Anthropic which models `api_key` can use (`GET /v1/models`),
-    server-side, so the key never goes back to the browser. Uses the same
-    `x-api-key` + `anthropic-version` headers as `AnthropicProvider`, and
-    the same `anthropic_client_factory` test seam."""
-    client = anthropic_client_factory() or httpx.AsyncClient(timeout=10.0)
+async def discover_models(spec: _DiscoverySpec, api_key: str) -> list[dict[str, Any]]:
+    """Asks the provider which models `api_key` can use (`GET /v1/models`
+    on both OpenAI and Anthropic), server-side, so the key never goes back
+    to the browser."""
+    client = spec.client_factory() or httpx.AsyncClient(timeout=10.0)
     try:
         resp = await client.get(
-            ANTHROPIC_MODELS_URL,
-            params={"limit": 1000},
-            headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_API_VERSION},
+            spec.models_url, params=spec.params, headers=spec.auth_headers(api_key)
         )
     except httpx.HTTPError as exc:
         raise ModelDiscoveryError(key_rejected=False, upstream_status=None) from exc
@@ -1096,23 +1196,29 @@ def create_app(data_dir: Path) -> FastAPI:
 
     @app.get("/v1/trial/{tenant_id}/models")
     async def list_models(
-        tenant_id: str, provider: str = "anthropic", tenant: Tenant = _require_auth
+        tenant_id: str, provider: str, tenant: Tenant = _require_auth
     ) -> dict[str, Any]:
         """Which models this trial's own provider key can use, plus the one
         the /try/ page should use for its test request (`selected_model`).
-        Discovery runs here, server-side, with the key held in this
-        process -- the response carries model ids only, never the key.
-        `models` is returned in full so a page can later offer a picker;
-        `selected_model` is `null` (with `message`) when nothing usable was
-        listed. Only `provider=anthropic` is supported so far."""
+        `provider` is `openai` or `anthropic`; the response has the same
+        shape for both. Discovery runs here, server-side, with the key
+        held in this process -- the response carries model ids only, never
+        the key. `models` is returned in full so a page can later offer a
+        picker; `selected_model` is `null` (with `message`) when nothing
+        usable was listed."""
         _require_path_tenant(tenant_id, tenant)
-        if provider != "anthropic":
+        spec = _DISCOVERY.get(provider)
+        if spec is None:
             raise HTTPException(
-                status_code=400, detail="only provider=anthropic is supported"
+                status_code=400, detail="provider must be one of: openai, anthropic"
             )
-        api_key = _require_anthropic_key(tenant)
+        api_key = (
+            _require_openai_key(tenant)
+            if provider == "openai"
+            else _require_anthropic_key(tenant)
+        )
         try:
-            models = await discover_anthropic_models(api_key)
+            models = await discover_models(spec, api_key)
         except ModelDiscoveryError as exc:
             if exc.key_rejected:
                 raise HTTPException(
@@ -1120,7 +1226,7 @@ def create_app(data_dir: Path) -> FastAPI:
                     detail={
                         "code": "provider_key_rejected",
                         "message": (
-                            f"Anthropic rejected this key (HTTP {exc.upstream_status}) -- "
+                            f"{spec.label} rejected this key (HTTP {exc.upstream_status}) -- "
                             "check that it's correct and still active, then add it again."
                         ),
                     },
@@ -1130,25 +1236,25 @@ def create_app(data_dir: Path) -> FastAPI:
                 detail={
                     "code": "model_discovery_failed",
                     "message": (
-                        "Couldn't get the list of models from Anthropic"
+                        f"Couldn't get the list of models from {spec.label}"
                         + (f" (HTTP {exc.upstream_status})" if exc.upstream_status else "")
                         + " -- your key may be fine; try again shortly."
                     ),
                 },
             ) from None
-        selected = select_anthropic_test_model(models)
+        selected = spec.select(models)
         return {
-            "provider": "anthropic",
+            "provider": provider,
             "models": [
                 {
                     "id": m.get("id"),
                     "display_name": m.get("display_name"),
-                    "created_at": m.get("created_at"),
+                    "created": m.get(spec.created_field),
                 }
                 for m in models
             ],
             "selected_model": selected,
-            "message": None if selected else NO_COMPATIBLE_MODEL_MESSAGE,
+            "message": None if selected else no_compatible_model_message(spec.label),
         }
 
     @app.delete("/v1/trial/{tenant_id}")

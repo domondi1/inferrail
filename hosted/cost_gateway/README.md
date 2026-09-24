@@ -169,12 +169,15 @@ curl -s "http://127.0.0.1:8423/v1/report?by=customer" -H "Authorization: Bearer 
 #     aggregated (`inferrail transaction <task_id>`).
 curl -s http://127.0.0.1:8423/v1/transaction/task_1 -H "Authorization: Bearer $API_KEY"
 
-# 11b. Which Anthropic models your submitted key can use -- asked of
-#      Anthropic server-side with the key this service holds (never
-#      returned). `selected_model` is the lightest, newest one; `null`
-#      plus a `message` if none is usable. 400 `provider_key_rejected` if
-#      Anthropic refuses the key, 502 `model_discovery_failed` otherwise.
-curl -s "http://127.0.0.1:8423/v1/trial/$TENANT_ID/models?provider=anthropic" \
+# 11b. Which models your submitted key can use (provider=openai or
+#      anthropic; same response shape for both) -- asked of the provider
+#      server-side with the key this service holds (never returned).
+#      `selected_model` is what the /try/ page tests with; `null` plus a
+#      `message` if none is usable. 400 `provider_key_rejected` if the
+#      provider refuses the key, 502 `model_discovery_failed` otherwise.
+#      Selection rules: `select_openai_test_model` /
+#      `select_anthropic_test_model` in service.py.
+curl -s "http://127.0.0.1:8423/v1/trial/$TENANT_ID/models?provider=openai" \
   -H "Authorization: Bearer $API_KEY"
 
 # 12. Forget your key without ending the trial.
