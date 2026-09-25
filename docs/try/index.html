@@ -6,6 +6,10 @@
   <title>Try Inferrail free — instant hosted gateway</title>
   <meta name="description" content="Start a free, no-account Inferrail trial in your browser: a personal base_url, zero-key demo receipts immediately, and an optional real OpenAI/Anthropic key for a real payload-free receipt.">
   <link rel="canonical" href="https://tryinferrail.com/try/">
+  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../favicon-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
@@ -19,7 +23,9 @@
     .wrap { width:100%; max-width:1040px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
     .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); flex-wrap:wrap; gap:10px; }
     .wordmark,.eyebrow,.button,.copy { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
-    .wordmark { font-size:clamp(16px,1.4vw,22px); }
+    .wordmark { font-size:clamp(16px,1.4vw,22px); display:inline-flex; align-items:center; gap:.55em; }
+    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
+    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
     .nav { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:clamp(10px,2.8vw,28px); font-size:clamp(13px,1vw,16px); }
     .nav a { text-underline-offset:4px; }
     .hero { padding:clamp(32px,4vw,64px) 0 clamp(20px,3vw,36px); text-align:center; }
@@ -92,7 +98,7 @@
 </head>
 <body>
   <header class="masthead wrap">
-    <a class="wordmark" href="/">Inferrail</a>
+    <a class="wordmark" href="/"><img class="wordmark-mark" src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
     <nav class="nav" aria-label="Primary navigation">
       <a href="/#steps">Self-hosted</a>
       <a href="/#ap-hosted">Real job</a>
