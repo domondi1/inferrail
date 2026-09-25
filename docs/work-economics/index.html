@@ -6,6 +6,10 @@
   <title>Work Economics — Inferrail</title>
   <meta name="description" content="Inferrail Work Economics: agents submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 on Base Sepolia testnet.">
   <link rel="canonical" href="https://tryinferrail.com/work-economics/">
+  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../favicon-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
@@ -19,7 +23,9 @@
     .wrap { width:min(100%, 900px); margin:auto; padding:0 20px; }
     .masthead { display:flex; min-height:62px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--ink); }
     .wordmark, .eyebrow, .button, .fact-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
-    .wordmark { font-size:19px; text-decoration:none; }
+    .wordmark { font-size:19px; text-decoration:none; display:inline-flex; align-items:center; gap:.55em; }
+    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
+    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
     .nav { display:flex; gap:18px; font-size:12px; }
     .nav a { text-underline-offset:4px; }
     main { padding:clamp(36px,5vw,58px) 0 clamp(48px,6vw,80px); }
@@ -56,7 +62,7 @@
 </head>
 <body>
   <header class="masthead wrap">
-    <a class="wordmark" href="/">Inferrail</a>
+    <a class="wordmark" href="/"><img class="wordmark-mark" src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
     <nav class="nav" aria-label="Primary navigation"><a href="/">Home</a><a href="https://github.com/domondi1/inferrail">GitHub</a></nav>
   </header>
   <main class="wrap">
