@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inferrail Labs</title>
+  <meta name="description" content="Inferrail Labs: experiments in economics for autonomous agents. Work Economics and Economic Authority, paid per call over x402, on Base Sepolia testnet only.">
+  <link rel="canonical" href="https://tryinferrail.com/labs/">
+  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../favicon-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="../site.css">
+  <style>
+    .page-top { padding-top: clamp(28px, 4vw, 64px); padding-bottom: clamp(24px, 3vw, 40px); }
+    .page-title { font-size: clamp(44px, 5.4vw, 84px); margin-top: 14px; }
+    .lab { display: flex; flex-direction: column; gap: 12px; }
+    .lab .facts { margin: 4px 0 0; padding: 0; list-style: none; font-size: 16px; }
+    .lab .facts li { padding: 6px 0; border-top: 1px solid var(--rule); color: var(--ink-2); }
+    .lab .button { align-self: flex-start; margin-top: auto; }
+    .caveat { margin-top: clamp(24px, 3vw, 40px); border-left: 6px solid var(--labs); }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="/"><img src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
+      <div class="header-actions">
+        <a class="button button-primary" href="/try/">Try free</a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+      </div>
+      <nav class="nav" id="primary-nav" aria-label="Primary">
+        <a href="/#product">Product</a>
+        <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
+        <a href="/labs/" aria-current="page">Labs</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a class="button button-primary nav-try" href="/try/">Try free</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-top wrap" aria-labelledby="labs-title">
+      <span class="badge badge-labs">Labs</span>
+      <h1 class="display page-title" id="labs-title">Inferrail Labs</h1>
+      <p class="section-lede" style="margin-top:18px">Experiments in economics for autonomous agents. They are hosted, paid per call over x402, and run on Base Sepolia testnet only.</p>
+    </section>
+
+    <section class="wrap" style="padding-bottom:clamp(56px,7vw,104px)" aria-label="Experiments">
+      <div class="grid grid-2">
+        <div class="card lab">
+          <span class="badge badge-labs" style="align-self:flex-start">Labs · testnet</span>
+          <h2 style="margin:0;font:700 clamp(24px,2vw,30px)/1.2 var(--sans)">Work Economics</h2>
+          <p>An agent sends payload-free cost metadata for one unit of AI work, and gets back a normalized cost analysis plus a receipt it can reconcile. No subscription, no Inferrail account.</p>
+          <ul class="facts">
+            <li>Paid per call over x402</li>
+            <li>Base Sepolia testnet only</li>
+            <li>No prompt or response content needed</li>
+          </ul>
+          <a class="button button-secondary" href="/work-economics/">See Work Economics</a>
+        </div>
+        <div class="card lab">
+          <span class="badge badge-labs" style="align-self:flex-start">Labs · testnet</span>
+          <h2 style="margin:0;font:700 clamp(24px,2vw,30px)/1.2 var(--sans)">Economic Authority</h2>
+          <p>Several agents coordinate a shared spending boundary that the caller declares, paid per session over x402.</p>
+          <ul class="facts">
+            <li>Paid per session over x402</li>
+            <li>Base Sepolia testnet only</li>
+            <li>Recorded within Inferrail's own service only</li>
+          </ul>
+          <a class="button button-secondary" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">See Economic Authority</a>
+        </div>
+      </div>
+      <div class="card caveat">
+        <h2 style="margin:0 0 8px;font:700 21px var(--sans)">What these are not</h2>
+        <p>Neither experiment controls external wallets, providers, or network spending. Economic Authority is cooperative coordination, not real-world spend enforcement. For the product that measures what your AI work costs today, <a href="/">start here</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>Inferrail. Know what your AI work costs, without keeping what it said.</span>
+      <nav aria-label="Footer">
+        <a href="/">Home</a>
+        <a href="/try/">Try free</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="../site.js"></script>
+</body>
+</html>

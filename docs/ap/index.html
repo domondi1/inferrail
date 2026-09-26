@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AP invoice exception recovery: Inferrail</title>
+  <meta name="description" content="Inferrail AP invoice exception recovery (Preview): for one eligible invoice-extraction exception, decide on one machine retry or your human-review path, run it, and record the cost and outcome. Try the self-serve sandbox with curl.">
+  <link rel="canonical" href="https://tryinferrail.com/ap/">
+  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../favicon-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="../site.css">
+  <style>
+    .page-top { padding-top: clamp(28px, 4vw, 64px); padding-bottom: clamp(24px, 3vw, 40px); }
+    .page-title { font-size: clamp(40px, 5vw, 76px); margin-top: 14px; }
+    .steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; margin: 0; padding: 0; list-style: none; }
+    .steps h3 { margin: 0 0 8px; font: 700 19px var(--sans); }
+    .steps p { margin: 8px 0 0; color: var(--ink-2); font-size: 16px; }
+    .steps .code-block pre { padding-right: 96px; }
+    @media (max-width: 600px) { .steps .code-block pre { padding-right: 18px; padding-top: 58px; } }
+    .card .button { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="/"><img src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
+      <div class="header-actions">
+        <a class="button button-primary" href="/try/">Try free</a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+      </div>
+      <nav class="nav" id="primary-nav" aria-label="Primary">
+        <a href="/#product">Product</a>
+        <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
+        <a href="/labs/">Labs</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a class="button button-primary nav-try" href="/try/">Try free</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-top wrap" aria-labelledby="ap-title">
+      <span class="badge badge-preview">Preview</span>
+      <h1 class="display page-title" id="ap-title">AP invoice exception recovery</h1>
+      <p class="section-lede" style="margin-top:18px">For teams running invoice extraction. When one eligible extraction fails, decide whether it gets one permitted machine retry or goes to your existing human-review path. Run it, then record what it cost and how it ended.</p>
+      <p class="small measure">A separate capability built on the same payload-free receipts as the gateway. It has its own module and storage, and shares no code path with the gateway.</p>
+    </section>
+
+    <section class="section-paper2" style="padding:clamp(40px,5vw,72px) 0" aria-labelledby="sandbox-title">
+      <div class="wrap">
+        <h2 class="section-title" id="sandbox-title">Try the sandbox</h2>
+        <p class="section-lede">Four commands, no signup. Run them unchanged from any machine with <code>curl</code>.</p>
+        <p class="body-copy measure" style="color:var(--ink-2);margin:-16px 0 28px">The demo instance runs on free-tier hosting with no persistent disk. Every record on it is synthetic and disposable, gone after a restart or an idle spin-down, and never used for real customer data. Your key is short-lived, isolated, capped, and rate-limited, and every response is tagged <code>"sandbox": true</code>. If it has been idle, the first request can take a minute. Prefer zero network calls? <code>pip install inferrail &amp;&amp; inferrail ap demo</code> runs the same decision engine locally.</p>
+        <ol class="steps">
+          <li>
+            <h3>1. Get a sandbox key</h3>
+            <div class="cmd"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox</code><button class="copy" type="button" aria-label="Copy get-key command">Copy</button></div>
+            <p>No account needed.</p>
+          </li>
+          <li>
+            <h3>2. Save the key</h3>
+            <div class="cmd"><code>export API_KEY=sbx_paste-your-key-here</code><button class="copy" type="button" aria-label="Copy export-key command">Copy</button></div>
+            <p>Paste the <code>"api_key"</code> value from step 1's response.</p>
+          </li>
+          <li>
+            <h3>3. Create a decision</h3>
+            <div class="code-block"><pre><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "work_id": "SANDBOX-DEMO-1",
+    "checkpoint_attempt_id": "SANDBOX-DEMO-1-checkpoint",
+    "failure_type": "low_confidence",
+    "confidence": 0.6,
+    "cost_so_far_usd": "0.10",
+    "policy_config": {
+      "eligible_failure_types": ["low_confidence", "validation_check_failed"],
+      "retry_floor": 0.5,
+      "human_review_threshold": 0.75,
+      "max_retry_cost_usd": "1.00",
+      "decision_deadline_seconds": 86400
+    }
+  }'</code></pre><button class="copy" type="button" aria-label="Copy create-decision command">Copy</button></div>
+            <p>A real policy evaluation, not canned output.</p>
+          </li>
+          <li>
+            <h3>4. Record a retry attempt</h3>
+            <div class="code-block"><pre><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions/SANDBOX-DEMO-1/retry-attempts \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
+    "attempt_id": "SANDBOX-DEMO-1-attempt-1",
+    "status": "success",
+    "cost_usd": "0.06",
+    "validation_passed": true,
+    "validator_version": "ap.validator/v1"
+  }'</code></pre><button class="copy" type="button" aria-label="Copy record-retry command">Copy</button></div>
+            <p>As your own RetryAdapter would.</p>
+          </li>
+          <li>
+            <h3>5. Read your report</h3>
+            <div class="code-block"><pre><code>curl -s https://inferrail-ap-exceptions.onrender.com/v1/report \
+  -H "Authorization: Bearer $API_KEY"</code></pre><button class="copy" type="button" aria-label="Copy report command">Copy</button></div>
+            <p>Expect <code>retry_resolved</code> and <code>observed_cost_complete: true</code>.</p>
+          </li>
+        </ol>
+        <div class="button-row" style="margin-top:28px">
+          <a class="button button-secondary" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md#try-it-yourself-the-self-serve-sandbox">Full walkthrough, guardrails, and error cases</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" aria-labelledby="ap-more-title">
+      <h2 class="section-title" id="ap-more-title">Go further</h2>
+      <div class="grid grid-2" style="margin-top:24px">
+        <div class="card">
+          <h3>Deploy your own AP instance</h3>
+          <p>Run the decision, persistence, and reporting steps over an authenticated HTTP API instead of a local store. Isolated per API key, with rate limits and a documented crash-recovery path. Retries always run in your own process, never on this service.</p>
+          <a class="button button-secondary" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">Deploy your own instance</a>
+        </div>
+        <div class="card">
+          <h3>The full contract</h3>
+          <p>Supported failure types, the retry method and its cost boundary, the validation contract, the human-review handoff, versioned policy config, persistence and idempotency, and the report.</p>
+          <a class="button button-secondary" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>Inferrail. Know what your AI work costs, without keeping what it said.</span>
+      <nav aria-label="Footer">
+        <a href="/">Home</a>
+        <a href="/try/">Try free</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="../site.js"></script>
+</body>
+</html>
