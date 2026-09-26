@@ -1,20 +1,38 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.domondi1/inferrail",
-  "description": "Read-only MCP tools over Inferrail's local receipt ledger: attributed spend and gateway health.",
+  "title": "Inferrail",
+  "description": "Local, payload-free AI cost visibility for agents. Query spend by model, route, or tagged work.",
   "repository": {
     "url": "https://github.com/domondi1/inferrail",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "0.4.5",
   "packages": [
     {
       "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
       "identifier": "inferrail",
-      "version": "0.1.2",
+      "version": "0.4.5",
+      "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
-      }
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "INFERRAIL_RECEIPTS_PATH",
+          "description": "Absolute path to your Inferrail receipts file (JSONL or SQLite). Used when a tool call gives no receipts_path. Default: ./inferrail-receipts.jsonl",
+          "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
     }
   ]
 }

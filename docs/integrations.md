@@ -231,11 +231,13 @@ by `task_id` ([ADR 0008](adr/0008-task-transactions.md)).
 ## MCP
 
 ```bash
-pip install "inferrail[mcp]"
-claude mcp add inferrail -- inferrail-mcp
+pip install inferrail
+claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- inferrail mcp
 ```
 
 `inferrail-mcp` exposes the local receipt ledger to MCP clients as two
 read-only tools: `get_spend` (aggregate by provider, model, route, or
 attribute) and `get_health` (gateway reachability and latest receipt).
-Neither runs inference. Full contract: [inferrail-mcp/README.md](../inferrail-mcp/README.md).
+Neither runs inference or writes files; receipts store usage and cost
+metadata without persisting prompt or response bodies. Client config and receipts-path setup:
+[README](../README.md#mcp). Full contract: [inferrail-mcp/README.md](../inferrail-mcp/README.md).

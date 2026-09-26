@@ -23,6 +23,7 @@ Inferrail is a gateway you run yourself that tracks token usage and estimated LL
   <a href="#how-it-works">How it works</a> ·
   <a href="#privacy-boundary">Privacy</a> ·
   <a href="#integrations">Integrations</a> ·
+  <a href="#mcp">MCP</a> ·
   <a href="#status">Status</a> ·
   <a href="#documentation">Docs</a>
 </p>
@@ -209,6 +210,64 @@ speech-to-text, text-to-speech, the Realtime API, and full call cost are
 not covered, and no voice framework has been tested by this project
 ([details](docs/integrations.md#voice-agents)).
 
+## MCP
+
+Inferrail ships an MCP server with two read-only tools, so an agent can
+ask what its AI work cost. The tools read your local receipts file. They
+do not run inference, spend provider budget, change configuration, or
+write any file. Inferrail receipts store usage and cost metadata without
+persisting prompt or response bodies, so the tools have none to return.
+(The gateway itself still handles prompts and responses in memory while
+forwarding them to the provider; see [Privacy boundary](#privacy-boundary).)
+
+| Tool | What it answers |
+|---|---|
+| `get_spend` | Known cost, tokens, and request counts grouped by `provider`, `model`, `route`, or any attribute you tag requests with (`customer`, `workflow`, `work_id`), optionally within a time window. Requests with unknown pricing are counted separately, not as `$0`. |
+| `get_health` | Whether the gateway answers `GET /health`, plus the most recent receipt. |
+
+There are no separate customer, workflow, or job tools. `get_spend` groups
+by whatever tags your requests carry, so grouping by `customer`,
+`workflow`, or `work_id` (a unit of tagged work, such as one job) only
+covers requests that were sent with that tag
+([attribution](docs/integrations.md)).
+
+The server speaks stdio and is started by your MCP client:
+
+```bash
+uvx inferrail mcp        # or: pip install inferrail && inferrail mcp
+```
+
+Client config (Claude Desktop, Cursor, and other clients that use
+`mcpServers`; VS Code uses the same entry under `servers`):
+
+```json
+{
+  "mcpServers": {
+    "inferrail": {
+      "command": "uvx",
+      "args": ["inferrail", "mcp"],
+      "env": {
+        "INFERRAIL_RECEIPTS_PATH": "/absolute/path/to/inferrail-receipts.jsonl"
+      }
+    }
+  }
+}
+```
+
+Claude Code: `claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx inferrail mcp`
+
+Set `INFERRAIL_RECEIPTS_PATH` to your receipts file. Clients start the
+server from their own working directory, so the default
+`./inferrail-receipts.jsonl` is rarely the right place. For
+`serve --app-mode`, point it at `receipts.db` in Inferrail's data
+directory (`~/.local/share/inferrail` on Linux, `~/Library/Application Support/inferrail`
+on macOS, `%APPDATA%\inferrail` on Windows).
+
+Then ask, for example: *"How much did the work tagged contract_review_42
+cost?"* If your requests carried `work_id=contract_review_42`, the agent
+calls `get_spend` with `by: "work_id"` and reads that group.
+Full tool contract: [inferrail-mcp/README.md](inferrail-mcp/README.md).
+
 ## Status
 
 | Capability | Status |
@@ -216,7 +275,7 @@ not covered, and no voice framework has been tested by this project
 | Text LLM gateway, cost receipts, reports, attribution | **Available** in the 0.4.3 developer preview on PyPI |
 | Work grouping and application-declared outcomes | **Available**. Reports known cost only and counts unknown-cost receipts separately |
 | Budget checks | **Available**, opt-in. Applies only to supported requests through this gateway; unpriced models are not checked ([details](docs/self-hosting.md#budgets)) |
-| Local dashboard (`serve --app-mode`), read-only MCP tools | **Available**. Dashboard ships in the PyPI wheel; MCP needs `inferrail[mcp]` |
+| Local dashboard (`serve --app-mode`), read-only MCP tools | **Available**. Both ship in the PyPI package ([MCP](#mcp)) |
 | AP invoice-exception recovery (`inferrail ap demo`) | **Experimental** workflow with a bounded contract ([docs](docs/capabilities/ap-invoice-exception-recovery.md)) |
 | Hosted cost-gateway trial ([tryinferrail.com/try](https://tryinferrail.com/try/)) | **Preview**. With a real key, the hosted process holds it in memory, and the trial expires within 4 hours of adding it ([key handling](hosted/cost_gateway/README.md)) |
 | Hosted Work Economics and Economic Authority | **Experimental**, Base Sepolia testnet only. Work Economics: [docs](docs/capabilities/work-economics.md), [example](examples/work_economics_purchase.py). Economic Authority: [docs](docs/capabilities/economic-authority.md), [example](examples/economic_authority_session.py) |

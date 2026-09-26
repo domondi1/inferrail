@@ -20,7 +20,7 @@ environment is not active, or `pip` installed into a different Python
 than the one on your `PATH`. Activate the environment, or run
 `python -m pip show inferrail` to see where it went.
 
-Extras: `inferrail[mcp]` for the MCP server, `inferrail[ap]` for the AP
+The MCP server is included (`inferrail mcp`). Extras: `inferrail[ap]` for the AP
 retry adapter's OpenAI SDK path.
 
 ## Configuration

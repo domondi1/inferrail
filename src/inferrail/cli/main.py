@@ -166,6 +166,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", default="inferrail.yaml", help="Path to inferrail.yaml (default: %(default)s)"
     )
 
+    subparsers.add_parser(
+        "mcp",
+        help=(
+            "Run the read-only MCP server (get_spend, get_health) over stdio. "
+            "Same server as the `inferrail-mcp` command."
+        ),
+    )
+
     report = subparsers.add_parser(
         "report", help="Aggregate local economic receipts by a dimension."
     )
@@ -817,6 +825,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return run_doctor(args.config)
 
 
+def _cmd_mcp() -> int:
+    # Imported here so the MCP SDK only loads for this command. Nothing may
+    # be written to stdout before this point: stdout carries the protocol.
+    from inferrail_mcp.server import main as run_mcp_server
+
+    run_mcp_server()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     # find_dotenv(usecwd=True): without it, python-dotenv locates .env
@@ -836,6 +853,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_serve(args)
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(args)
+    if args.command == "mcp":
+        return _cmd_mcp()
     if args.command == "report":
         return _cmd_report(args)
     if args.command == "transaction":

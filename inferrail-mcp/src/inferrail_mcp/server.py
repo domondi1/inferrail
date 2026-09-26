@@ -20,6 +20,7 @@ stable identifiers, and a `schema_version` on every payload.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -36,11 +37,17 @@ try:
     from mcp.server.mcpserver import MCPServer
 except ModuleNotFoundError as exc:  # pragma: no cover - guidance, not logic
     raise ModuleNotFoundError(
-        "The 'mcp' package is required to run inferrail-mcp. Install with: "
-        "pip install 'inferrail[mcp]'"
+        "The 'mcp' package (>=2.0) is required to run the Inferrail MCP server. "
+        "Install with: pip install --upgrade inferrail"
     ) from exc
 
 _SCHEMA_VERSION = "1"
+
+# Used when a tool call omits `receipts_path`. MCP clients often start the
+# server from an arbitrary working directory, so this lets the path be set
+# once in the client config instead of in every call.
+RECEIPTS_PATH_ENV = "INFERRAIL_RECEIPTS_PATH"
+_DEFAULT_RECEIPTS_PATH = "./inferrail-receipts.jsonl"
 
 server = MCPServer(
     name="inferrail",
@@ -55,6 +62,12 @@ server = MCPServer(
         "spends provider budget, or changes configuration."
     ),
 )
+
+
+def _resolve_receipts_path(receipts_path: str | None) -> str:
+    if receipts_path:
+        return receipts_path
+    return os.environ.get(RECEIPTS_PATH_ENV) or _DEFAULT_RECEIPTS_PATH
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -97,7 +110,7 @@ def _receipt_summary(receipt: InferenceReceipt) -> dict[str, Any]:
 )
 def get_spend(
     by: str = "customer",
-    receipts_path: str = "./inferrail-receipts.jsonl",
+    receipts_path: str | None = None,
     since: str | None = None,
     until: str | None = None,
 ) -> dict[str, Any]:
@@ -106,10 +119,13 @@ def get_spend(
     `by`: "provider", "model", "route", or any attribute name (e.g. "customer",
     "workflow", "agent") a caller has attached via `-a KEY=VALUE` or
     `X-Inferrail-Attribute-<Name>`.
+    `receipts_path`: JSONL or SQLite receipts file. Defaults to
+    $INFERRAIL_RECEIPTS_PATH, else ./inferrail-receipts.jsonl.
     `since`/`until`: ISO 8601 timestamps (e.g. "2026-08-01T00:00:00Z"). Naive
     timestamps are treated as UTC. Both are inclusive-exclusive: `since` <=
     timestamp < `until`.
     """
+    receipts_path = _resolve_receipts_path(receipts_path)
     path = Path(receipts_path)
     if not path.exists():
         return {
@@ -160,10 +176,14 @@ def get_spend(
 )
 async def get_health(
     base_url: str = "http://127.0.0.1:8000",
-    receipts_path: str = "./inferrail-receipts.jsonl",
+    receipts_path: str | None = None,
 ) -> dict[str, Any]:
-    """Report gateway reachability and the most recent local receipt, if any."""
-    return await _get_health_impl(base_url, receipts_path, client=None)
+    """Report gateway reachability and the most recent local receipt, if any.
+
+    `receipts_path` defaults to $INFERRAIL_RECEIPTS_PATH, else
+    ./inferrail-receipts.jsonl.
+    """
+    return await _get_health_impl(base_url, _resolve_receipts_path(receipts_path), client=None)
 
 
 async def _get_health_impl(

@@ -20,20 +20,28 @@ for the exact contract.
 | `get_spend` | Aggregates local receipts by provider/model/route/attribute, optional time window | No — reads a local file only |
 | `get_health` | Checks gateway reachability (`/health`) + most recent local receipt | No — never issues a new inference call |
 
-## Install
+## Install and run
 
 ```bash
-pip install -e ".[mcp]"   # from the inferrail repo root
-```
-
-## Run directly (for testing)
-
-```bash
-inferrail-mcp
+pip install inferrail   # the MCP SDK is a core dependency
+inferrail mcp           # or `uvx inferrail mcp`; `inferrail-mcp` also works
 ```
 
 Speaks MCP over stdio — not meant to be run interactively; see the client
-config snippets in the main [README](../README.md#mcp).
+config snippets in the main [README](../README.md#mcp). From a checkout,
+`pip install -e ".[dev]"` at the repo root.
+
+## Receipts path
+
+Both tools take an optional `receipts_path` (JSONL or SQLite). When a call
+omits it, the server uses `$INFERRAIL_RECEIPTS_PATH`, else
+`./inferrail-receipts.jsonl` relative to the server's working directory.
+
+## Registry
+
+Listed on the official MCP Registry as `io.github.domondi1/inferrail`
+(metadata: [`server.json`](../server.json); ownership marker: the
+`mcp-name` comment at the top of the main README).
 
 ## Why not more tools
 

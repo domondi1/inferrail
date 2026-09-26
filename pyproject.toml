@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.4.4"
+version = "0.4.5"
 description = "Self-hosted, OpenAI- and Anthropic-compatible LLM gateway that turns every request into a payload-free, attributable cost receipt -- know what your AI work costs, without keeping what it said."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,10 @@ dependencies = [
     "pydantic>=2.5",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
+    # Core, not optional, so `uvx inferrail mcp` (the command the MCP
+    # Registry entry in server.json launches) works with no extras.
+    # >=2.0 because inferrail_mcp uses the 2.x `MCPServer` API.
+    "mcp>=2.0",
 ]
 
 [project.urls]
@@ -59,8 +63,10 @@ dev = [
     # dev/test environment (pip's PEP 517 build isolation keeps it out).
     "hatchling>=1.18",
 ]
+# Kept so existing `pip install "inferrail[mcp]"` commands still work;
+# `mcp` is now a core dependency.
 mcp = [
-    "mcp>=1.0",
+    "mcp>=2.0",
 ]
 # Only needed for inferrail.ap.adapters.OpenAIRetryAdapter -- the AP
 # decision engine, SDK, and CLI have no dependency on this by default
