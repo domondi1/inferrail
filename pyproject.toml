@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.4.3"
+version = "0.4.4"
 description = "Self-hosted, OpenAI- and Anthropic-compatible LLM gateway that turns every request into a payload-free, attributable cost receipt -- know what your AI work costs, without keeping what it said."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.4 — 2026-09-26
 
 ### Fixed
 
@@ -16,6 +16,7 @@ PyPI release (the hosted service and website ship independently of the
 
 ### Changed
 
+- Try page: faster startup (early connection to the trial gateway, fonts no longer block first paint).
 - `inferrail verify-payload-free` now describes what it checks (receipt
   field names) and what it cannot prove (stored attribute values, logs,
   the provider). It no longer calls its output suitable for a security
