@@ -1,0 +1,14 @@
+{
+  "inferrail_version": "0.4.3",
+  "python": "3.12.1",
+  "platform": "linux",
+  "network_attempts": 0,
+  "network_attempt_log": [],
+  "api_keys_in_env": false,
+  "commands": [
+    "inferrail demo",
+    "inferrail report --by customer --receipts ./inferrail-demo-receipts.jsonl",
+    "head -n 1 inferrail-demo-receipts.jsonl | python -m json.tool --no-ensure-ascii",
+    "grep demo-preview inferrail-demo-receipts.jsonl | python -m json.tool --no-ensure-ascii"
+  ]
+}

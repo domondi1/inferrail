@@ -222,9 +222,10 @@ def test_serve_quickstart_banner_prints_both_sdk_base_urls(
     assert result == 0
     out = capsys.readouterr().out
     assert 'OpenAI(base_url="http://127.0.0.1:9999/v1")' in out
-    assert 'Anthropic(base_url="http://127.0.0.1:9999/v1")' in out
+    # No /v1: the Anthropic SDK appends /v1/messages itself.
+    assert 'Anthropic(base_url="http://127.0.0.1:9999")' in out
     assert "OPENAI_BASE_URL=http://127.0.0.1:9999/v1" in out
-    assert "ANTHROPIC_BASE_URL=http://127.0.0.1:9999/v1" in out
+    assert "ANTHROPIC_BASE_URL=http://127.0.0.1:9999\n" in out
     assert "verify-payload-free" in out
 
 

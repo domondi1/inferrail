@@ -1,18 +1,22 @@
-"""`inferrail verify-payload-free`: proof, not a promise, that the receipt
-schema Inferrail actually writes to disk cannot hold a prompt, response, or
-any other message content.
+"""`inferrail verify-payload-free`: a schema inspection of the receipt
+record Inferrail writes to disk, with its scope stated in the output.
 
-Everything printed here is derived from the real, running
-`InferenceReceipt` model at call time (`inferrail.receipts.schema`) — never
-a hardcoded string a future schema change could quietly drift out of sync
-with. The same structural check this command runs is also a regression
-test (`test_inference_receipt_has_no_payload_fields`,
-`tests/unit/test_receipts.py`), so a future field named `prompt` or
-`response` would fail CI before it could ever reach a release, not just
-fail this command.
+What it checks: every field of the real, running `InferenceReceipt`
+model (`inferrail.receipts.schema`), introspected at call time rather
+than hardcoded, compared against a small set of payload field names
+(`prompt`, `messages`, `content`, `response`). The same name check is a
+regression test (`test_inference_receipt_has_no_payload_fields`,
+`tests/unit/test_receipts.py`).
 
-Exists for the person who has to answer a security/compliance reviewer's
-question with more than "we promise" — see
+What it does not check: the receipt still has string fields and an
+arbitrary `attributes: dict[str, str]` that is persisted exactly as the
+caller supplies it, so a field-name check cannot prove that stored
+strings are free of sensitive text, and it says nothing about logs,
+telemetry sinks, or the upstream provider. The behavioral evidence that
+the gateway does not copy message bodies into receipts is the canary
+tests in `tests/unit/test_gateway_receipts.py`,
+`tests/unit/test_gateway.py`, and `tests/unit/test_gateway_anthropic.py`.
+The output says this plainly so it is not mistaken for a full audit. See
 docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
 """
 
@@ -22,7 +26,7 @@ from inferrail.receipts.schema import InferenceReceipt
 
 # The same disjoint-set check test_inference_receipt_has_no_payload_fields
 # makes — kept here too (not imported from the test module, which pytest
-# owns) so this command's proof doesn't depend on the test suite being
+# owns) so this command's check doesn't depend on the test suite being
 # present in an installed, non-dev environment.
 _PAYLOAD_CAPABLE_FIELD_NAMES = {"prompt", "messages", "content", "response"}
 
@@ -39,7 +43,7 @@ def run_verify_payload_free() -> int:
     field_names = set(InferenceReceipt.model_fields)
     offending = field_names & _PAYLOAD_CAPABLE_FIELD_NAMES
 
-    print("Inferrail receipt schema — payload-free verification")
+    print("Inferrail receipt schema: payload field-name check")
     print("=" * 56)
     print()
     print(f"Model: inferrail.receipts.schema.InferenceReceipt (installed version {_version()})")
@@ -56,28 +60,34 @@ def run_verify_payload_free() -> int:
         # something the schema doesn't actually prove, so it checks live
         # rather than trusting its own docstring.
         print(f"FAIL: found payload-capable field(s): {sorted(offending)}")
-        print("Do not paste this output into a security review.")
         return 1
 
     print(
-        "RESULT: PASS — none of this schema's fields can hold a prompt, response, tool-call\n"
-        "payload, or any other message content. This is a structural property of the\n"
-        "field list above, not a runtime setting that could be misconfigured on — there is\n"
-        "no field named or shaped to carry free-form message content, checked against the\n"
-        "same names (prompt/messages/content/response) this project's own CI enforces via\n"
+        "RESULT: PASS (field-name check). No receipt field is named prompt, messages,\n"
+        "content, or response. The same check runs in CI as\n"
         "test_inference_receipt_has_no_payload_fields in tests/unit/test_receipts.py."
     )
     print()
     print(
-        "Scope, stated plainly: this is a receipt-storage guarantee, not a network claim.\n"
-        "The prompt and response still travel to your configured upstream provider (OpenAI,\n"
-        "Anthropic, etc.) exactly as they would without Inferrail in the path — Inferrail is\n"
-        "a pass-through gateway to that provider, not a privacy boundary against it. What\n"
-        "this command proves is narrower and verifiable: the record Inferrail itself writes\n"
-        "to your receipts store never contains that content, structurally, not by policy."
+        "What this does not prove:\n"
+        "  - Several fields are free-form strings. `attributes` is a dict[str, str] stored\n"
+        "    exactly as the caller sends it (X-Inferrail-Attribute-* headers, -a flags).\n"
+        "    Keep secrets and message content out of attribute values.\n"
+        "  - It inspects the schema, not the data already on disk, your logs, or any\n"
+        "    telemetry sink you configure.\n"
+        "  - It is not a security audit or certification."
     )
     print()
-    print("Suitable for pasting into a security review as-is.")
+    print(
+        "Behavioral evidence that the gateway's receipt path does not copy request or\n"
+        "response bodies: the canary tests in tests/unit/test_gateway_receipts.py,\n"
+        "tests/unit/test_gateway.py, and tests/unit/test_gateway_anthropic.py.\n"
+        "\n"
+        "Scope: this is about the records Inferrail writes, not the network path. Prompts\n"
+        "and responses still travel to your configured upstream provider (OpenAI,\n"
+        "Anthropic, etc.) exactly as they would without Inferrail in the path. Inferrail\n"
+        "is a pass-through gateway to that provider, not a privacy boundary against it."
+    )
     return 0
 
 

@@ -4,9 +4,9 @@
 
 **Developer Preview.** The scope below is fully implemented and tested,
 but nothing is stable yet — CLI flags, `inferrail.yaml`'s shape, and
-receipt/telemetry JSON fields may change without notice before v1.0. See
-README.md's status note for the current version number — deliberately
-not restated here as a second hardcoded copy that could drift from it.
+receipt/telemetry JSON fields may change without notice before v1.0. The
+package version lives in `pyproject.toml` (and on PyPI); it is not
+restated here so it cannot drift.
 
 ## What it is
 
@@ -86,7 +86,7 @@ business logic. Inferrail v0.1 moves that decision to a deterministic,
 inspectable config file and gives you a telemetry record for every request
 — the prerequisite for anything smarter later (see "Long-term direction").
 
-## Current scope (v0.1) — what works today
+## Current scope: what works today
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
   for single-turn or multi-turn text chat (see limits below). Every
@@ -230,9 +230,9 @@ inspectable config file and gives you a telemetry record for every request
   (one real request through the same `InferenceEngine` `inferrail serve`
   uses, no config file required — needs `OPENAI_API_KEY`),
   `inferrail verify-payload-free` (introspects the real, running
-  `InferenceReceipt` schema at call time and proves structurally that no
-  field can hold a prompt/response — see "Verifying privacy claims
-  yourself" below)
+  `InferenceReceipt` schema at call time and checks that no field is
+  named for message content; a schema check, not an audit of stored
+  values or logs. See "Verifying privacy claims yourself" below)
 - A configless quickstart path: `inferrail try` and `inferrail serve
   --quickstart` both build the same `InferrailConfig` type `inferrail.yaml`
   loads into, just from an in-memory default instead of a file — not a
@@ -549,9 +549,22 @@ Not a hidden limitation — these are the honest edges of v0.1:
 
 ## Verifying privacy claims yourself
 
-README.md's "Privacy" section shows a quick `inferrail try`-based check.
-The same claim — that Inferrail never persists prompt or response content
-— can be checked against a running gateway:
+The claim being checked: Inferrail's receipt and telemetry paths do not
+copy prompt or response bodies into the records they write. Three ways
+to check it, each with a different scope:
+
+1. `inferrail verify-payload-free` lists every `InferenceReceipt` field
+   and checks that none is named for message content. It inspects the
+   schema only. `attributes` is a free-form `dict[str, str]` stored as
+   the caller sends it, so a name check cannot prove that stored values
+   are free of sensitive text.
+2. The canary tests send marker strings through the real gateway paths
+   (success, provider error, streaming, tool calls, both
+   `/v1/chat/completions` and `/v1/messages`) and assert the markers
+   never reach a receipt or telemetry event:
+   `tests/unit/test_gateway_receipts.py`, `tests/unit/test_gateway.py`,
+   `tests/unit/test_gateway_anthropic.py`.
+3. Against your own running gateway:
 
 In `inferrail.yaml`, set:
 
@@ -575,14 +588,26 @@ grep -c "MARKER-1234" inferrail-receipts.jsonl    # 0, every time (receipts are 
 cat inferrail-receipts.jsonl                      # tokens, cost, pricing — no message content
 ```
 
-This checks only what Inferrail itself writes to disk; your provider
-still receives the real prompt either way — Inferrail is a pass-through
-gateway to it, not a privacy boundary against it.
+This checks only what Inferrail itself writes to disk for that request.
+It does not cover values you put in attribution headers, your own
+application or proxy logs, or the provider: your provider still receives
+the real prompt. Inferrail is a pass-through gateway to it, not a privacy
+boundary against it. None of these checks is a security audit.
 
-## Hosted capabilities (beyond v0.1's data plane)
+## Hosted capabilities (beyond the self-hosted data plane)
 
 Everything above is the self-hosted gateway: zero dependency on any
 Inferrail-operated service (see "Who it's for" and `docs/adr/0004`).
+
+**Hosted cost gateway trial** (`hosted/cost_gateway/`): a no-account
+trial at [tryinferrail.com/try/](https://tryinferrail.com/try/) that
+issues a short-lived, isolated tenant with zero-key demo traffic, and
+optionally proxies real traffic through a visitor's own OpenAI or
+Anthropic key. With a real key, the hosted process holds that key in
+memory and handles the traffic; the trial expires within 4 hours of the
+key being added (24 hours at most in demo mode). Preview status. Full
+contract and key-handling threat model:
+`hosted/cost_gateway/README.md`.
 Inferrail helps companies measure, attribute, and eventually govern the
 economics of work performed by AI agents. The gateway and receipts above
 are today's working measurement layer. Separately, Inferrail also

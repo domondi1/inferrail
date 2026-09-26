@@ -310,9 +310,10 @@ exists. Anything it can't resolve is `None`.
 
 `InferenceReceipt` (`receipts/schema.py`) is deliberately a separate type
 from `InferenceEvent`, not an extension of it — see ADR 0005. Like
-`InferenceEvent`, it has no field capable of holding prompt or response
-content (`test_inference_receipt_has_no_payload_fields`), and one
-additional intentional exception: caller-supplied `attributes` **are**
+`InferenceEvent`, it has no field for prompt or response content
+(field names checked by `test_inference_receipt_has_no_payload_fields`;
+the gateway canary tests check that message bodies never reach a
+receipt), and one additional intentional exception: caller-supplied `attributes` **are**
 persisted, since they're business metadata the caller explicitly declared,
 not extracted from the prompt. `ReceiptSink` (`receipts/sinks.py`) is a
 one-method `Protocol`, same shape as `TelemetrySink`, with JSONL, a
@@ -451,8 +452,10 @@ surface in this repository already follows.
 
 Everything in this repository is the **data plane**: the hot path that
 actually serves inference requests. It is designed to keep running with no
-dependency on any Inferrail-operated service — there is currently no code
-path that calls out to one.
+dependency on any Inferrail-operated service. Apart from requests to the
+providers you configure, the only outbound code path is the usage beacon
+(`usage_ping/`), which sends nothing unless `usage_ping.endpoint` is set;
+the package ships with no default endpoint.
 
 A **control plane** (fleet-wide analytics, historical provider/model
 performance comparison, policy management across many deployments,

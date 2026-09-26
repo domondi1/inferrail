@@ -6,6 +6,33 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Fixed
+
+- `inferrail serve --quickstart` printed the Anthropic SDK base URL with a
+  trailing `/v1`, which makes the SDK request `/v1/v1/messages` and get a
+  404. It now prints the origin (`http://127.0.0.1:8000`).
+
+### Changed
+
+- `inferrail verify-payload-free` now describes what it checks (receipt
+  field names) and what it cannot prove (stored attribute values, logs,
+  the provider). It no longer calls its output suitable for a security
+  review as-is.
+- README rewritten around the self-hosted cost gateway, with a real
+  demo recording, a data-flow diagram, and a status table. Long-form
+  material moved to `docs/integrations.md` and `docs/self-hosting.md`.
+- SECURITY.md, PRODUCT.md, ARCHITECTURE.md, the homepage, and the hosted
+  cost-gateway README corrected to match current behavior: hosted
+  services exist, the usage beacon is documented, and privacy claims
+  are scoped to what the schema and tests show.
+
+### Added
+
+- Regression tests that `/v1/messages` receipts never contain prompt,
+  tool, streamed, or provider-echoed error content.
+
 ## v0.4.3 — 2026-09-18 — the payload-free cost-receipt promise, relaunched
 
 Founder-directed relaunch: reorganize the product and the website

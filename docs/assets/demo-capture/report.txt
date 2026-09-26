@@ -1,0 +1,6 @@
+CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+globex          2                 1621          416            $0.007825               
+acme            3                 1952          361            $0.000483   1           
+(unattributed)  1                 300           50             $0.0001                 
+--------------  --------  ------  ------------  -------------  ----------  ------------
+TOTAL           6                 3873          827            $0.008408   1           

@@ -10,10 +10,11 @@
 > [docs/adr/0014](https://github.com/domondi1/inferrail/blob/main/docs/adr/0014-anthropic-messages-passthrough.md))
 > at Inferrail instead of directly at the provider, and every call
 > produces a receipt with verified pricing, measured token usage, and
-> whatever business attribution you attach — never the prompt or
-> response itself; the receipt schema has no field capable of holding
-> one, a structural guarantee provable at runtime with `inferrail
-> verify-payload-free`, not a policy that could be misconfigured on.
+> whatever business attribution you attach, not the prompt or
+> response itself. The receipt schema has no field for message content
+> (`inferrail verify-payload-free` lists the fields and checks their
+> names), and canary tests check that message bodies never reach a
+> receipt. Attribution values are stored as sent.
 > The provider itself still receives the real prompt, exactly as it
 > would without Inferrail in the path — this is a receipt-storage
 > guarantee, not a network privacy boundary. `pip install inferrail &&
