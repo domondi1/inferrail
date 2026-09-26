@@ -6,14 +6,15 @@ immediately, and may optionally submit their own OpenAI and/or Anthropic
 API key to proxy real traffic through their own key and see a real,
 payload-free receipt.
 
-**Deployment status: NOT YET DEPLOYED.** No Inferrail-operated public
-instance of this service exists yet -- this is Phase 1 (backend
-foundation) of a phased build; there is no public URL to point at today.
-Run it yourself locally per "Running it locally" below. This will be
-corrected here and on the website the moment a real, founder-authorized
-deployment exists -- see `hosted/ap_exceptions/README.md` for the exact
-kind of overclaim this project has previously found and fixed on its own
-public pages, and treats as a real defect, not a rounding error.
+**Deployment status: live trial (preview).** An Inferrail-operated
+instance backs the trial page at
+[tryinferrail.com/try/](https://tryinferrail.com/try/), at
+`https://inferrail-cost-gateway.onrender.com` (the page's default
+`base_url`). Its `/health` endpoint answered `{"status":"ok"}` on
+2026-09-26. This repository cannot show which commit that instance runs,
+so treat this README as the contract for `main`, not a statement about
+the deployed revision. You can also run it yourself per "Running it
+locally" below.
 
 Lives outside `src/inferrail`, exactly like `hosted/work_economics`,
 `hosted/a2a_economic_authority`, and `hosted/ap_exceptions` (see

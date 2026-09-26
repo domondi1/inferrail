@@ -1,0 +1,58 @@
+========================================================================
+INFERRAIL DEMO — canned responses, not real provider billing
+========================================================================
+Writing receipts to inferrail-demo-receipts.jsonl
+
+  [default ] acme       ->  143 completion tokens (latency 0.03ms)
+  [default ] acme       ->   98 completion tokens (latency 0.02ms)
+  [default ] globex     ->   76 completion tokens (latency 0.01ms)
+  [large   ] globex     ->  340 completion tokens (latency 0.01ms)
+  [default ] (unattributed) ->   50 completion tokens (latency 0.01ms)
+  [preview ] acme       ->  120 completion tokens (latency 0.01ms)
+
+Done. Every one of those requests just produced a real
+InferenceReceipt via the exact same InferenceEngine code path
+`inferrail serve` and `inferrail try` use — only the provider is fake.
+
+------------------------------------------------------------------------
+inferrail report --by customer   (run directly on the demo receipts)
+------------------------------------------------------------------------
+CUSTOMER        REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+globex          2                 1621          416            $0.007825               
+acme            3                 1952          361            $0.000483   1           
+(unattributed)  1                 300           50             $0.0001                 
+--------------  --------  ------  ------------  -------------  ----------  ------------
+TOTAL           6                 3873          827            $0.008408   1           
+
+Try other dimensions yourself, e.g.:
+  inferrail report --by workflow --receipts inferrail-demo-receipts.jsonl
+  inferrail report --by model    --receipts inferrail-demo-receipts.jsonl
+
+Open inferrail-demo-receipts.jsonl directly to see one full receipt, including
+the 'unknown' pricing on the demo-preview request and the DEMO source
+label on every price used above.
+
+------------------------------------------------------------------------
+The receipt evidence above is grouped by the application's work_id;
+the outcomes below are customer-declared.
+WORK ECONOMICS — receipts + shared work_id + declared outcome
+------------------------------------------------------------------------
+WORK ID              OUTCOME     RECEIPTS  INFERENCE  KNOWN ATTRIBUTED INFERENCE COST  UNKNOWN COST
+work-contract-1      resolved    2         success    $0.000483                                    
+work-outcome-only-1  escalated   0         unknown    unavailable                                  
+work-pending-1       undeclared  1         success    $0.0001                                      
+work-support-1       failed      2         success    $0.007825                                    
+work-unknown-1       resolved    1         success    $0.00                            1           
+
+WORK ECONOMICS BY CUSTOMER-DECLARED OUTCOME
+OUTCOME STATUS  WORK UNITS  FULLY-KNOWN WORKS  UNKNOWN-COST WORKS  NO RECEIPT EVIDENCE  KNOWN ATTRIBUTED INFERENCE COST  KNOWN-ONLY AVERAGE    
+escalated       1           0                  0                   1                    unavailable                      unavailable           
+failed          1           1                  0                   0                    $0.007825                        $0.007825 (known-only)
+resolved        2           1                  1                   0                    $0.000483                        $0.000483 (known-only)
+undeclared      1           1                  0                   0                    $0.0001                          $0.0001 (known-only)  
+
+SYNTHETIC SUPPORT EXAMPLE
+In this synthetic support example, the application defines 'resolved' as success.
+
+Ready to see a real cost number instead of a demo one?
+  inferrail try "Reply with one word: ready" --customer acme

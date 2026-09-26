@@ -1,729 +1,245 @@
-# Inferrail
-
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-Decide, execute, and record AP invoice-exception recovery.
-
-For one eligible invoice-extraction exception, Inferrail decides whether it
-gets one permitted machine retry or your established human-review path,
-executes the retry through a supported integration, and records the
-resulting cost and outcome — with invoice content and provider credentials
-staying in your own process the whole time.
-
-[![CI](https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg)](https://github.com/domondi1/inferrail/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/inferrail.svg)](https://pypi.org/project/inferrail/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-
-## AP invoice-exception recovery: 30-second demo
-
-```bash
-pip install inferrail
-inferrail ap demo
-```
-
-Fixture-based, zero-key, no network call. Runs the real decision engine
-through all five core scenarios — an eligible exception recovered by one
-retry, an unsuccessful retry that falls back to human review, a case the
-policy routes straight to human review, a repeated request handled without
-re-executing anything, and inspecting the resulting decision/outcome records
-— then points you at `inferrail ap report` to inspect them yourself.
-
-Want a real (billed) OpenAI call instead of fixtures, or to see how you'd
-wire in your own extraction pipeline and review queue? See
-[`examples/ap_invoice_exception_recovery/`](examples/ap_invoice_exception_recovery/).
-Full contract — supported failure types, retry method, validation contract,
-human-review handoff, versioned policy config, persistence/idempotency, the
-hosted HTTP API — in
-[`docs/capabilities/ap-invoice-exception-recovery.md`](docs/capabilities/ap-invoice-exception-recovery.md).
-
-**No claim of proven savings or customer adoption is made anywhere in this
-README** — see that capability doc's "Pricing and performance assumptions,"
-which labels every dollar figure as an explicit assumption, not a validated
-result.
-
-## Also in this package: the self-hosted LLM gateway and cost receipts
-
-Everything below this point is Inferrail's original, still fully-supported
-product: a self-hosted gateway that turns supported OpenAI chat-completion
-traffic into local, attributable economic receipts — the same receipt/cost
-substrate the AP product's `OpenAIRetryAdapter` and reporting build on. It
-remains available and unchanged; nothing about the AP release modifies its
-behavior or its commands.
-
-Inferrail turns supported OpenAI chat-completion traffic into local,
-attributable economic receipts. Give related requests a customer-defined
-`work_id`, declare an outcome when your application knows one, and inspect the
-known inference economics associated with that work without storing prompts,
-responses, or tool payloads in Inferrail's own records.
-
-For the supported chat-completions surface, Inferrail records known cost when
-measured usage and a verified price are available. Otherwise it reports
-`unknown`, never a fabricated `$0`.
-
-## Gateway: 30-second demo
-
-```bash
-pip install inferrail
-inferrail demo
-```
-
-The demo needs no API key, no network call, and no provider billing. It runs
-canned requests through Inferrail's real engine with made-up prices labeled
-`DEMO`, then shows receipts, attribution, work-level economics, and explicit
-unknown evidence.
-
-As of `0.2.0`, the stable PyPI release includes the gateway, receipts,
-reports, `TaskTransaction`, and `work` commands (Work Economics), alongside
-AP invoice-exception recovery above.
-
-## What just happened?
-
-```text
-AI request
-  -> InferenceReceipt
-  -> caller-supplied attribution
-  -> related requests share work_id
-  -> customer-declared outcome
-  -> Work Economics
-```
-
-- **Receipt:** one inference request produced payload-free economic evidence.
-- **Attribution:** the caller can attach identifiers such as customer,
-  workflow, or project.
-- **Work:** several requests can share a `work_id` that your application
-  defines.
-- **Outcome:** your application can append a declaration of what happened to
-  that work.
-- **Work Economics:** Inferrail joins that declaration with matching receipts
-  and reports known attributed inference economics for the work.
-
-You decide what a unit of work means: a contract review, support resolution,
-coding task, research run, or document-processing job. Inferrail associates
-economic evidence with the identifier your application supplies; it does not
-interpret the business meaning of that identifier or its outcome.
-
-### Request economics vs. Work Economics
-
-**Request economics:** what known inference economics belong to one request?
-
-**Work Economics:** what known inference economics belonged to the
-customer-defined unit of work those requests were performing?
-
-This is not a full cost of work, COGS, margin, or business-value calculation.
-
-## Track a unit of work
-
-The following uses real provider requests and requires `OPENAI_API_KEY`:
-
-```bash
-export OPENAI_API_KEY=<your-openai-api-key>
-
-inferrail try "Review this contract clause" \
-  -a work_id=contract_review_42
-
-inferrail try "Identify remaining risks" \
-  -a work_id=contract_review_42
-
-inferrail work outcome contract_review_42 --status completed
-inferrail work contract_review_42
-inferrail work --all
-```
-
-For a gateway client, the equivalent generic attribution header is:
-
-```text
-X-Inferrail-Attribute-Work-Id: contract_review_42
-```
-
-The deterministic offline demo includes this synthetic example:
-
-```text
-work-contract-1
-  2 inference receipts
-  customer-declared outcome: resolved
-  known attributed inference cost: $0.000483
-```
-
-`resolved` is only the demo application's own outcome meaning. Inferrail does
-not treat any outcome status as universally successful.
-
-If Inferrail cannot verify the price for an observed inference event, its cost
-remains `unknown` rather than being treated as zero. No receipt evidence is
-also not the same thing as known zero cost.
-
-## First real request and reports
-
-`inferrail try` is the shortest route to one real receipt. It uses your
-existing `OPENAI_API_KEY`; if it is not set, Inferrail prints what is required.
-It prints the response, receipt, measured tokens, known cost or `unknown`, the
-local receipt path, and the next report command.
-
-```bash
-inferrail try "Reply with one word: ready" --customer acme
-inferrail report
-inferrail report --by customer
-inferrail report --by workflow
-inferrail report --by provider
-```
-
-## What a receipt contains
-
-One payload-free JSON receipt per supported request:
-
-```json
-{
-  "receipt_id": "ir_1e6c916bac8940ca8a85",
-  "provider": "openai",
-  "model": "gpt-4o-mini",
-  "prompt_tokens": 842,
-  "completion_tokens": 191,
-  "estimated_cost_usd": "0.000241",
-  "attributes": { "customer": "acme", "workflow": "contract-review" }
-}
-```
-
-(Trimmed — the full record also carries pricing provenance, status,
-route, timestamp, latency, and retry count. See
-[Privacy boundary](#privacy-boundary) below for the complete shape.)
-
-## TaskTransaction: receipt-only task grouping
-
-One task is rarely one call. Tag every request belonging to one unit of
-work with the same attribution value, then ask Inferrail what the task
-cost:
-
-```bash
-export OPENAI_API_KEY=<your-openai-api-key>
-inferrail try "Reply with one word: ready" -a task_id=bug_9281
-inferrail try "Summarize: the retry patch is deployed" -a task_id=bug_9281
-inferrail transaction bug_9281
-```
-
-```
-Task:        bug_9281
-Transaction: tx_72fcfcca9ede9d2facc3
-Status:      success
-
-EVENT TYPE  EVENT ID                 STATUS   COST
-inference   ir_f6fb6403d5324ea0acf9  success  $0.000003
-inference   ir_756cc072a27f42f4a2ea  success  $0.000007
-
-Known total cost: $0.00001
-```
-
-This TaskTransaction example uses real provider requests and a `task_id`.
-The offline demo instead correlates requests with `work_id` and shows Work
-Economics. Over HTTP, an
-`X-Inferrail-Attribute-Task-Id: bug_9281` header does the same thing;
-`inferrail.track_task(task_id=...)` (see [Attribute spend](#attribute-spend)
-below) attaches it automatically to every nested call in an agent run, no
-header-threading required. See
-[docs/adr/0008](docs/adr/0008-task-transactions.md).
-
-## Use it as a gateway
-
-For a long-running application, start the separate gateway process. The
-gateway process must have access to the provider credential through the
-configured environment variable; a key held only inside application memory is
-not automatically transferred to the gateway.
-
-```bash
-inferrail serve --quickstart
-```
-
-```bash
-curl http://127.0.0.1:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-Inferrail-Attribute-Customer: acme" \
-  -d '{
-    "model": "default",
-    "messages": [{"role": "user", "content": "Say hello in five words."}]
-  }'
-```
-
-The response is standard OpenAI `choices`/`usage` plus a non-standard
-`inferrail` block (route, provider, latency, retries) any OpenAI client
-already ignores. `X-Inferrail-Attribute-*` headers are optional
-attribution — never forwarded upstream. See
-[examples/basic_chat_request.py](examples/basic_chat_request.py) for a
-minimal Python client, or point a supported OpenAI-compatible chat client at
-`http://127.0.0.1:8000/v1`. An OpenAI SDK client that does not set `base_url`
-can use its existing `OPENAI_BASE_URL` environment mechanism instead.
-
-The default receipt is one JSONL line per supported request in
-`./inferrail-receipts.jsonl`, relative to the gateway's working directory.
-Treat that file as machine/audit evidence; use `inferrail report` for the
-human aggregate, `inferrail transaction <task-id>` for receipt-only task
-grouping, and `inferrail work <work-id>` for work-attributed inference
-economics plus a customer-declared outcome.
-
-### Point Claude Code (or any Anthropic SDK client) at Inferrail
-
-`POST /v1/messages` is a genuinely separate, Anthropic-compatible
-passthrough — not a translation of `/v1/chat/completions` — with real
-streaming and tool use, priced via the catalog. See
-[docs/adr/0014](docs/adr/0014-anthropic-messages-passthrough.md).
-`--quickstart` doesn't configure a provider for it (it's OpenAI-only);
-add one to `inferrail.yaml` (see `inferrail.example.yaml`'s commented
-`anthropic:`/`claude:` entries):
-
-```yaml
-providers:
-  anthropic:
-    type: anthropic
-    api_key_env: ANTHROPIC_API_KEY
-routes:
-  claude:
-    provider: anthropic
-    model: claude-sonnet-5
-```
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-inferrail serve
-```
-
-```bash
-curl http://127.0.0.1:8000/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Say hello in five words."}]
-  }'
-```
-
-Point Claude Code itself at it by setting `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
-before launching it (the Anthropic SDKs' own env-var convention, same
-idea as `OPENAI_BASE_URL` above) — every call it makes is now measured
-and receipted locally, payload-free.
-
-<details>
-<summary>Framework examples (LangChain, LlamaIndex, CrewAI)</summary>
-
-```python
-# LangChain
-from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI(
-    base_url="http://127.0.0.1:8000/v1",
-    api_key="not-needed",  # or your INFERRAIL_GATEWAY_TOKEN if auth is enabled
-    model="default",
-)
-```
-
-```python
-# LlamaIndex
-from llama_index.llms.openai_like import OpenAILike
-
-llm = OpenAILike(
-    model="default",
-    api_base="http://127.0.0.1:8000/v1",
-    api_key="not-needed",
-    is_chat_model=True,
-    context_window=8192,
-)
-```
-
-```python
-# CrewAI
-from crewai import LLM
-
-llm = LLM(
-    model="openai/default",  # "openai/" prefix required by CrewAI
-    base_url="http://127.0.0.1:8000/v1",
-    api_key="not-needed",
-)
-```
-
-</details>
-
-`"model"` normally selects a named route from `inferrail.yaml` (e.g.
-`"default"`), which maps to a provider + underlying model. If
-`default_provider` is set in your config, a `model` that matches no route
-is instead forwarded to that provider unchanged — so `"model":
-"gpt-5.6-sol"` works with no route pre-registered for it. Named routes
-always take priority. This passthrough is on by default for the
-zero-config quickstart path, off by default otherwise. Full design:
-[docs/adr/0007](docs/adr/0007-model-passthrough-routing.md).
-
-## Attribute spend
-
-Three ways to attach business context to a request, all landing in the
-same `attributes: dict[str, str]` on its receipt:
-
-- **HTTP header** (gateway): `X-Inferrail-Attribute-<Name>: <value>`, e.g.
-  `X-Inferrail-Attribute-Task-Id: bug_9281`.
-- **CLI flag** (`inferrail try`): `--customer`/`--workflow` shorthand, or
-  generic `-a <name>=<value>` for anything else, including `task_id`.
-- **Ambient, for nested agent calls**: `inferrail.track_task` attaches
-  `X-Inferrail-Attribute-Task-Id` to every outgoing request for the
-  duration of a `with` block or decorated function — no threading a
-  `task_id` parameter through nested function signatures by hand.
-
-```python
-import inferrail
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8000/v1",
-    api_key="not-needed",
-    # also accepted by LangChain's ChatOpenAI, CrewAI's LLM, etc. via
-    # their own http_client= argument
-    # base_url must match the client's own base_url above — the header is
-    # only ever attached to requests going to that destination.
-    http_client=inferrail.attributed_http_client(base_url="http://127.0.0.1:8000/v1"),
-)
-
-@inferrail.track_task(task_id="bug_9281")
-def fix_bug():
-    client.chat.completions.create(...)  # tagged automatically
-    run_subagent()  # nested calls too — no task_id parameter needed
-```
-
-`with inferrail.track_task(task_id="..."):` works the same way. Sync and
-async are both supported (`attributed_async_http_client(base_url=...)` for
-`AsyncOpenAI`/async frameworks); concurrent tasks never cross-contaminate.
-This is a small client-side convenience over the HTTP header above — no
-gateway or schema change, `task_id` only, no public API stability
-commitment yet. See
-[docs/adr/0009](docs/adr/0009-ambient-task-tracking.md).
-
-Once tagged, `inferrail report` shows the all-up aggregate, while
-`inferrail report --by <provider|model|route|attribute-name>`
-aggregates receipts by any of these dimensions —
-`customer`, `workflow`, `task_id`, or anything else you've attached.
-
-## Referral early access
-
-Referral access is opening soon. Planned early-access rewards are based on
-verified routed usage, not signup:
-
-```text
-1 verified referral
-→ +90 days of cost history for both sides
-
-3 verified referrals
-→ Pro for one year + unlimited seats
-
-10 verified referrals
-→ Founding Operator
-→ permanent Pro
-→ logo on the site
-→ roadmap vote
-→ private channel
-
-25 verified referrals
-→ Inferrail free for life
-→ 20% recurring on additional teams referred
-```
-
-Program terms will be published when referral access opens.
-
-See the current program presentation at [tryinferrail.com](https://tryinferrail.com).
-
-## How it works
-
-`InferenceEngine` normalizes the request, resolves `model` to a route in
-`inferrail.yaml` (a pure config lookup — no cost/latency-aware
-selection in v0.1), calls the one provider adapter in this version
-(`OpenAIProvider`, generic over `base_url` — OpenAI itself, Azure
-OpenAI's compatible surface, vLLM, llama.cpp-server, or anything else
-speaking the same wire format), and emits a telemetry event and a
-receipt for every supported request, success or failure. Full lifecycle, package
-layout, and the streaming/retry boundaries:
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+<p align="center">
+  <img src="docs/assets/inferrail-logo.svg" width="88" height="88" alt="Inferrail logo">
+</p>
+
+<h1 align="center">Know what your AI work costs.<br>Without keeping what it said.</h1>
+
+<p align="center">
+Inferrail is a gateway you run yourself that tracks token usage and estimated LLM cost by customer, workflow, or task for its supported OpenAI and Anthropic endpoints.
+</p>
+
+<p align="center">
+  <a href="https://github.com/domondi1/inferrail/actions/workflows/ci.yml"><img src="https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/inferrail/"><img src="https://img.shields.io/pypi/v/inferrail.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/inferrail/"><img src="https://img.shields.io/pypi/pyversions/inferrail.svg" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/status-developer%20preview%20(alpha)-orange.svg" alt="Status: developer preview (alpha)">
+</p>
+
+<p align="center">
+  <a href="#try-it-offline">Try locally</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#privacy-boundary">Privacy</a> ·
+  <a href="#integrations">Integrations</a> ·
+  <a href="#status">Status</a> ·
+  <a href="#documentation">Docs</a>
+</p>
+
+**Open source under [Apache-2.0](LICENSE).** Developer preview: the
+features below are implemented and tested, but CLI flags, config shape,
+and receipt fields may still change before 1.0.
 
 ## Privacy boundary
 
-Inferrail's own local receipt, telemetry, and outcome records contain
-economic metadata and caller-supplied identifiers, not persisted prompts,
-responses, tool payloads, or free-form business outcome payloads.
-Structurally, the receipt and telemetry schemas have no field capable of
-holding message content, and
-`test_inference_receipt_has_no_payload_fields` enforces it. This is a
-claim about **Inferrail's own local records**, not about the request path as
-a whole — your configured provider still receives the real prompt either
-way; Inferrail is a pass-through gateway to it, not a privacy boundary
-against the provider.
+For each supported request, the gateway writes one receipt to a local
+file. This is a real receipt from the offline demo below.
 
-Inferrail currently measures supported OpenAI- and Anthropic-shaped
-traffic. It is not a background monitor: it records while requests pass
-through the running process and serves nothing when that process is
-stopped. Budget enforcement is opt-in (see "Supported today" below) —
-without it configured, Inferrail measures and reports spend but does not
-block a request on cost.
-
-`inferrail try` says this in its own output too, not just in the schema:
-
-```
-  Prompt stored     no
-  Response stored   no
-```
-
-The full receipt shape, all fields:
+**Example receipt: synthetic demo data, abbreviated.**
 
 ```json
 {
-  "receipt_id": "ir_1e6c916bac8940ca8a85",
+  "receipt_id": "ir_4090e812f2ba4d3680e7",
   "route": "default",
-  "provider": "openai",
-  "model": "gpt-4o-mini",
+  "provider": "demo",
+  "model": "demo-small",
   "status": "success",
-  "prompt_tokens": 842,
-  "completion_tokens": 191,
+  "prompt_tokens": 812,
+  "completion_tokens": 143,
   "pricing": {
-    "input_usd_per_million": "0.15",
-    "output_usd_per_million": "0.60",
-    "source": "https://developers.openai.com/api/docs/pricing",
-    "verified_date": "2026-08-16"
+    "input_usd_per_million": "0.20",
+    "output_usd_per_million": "0.80",
+    "source": "DEMO — a made-up round number, not a real provider price",
+    "verified_date": "2026-09-26"
   },
-  "estimated_cost_usd": "0.000241",
-  "attributes": { "customer": "acme", "workflow": "contract-review" },
-  "total_latency_ms": 15.96,
-  "retry_count": 0
+  "estimated_cost_usd": "0.000277",
+  "attributes": {"customer": "acme", "workflow": "contract-review", "work_id": "work-contract-1"}
 }
 ```
 
-If Inferrail can't verify a price for the (provider, model) pair,
-`pricing` and `estimated_cost_usd` are `null` — never a guessed or
-fabricated cost. You can check the no-payload claim yourself against a
-running gateway, not just take it on faith:
-[docs/PRODUCT.md's verification walkthrough](docs/PRODUCT.md#verifying-privacy-claims-yourself).
-Design rationale:
-[docs/adr/0005](docs/adr/0005-privacy-preserving-economic-receipts.md).
+Omitted here: `request_id`, `timestamp`, `total_latency_ms`, `retry_count`.
+Full field list: [receipts/schema.py](src/inferrail/receipts/schema.py).
 
-## MCP
+**What happens to your key and your content (self-hosted):**
+
+- Your gateway process reads the provider key from its own environment
+  and sends requests to the provider you configure.
+- It processes prompts and responses in memory to forward them. The
+  provider still receives your request content, under its own policies.
+- Receipts record usage, cost evidence, status, timing, and the
+  attribution you supply. The receipt path does not copy message bodies.
+- Attribution tags are stored exactly as sent. Use identifiers, and keep
+  secrets and message content out of them.
+- Local telemetry events are operational metadata. The optional usage
+  beacon is separate and sends nothing unless you configure a collector
+  endpoint ([details](docs/privacy/usage-ping.md)).
+- The [hosted trial](#status) is a different boundary: if you add a real
+  key there, the hosted process holds that key and handles your traffic.
+
+**Check it yourself:**
+[request handlers](src/inferrail/gateway/routes.py) ·
+execution engines ([OpenAI](src/inferrail/gateway/execution.py), [Anthropic](src/inferrail/gateway/anthropic_execution.py)) ·
+provider adapters ([OpenAI](src/inferrail/providers/openai.py), [Anthropic](src/inferrail/providers/anthropic.py)) ·
+[receipt builder](src/inferrail/receipts/builder.py) ·
+sinks ([JSONL](src/inferrail/receipts/sinks.py), [SQLite](src/inferrail/receipts/sqlite_store.py)) ·
+canary tests ([OpenAI](tests/unit/test_gateway_receipts.py), [streaming and telemetry](tests/unit/test_gateway.py), [Anthropic](tests/unit/test_gateway_anthropic.py)).
+
+`inferrail verify-payload-free` prints the live receipt schema and checks
+that no field is named for message content. It is a schema check, not a
+security audit: it cannot inspect stored values, logs, or your provider.
+
+## Try it offline
+
+Requires Python 3.11+. Installing downloads the package and its
+dependencies; after that, the demo runs offline.
 
 ```bash
-pip install "inferrail[mcp]"
+python -m pip install inferrail
+inferrail demo
+inferrail report --by customer --receipts ./inferrail-demo-receipts.jsonl
 ```
 
-An MCP server (`inferrail-mcp`), published on the MCP registry as
-[`io.github.domondi1/inferrail`](https://registry.modelcontextprotocol.io),
-exposes Inferrail's local receipt ledger to any MCP-aware agent (Claude
-Code, Claude Desktop, Cursor, ...) as two **read-only** tools — neither
-executes inference nor spends provider budget:
+The demo needs no API key, makes no network calls, and creates no
+provider charges. It sends six scripted requests through the real engine
+with a fake provider and made-up prices labeled `DEMO`, then writes
+`./inferrail-demo-receipts.jsonl` in your current directory.
 
-| Tool | What it does |
+<details>
+<summary>Setting up Python or fixing <code>command not found</code></summary>
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m pip install inferrail
+```
+
+If `inferrail` is still not found, the environment is not active or pip
+installed into a different Python. More in
+[docs/self-hosting.md](docs/self-hosting.md#install).
+</details>
+
+<p align="center">
+  <img src="docs/assets/inferrail-demo.gif" width="860" alt="Terminal recording of a real, network-blocked run of inferrail demo on synthetic data: six requests, a cost report by customer with one unknown-cost request, a full receipt, and a receipt whose pricing and cost are null">
+</p>
+
+<p align="center"><sub>
+Real run of <code>inferrail demo</code> 0.4.3 with networking blocked. Synthetic data, not provider billing.
+<a href="docs/assets/inferrail-demo-poster.png">Static image</a> ·
+<a href="docs/assets/demo-capture/">captured output</a> ·
+<a href="scripts/render_demo_gif.py">how it was made</a>
+</sub></p>
+
+In the report, `acme` shows one request with **unknown cost**: the demo's
+preview model has no price on file, so its receipt has
+`"pricing": null` and `"estimated_cost_usd": null`. The `COST (USD)`
+column adds up known costs only. It is not a complete bill when the
+unknown count is above zero.
+
+## Send a real request
+
+This uses your own provider account, which bills you as usual. Run the
+gateway in one terminal, with the key set **in that terminal**, because
+the gateway is the process that calls the provider:
+
+```bash
+export OPENAI_API_KEY=...        # and/or ANTHROPIC_API_KEY=...
+inferrail serve --quickstart
+```
+
+Then point your client at it from another terminal or your app:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="not-needed")
+client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Say hello in five words."}],
+    extra_headers={"X-Inferrail-Attribute-Customer": "acme"},
+)
+```
+
+```python
+import anthropic
+
+# No /v1 here: the Anthropic SDK adds /v1/messages itself.
+client = anthropic.Anthropic(base_url="http://127.0.0.1:8000", api_key="not-needed")
+client.messages.create(
+    model="claude-haiku-4-5-20251001",
+    max_tokens=256,
+    messages=[{"role": "user", "content": "Say hello in five words."}],
+)
+```
+
+The client's `api_key` is a placeholder; the gateway ignores it unless
+you set `INFERRAIL_GATEWAY_TOKEN`. Then run `inferrail report --by customer`
+in the gateway's directory. The gateway listens only on `127.0.0.1` by
+default. Set `INFERRAIL_GATEWAY_TOKEN` before exposing it anywhere else
+([SECURITY.md](SECURITY.md)).
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/inferrail-flow-dark.svg">
+  <img src="docs/assets/inferrail-flow-light.svg" width="100%" alt="Data flow. On your machine, your application sends requests to the Inferrail gateway, which reads the provider API key from its environment, forwards request content and the key to OpenAI or Anthropic, and returns the response. Separately, the gateway writes a metadata receipt (tokens, cost, status, timing, attributes, no message bodies) to a local JSONL or SQLite store that reports, the local dashboard, and MCP tools read. A usage beacon collector receives lifecycle events only if an endpoint is configured.">
+</picture>
+
+Each request is routed by `model` to a configured provider
+([routing](src/inferrail/routing/router.py)), executed with retries, and
+measured. Cost is computed only when the provider reports usage and a
+verified price is on file; otherwise it stays `null`, never a guessed
+`$0` ([calculator](src/inferrail/receipts/calculator.py)). Architecture:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Diagram source:
+[scripts/render_flow_svg.py](scripts/render_flow_svg.py).
+
+## Integrations
+
+Supported today: `POST /v1/chat/completions` (OpenAI-compatible, with
+streaming and tool calls), `POST /v1/messages` (Anthropic-compatible,
+with streaming and tool use), and `GET /health`. Any client or framework
+that lets you set a base URL and sends those shapes can use the gateway.
+Attribution, work grouping, framework examples, and MCP setup are in
+[docs/integrations.md](docs/integrations.md).
+
+**Voice agents.** Inferrail has no native voice support. A voice stack
+can route its **text LLM stage** through Inferrail if that stage accepts
+a custom OpenAI- or Anthropic-compatible base URL and sends a supported
+request shape. Only that stage's tokens and cost are recorded. Audio,
+speech-to-text, text-to-speech, the Realtime API, and full call cost are
+not covered, and no voice framework has been tested by this project
+([details](docs/integrations.md#voice-agents)).
+
+## Status
+
+| Capability | Status |
 |---|---|
-| `get_spend` | Aggregates local receipts by provider/model/route/attribute (including `task_id`), optional time window |
-| `get_health` | Checks gateway reachability + most recent local receipt |
+| Text LLM gateway, cost receipts, reports, attribution | **Available** in the 0.4.3 developer preview on PyPI |
+| Work grouping and application-declared outcomes | **Available**. Reports known cost only and counts unknown-cost receipts separately |
+| Budget checks | **Available**, opt-in. Applies only to supported requests through this gateway; unpriced models are not checked ([details](docs/self-hosting.md#budgets)) |
+| Local dashboard (`serve --app-mode`), read-only MCP tools | **Available**. Dashboard ships in the PyPI wheel; MCP needs `inferrail[mcp]` |
+| AP invoice-exception recovery (`inferrail ap demo`) | **Experimental** workflow with a bounded contract ([docs](docs/capabilities/ap-invoice-exception-recovery.md)) |
+| Hosted cost-gateway trial ([tryinferrail.com/try](https://tryinferrail.com/try/)) | **Preview**. With a real key, the hosted process holds it in memory, and the trial expires within 4 hours of adding it ([key handling](hosted/cost_gateway/README.md)) |
+| Hosted Work Economics and Economic Authority | **Experimental**, Base Sepolia testnet only. Work Economics: [docs](docs/capabilities/work-economics.md), [example](examples/work_economics_purchase.py). Economic Authority: [docs](docs/capabilities/economic-authority.md), [example](examples/economic_authority_session.py) |
+| Referral rewards, paid tiers | **Planned**. Not part of the package |
+| Audio, speech-to-text, text-to-speech, Realtime API, embeddings, images, batch | **Not supported** |
+| Providers beyond OpenAI- and Anthropic-compatible APIs (Gemini, Bedrock native) | **Not supported** |
 
-```json
-{
-  "mcpServers": {
-    "inferrail": { "command": "inferrail-mcp" }
-  }
-}
-```
-
-Claude Code: `claude mcp add inferrail -- inferrail-mcp`. Full contract:
-[inferrail-mcp/README.md](inferrail-mcp/README.md).
-
-## Supported today
-
-- `POST /v1/chat/completions`: streaming (`stream: true`, real SSE
-  passthrough) and tool/function calling, single string message content,
-  no `n != 1`
-- `POST /v1/messages`: a genuinely separate Anthropic-compatible
-  passthrough (real streaming, tool use, priced via the catalog) — not a
-  translation of `/v1/chat/completions`. See
-  [docs/adr/0014](docs/adr/0014-anthropic-messages-passthrough.md).
-- `GET /health`
-- One provider adapter per wire format, each generic over any endpoint
-  sharing that format (`type: openai`/`openai_compatible` and
-  `type: anthropic`/`anthropic_compatible`)
-- Named-route + optional passthrough model routing (above)
-- Per-route retry with backoff on transient provider errors
-- Local structured telemetry and payload-free cost receipts for supported
-  requests, plus `inferrail report`, grouped reports, and
-  `inferrail transaction <task-id>`
-- Customer-defined `work_id` attribution, append-only outcome declarations,
-  and derived Work Economics via `inferrail work outcome`, `inferrail work
-  <work-id>`, and `inferrail work --all`
-- CLI: `inferrail demo`, `try`, `serve` (`--quickstart`/`--app-mode`),
-  `config check`, `report`, `transaction`, `work`,
-  `receipts import|export`, `budget set|list|rm`, `pricing update`,
-  `doctor`, `telemetry preview|status|enable|disable`
-- Budget enforcement (opt-in, requires `receipts.sink: sqlite`):
-  `global`/`project`/`work_id`-scoped spend caps over a `per_work`/
-  `daily`/`monthly` window, in `warn` or `block` mode. A `block` budget
-  rejects a request with HTTP 402 *before* any provider is contacted,
-  using a conservative upper-bound cost estimate; the block is still
-  visible in `inferrail report`. See
-  [docs/adr/0015](docs/adr/0015-budget-enforcement.md).
-- `inferrail serve --app-mode`: relocates receipts/budgets under the OS
-  app-data directory and mounts a local control API (`/v1/local/*` —
-  paginated receipts, work rollups, budgets CRUD, an SSE receipt tail)
-  guarded by a mandatory per-install token, plus (when built — see
-  below) the local dashboard. See
-  [docs/adr/0016](docs/adr/0016-local-control-api.md).
-- A local web dashboard (`app/`, `docs/adr/0017`) — **all six v0.4.0
-  screens built** (Live Feed, Work, Budgets, Recover, Connect,
-  Settings), and bundled into the wheel this project's own CI builds
-  (`docs/adr/0018`). `inferrail serve --app-mode` prints a ready-to-open
-  URL with the local API token already embedded. Building from a
-  checkout with no Node installed still works — no dashboard, no error;
-  build one yourself with `cd app && npm install && npm run build`.
-- `inferrail doctor` (port, pricing-catalog freshness, provider
-  reachability) and `inferrail pricing update` (reports built-in
-  catalog age; never fetches prices over the network).
-- An anonymous, opt-out usage/presence beacon (on by default, but still
-  inert with no collector configured): four lifecycle events only
-  (`install`, `serve_start`, `first_receipt`, `heartbeat` — at most once
-  per 24h), never a prompt, response, model name, cost, or anything
-  about your traffic. Turn it off with `inferrail telemetry disable`,
-  `INFERRAIL_TELEMETRY=0`, `serve --no-telemetry`, or `DO_NOT_TRACK=1`
-  (automatic under CI/the test suite). Preview the exact payload with
-  `inferrail telemetry preview`; see
-  [docs/privacy/usage-ping.md](docs/privacy/usage-ping.md) and
-  [docs/adr/0020](docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md).
-
-## Not yet
-
-Honest edges, not silent gaps — full list in
-[docs/PRODUCT.md](docs/PRODUCT.md):
-
-- Cost- or latency-aware routing, or automatic failover to a different
-  provider/model on error — routing is a static config lookup
-- Any provider wire format other than OpenAI-compatible or
-  Anthropic-compatible (Gemini, Bedrock's native API, ...)
-- The full OpenAI/Anthropic API surface — only `/v1/chat/completions`,
-  `/v1/messages`, and `/health` exist; no embeddings, assistants, batch,
-  images, audio, or the Anthropic Files/Batches APIs
-- Multi-user auth or role-based access control —
-  `INFERRAIL_GATEWAY_TOKEN` is one shared secret, not a user system
-- Any hosted or cloud-operated component
-- Non-LLM economic events (browser, search, compute/sandbox, MCP tool
-  cost) in a `TaskTransaction` — its only event type today is `inference`
-- Outcome or business-value linkage (success signal, revenue, margin) on
-  a `TaskTransaction` — it aggregates cost only
-
-## Deployment boundary
-
-**Single node.** The receipt ledger is a local file — JSONL by default,
-or a WAL-mode SQLite file (`receipts.sink: sqlite`, see
-[docs/adr/0013](docs/adr/0013-sqlite-receipts-store.md) for indexed
-queries at larger scale) — so every process that should appear in one
-report must write to one file on one filesystem.
-
-- Concurrent writers to the same file are safe either way: JSONL uses a
-  single atomic `O_APPEND` write per receipt; SQLite uses WAL journaling
-  plus a busy-timeout. Threads *and* multiple processes on the same host
-  can share one ledger without interleaving or losing records.
-- Not supported: several hosts writing to one ledger, aggregating ledgers
-  across machines, or anything resembling a shared/hosted control plane.
-  Running Inferrail on N hosts gives you N separate ledgers, and nothing
-  in the product merges them.
-- `inferrail report` and `inferrail transaction` read the whole file into
-  memory. That is fine for the millions-of-bytes range a developer
-  preview produces; it is not a query engine, and there is no retention,
-  rotation, or compaction. Rotate the file yourself if it grows.
-
-Anything beyond one host is out of scope for v0.x — see
-[docs/PRODUCT.md](docs/PRODUCT.md).
-
-## Hosted services (optional, separate from the gateway)
-
-**Inferrail AP Exceptions** (`hosted/ap_exceptions/`) is the optional
-hosted counterpart to the AP invoice-exception recovery SDK above:
-authenticated decision/persistence/reporting over HTTP, isolated per
-API key. It never executes a retry itself — that always happens in your
-own process. Not paid/x402-gated; a plain `Authorization: Bearer
-<api-key>` header. Full contract:
-[hosted/ap_exceptions/README.md](hosted/ap_exceptions/README.md).
-
-## Paid capabilities (hosted, separate from the gateway)
-
-Inferrail helps companies measure, attribute, and eventually govern the
-economics of work performed by AI agents. The gateway and receipts above
-are today's working part of that: privacy-preserving evidence of what AI
-work costs and what customer, workflow, or task its cost is attributed
-to. The two capabilities below extend that same foundation toward
-machine buyers. Both are experimental and Base Sepolia testnet only;
-neither controls external wallets, providers, or network spending.
-
-**Inferrail Work Economics** is Inferrail's first hosted, paid capability:
-given caller-declared economic events for a unit of AI work, it returns a
-normalized cost receipt — known cost, a breakdown by resource class and
-supplier, and unit economics for the work — paid for over the
-[x402](https://www.x402.org/) protocol by any agent with its own wallet —
-no Inferrail account required. **Base Sepolia testnet only right now**, not
-mainnet, not real money.
-
-This is unrelated code, in `hosted/`, not part of the `inferrail` package —
-running the gateway above never requires it and never talks to it.
-
-- Canonical endpoint: `https://work.tryinferrail.com` ([manifest](https://work.tryinferrail.com/manifest))
-- Human-readable overview: [tryinferrail.com/work-economics](https://tryinferrail.com/work-economics/)
-- Full contract: [docs/capabilities/work-economics.md](docs/capabilities/work-economics.md)
-- Standalone buyer example: [`examples/work_economics_purchase.py`](examples/work_economics_purchase.py)
-
-**Inferrail Economic Authority** (working name) explores voluntary
-coordination of a caller-declared spending boundary between agents. The
-boundary is caller-declared and the ledger is cooperative: Inferrail
-records and coordinates it entirely within its own service, and does not
-control any external wallet, provider, or network spending. This is not
-real-world spend enforcement. A buyer purchases a durable coordination
-boundary — a spending ceiling shared across agents, without
-double-allocating it — paid for over x402 by any agent with its own
-wallet. **Base Sepolia testnet only.** Whether session purchase is
-currently enabled on a given deployment is always authoritative from
-that deployment's own Agent Card, not this README.
-
-- Canonical endpoint: `https://authority.tryinferrail.com` ([Agent Card](https://authority.tryinferrail.com/.well-known/agent-card.json))
-- Full contract: [docs/capabilities/economic-authority.md](docs/capabilities/economic-authority.md)
-- Standalone client example: [`examples/economic_authority_session.py`](examples/economic_authority_session.py)
-
-## Configuration
-
-For a real deployment instead of quickstart defaults:
-
-```bash
-cp inferrail.example.yaml inferrail.yaml
-cp .env.example .env      # then add a real OPENAI_API_KEY
-inferrail config check    # validate without starting a server
-inferrail serve
-```
-
-`inferrail.yaml` only ever holds the *name* of an environment variable
-for a secret, never the secret itself. Full shape (providers, routes,
-telemetry, receipts, pricing overrides):
-[inferrail.example.yaml](inferrail.example.yaml).
-
-By default the gateway binds to `127.0.0.1:8000` with no auth. Set
-`INFERRAIL_GATEWAY_TOKEN` to require callers to send `Authorization:
-Bearer <token>` — see [SECURITY.md](SECURITY.md).
+Inferrail does not account for all spending on a provider account, only
+the supported requests that pass through a running gateway. Full scope
+and non-goals: [docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Documentation
 
-- [docs/capabilities/ap-invoice-exception-recovery.md](docs/capabilities/ap-invoice-exception-recovery.md)
-  — AP invoice-exception recovery: full contract
-- [docs/PRODUCT.md](docs/PRODUCT.md) — exact current scope
-- [docs/comparison.md](docs/comparison.md) — how Inferrail keeps prompt
-  and response content out of its receipts
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — package layout, request
-  lifecycle
-- [docs/adr/](docs/adr/) — why specific structural decisions were made
-- [openapi.json](openapi.json) / [config.schema.json](config.schema.json)
-  / [llms.txt](llms.txt) — machine-readable references for tooling and
-  agents
-- [SECURITY.md](SECURITY.md)
+- [docs/integrations.md](docs/integrations.md): clients, attribution, work tracking, voice, MCP
+- [docs/self-hosting.md](docs/self-hosting.md): install, configuration, storage, budgets, dashboard
+- [docs/PRODUCT.md](docs/PRODUCT.md): exact current scope
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/adr/](docs/adr/): how and why it is built this way
+- [docs/privacy/usage-ping.md](docs/privacy/usage-ping.md): the usage beacon
+- [openapi.json](openapi.json), [config.schema.json](config.schema.json), [llms.txt](llms.txt): machine-readable references
 
-## Development
+## Feedback, security, license
 
-```bash
-git clone https://github.com/domondi1/inferrail.git && cd inferrail
-pip install -e ".[dev,mcp,ap]"
-ruff check . && mypy && pytest
-```
-
-`pytest` needs no API key or network access — see
-[CONTRIBUTING.md](CONTRIBUTING.md). The `ap` extra is only needed to
-exercise `OpenAIRetryAdapter`'s code path; the live-provider integration
-test still self-skips without `OPENAI_API_KEY` and `INFERRAIL_LIVE_TESTS=1`.
-
-## License
-
-Apache License 2.0 — see [LICENSE](LICENSE).
+- Questions and bugs: [GitHub issues](https://github.com/domondi1/inferrail/issues).
+- Security or privacy vulnerabilities: please report privately, as described in [SECURITY.md](SECURITY.md).
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). `pytest` needs no API key or network.
+- License: [Apache-2.0](LICENSE).

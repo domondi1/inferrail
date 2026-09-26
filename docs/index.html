@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Inferrail — know what your AI work costs</title>
-  <meta name="description" content="Inferrail is a self-hosted, OpenAI- and Anthropic-compatible gateway that turns every request into a payload-free, attributable cost receipt — without ever storing the prompt or response. Apache 2.0.">
+  <meta name="description" content="Inferrail is a self-hosted, OpenAI- and Anthropic-compatible gateway that records token usage and estimated cost per request, attributed to your customers, workflows, or tasks, without copying prompts or responses into its receipts. Apache 2.0.">
   <link rel="canonical" href="https://tryinferrail.com/">
   <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
@@ -157,18 +157,18 @@
 
     <div class="section-break wrap" aria-hidden="true"></div>
     <section class="cards wrap" id="never-keeps" aria-labelledby="never-keeps-title">
-      <h2 id="never-keeps-title">What Inferrail never keeps<span class="tagline-2">Stated plainly, including what it doesn't protect.</span></h2>
+      <h2 id="never-keeps-title">What Inferrail keeps, and what it doesn't<span class="tagline-2">Stated plainly, including what it doesn't protect.</span></h2>
       <div class="card">
-        <p class="eyebrow">Structural, not a setting</p>
-        <h3>No field can hold a prompt or response</h3>
-        <p class="card-copy">The receipt schema has no field capable of holding message content — not redacted, not a toggle, not a policy someone could misconfigure. It's a small, explicit set of fields (route, provider, model, token counts, cost, your own attribution tags), enforced by a regression test in this project's own CI. Run it yourself, right now, no key needed:</p>
+        <p class="eyebrow">Schema plus tests</p>
+        <h3>Receipts have no field for prompts or responses</h3>
+        <p class="card-copy">A receipt is a small, explicit set of fields: route, provider, model, token counts, price snapshot, cost, status, timing, and your own attribution tags. None of them is a message field, and the gateway never hands message bodies to the receipt builder. Canary tests in this project's CI check that for success, error, and streaming requests. Attribution tags are stored exactly as you send them, so keep secrets and message content out of them. See the schema yourself, no key needed:</p>
         <div class="install"><code>inferrail verify-payload-free</code><button class="copy" type="button" aria-label="Copy verify-payload-free command">Copy</button></div>
-        <p class="step-note">Prints the real, running schema — not a hardcoded string — in a form you can paste straight into a security review. Built for the engineer who was told by compliance they can't run an LLM logger because it stores prompts.</p>
+        <p class="step-note">Prints the real, running schema and checks its field names. It is a schema check, not a security audit: it cannot inspect values you store, your logs, or your provider.</p>
       </div>
       <div class="card">
         <p class="eyebrow">The honest limit</p>
         <h3>Your provider still sees the prompt</h3>
-        <p class="card-copy">Inferrail is a pass-through gateway, not a privacy barrier against OpenAI or Anthropic — the request still reaches them exactly as it would without Inferrail in the path. What this guarantees is narrower and verifiable: <em>Inferrail's own</em> receipts, telemetry, and outcome records never contain that content, structurally, not by policy.</p>
+        <p class="card-copy">Inferrail is a pass-through gateway, not a privacy barrier against OpenAI or Anthropic. The request still reaches them exactly as it would without Inferrail in the path. What is narrower and testable: <em>Inferrail's own</em> receipts and telemetry are built without message bodies. The self-hosted gateway reads your provider key from its own environment. The hosted trial is different: if you add a real key there, the hosted process holds it in memory and handles your traffic.</p>
       </div>
     </section>
 

@@ -15,7 +15,7 @@ def test_verify_payload_free_passes_and_lists_every_field(
     assert result == 0
     out = capsys.readouterr().out
     assert "RESULT: PASS" in out
-    assert "Suitable for pasting into a security review" in out
+    assert "field-name check" in out
     # Every real InferenceReceipt field name should be listed, derived at
     # runtime, not hardcoded.
     for field_name in (
@@ -42,3 +42,17 @@ def test_verify_payload_free_states_the_pass_through_scope_honestly(
     out = capsys.readouterr().out
     assert "still travel to your configured upstream provider" in out
     assert "not a privacy boundary against it" in out
+
+
+def test_verify_payload_free_states_what_a_name_check_cannot_prove(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_verify_payload_free()
+
+    out = capsys.readouterr().out
+    # `attributes` is a free-form dict[str, str] persisted verbatim, so the
+    # output must not claim that no stored string can hold content.
+    assert "What this does not prove" in out
+    assert "dict[str, str]" in out
+    assert "not a security audit" in out
+    assert "Suitable for pasting" not in out

@@ -16,9 +16,10 @@ from _fakes import AnthropicFakeProvider, StreamScript
 from fastapi.testclient import TestClient
 
 from inferrail.config.models import InferrailConfig
-from inferrail.errors import AuthenticationError
+from inferrail.errors import AuthenticationError, InvalidRequestError
 from inferrail.gateway import app as app_module
 from inferrail.providers.anthropic_base import AnthropicNormalizedResponse
+from inferrail.receipts.schema import InferenceReceipt
 from inferrail.telemetry.events import InferenceEvent
 
 __all__ = ["AnthropicFakeProvider", "StreamScript"]
@@ -372,3 +373,117 @@ def test_streamed_content_never_persisted_to_telemetry(
     assert secret not in serialized_events
     assert telemetry.events[0].completion_tokens == 9
     assert telemetry.events[0].prompt_tokens == 1
+
+
+class InMemoryReceiptSink:
+    def __init__(self) -> None:
+        self.receipts: list[InferenceReceipt] = []
+
+    def emit(self, receipt: InferenceReceipt) -> None:
+        self.receipts.append(receipt)
+
+
+def _make_anthropic_client_with_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+    config: InferrailConfig,
+    provider: AnthropicFakeProvider,
+    receipts: InMemoryReceiptSink,
+) -> TestClient:
+    monkeypatch.setattr(app_module, "build_receipt_sink", lambda cfg: receipts)
+    return _make_anthropic_client(monkeypatch, config, provider)
+
+
+# The telemetry tests above cover InferenceEvent; these cover the other
+# record /v1/messages writes, InferenceReceipt, on the same success,
+# streaming, and provider-error paths test_gateway_receipts.py already
+# covers for /v1/chat/completions.
+
+
+def test_receipts_never_persist_prompt_or_tool_content(
+    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
+) -> None:
+    receipts = InMemoryReceiptSink()
+    secret_prompt = "RECEIPT-CANARY-anthropic-prompt-7731"
+    secret_tool_input = "RECEIPT-CANARY-anthropic-tool-input-7731"
+    provider = AnthropicFakeProvider(
+        outcomes=[
+            AnthropicNormalizedResponse(
+                content=[
+                    {
+                        "type": "tool_use", "id": "toolu_1", "name": "lookup",
+                        "input": {"account": secret_tool_input},
+                    }
+                ],
+                stop_reason="tool_use", stop_sequence=None, input_tokens=5, output_tokens=4,
+            )
+        ]
+    )
+    client = _make_anthropic_client_with_receipts(
+        monkeypatch, anthropic_config, provider, receipts
+    )
+
+    response = client.post(
+        "/v1/messages",
+        json=_messages_body(messages=[{"role": "user", "content": secret_prompt}]),
+    )
+
+    assert response.status_code == 200
+    assert len(receipts.receipts) == 1
+    serialized = receipts.receipts[0].model_dump_json()
+    assert secret_prompt not in serialized
+    assert secret_tool_input not in serialized
+    assert receipts.receipts[0].prompt_tokens == 5
+
+
+def test_streamed_content_never_persisted_to_receipts(
+    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
+) -> None:
+    receipts = InMemoryReceiptSink()
+    secret = "RECEIPT-CANARY-anthropic-stream-7731"
+    events = (
+        b'event: message_start\ndata: {"type":"message_start",'
+        b'"message":{"usage":{"input_tokens":1}}}\n\n'
+        b'event: content_block_delta\ndata: {"type":"content_block_delta",'
+        b'"index":0,"delta":{"type":"text_delta","text":"' + secret.encode() + b'"}}\n\n'
+        b'event: message_delta\ndata: {"type":"message_delta",'
+        b'"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}\n\n'
+        b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    )
+    provider = AnthropicFakeProvider(stream_outcomes=[StreamScript(chunks=[events])])
+    client = _make_anthropic_client_with_receipts(
+        monkeypatch, anthropic_config, provider, receipts
+    )
+
+    with client.stream("POST", "/v1/messages", json=_messages_body(stream=True)) as response:
+        body = b"".join(response.iter_bytes())
+
+    assert secret.encode() in body  # the caller still receives the content
+    assert len(receipts.receipts) == 1
+    assert secret not in receipts.receipts[0].model_dump_json()
+    assert receipts.receipts[0].completion_tokens == 9
+
+
+def test_receipts_never_persist_provider_echoed_error_text(
+    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
+) -> None:
+    receipts = InMemoryReceiptSink()
+    canary = "RECEIPT-CANARY-anthropic-echoed-error-7731"
+    provider = AnthropicFakeProvider(
+        outcomes=[
+            InvalidRequestError(
+                f"provider 'anthropic' returned HTTP 400: rejected input '{canary}'",
+                provider="anthropic",
+                status_code=400,
+                safe_summary="provider 'anthropic' returned HTTP 400 (invalid_request_error)",
+            )
+        ]
+    )
+    client = _make_anthropic_client_with_receipts(
+        monkeypatch, anthropic_config, provider, receipts
+    )
+
+    client.post("/v1/messages", json=_messages_body())
+
+    assert len(receipts.receipts) == 1
+    assert receipts.receipts[0].status == "error"
+    assert canary not in receipts.receipts[0].model_dump_json()

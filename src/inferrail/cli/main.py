@@ -129,9 +129,9 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "verify-payload-free",
         help=(
-            "Print the real receipt schema and prove structurally that no field can "
-            "hold a prompt, response, or other message content. Paste the output "
-            "into a security review."
+            "Print the real receipt schema and check that no field is named for "
+            "message content (prompt/messages/content/response). A schema check, "
+            "not an audit: see its output for what it does not cover."
         ),
     )
 
@@ -529,6 +529,10 @@ def _print_quickstart_banner(
     daily_budget_usd: str | None,
 ) -> None:
     base_url = f"http://{host}:{port}/v1"
+    # The Anthropic SDKs append `/v1/messages` to their base URL themselves,
+    # so theirs must stop at the origin; `.../v1` would request
+    # `/v1/v1/messages` and 404.
+    anthropic_base_url = f"http://{host}:{port}"
     print("No inferrail.yaml used -- running with quickstart defaults:")
     print(f"  OpenAI SDK:    any model id passes through, e.g. {QUICKSTART_MODEL}")
     print(f"  Anthropic SDK: any model id passes through, e.g. {QUICKSTART_ANTHROPIC_MODEL}")
@@ -541,9 +545,9 @@ def _print_quickstart_banner(
     print(f"    export OPENAI_BASE_URL={base_url}")
     print()
     print("  Anthropic SDK (Python):")
-    print(f'    client = Anthropic(base_url="{base_url}")')
+    print(f'    client = Anthropic(base_url="{anthropic_base_url}")')
     print("  Anthropic SDK (env var, any language):")
-    print(f"    export ANTHROPIC_BASE_URL={base_url}")
+    print(f"    export ANTHROPIC_BASE_URL={anthropic_base_url}")
     print()
     if daily_budget_usd is not None and not app_mode:
         print(f"  receipts: {_QUICKSTART_BUDGET_RECEIPTS_PATH} (sqlite -- required by")
@@ -558,8 +562,8 @@ def _print_quickstart_banner(
         print(f"  daily budget: ${daily_budget_usd} (global, block mode -- a request that would")
         print("    exceed it is rejected with HTTP 402 before any provider is contacted)")
     print()
-    print("  inferrail verify-payload-free      (proof, for a security review, that no")
-    print("                                       receipt field can ever hold a prompt/response)")
+    print("  inferrail verify-payload-free      (lists every receipt field and checks none is")
+    print("                                       named for message content; see its scope notes)")
     print()
     print("To persist/customize configuration: cp inferrail.example.yaml inferrail.yaml")
     print()

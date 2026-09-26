@@ -10,9 +10,12 @@ telemetry schema, its sinks, and every test that depends on them are
 untouched by this feature.
 
 Just like `InferenceEvent` (see docs/adr/0003), this schema has no field
-that could ever hold prompt or response content — a structural guarantee,
-covered by `test_inference_receipt_has_no_payload_fields`, not a runtime
-policy that could be misconfigured on.
+for prompt or response content, and the receipt builder is never given
+message bodies. `test_inference_receipt_has_no_payload_fields` checks the
+field names; the gateway canary tests (`test_gateway_receipts.py`,
+`test_gateway.py`, `test_gateway_anthropic.py`) check the behavior. The
+string fields, and `attributes` in particular, still hold whatever the
+caller or operator supplies, so they are not content-proof by type alone.
 """
 
 from __future__ import annotations

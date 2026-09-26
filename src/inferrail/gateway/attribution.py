@@ -11,7 +11,7 @@ to the upstream provider; there is no stripping step to forget.
 
 Attribute values ARE persisted, verbatim, in `InferenceReceipt.attributes`
 (see receipts/schema.py). Do not put secrets or other sensitive data in
-them — see README.md's attribution section.
+them. See docs/integrations.md's "Attribution" section.
 """
 
 from __future__ import annotations
