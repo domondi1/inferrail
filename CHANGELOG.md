@@ -6,6 +6,34 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.5 — 2026-09-26
+
+### Added
+
+- `inferrail mcp` runs the read-only MCP server (`get_spend`,
+  `get_health`) over stdio. The `inferrail-mcp` command still works.
+- `INFERRAIL_RECEIPTS_PATH` sets the MCP tools' receipts file when a call
+  passes no `receipts_path`. Precedence: explicit `receipts_path`, then
+  the env var, then `./inferrail-receipts.jsonl`.
+
+### Fixed
+
+- The MCP server needs the MCP SDK 2.x API, but the `[mcp]` extra allowed
+  `mcp>=1.0`. `mcp>=2.0` is now a core dependency; the `[mcp]` extra
+  remains for existing install commands.
+- The MCP Registry entry launched `uvx inferrail`, which starts the CLI,
+  not the MCP server. `server.json` now launches `uvx inferrail mcp`.
+
+### Changed
+
+- `server.json` updated to 0.4.5 with a precise description, `uvx`
+  runtime hint, and the optional `INFERRAIL_RECEIPTS_PATH` declaration.
+  CI validates it with the official `mcp-publisher`; tagged releases
+  publish it to the registry after the PyPI release succeeds.
+- README "MCP" section with client config; tests for the `inferrail mcp`
+  launch path, receipts-path precedence, malformed receipts, read-only
+  behavior, and `server.json` consistency.
+
 ## v0.4.4 — 2026-09-26
 
 ### Fixed

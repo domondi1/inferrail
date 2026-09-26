@@ -28,6 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Confirm tag, pyproject.toml, and server.json versions agree
+        # Checked before anything is built or published, so a mismatched
+        # tag can never reach PyPI and then fail at the MCP Registry step.
+        run: |
+          python3 -c "
+          import json, sys, tomllib
+          tag = sys.argv[1]
+          pyproject = tomllib.load(open('pyproject.toml', 'rb'))['project']['version']
+          s = json.load(open('server.json'))
+          versions = {pyproject, s['version'], *(p['version'] for p in s['packages'])}
+          assert versions == {tag}, f'versions {versions} != tag {tag}'
+          print('ok: tag, pyproject.toml, and server.json are all', tag)
+          " "${GITHUB_REF_NAME#v}"
+
       # Node is required here, not just in ci.yml's own `dashboard` job:
       # `python -m build` triggers hatch_build.py's wheel-build hook,
       # which runs `npm ci && npm run build` in app/ to bundle the
@@ -130,3 +144,48 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+
+  mcp-registry:
+    # Publishes server.json to the official MCP Registry, only after the
+    # PyPI release above succeeded (the registry verifies that the PyPI
+    # package version exists and its README carries the matching
+    # `mcp-name` marker). Authenticates with GitHub OIDC, the registry's
+    # documented CI method for io.github.domondi1/* names: no stored
+    # secret. Runs only on v*.*.* tags (see `on:` above).
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm server.json version matches the release tag
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          python3 -c "
+          import json, sys
+          s = json.load(open('server.json'))
+          versions = {s['version'], *(p['version'] for p in s['packages'])}
+          assert versions == {sys.argv[1]}, f'server.json versions {versions} != tag {sys.argv[1]}'
+          print('ok: server.json version', sys.argv[1])
+          " "$expected"
+
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Authenticate to the MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server.json to the MCP Registry
+        run: ./mcp-publisher publish

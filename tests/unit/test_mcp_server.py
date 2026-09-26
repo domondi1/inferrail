@@ -16,7 +16,13 @@ from pathlib import Path
 
 import httpx
 import pytest
-from inferrail_mcp.server import _get_health_impl, get_spend, server
+from inferrail_mcp.server import (
+    RECEIPTS_PATH_ENV,
+    _get_health_impl,
+    _resolve_receipts_path,
+    get_spend,
+    server,
+)
 
 
 def _write_receipts(path: Path, rows: list[dict[str, object]]) -> None:
@@ -182,6 +188,153 @@ async def test_real_stdio_session_lists_and_calls_both_tools(tmp_path: Path) -> 
                 "get_spend", {"by": "customer", "receipts_path": str(receipts_path)}
             )
             assert result.structured_content["groups"][0]["key"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_real_stdio_session_via_inferrail_mcp_subcommand(tmp_path: Path) -> None:
+    # `inferrail mcp` is what the MCP Registry entry (server.json) launches.
+    # Run from an unrelated working directory with the receipts path given
+    # only through INFERRAIL_RECEIPTS_PATH, as an MCP client config would.
+    import os
+
+    from mcp.client.session import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    receipts_path = tmp_path / "data" / "receipts.jsonl"
+    receipts_path.parent.mkdir()
+    _write_receipts(receipts_path, [_RECEIPT_A, _RECEIPT_B])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    params = StdioServerParameters(
+        command="inferrail",
+        args=["mcp"],
+        cwd=str(elsewhere),
+        env={**os.environ, RECEIPTS_PATH_ENV: str(receipts_path)},
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            tools = await session.list_tools()
+            assert {t.name for t in tools.tools} == {"get_spend", "get_health"}
+
+            result = await session.call_tool("get_spend", {"by": "model"})
+            data = result.structured_content
+            assert data["receipts_path"] == str(receipts_path)
+            assert data["groups"][0]["key"] == "gpt-4o-mini"
+            assert data["groups"][0]["requests"] == 2
+            assert data["groups"][0]["known_cost_usd"] == "0.000135"
+
+    assert list(elsewhere.iterdir()) == []  # nothing written to the cwd
+
+
+# ---------------------------------------------------------------------------
+# Receipts path resolution, malformed state, read-only guarantees
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("explicit", "env", "expected"),
+    [
+        ("/explicit.jsonl", "/env.jsonl", "/explicit.jsonl"),  # 1. explicit argument
+        (None, "/env.jsonl", "/env.jsonl"),  # 2. INFERRAIL_RECEIPTS_PATH
+        (None, None, "./inferrail-receipts.jsonl"),  # 3. existing default
+    ],
+)
+def test_receipts_path_precedence(
+    explicit: str | None,
+    env: str | None,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if env is None:
+        monkeypatch.delenv(RECEIPTS_PATH_ENV, raising=False)
+    else:
+        monkeypatch.setenv(RECEIPTS_PATH_ENV, env)
+
+    assert _resolve_receipts_path(explicit) == expected
+
+
+def test_get_spend_uses_env_var_when_no_path_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "receipts.jsonl"
+    _write_receipts(path, [_RECEIPT_A])
+    monkeypatch.setenv(RECEIPTS_PATH_ENV, str(path))
+
+    result = get_spend(by="customer")
+
+    assert result["receipts_path"] == str(path)
+    assert [g["key"] for g in result["groups"]] == ["acme"]
+
+
+def test_get_spend_explicit_path_overrides_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "receipts.jsonl"
+    _write_receipts(path, [_RECEIPT_B])
+    monkeypatch.setenv(RECEIPTS_PATH_ENV, str(tmp_path / "other.jsonl"))
+
+    result = get_spend(by="customer", receipts_path=str(path))
+
+    assert [g["key"] for g in result["groups"]] == ["globex"]
+
+
+def test_get_spend_default_path_unchanged_without_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(RECEIPTS_PATH_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    result = get_spend()
+
+    assert result["receipts_path"] == "./inferrail-receipts.jsonl"
+    assert result["error"] == "receipts_file_not_found"
+
+
+def test_get_spend_skips_malformed_rows_instead_of_failing(tmp_path: Path) -> None:
+    path = tmp_path / "receipts.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        f.write("not json\n")
+        f.write(json.dumps({"receipt_id": "missing_required_fields"}) + "\n")
+        f.write(json.dumps(_RECEIPT_A) + "\n")
+
+    result = get_spend(by="customer", receipts_path=str(path))
+
+    assert result["skipped_malformed_rows"] == 2
+    assert [g["key"] for g in result["groups"]] == ["acme"]
+
+
+@pytest.mark.asyncio
+async def test_get_health_malformed_only_file_reports_no_last_receipt(tmp_path: Path) -> None:
+    path = tmp_path / "receipts.jsonl"
+    path.write_text("{truncated\n", encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await _get_health_impl("http://127.0.0.1:8000", str(path), client=client)
+
+    assert result["last_receipt"] is None
+
+
+@pytest.mark.asyncio
+async def test_tools_never_write_to_the_receipts_directory(tmp_path: Path) -> None:
+    path = tmp_path / "receipts.jsonl"
+    _write_receipts(path, [_RECEIPT_A, _RECEIPT_B])
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+
+    get_spend(by="customer", receipts_path=str(path))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _get_health_impl("http://127.0.0.1:8000", str(path), client=client)
+
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
 
 def test_server_name_and_instructions_are_set() -> None:

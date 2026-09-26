@@ -62,7 +62,7 @@
 
 ## Agent tools
 
-- [inferrail-mcp](https://github.com/domondi1/inferrail/tree/main/inferrail-mcp): MCP server (stdio) exposing `get_spend` (query attributed cost) and `get_health` (gateway reachability + last receipt) — read-only, cannot execute inference or spend provider budget
+- [inferrail-mcp](https://github.com/domondi1/inferrail/tree/main/inferrail-mcp): MCP server (stdio, run with `inferrail mcp` or `uvx inferrail mcp`; registry name `io.github.domondi1/inferrail`) exposing `get_spend` (query attributed cost) and `get_health` (gateway reachability + last receipt) — read-only, cannot execute inference or spend provider budget
 
 ## Examples
 
