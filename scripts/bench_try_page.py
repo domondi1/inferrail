@@ -104,8 +104,10 @@ def main() -> int:
                 page.goto(url, wait_until="load")
                 page.wait_for_timeout(200)
                 paint = page.evaluate("""() => ({
-                    fcp: (performance.getEntriesByName('first-contentful-paint')[0] || {}).startTime,
-                    dcl: performance.getEntriesByType('navigation')[0].domContentLoadedEventEnd })""")
+                    fcp: (performance.getEntriesByName('first-contentful-paint')[0]
+                          || {}).startTime,
+                    dcl: performance.getEntriesByType('navigation')[0]
+                          .domContentLoadedEventEnd })""")
                 seen = len(_request_log(log_path))
                 started = time.monotonic()
                 page.click("#start-trial-btn")
