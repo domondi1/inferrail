@@ -1259,6 +1259,37 @@ def test_every_response_has_request_id_matching_its_log_line(service_module, tmp
     assert isinstance(line["duration_ms"], float)
 
 
+def test_every_response_carries_a_duration_only_server_timing_header(client):
+    """Lets a browser's DevTools split a slow /try/ request into network
+    vs. service time. Covers success, an auth failure, and a CORS
+    preflight (answered before routing), and checks the header carries
+    a duration and nothing else."""
+    import re
+
+    preflight = client.options(
+        "/v1/receipts",
+        headers={
+            "Origin": "https://tryinferrail.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    for resp in (client.get("/health"), client.get("/v1/receipts"), preflight):
+        assert re.fullmatch(r"app;dur=\d+\.\d", resp.headers["server-timing"]), resp.headers
+
+
+def test_trial_issuance_does_no_storage_io(client, tmp_path):
+    """`POST /v1/trial` is the "Try free" click: it must stay in-memory
+    only (registry + hash), so a slow disk can never slow it down. The
+    tenant's files are created lazily by its first authenticated call."""
+    data_dir = tmp_path / "data"
+    before = sorted(p.name for p in data_dir.iterdir())
+    trial = _issue(client)
+    assert sorted(p.name for p in data_dir.iterdir()) == before
+    client.get("/v1/receipts", headers=_auth(trial["api_key"]))
+    assert any(p.name.startswith(trial["tenant_id"]) for p in data_dir.iterdir())
+
+
 def test_rejections_before_routing_are_logged_too(service_module, tmp_path, caplog, monkeypatch):
     """The access log wraps every other middleware, so a 413 from the body
     limit still gets a request id and a log line."""

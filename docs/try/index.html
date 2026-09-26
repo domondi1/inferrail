@@ -12,7 +12,15 @@
   <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <!-- The trial gateway: connect (DNS + TCP + TLS) while the visitor reads,
+       so the "Try free" click costs one round trip, not three. crossorigin
+       matches the page's credential-less fetch() calls. -->
+  <link rel="preconnect" href="https://inferrail-cost-gateway.onrender.com" crossorigin>
+  <!-- Fonts load without blocking first paint (they already use
+       display=swap, so text shows in the fallback face until they arrive
+       either way). -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet"></noscript>
   <style>
     :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --good:#3E6B4F; }
     * { box-sizing:border-box; }
@@ -113,7 +121,7 @@
       <p class="supporting-line">A hosted, isolated trial instance — demo receipts immediately, your own OpenAI or Anthropic key if you want a real one. Prefer to keep everything on your own machine instead? <a href="/#steps">Self-host it</a> — same receipt schema, zero trust required in any hosted process.</p>
       <div class="cta-wrap">
         <button class="button-primary" id="start-trial-btn" type="button">Try free — instant gateway</button>
-        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all. First request after a quiet period may take up to a minute to wake up.</p>
+        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all.</p>
       </div>
       <p class="step-note hidden" id="restore-note" role="status"></p>
       <div class="error-banner hidden" id="unreachable-banner" role="alert">
@@ -263,9 +271,10 @@
     (() => {
       'use strict';
 
-      // hosted/cost_gateway deployed on Render's free tier, 2026-09-22 --
-      // see hosted/cost_gateway/README.md and ops notes for the deploy
-      // record. A `?base_url=` query param overrides this for local
+      // hosted/cost_gateway on an always-on Render instance -- see
+      // hosted/cost_gateway/README.md and LAUNCH.md. Keep the preconnect
+      // <link> in <head> in step with this origin. A `?base_url=` query
+      // param overrides this for local
       // development/testing, e.g.
       // http://127.0.0.1:5500/docs/try/?base_url=http://127.0.0.1:8423
       const DEFAULT_BASE_URL = 'https://inferrail-cost-gateway.onrender.com';
@@ -292,6 +301,18 @@
         document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
       };
 
+      // User Timing marks: zero network cost, visible in DevTools'
+      // Performance panel and to performance.getEntriesByType('measure')
+      // -- how scripts/bench_try_page.py reads click-to-ready and
+      // click-to-first-demo. Never allowed to break the page.
+      const perfMark = (name) => { try { performance.mark(name); } catch (_e) { /* unsupported */ } };
+      const perfMeasure = (name, start, { once = false } = {}) => {
+        try {
+          if (once && performance.getEntriesByName(name).length) return;
+          performance.measure(name, start);
+        } catch (_e) { /* start mark missing or API unsupported */ }
+      };
+
       let trial = null; // { tenant_id, api_key, base_url, expires_at, ... }
       // Model state per provider, filled by server-side discovery from the
       // visitor's own key (GET /v1/trial/{id}/models?provider=...). Each
@@ -306,6 +327,19 @@
       };
       let countdownTimer = null;
       let pollTimer = null;
+      // Polling budget. Each trial is rate-limited per minute (60 by
+      // default, service-side), and every request this page makes counts.
+      // An idle tick is ONE call (the receipt feed); work, task and status
+      // are re-fetched only when the receipt total changes, plus every
+      // FULL_REFRESH_EVERY_N_POLLS ticks so changes made from another tab
+      // or device (outcomes, keys) still show up. Polling pauses while
+      // the tab is hidden. tests/unit/hosted/test_try_page.py checks this
+      // budget against the service's rate limit.
+      const POLL_INTERVAL_MS = 5000;
+      const FULL_REFRESH_EVERY_N_POLLS = 6;
+      const START_TRIAL_TIMEOUT_MS = 15000;
+      let pollCount = 0;
+      let lastReceiptTotal = null;
 
       async function apiFetch(path, options) {
         const res = await fetch(BASE_URL + path, options);
@@ -401,6 +435,7 @@
         // starting another (or a natural expiry) never leaves stale
         // data from the previous trial visible, even for a moment.
         resetKeyFields(); resetModels();
+        lastReceiptTotal = null; pollCount = 0;
         $('key-status').textContent = '';
         $('test-result').innerHTML = '';
         $('feed-list').innerHTML =
@@ -446,7 +481,7 @@
         el.textContent = fmtSeconds(remaining);
         el.classList.toggle('low', remaining < 600);
         if (remaining <= 0) {
-          clearInterval(countdownTimer); clearInterval(pollTimer);
+          stopPolling();
           resetTrialUI(); clearSession();
           $('trial-notice').textContent = 'This trial has expired and its data has been deleted. Start a new one above.';
         }
@@ -461,15 +496,20 @@
       }
 
       async function refreshReceipts() {
+        // Returns whether the receipt total changed since the last look --
+        // the poll loop uses that to decide whether anything else is stale.
         try {
           const page = await apiFetch('/v1/receipts?limit=20', { headers: authHeaders() });
+          const changed = page.total !== lastReceiptTotal;
+          lastReceiptTotal = page.total;
           const list = $('feed-list');
-          if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet — send a test request above.</div>'; return; }
+          if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet — send a test request above.</div>'; return changed; }
           list.innerHTML = page.receipts.slice().reverse().map((r) => `
             <div class="receipt-row"><span>${esc(r.provider)} / ${esc(r.model)}${r.attributes && r.attributes.work_id ? ' · ' + esc(r.attributes.work_id) : ''}</span><span>${esc(r.status)}</span></div>
             <div class="receipt-row"><span>${esc(r.prompt_tokens ?? '?')} in / ${esc(r.completion_tokens ?? '?')} out</span><span>${esc(fmtUsd(r.estimated_cost_usd))}</span></div>
           `).join('');
-        } catch (e) { /* transient poll failure */ }
+          return changed;
+        } catch (e) { return false; /* transient poll failure */ }
       }
 
       function renderWork(work, taskReport) {
@@ -571,12 +611,35 @@
         }
       }
 
-      function startPolling() {
+      function refreshAll() {
+        refreshReceipts(); refreshStatus(); refreshWork();
+      }
+
+      async function pollOnce() {
+        if (!trial || document.hidden) return;
+        pollCount += 1;
+        const changed = await refreshReceipts();
+        if (!trial) return; // ended or expired while that was in flight
+        if (changed || pollCount % FULL_REFRESH_EVERY_N_POLLS === 0) { refreshStatus(); refreshWork(); }
+      }
+
+      function stopPolling() {
         clearInterval(countdownTimer); clearInterval(pollTimer);
+        countdownTimer = null; pollTimer = null;
+      }
+
+      function startPolling() {
+        stopPolling();
         countdownTimer = setInterval(tickCountdown, 1000);
-        pollTimer = setInterval(() => { refreshStatus(); refreshReceipts(); refreshWork(); }, 5000);
+        pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
         tickCountdown();
       }
+
+      document.addEventListener('visibilitychange', () => {
+        // Catch up at once when the visitor comes back to the tab, instead
+        // of showing whatever was current when they left it.
+        if (!document.hidden && trial && pollTimer) refreshAll();
+      });
 
       function renderReceiptResult(label, response) {
         const meta = response.inferrail || {};
@@ -596,13 +659,15 @@
         btn.disabled = true;
         const original = btn.textContent;
         btn.textContent = 'Sending…';
+        perfMark('inferrail:demo-click');
         try {
           const response = await apiFetch('/v1/demo/chat/completions', {
             method: 'POST', headers: taggedHeaders(),
             body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
           });
           renderReceiptResult('Demo receipt (DEMO-priced, no real key used)', response);
-          refreshReceipts(); refreshStatus(); refreshWork();
+          perfMeasure('inferrail:first-demo', 'inferrail:demo-click', { once: true });
+          refreshAll();
         } catch (e) { $('test-result').textContent = 'Demo request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
@@ -665,7 +730,7 @@
           }
           const label = `Real receipt — your ${PROVIDER_LABELS[provider]} key · model ${model} (picked automatically from the models your key can use)`;
           renderReceiptResult(label, response);
-          refreshReceipts(); refreshStatus(); refreshWork();
+          refreshAll();
         } catch (e) { $('test-result').textContent = 'Real request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
@@ -731,7 +796,7 @@
         btn.disabled = true;
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}`, { method: 'DELETE', headers: authHeaders() });
-          clearInterval(countdownTimer); clearInterval(pollTimer);
+          stopPolling();
           resetTrialUI(); clearSession();
           $('trial-panel').classList.add('hidden');
           $('start-trial-btn').disabled = false; $('start-trial-btn').textContent = 'Try free — instant gateway';
@@ -768,7 +833,11 @@
         }
       }
 
-      function showTrial() {
+      function showTrial({ fresh = false } = {}) {
+        // `fresh`: this trial was minted a moment ago, so its receipts and
+        // work are empty by construction -- resetTrialUI() already shows
+        // exactly that, and fetching them would only put three requests
+        // (plus CORS preflights) in front of the visitor's first click.
         resetTrialUI(); // wipe any leftover UI from a previous trial before showing this one
         $('trial-panel').classList.remove('hidden');
         $('base-url-code').textContent = trial.base_url;
@@ -776,12 +845,14 @@
         $('trial-notice').textContent = trial.notice;
         renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
         saveSession();
-        startPolling(); refreshReceipts(); refreshWork();
+        startPolling();
+        if (!fresh) { refreshReceipts(); refreshWork(); }
         ['openai', 'anthropic'].forEach((provider) => {
           if (trial[provider + '_configured']) discoverModels(provider).catch(() => { /* retried on the next real request */ });
         });
         $('start-trial-btn').disabled = true;
         $('start-trial-btn').textContent = 'Gateway ready ✓';
+        perfMeasure('inferrail:trial-ready', 'inferrail:trial-click');
       }
 
       async function restoreTrial() {
@@ -818,23 +889,20 @@
 
       async function startTrial() {
         const btn = $('start-trial-btn');
+        perfMark('inferrail:trial-click');
         btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
         $('unreachable-banner').classList.add('hidden');
-        // Free-tier hosting spins down when idle -- a cold start can take
-        // up to about a minute. Rather than let the button sit on a
-        // generic "setting up" message that starts to look stuck, say so
-        // plainly once it's taking longer than a normal warm request would.
-        const coldStartTimer = setTimeout(() => {
-          btn.textContent = 'Waking up the trial service (cold start, up to ~60s)…';
-        }, 4000);
+        // The service is always on, so a healthy start takes well under a
+        // second. If it hasn't answered by START_TRIAL_TIMEOUT_MS, stop
+        // waiting and offer a retry rather than leave the button spinning.
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), START_TRIAL_TIMEOUT_MS);
         try {
-          trial = await apiFetch('/v1/trial', { method: 'POST' });
-          clearTimeout(coldStartTimer);
-          showTrial();
+          trial = await apiFetch('/v1/trial', { method: 'POST', signal: controller.signal });
+          showTrial({ fresh: true });
           $('start-trial-hint').textContent = 'Your gateway is ready below.';
           $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) {
-          clearTimeout(coldStartTimer);
           if (e.httpStatus !== undefined) {
             // We reached the service and it gave a real answer -- show
             // that answer, not a generic "not deployed" guess.
@@ -843,16 +911,34 @@
                 ? "You've hit the trial rate limit for this network."
                 : `The trial service returned an error (HTTP ${e.httpStatus}).`;
             $('unreachable-banner-detail').textContent = e.message;
+          } else if (e.name === 'AbortError') {
+            $('unreachable-banner-title').textContent = "The trial service didn't respond in time.";
+            $('unreachable-banner-detail').textContent = 'Please try again in a moment.';
           } else {
-            $('unreachable-banner-title').textContent = "This hosted trial isn't reachable right now.";
-            $('unreachable-banner-detail').textContent =
-              'Either it hasn’t been deployed yet, or this instance is temporarily unavailable.';
+            $('unreachable-banner-title').textContent = "Couldn't reach the trial service.";
+            $('unreachable-banner-detail').textContent = 'Check your connection and try again.';
           }
           $('unreachable-banner').classList.remove('hidden');
-          btn.disabled = false; btn.textContent = 'Try free — instant gateway';
+          btn.disabled = false; btn.textContent = 'Try again';
+        } finally {
+          clearTimeout(timeout);
         }
       }
 
+      let warmedAt = 0;
+      const warmConnection = () => {
+        // Browsers drop an unused preconnected socket after a few seconds,
+        // so re-hint when the visitor shows intent (hover, focus, touch) --
+        // a connection hint only, no request is sent.
+        if (trial || Date.now() - warmedAt < 5000) return;
+        warmedAt = Date.now();
+        const link = document.createElement('link');
+        link.rel = 'preconnect'; link.href = BASE_URL; link.crossOrigin = 'anonymous';
+        document.head.appendChild(link);
+      };
+      ['pointerenter', 'focus', 'touchstart'].forEach((type) => {
+        $('start-trial-btn').addEventListener(type, warmConnection, { passive: true });
+      });
       $('start-trial-btn').addEventListener('click', startTrial);
       $('send-demo-btn').addEventListener('click', sendDemoRequest);
       $('send-real-btn').addEventListener('click', sendRealRequest);

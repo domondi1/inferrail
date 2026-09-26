@@ -227,11 +227,17 @@ class _AccessLogMiddleware:
             if message["type"] == "http.response.start":
                 response_started = True
                 status = message["status"]
+                # Server-Timing: time spent in this process until the
+                # response started, so a browser's DevTools can split a
+                # slow request into network vs. service time. Only a
+                # duration -- nothing about the request itself.
+                app_ms = (time.monotonic() - started_at) * 1000
                 message = {
                     **message,
                     "headers": [
                         *message.get("headers", []),
                         (b"x-request-id", request_id.encode()),
+                        (b"server-timing", f"app;dur={app_ms:.1f}".encode()),
                     ],
                 }
             await send(message)
