@@ -5,9 +5,9 @@ Starts a throwaway gateway (fresh data dir) and a static server for
 docs/, then drives the real page in headless Chromium and reports:
 
 - first contentful paint and DOMContentLoaded,
-- click "Try free" -> trial panel ready (the page's own
+- click "Run demo" -> trial panel ready (the page's own
   `inferrail:trial-ready` User Timing measure),
-- click "Send a demo request" -> receipt shown (`inferrail:first-demo`),
+- click "Run demo" -> demo job result shown (`inferrail:first-demo`),
 - gateway requests in the first 6 s after the click, and how many of
   them were CORS preflights (counted from the gateway's own access log),
 - requests an idle, visible trial tab makes per minute.
@@ -110,10 +110,10 @@ def main() -> int:
                           .domContentLoadedEventEnd })""")
                 seen = len(_request_log(log_path))
                 started = time.monotonic()
-                page.click("#start-trial-btn")
+                # One click starts the trial and runs the demo job.
+                page.click("#run-demo-btn")
                 page.wait_for_selector("#trial-panel:not(.hidden)")
-                page.click("#send-demo-btn")
-                page.wait_for_selector("#test-result .card")
+                page.wait_for_selector("#result-status:text('Job completed')")
                 measures = page.evaluate("""() => Object.fromEntries(
                     performance.getEntriesByType('measure').map(m => [m.name, m.duration]))""")
                 page.wait_for_timeout(max(0, int((6 - (time.monotonic() - started)) * 1000)))

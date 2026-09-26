@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Inferrail — know what your AI work costs</title>
-  <meta name="description" content="Inferrail is a self-hosted, OpenAI- and Anthropic-compatible gateway that records token usage and estimated cost per request, attributed to your customers, workflows, or tasks, without copying prompts or responses into its receipts. Apache 2.0.">
+  <title>Inferrail: know what your AI work costs</title>
+  <meta name="description" content="Inferrail turns the many model calls behind one AI job into one cost for that job, without copying prompts or responses into its receipts. Open source, Apache 2.0. OpenAI- and Anthropic-compatible.">
   <link rel="canonical" href="https://tryinferrail.com/">
   <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
@@ -12,300 +12,418 @@
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <!-- Fonts load without blocking first paint; text shows in the system
+       fallback until they arrive (display=swap). -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="site.css">
   <style>
-    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; }
-    * { box-sizing:border-box; }
-    html { background:var(--paper); scroll-behavior:smooth; }
-    body { margin:0; background:var(--paper); color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:clamp(15px,1.05vw,19px); line-height:1.55; }
-    a { color:inherit; }
-    a:focus-visible,button:focus-visible { outline:2px solid var(--stamp); outline-offset:5px; }
-    .wrap { width:100%; max-width:1240px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
-    .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); }
-    .wordmark,.eyebrow,.button,.receipt-label,.receipt-stamp { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
-    .wordmark { font-size:clamp(16px,1.4vw,22px); display:inline-flex; align-items:center; gap:.55em; }
-    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
-    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
-    .nav { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:clamp(10px,2.8vw,28px); font-size:clamp(13px,1vw,16px); }
-    .nav a { text-underline-offset:4px; }
-    .hero { padding:clamp(36px,4vw,72px) 0 clamp(40px,4.5vw,72px); text-align:center; }
-    h1,h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; line-height:.98; letter-spacing:-.02em; text-transform:uppercase; }
-    h1 { font-size:clamp(34px,6vw,92px); max-width:20ch; margin:0 auto; }
-    .tagline-2 { display:block; color:var(--ink-2); }
-    .supporting-line { max-width:52ch; margin:clamp(18px,2vw,28px) auto 0; color:var(--ink-2); font-size:clamp(14px,1.1vw,19px); }
-    .cta-wrap { display:grid; justify-items:center; gap:12px; margin-top:clamp(24px,2.8vw,44px); }
-    .button-primary { display:inline-block; padding:clamp(18px,1.7vw,26px) clamp(38px,4vw,64px); font-size:clamp(16px,1.5vw,23px); line-height:1; cursor:pointer; color:var(--paper); background:var(--stamp); border:1px solid var(--stamp); box-shadow:6px 6px 0 rgba(20,32,27,.14); }
-    .button-primary:hover { background:#8f2c22; }
-    .cta-hint { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    .cta-wrap .button-ghost { padding:clamp(11px,1vw,14px) clamp(22px,2vw,30px); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.08em; font-size:clamp(13px,1vw,15px); }
-    .steps { padding:0 0 clamp(40px,4.5vw,72px); }
-    .steps-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(16px,2vw,26px); margin-top:clamp(20px,2.2vw,32px); text-align:left; }
-    .step { padding:clamp(18px,1.8vw,26px); background:#fff; border:1px solid var(--rule); box-shadow:6px 6px 0 rgba(20,32,27,.06); }
-    .step-number { display:block; margin:0 0 10px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:clamp(11px,.8vw,13px); letter-spacing:.12em; text-transform:uppercase; }
-    .step h3 { margin:0 0 12px; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(15px,1.1vw,18px); font-weight:700; text-transform:uppercase; line-height:1.2; }
-    .install-wrap { margin-top:clamp(16px,1.6vw,22px); }
-    .install { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:clamp(10px,1vw,15px); background:var(--ink); color:var(--paper); overflow-x:auto; }
-    .install code { font-family:inherit; font-size:clamp(12.5px,1vw,16px); white-space:pre; }
-    .copy { flex:none; padding:5px 8px; color:var(--paper); background:transparent; border:1px solid var(--paper); font:500 clamp(10px,.7vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
-    .step-note { margin:9px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    .receipt-json { margin-top:clamp(28px,3vw,44px); }
-    .receipt-json p.eyebrow { margin:0 0 10px; text-align:center; }
-    .receipt-json pre { max-width:clamp(440px,54vw,680px); margin:0 auto; padding:clamp(18px,1.8vw,26px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); overflow-x:auto; font-size:clamp(12px,.95vw,15px); line-height:1.6; }
-    .receipt-json .k { color:var(--ink-2); }
-    .receipt-json .v { color:var(--ink); }
-    .receipt-json .missing { color:var(--stamp); }
-    .section-break { height:4px; margin:clamp(24px,4vw,60px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
-    h2 { font-size:clamp(28px,5vw,72px); line-height:1; }
-    .sub { max-width:60ch; margin:clamp(20px,2.2vw,32px) 0 clamp(26px,3vw,44px); color:var(--ink-2); font-size:clamp(14px,1.1vw,19px); }
-    .cards { padding:0 0 clamp(56px,6vw,96px); }
-    .card { max-width:66ch; padding:clamp(22px,2.2vw,32px) clamp(24px,2.4vw,36px); margin-top:clamp(8px,1vw,16px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); }
-    .card + .card { margin-top:clamp(18px,1.8vw,26px); }
-    .eyebrow { margin:0 0 10px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
-    .card h3 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(20px,2.4vw,30px); font-weight:700; text-transform:uppercase; line-height:1.15; }
-    .card-copy { max-width:58ch; margin:clamp(12px,1.4vw,18px) 0 0; color:var(--ink-2); font-size:clamp(14px,1.05vw,17px); line-height:1.5; }
-    .card .button { margin-top:clamp(16px,1.8vw,24px); padding:clamp(11px,1vw,15px) clamp(22px,2vw,30px); font-size:clamp(13px,1vw,15px); }
-    .button { display:inline-block; text-decoration:none; }
-    .button-ghost { color:var(--ink); background:transparent; border:1px solid var(--ink); }
-    .button-ghost:hover { background:var(--ink); color:var(--paper); }
-    .receipt-row { display:flex; justify-content:space-between; gap:18px; padding:3px 8px; font-size:clamp(13px,1.02vw,16px); }
-    .receipt-row:nth-of-type(even) { background:var(--bar); }
-    .receipt-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
-    footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    footer nav { display:flex; flex-wrap:wrap; gap:18px; }
-    @media (max-width:900px) { .steps-grid{grid-template-columns:1fr} }
-    @media (max-width:600px) { .masthead{min-height:58px}footer{display:block}footer nav{margin-top:10px}.receipt-json pre{white-space:pre-wrap;word-break:break-word}.receipt-json .missing{display:block;margin-top:8px} }
+    /* ---------- Hero ---------- */
+    .hero { padding-top: clamp(24px, 3.6vw, 64px); padding-bottom: clamp(44px, 5vw, 88px); }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.22fr) minmax(0, .78fr); gap: clamp(28px, 4vw, 72px); align-items: center; }
+    .hero-title { font-size: clamp(44px, 5.4vw, 78px); }
+    .hero-title span { display: block; }
+    .hero-title .accent { color: var(--stamp); }
+    /* Second headline: about 60% of the primary headline's size. */
+    .hero-promise { margin: clamp(18px, 2vw, 30px) 0 0; font-size: clamp(28px, 3.3vw, 44px); line-height: 1; }
+    .hero-promise span { display: block; text-wrap: balance; }
+    .hero-promise span + span { margin-top: .12em; color: var(--ink-2); }
+    .hero-support { margin: clamp(16px, 1.6vw, 24px) 0 0; font-size: clamp(17px, 1.3vw, 20px); color: var(--ink-2); max-width: 44ch; }
+    .hero-ctas { margin-top: clamp(20px, 2.2vw, 32px); }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 18px 0 0; padding: 0; list-style: none; font-size: 15px; color: var(--ink-2); }
+    .hero-meta li::before { content: "\2713"; margin-right: 6px; color: var(--good); font-weight: 700; }
+    .example-tag { font: 600 13px var(--sans); color: var(--ink-2); text-transform: uppercase; letter-spacing: .08em; padding: 3px 8px; border: 1px dashed var(--ink-3); }
+    .example-note { margin: 12px 0 0; font-size: 15px; color: var(--ink-2); }
+    @media (max-width: 1000px) {
+      .hero-grid { grid-template-columns: minmax(0, 1fr); }
+      .hero-proof { max-width: 680px; }
+    }
+
+    /* ---------- Benefits ---------- */
+    .benefit h3 { font-size: clamp(19px, 1.5vw, 22px); }
+    .benefit-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; margin-bottom: 14px; border: 2px solid var(--ink); font: 700 18px var(--display); }
+    .benefit:first-child .benefit-icon { background: var(--stamp); border-color: var(--stamp); color: #fff; }
+
+    /* ---------- How it works ---------- */
+    .how { counter-reset: how; }
+    .how-step { position: relative; padding-top: 52px; min-width: 0; }
+    .how-step::before { counter-increment: how; content: counter(how); position: absolute; top: 0; left: 0; display: grid; place-items: center; width: 38px; height: 38px; background: var(--ink); color: var(--paper); font: 700 18px var(--display); }
+    .how-step h3 { margin: 0 0 6px; font: 700 21px/1.25 var(--sans); }
+    .how-step p { margin: 0; color: var(--ink-2); }
+    .how-step .mono { display: block; margin-top: 12px; padding: 10px 12px; background: var(--card); border: 1px solid var(--rule); font-size: 14px; overflow-wrap: anywhere; }
+
+    /* ---------- Local ---------- */
+    .local-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 64px); align-items: start; }
+    .local-steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; margin: 0; padding: 0; list-style: none; }
+    .local-steps h3 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 10px; font: 700 21px var(--sans); }
+    .local-steps h3 .n { color: var(--stamp); font-family: var(--display); }
+    .local-links { margin-top: 26px; }
+    .time-pill { display: inline-block; margin-left: 10px; padding: 2px 10px; font: 600 15px var(--sans); color: var(--good); background: var(--good-tint); border: 1px solid var(--good); vertical-align: middle; letter-spacing: 0; text-transform: none; }
+    @media (max-width: 900px) { .local-grid { grid-template-columns: minmax(0, 1fr); } }
+    .recipes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .recipe { padding: 18px; background: var(--paper); border: 1px solid var(--rule); min-width: 0; }
+    .recipe h4 { margin: 0 0 4px; font: 700 18px var(--sans); }
+    .recipe p { margin: 0 0 12px; color: var(--ink-2); font-size: 16px; }
+    .recipe .cmd code { font-size: 15px; }
+    @media (max-width: 800px) { .recipes { grid-template-columns: minmax(0, 1fr); } }
+
+    /* ---------- Privacy ---------- */
+    .keeps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); }
+    .keeps ul { margin: 12px 0 0; padding: 0; list-style: none; }
+    .keeps li { padding: 8px 0; border-top: 1px solid var(--rule); }
+    .keeps li::before { margin-right: 10px; font-weight: 700; }
+    .keeps .yes li::before { content: "\2713"; color: var(--good); }
+    .keeps .no li::before { content: "\2715"; color: var(--stamp); }
+    .limit { margin-top: clamp(16px, 2vw, 28px); border-left: 6px solid var(--stamp); }
+    @media (max-width: 700px) { .keeps { grid-template-columns: minmax(0, 1fr); } }
+
+    /* ---------- Status ---------- */
+    .status-list { margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--rule); }
+    .status-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 20px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--rule); }
+    .status-list li:first-child { border-top: none; }
+    .status-list strong { font-weight: 600; }
+    .status-list .desc { grid-column: 1; color: var(--ink-2); font-size: 16px; }
+    .status-list .badge { grid-row: 1 / span 2; grid-column: 2; }
+    .legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 20px; }
+    .legend p { margin: 8px 0 0; font-size: 15px; color: var(--ink-2); }
+    @media (max-width: 800px) { .legend { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 480px) {
+      .status-list li { grid-template-columns: 1fr; }
+      .status-list .badge { grid-row: auto; grid-column: 1; justify-self: start; }
+    }
+
+    /* ---------- More ---------- */
+    .more-card { display: flex; flex-direction: column; gap: 12px; }
+    .more-card .button { align-self: flex-start; margin-top: auto; }
   </style>
 </head>
 <body>
-  <header class="masthead wrap">
-    <a class="wordmark" href="."><img class="wordmark-mark" src="inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
-    <nav class="nav" aria-label="Primary navigation">
-      <a href="/try/"><strong>Try free</strong></a>
-      <a href="#work">Work, not tokens</a>
-      <a href="#never-keeps">Never keeps</a>
-      <a href="#budgets">Budgets</a>
-      <a href="#dashboard">Dashboard</a>
-      <a href="#ap-hosted">Real job</a>
-      <a href="https://github.com/domondi1/inferrail">GitHub</a>
-    </nav>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="/"><img src="inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
+      <div class="header-actions">
+        <a class="button button-primary" href="/try/">Try free</a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+      </div>
+      <nav class="nav" id="primary-nav" aria-label="Primary">
+        <a href="#product">Product</a>
+        <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
+        <a href="/labs/">Labs</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a class="button button-primary nav-try" href="/try/">Try free</a>
+      </nav>
+    </div>
   </header>
-  <main>
+
+  <main id="main">
+    <!-- 1. What is this? -->
     <section class="hero wrap" aria-labelledby="hero-title">
-      <h1 id="hero-title">Know what your AI work costs.<span class="tagline-2">Without keeping what it said.</span></h1>
-      <p class="supporting-line">Self-hosted gateway. Payload-free receipts. Apache 2.0.<br>tryinferrail.com</p>
-      <div class="cta-wrap">
-        <a class="button-primary" href="/try/">Try free — instant gateway</a>
-        <p class="cta-hint">No account. Personal hosted gateway in seconds — demo mode needs no key at all.</p>
-        <a class="button button-ghost" href="#steps" style="margin-top:6px">Or self-host: <code>pip install inferrail</code></a>
-        <p class="cta-hint">Runs on your own machine. No account, ever, for this path either.</p>
+      <div class="hero-grid">
+        <div>
+          <h1 class="display hero-title" id="hero-title">
+            <span>20 model calls.</span>
+            <span>One job.</span>
+            <span class="accent">One cost.</span>
+          </h1>
+          <p class="display hero-promise"><span>Know what your AI work costs.</span><span>Without keeping what it said.</span></p>
+          <p class="hero-support">See what a real AI job costs in seconds, or run Inferrail locally.</p>
+          <div class="button-row hero-ctas">
+            <a class="button button-primary button-big" href="/try/">Try it free <span class="arrow" aria-hidden="true"></span></a>
+            <a class="button button-secondary button-big" href="#local">Run locally</a>
+          </div>
+          <ul class="hero-meta" aria-label="Good to know">
+            <li>No account</li>
+            <li>Demo mode needs no API key</li>
+            <li>Open source, Apache 2.0</li>
+          </ul>
+        </div>
+
+        <!-- 2. Can I see it? -->
+        <div class="hero-proof">
+          <figure class="result" style="margin:0" aria-labelledby="example-caption">
+            <div class="result-head">
+              <p class="result-job">Support ticket #42<span class="result-job-id">work_id: support-ticket-42</span></p>
+              <span class="example-tag">Example</span>
+            </div>
+            <div class="metrics">
+              <div class="metric metric-cost"><span class="metric-value">$0.0148</span><span class="metric-label">cost of this job</span></div>
+              <div class="metric"><span class="metric-value">18</span><span class="metric-label">model calls</span></div>
+              <div class="metric"><span class="metric-value">8,241</span><span class="metric-label">tokens</span></div>
+              <div class="metric"><span class="metric-value">23s</span><span class="metric-label">total time</span></div>
+            </div>
+            <div class="rollup" aria-hidden="true">
+              <div class="rollup-calls"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <span class="rollup-arrow">&rarr;</span>
+              <span class="rollup-node">1 job</span>
+              <span class="rollup-arrow">&rarr;</span>
+              <span class="rollup-cost">$0.0148</span>
+            </div>
+            <div class="table-scroll">
+              <table class="calls-table">
+                <caption class="sr-only">Some of the 18 calls in this example job</caption>
+                <thead><tr><th scope="col">Call</th><th scope="col">Step</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th></tr></thead>
+                <tbody>
+                  <tr><td>1</td><td>read ticket</td><td class="num">612</td><td class="num">$0.0009</td></tr>
+                  <tr><td>2</td><td>classify</td><td class="num">380</td><td class="num">$0.0005</td></tr>
+                  <tr><td>3</td><td>look up account</td><td class="num">1,204</td><td class="num">$0.0021</td></tr>
+                  <tr class="more"><td>4&ndash;17</td><td>14 more calls</td><td class="num">5,145</td><td class="num">$0.0097</td></tr>
+                  <tr><td>18</td><td>final reply</td><td class="num">900</td><td class="num">$0.0016</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </figure>
+          <p class="example-note" id="example-caption">An example job, for illustration. <a href="/try/">Run the live demo</a> for a real result from a real Inferrail gateway.</p>
+        </div>
       </div>
     </section>
 
-    <section class="steps wrap" id="steps" aria-labelledby="steps-title">
-      <h2 id="steps-title">Three commands<span class="tagline-2">to a real, payload-free receipt.</span></h2>
-      <div class="steps-grid">
-        <div class="step">
-          <span class="step-number">1. Install</span>
-          <h3>pip install inferrail</h3>
-          <div class="install"><code>pip install inferrail</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div>
-          <p class="step-note">Apache-2.0. No account required, ever, for this path.</p>
+    <!-- Core benefits -->
+    <section class="section section-tint" id="product" aria-labelledby="benefits-title">
+      <div class="wrap">
+        <h2 class="section-title" id="benefits-title">What Inferrail does</h2>
+        <p class="section-lede">It sits between your app and your model provider. Every call gets a receipt. Receipts from the same job add up to one cost.</p>
+        <div class="grid grid-4">
+          <div class="card benefit">
+            <span class="benefit-icon" aria-hidden="true">$</span>
+            <h3>Know what work costs</h3>
+            <p>From single model calls to one workflow, customer, or job.</p>
+          </div>
+          <div class="card benefit">
+            <span class="benefit-icon" aria-hidden="true">&empty;</span>
+            <h3>No prompt storage</h3>
+            <p>Inferrail's receipts have no field for prompts or responses.</p>
+          </div>
+          <div class="card benefit">
+            <span class="benefit-icon" aria-hidden="true">&#9632;</span>
+            <h3>Set budgets</h3>
+            <p>A daily cap refuses a request before the provider is called.</p>
+          </div>
+          <div class="card benefit">
+            <span class="benefit-icon" aria-hidden="true">&harr;</span>
+            <h3>Works with what you use</h3>
+            <p>OpenAI SDK, Anthropic SDK, Claude Code, LangChain, and curl.</p>
+          </div>
         </div>
-        <div class="step">
-          <span class="step-number">2. Point your SDK at it</span>
-          <h3>inferrail serve --quickstart</h3>
-          <div class="install"><code>inferrail serve --quickstart</code><button class="copy" type="button" aria-label="Copy serve command">Copy</button></div>
-          <p class="step-note">Prints the exact one-line <code>base_url</code> change for the OpenAI SDK <em>and</em> the Anthropic SDK — copy-pasteable, printed on startup.</p>
-        </div>
-        <div class="step">
-          <span class="step-number">3. See the receipt</span>
-          <h3>inferrail report</h3>
-          <div class="install"><code>inferrail report</code><button class="copy" type="button" aria-label="Copy report command">Copy</button></div>
-          <p class="step-note">A one-line summary prints to your terminal the instant each request completes. No key yet? <code>inferrail demo</code> runs the same real pipeline offline, zero-key.</p>
-        </div>
-      </div>
-      <div class="receipt-json">
-        <p class="eyebrow" style="text-align:center">A real receipt — every field this schema can ever hold</p>
-        <pre aria-label="Example InferenceReceipt JSON, with no prompt or response field"><code>{
-  <span class="k">"receipt_id"</span>: <span class="v">"ir_9e841cb322de"</span>,
-  <span class="k">"route"</span>: <span class="v">"passthrough"</span>,
-  <span class="k">"provider"</span>: <span class="v">"openai"</span>,
-  <span class="k">"model"</span>: <span class="v">"gpt-4o-mini"</span>,
-  <span class="k">"status"</span>: <span class="v">"success"</span>,
-  <span class="k">"prompt_tokens"</span>: <span class="v">812</span>,
-  <span class="k">"completion_tokens"</span>: <span class="v">143</span>,
-  <span class="k">"estimated_cost_usd"</span>: <span class="v">"0.000362"</span>,
-  <span class="k">"attributes"</span>: <span class="v">{"customer": "acme", "work_id": "wid_contract_1"}</span>,
-  <span class="k">"total_latency_ms"</span>: <span class="v">842.1</span>
-  <span class="missing">// no "prompt", "messages", "content", or "response" field exists on this schema</span>
-}</code></pre>
       </div>
     </section>
 
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="work" aria-labelledby="work-title">
-      <h2 id="work-title">Work, not tokens<span class="tagline-2">A contract review costs $2.14 and completed. Not "you spent $4,000 on GPT-4 last month."</span></h2>
-      <p class="sub">Inferrail groups related requests under a <code>work_id</code> you choose — a support ticket, an invoice, a contract review — and attaches the outcome your application declares for it. The answer it gives back is about the unit of work, not the raw token count.</p>
-      <div class="card">
-        <p class="eyebrow">One work_id, several requests, one answer</p>
-        <div class="receipt-row"><span>work_id</span><span>wid_contract_1</span></div>
-        <div class="receipt-row"><span>customer-declared outcome</span><span>resolved</span></div>
-        <div class="receipt-row"><span>receipts</span><span>2</span></div>
-        <div class="receipt-row"><span>known attributed inference cost</span><span>$0.000483</span></div>
-        <p class="card-copy">Tag a request with <code>X-Inferrail-Attribute-Work-Id: wid_contract_1</code> (or <code>-a work_id=...</code> via <code>inferrail try</code>), then <code>inferrail work outcome wid_contract_1 --status resolved</code> when your application knows how it ended. <code>inferrail work wid_contract_1</code> gives you this back — the engineer who's been answering "what does this feature cost us per customer?" with a spreadsheet gets a real number after a day of traffic: <code>inferrail report --by customer</code>.</p>
+    <!-- 3. What just happened? -->
+    <section class="section wrap" aria-labelledby="how-title">
+      <h2 class="section-title" id="how-title">How it works</h2>
+      <p class="section-lede">One job, like answering a support ticket, can take many model calls. Inferrail adds them up for you.</p>
+      <div class="grid grid-3 how">
+        <div class="how-step">
+          <h3>Point your app at Inferrail</h3>
+          <p>Change one <code>base_url</code>. Requests still go to OpenAI or Anthropic, and each call gets a receipt.</p>
+        </div>
+        <div class="how-step">
+          <h3>Say which job a call is for</h3>
+          <p>Add one header to each call. Any name works: a ticket, an invoice, a customer.</p>
+          <span class="mono">X-Inferrail-Attribute-Work-Id: support-ticket-42</span>
+        </div>
+        <div class="how-step">
+          <h3>See what the job cost</h3>
+          <p>Calls with the same job add up to one cost. Record how the job ended to see cost per successful outcome.</p>
+          <span class="mono">inferrail work support-ticket-42</span>
+        </div>
       </div>
     </section>
 
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="never-keeps" aria-labelledby="never-keeps-title">
-      <h2 id="never-keeps-title">What Inferrail keeps, and what it doesn't<span class="tagline-2">Stated plainly, including what it doesn't protect.</span></h2>
-      <div class="card">
-        <p class="eyebrow">Schema plus tests</p>
-        <h3>Receipts have no field for prompts or responses</h3>
-        <p class="card-copy">A receipt is a small, explicit set of fields: route, provider, model, token counts, price snapshot, cost, status, timing, and your own attribution tags. None of them is a message field, and the gateway never hands message bodies to the receipt builder. Canary tests in this project's CI check that for success, error, and streaming requests. Attribution tags are stored exactly as you send them, so keep secrets and message content out of them. See the schema yourself, no key needed:</p>
-        <div class="install"><code>inferrail verify-payload-free</code><button class="copy" type="button" aria-label="Copy verify-payload-free command">Copy</button></div>
-        <p class="step-note">Prints the real, running schema and checks its field names. It is a schema check, not a security audit: it cannot inspect values you store, your logs, or your provider.</p>
+    <!-- 4. Can I use it myself? -->
+    <section class="section section-paper2" id="local" aria-labelledby="local-title">
+      <div class="wrap">
+        <div class="local-grid">
+          <div>
+            <h2 class="section-title" id="local-title">Try it locally <span class="time-pill">30 seconds</span></h2>
+            <p class="section-lede" style="margin-bottom:28px">Runs on your machine. No account. The demo needs no API key.</p>
+            <ol class="local-steps">
+              <li>
+                <h3><span class="n">1</span> Install</h3>
+                <div class="cmd"><code>pip install inferrail</code><button class="copy" type="button" aria-label="Copy: pip install inferrail">Copy</button></div>
+              </li>
+              <li>
+                <h3><span class="n">2</span> Run the demo</h3>
+                <div class="cmd"><code>inferrail demo</code><button class="copy" type="button" aria-label="Copy: inferrail demo">Copy</button></div>
+              </li>
+              <li>
+                <h3><span class="n">3</span> See your costs</h3>
+                <p style="margin:0;color:var(--ink-2)">The demo prints cost per job, per customer, and per outcome.</p>
+              </li>
+            </ol>
+          </div>
+          <div>
+            <p class="eyebrow">From <code>inferrail demo</code>, some columns hidden</p>
+            <pre class="output" aria-label="Excerpt of inferrail demo output">WORK ID          OUTCOME     RECEIPTS  KNOWN COST
+work-contract-1  resolved    2         $0.000483
+work-pending-1   undeclared  1         $0.0001
+work-support-1   failed      2         $0.007825</pre>
+            <p class="small" style="margin:10px 0 0">Demo prices are made-up round numbers, labelled DEMO. No provider is called.</p>
+            <div class="button-row local-links">
+              <a class="button button-secondary" href="#connect" data-open="connect">Connect a real app</a>
+              <a class="button button-quiet" href="https://github.com/domondi1/inferrail#readme">Full installation guide</a>
+            </div>
+          </div>
+        </div>
+
+        <details class="disclose" id="connect" style="margin-top:clamp(32px,4vw,56px)">
+          <summary><span>Connect a real app<span class="summary-sub">Run the gateway, point your SDK at it, tag work, set a budget.</span></span></summary>
+          <div class="disclose-body">
+            <div class="recipes">
+              <div class="recipe">
+                <h4>Start the gateway</h4>
+                <p>Prints the one-line <code>base_url</code> change for your SDK.</p>
+                <div class="cmd"><code>inferrail serve --quickstart</code><button class="copy" type="button" aria-label="Copy serve command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Point your SDK at it</h4>
+                <p>OpenAI SDK: <code>base_url="http://127.0.0.1:8000/v1"</code>. Claude Code or the Anthropic SDK:</p>
+                <div class="cmd"><code>export ANTHROPIC_BASE_URL=http://127.0.0.1:8000</code><button class="copy" type="button" aria-label="Copy Anthropic base URL command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Tag calls with a job</h4>
+                <p>Send this header with each call that belongs to the job.</p>
+                <div class="cmd no-prompt"><code>X-Inferrail-Attribute-Work-Id: support-ticket-42</code><button class="copy" type="button" aria-label="Copy work header">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Record how the job ended</h4>
+                <p>Then <code>inferrail work support-ticket-42</code> shows cost and outcome together.</p>
+                <div class="cmd"><code>inferrail work outcome support-ticket-42 --status resolved</code><button class="copy" type="button" aria-label="Copy work outcome command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>See cost by customer</h4>
+                <p>Or by model, route, or any tag you attach.</p>
+                <div class="cmd"><code>inferrail report --by customer</code><button class="copy" type="button" aria-label="Copy report command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Set a daily budget</h4>
+                <p>A request that would go over is refused with HTTP 402 before the provider is called. <a href="https://github.com/domondi1/inferrail/blob/main/docs/adr/0015-budget-enforcement.md">Scoped budgets</a></p>
+                <div class="cmd"><code>inferrail serve --quickstart --daily-budget-usd 5.00</code><button class="copy" type="button" aria-label="Copy budget command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Open the local dashboard</h4>
+                <p>Live feed, work, budgets, and copy-paste snippets. Served by the gateway itself.</p>
+                <div class="cmd"><code>inferrail serve --quickstart --app-mode</code><button class="copy" type="button" aria-label="Copy app-mode command">Copy</button></div>
+              </div>
+              <div class="recipe">
+                <h4>Check the privacy claim yourself</h4>
+                <p>Prints the receipt schema your install is running. A schema check, not a security audit.</p>
+                <div class="cmd"><code>inferrail verify-payload-free</code><button class="copy" type="button" aria-label="Copy verify command">Copy</button></div>
+              </div>
+            </div>
+            <p class="small" style="margin:18px 0 0">More: <a href="https://github.com/domondi1/inferrail/blob/main/docs/adr/0014-anthropic-messages-passthrough.md">Anthropic passthrough design</a> · <a href="https://github.com/domondi1/inferrail/blob/main/docs/PRODUCT.md">exact current scope</a> · <a href="https://github.com/domondi1/inferrail/blob/main/docs/ARCHITECTURE.md">architecture</a></p>
+          </div>
+        </details>
       </div>
-      <div class="card">
-        <p class="eyebrow">The honest limit</p>
+    </section>
+
+    <!-- Privacy -->
+    <section class="section wrap" id="privacy" aria-labelledby="privacy-title">
+      <h2 class="section-title" id="privacy-title">What Inferrail keeps</h2>
+      <p class="section-lede">Enough to tell you what the work cost. Not what was said.</p>
+      <div class="keeps">
+        <div class="card yes">
+          <h3>Kept in Inferrail's records</h3>
+          <ul>
+            <li>Provider and model</li>
+            <li>Token counts</li>
+            <li>Cost, or "unknown" when it can't be priced</li>
+            <li>Timing and status</li>
+            <li>Tags you add, like a job or a customer, stored exactly as sent</li>
+          </ul>
+        </div>
+        <div class="card no">
+          <h3>Never kept</h3>
+          <ul>
+            <li>Your prompts</li>
+            <li>Model responses</li>
+          </ul>
+          <p style="margin-top:14px">The receipt schema has no field for them, and the gateway never hands message bodies to the receipt builder. Keep secrets and message text out of your tags too.</p>
+        </div>
+      </div>
+      <div class="card limit">
         <h3>Your provider still sees the prompt</h3>
-        <p class="card-copy">Inferrail is a pass-through gateway, not a privacy barrier against OpenAI or Anthropic. The request still reaches them exactly as it would without Inferrail in the path. What is narrower and testable: <em>Inferrail's own</em> receipts and telemetry are built without message bodies. The self-hosted gateway reads your provider key from its own environment. The hosted trial is different: if you add a real key there, the hosted process holds it in memory and handles your traffic.</p>
+        <p>Inferrail passes your request to OpenAI or Anthropic as usual. The promise is narrower: Inferrail's own receipts and records do not contain it.</p>
+        <details class="inline">
+          <summary>How privacy works</summary>
+          <div>
+            <p>A receipt is a small, explicit set of fields: route, provider, model, token counts, price snapshot, cost, status, timing, and your own tags. Canary tests in this project's CI check success, error, and streaming requests. <code>inferrail verify-payload-free</code> prints the schema your install is running. It is a schema check, not a security audit: it can't inspect tag values you store, your logs, or your provider.</p>
+            <p style="margin-top:10px">The self-hosted gateway writes records on your machine only. An optional usage ping reports lifecycle events like "installed" and "started", never anything about your traffic, and sends nothing until an endpoint is configured. <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Usage ping details</a></p>
+            <p style="margin-top:10px">The self-hosted gateway reads your provider key from its own environment. The hosted trial is different: if you add a real key there, the hosted process holds it in memory, for at most 4 hours, and handles your traffic. <a href="https://github.com/domondi1/inferrail/blob/main/hosted/cost_gateway/README.md">How the trial works</a></p>
+          </div>
+        </details>
       </div>
     </section>
 
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="budgets" aria-labelledby="budgets-title">
-      <h2 id="budgets-title">Never overspend on work<span class="tagline-2">The cap fires before the bill does.</span></h2>
-      <div class="card">
-        <p class="eyebrow">One flag, on the quickstart path</p>
-        <h3>A daily ceiling, enforced before the provider is ever called</h3>
-        <p class="card-copy">For the founder or ops lead who's had a surprise provider bill: set a global, block-mode daily cap in the same command that starts the gateway. A request that would cross it is rejected with HTTP 402 — a machine-readable error naming the exact budget, the limit, and what was spent so far — before any provider is contacted. The block itself is still recorded as a normal receipt, so nothing about it is hidden after the fact.</p>
-        <div class="install"><code>inferrail serve --quickstart --daily-budget-usd 5.00</code><button class="copy" type="button" aria-label="Copy budget command">Copy</button></div>
-        <p class="step-note">Scoped budgets (per-project, per-work_id, warn-instead-of-block) via <code>inferrail budget set</code> — see <a href="https://github.com/domondi1/inferrail/blob/main/docs/adr/0015-budget-enforcement.md">the full design</a>.</p>
+    <!-- 5. What else can it do? -->
+    <section class="section section-paper2" id="status" aria-labelledby="status-title">
+      <div class="wrap">
+        <h2 class="section-title" id="status-title">What's ready today</h2>
+        <p class="section-lede">Not everything is equally mature. Inferrail is a developer preview, so interfaces may still change before 1.0.</p>
+        <div class="legend">
+          <div><span class="badge badge-available">Available</span><p>Works today in the open-source package.</p></div>
+          <div><span class="badge badge-preview">Preview</span><p>Working, and still being shaped with early users.</p></div>
+          <div><span class="badge badge-labs">Labs</span><p>Experiments. Testnet only.</p></div>
+        </div>
+        <div class="grid grid-2">
+          <ul class="status-list" aria-label="Core capabilities">
+            <li><strong>OpenAI-compatible gateway</strong><span class="desc">Streaming and tool calls pass through.</span><span class="badge badge-available">Available</span></li>
+            <li><strong>Anthropic-compatible gateway</strong><span class="desc">Native <code>/v1/messages</code>. Works with Claude Code.</span><span class="badge badge-available">Available</span></li>
+            <li><strong>Cost receipts per call</strong><span class="desc">Token counts and cost. No prompt or response.</span><span class="badge badge-available">Available</span></li>
+            <li><strong>Cost per job</strong><span class="desc">Group calls by job and record outcomes.</span><span class="badge badge-available">Available</span></li>
+            <li><strong>Budgets</strong><span class="desc">Daily and scoped caps that block or warn.</span><span class="badge badge-available">Available</span></li>
+          </ul>
+          <ul class="status-list" aria-label="Newer capabilities">
+            <li><strong>Hosted trial</strong><span class="desc">A temporary personal gateway, deleted within 24 hours.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong>Local dashboard</strong><span class="desc">Live feed, work, budgets, snippets.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong>Cost per task</strong><span class="desc">Steps inside a job, with a Python helper.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong>MCP server</strong><span class="desc">Agents can read spend and health.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong>AP invoice exception recovery</strong><span class="desc">A separate capability on the same receipts.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong>Work Economics and Economic Authority</strong><span class="desc">Agent economics over x402.</span><span class="badge badge-labs">Labs</span></li>
+          </ul>
+        </div>
       </div>
     </section>
 
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="dashboard" aria-labelledby="dashboard-title">
-      <h2 id="dashboard-title">Watch it arrive<span class="tagline-2">A local dashboard, left open on a second monitor.</span></h2>
-      <div class="card">
-        <p class="eyebrow">Local, no account, same process as the gateway</p>
-        <h3>Live Feed, Work, Budgets, Recover, Connect, Settings</h3>
-        <p class="card-copy">Receipts land in the Live Feed the moment they're recorded. The Work screen rolls them up by <code>work_id</code>; Budgets shows the burn bar against whatever cap you set; Recover surfaces anything waiting on human review; Connect gives you copy-paste snippets (curl, the Anthropic SDK, the OpenAI SDK, LangChain) generated against your own running instance, not a generic placeholder host. Served by the exact same process as the gateway — nothing leaves your machine to render it.</p>
-        <div class="install"><code>inferrail serve --quickstart --app-mode</code><button class="copy" type="button" aria-label="Copy app-mode command">Copy</button></div>
-        <p class="step-note">Prints a ready-to-open dashboard URL with a per-install token already embedded.</p>
-      </div>
-    </section>
-
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="mcp" aria-labelledby="mcp-title">
-      <h2 id="mcp-title">Your agents can ask<span class="tagline-2">Cost and health, over MCP — read-only.</span></h2>
-      <div class="card">
-        <p class="eyebrow">stdio MCP server</p>
-        <h3>get_spend and get_health</h3>
-        <p class="card-copy"><code>get_spend</code> aggregates your local receipt ledger by provider, model, route, or any attribution tag you've attached, over an optional time window — reads a local file, makes no network call, can't incur provider cost. <code>get_health</code> checks whether a gateway is reachable and reports the most recent receipt as evidence of activity, without ever making a new inference call as a side effect.</p>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/tree/main/inferrail-mcp">See the MCP server</a>
-      </div>
-    </section>
-
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="ap-hosted" aria-labelledby="ap-hosted-title">
-      <h2 id="ap-hosted-title">See it on a real job<span class="tagline-2">AP invoice-exception recovery, built on this same receipt substrate.</span></h2>
-      <p class="sub">One eligible invoice-extraction exception, decided (one permitted machine retry, or your established human-review path), executed, and recorded — the same payload-free cost discipline applied to one real, whole job, not just one request.</p>
-      <div class="card">
-        <p class="eyebrow">Self-serve sandbox</p>
-        <h3>Get your own key and run it — four commands, no signup</h3>
-        <p class="card-copy">A demo instance runs at <code>inferrail-ap-exceptions.onrender.com</code> — Render's free tier, with no persistent disk: every record on it is synthetic and disposable, gone on the next restart or idle spin-down, never used for real customer data. <code>POST /v1/sandbox</code> issues you your own short-lived, isolated API key — no account, no human in the loop. Run the four commands below, unmodified, from any machine with <code>curl</code>. Every response is tagged <code>"sandbox": true</code>; the key expires, is capped in size, and is rate-limited. <strong>Prefer zero network calls?</strong> <code>pip install inferrail && inferrail ap demo</code> runs the same decision engine locally instead.</p>
-        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/sandbox</code><button class="copy" type="button" aria-label="Copy get-key command">Copy</button></div><p class="step-note">1. get a sandbox key · no account needed · the instance may take a minute to wake if it's been idle</p></div>
-        <div class="install-wrap"><div class="install"><code>export API_KEY=sbx_paste-your-key-here</code><button class="copy" type="button" aria-label="Copy export-key command">Copy</button></div><p class="step-note">paste the "api_key" value from step 1's response above</p></div>
-        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
-    "work_id": "SANDBOX-DEMO-1",
-    "checkpoint_attempt_id": "SANDBOX-DEMO-1-checkpoint",
-    "failure_type": "low_confidence",
-    "confidence": 0.6,
-    "cost_so_far_usd": "0.10",
-    "policy_config": {
-      "eligible_failure_types": ["low_confidence", "validation_check_failed"],
-      "retry_floor": 0.5,
-      "human_review_threshold": 0.75,
-      "max_retry_cost_usd": "1.00",
-      "decision_deadline_seconds": 86400
-    }
-  }'</code><button class="copy" type="button" aria-label="Copy create-decision command">Copy</button></div><p class="step-note">2. create a decision — a real policy evaluation, not canned output</p></div>
-        <div class="install-wrap"><div class="install"><code>curl -s -X POST https://inferrail-ap-exceptions.onrender.com/v1/decisions/SANDBOX-DEMO-1/retry-attempts \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{
-    "attempt_id": "SANDBOX-DEMO-1-attempt-1",
-    "status": "success",
-    "cost_usd": "0.06",
-    "validation_passed": true,
-    "validator_version": "ap.validator/v1"
-  }'</code><button class="copy" type="button" aria-label="Copy record-retry command">Copy</button></div><p class="step-note">3. record a retry attempt, as your own RetryAdapter would</p></div>
-        <div class="install-wrap"><div class="install"><code>curl -s https://inferrail-ap-exceptions.onrender.com/v1/report \
-  -H "Authorization: Bearer $API_KEY"</code><button class="copy" type="button" aria-label="Copy report command">Copy</button></div><p class="step-note">4. read your own report back — expect retry_resolved, observed_cost_complete: true</p></div>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md#try-it-yourself-the-self-serve-sandbox">Full walkthrough, guardrails, and error cases</a>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Self-hosted, optional</p>
-        <h3>Deploy your own AP Exceptions instance</h3>
-        <p class="card-copy">Run the AP decision/persistence/reporting steps over an authenticated HTTP API instead of a local store — isolated per API key, with rate limits and a documented crash-recovery path. Retry execution always happens in your own process, never on this service.</p>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/hosted/ap_exceptions/README.md">Deploy your own instance</a>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Full contract</p>
-        <h3>Failure types, retry method, validation, human-review handoff</h3>
-        <p class="card-copy">Supported failure types, the retry method and its cost boundary, the validation contract, the human-review handoff, versioned policy config, persistence/idempotency, and the auditable report — the same discipline as the gateway's own receipts, applied to one whole job.</p>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md">See the full contract</a>
-      </div>
-    </section>
-
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="compat" aria-labelledby="compat-title">
-      <h2 id="compat-title">Works with what you have<span class="tagline-2">OpenAI SDK, Anthropic SDK, curl, LangChain.</span></h2>
-      <div class="card">
-        <p class="eyebrow">Two wire formats, real streaming, real tool use</p>
-        <h3>OpenAI-compatible and Anthropic-compatible, both wire-native</h3>
-        <p class="card-copy">A genuine, separate <code>/v1/messages</code> passthrough — not a translation of <code>/v1/chat/completions</code> — with real streaming and tool use, priced from an independently-verified catalog. This is what makes pointing Claude Code, or any Anthropic SDK client, at Inferrail work, alongside every OpenAI-SDK-based tool and LangChain's own OpenAI-compatible client.</p>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/docs/adr/0014-anthropic-messages-passthrough.md">See the Anthropic passthrough design</a>
-      </div>
-    </section>
-
-    <div class="section-break wrap" aria-hidden="true"></div>
-    <section class="cards wrap" id="agents" aria-labelledby="agents-title">
-      <h2 id="agents-title">Experimental, testnet only<span class="tagline-2">Secondary capabilities for autonomous agents.</span></h2>
-      <div class="card">
-        <p class="eyebrow">For autonomous agents</p>
-        <h3>Buy Work Economics per call</h3>
-        <p class="card-copy">Submit payload-free economic metadata for one unit of AI work and get back a normalized cost analysis plus a commercial receipt, paid per call over x402 — no subscription, no Inferrail account.</p>
-        <a class="button button-ghost" href="/work-economics/">See the Work Economics capability</a>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Also experimental, testnet only</p>
-        <h3>Coordinate a shared spending boundary</h3>
-        <p class="card-copy">Inferrail Economic Authority lets multiple agents coordinate a caller-declared, cooperative spending boundary, paid per session over x402. Inferrail records and coordinates it within its own service only; it does not control external wallets, providers, or network spending, and is not real-world spend enforcement.</p>
-        <a class="button button-ghost" href="https://github.com/domondi1/inferrail/blob/main/docs/capabilities/economic-authority.md">See the Economic Authority capability</a>
+    <section class="section wrap" id="more" aria-labelledby="more-title">
+      <h2 class="section-title" id="more-title">More from Inferrail</h2>
+      <p class="section-lede">Built on the same receipts. Separate from the core product.</p>
+      <div class="grid grid-3">
+        <div class="card more-card">
+          <span class="badge badge-preview" style="align-self:flex-start">Preview</span>
+          <h3>AP invoice exception recovery</h3>
+          <p>For invoice-extraction teams: decide whether one failed extraction gets one machine retry or goes to human review, then record what it cost.</p>
+          <a class="button button-secondary" href="/ap/">Explore</a>
+        </div>
+        <div class="card more-card">
+          <span class="badge badge-preview" style="align-self:flex-start">Preview</span>
+          <h3>MCP server</h3>
+          <p>Two read-only tools, <code>get_spend</code> and <code>get_health</code>. An agent can check your local spend without making a model call.</p>
+          <a class="button button-secondary" href="https://github.com/domondi1/inferrail/tree/main/inferrail-mcp">See the MCP server</a>
+        </div>
+        <div class="card more-card">
+          <span class="badge badge-labs" style="align-self:flex-start">Labs</span>
+          <h3>Inferrail Labs</h3>
+          <p>Experiments in economics for autonomous agents: pay-per-call cost analysis and shared spending boundaries, on testnet.</p>
+          <a class="button button-secondary" href="/labs/">Explore Labs</a>
+        </div>
       </div>
     </section>
   </main>
-  <footer class="wrap">
-    <span>Inferrail — know what your AI work costs, without keeping what it said</span>
-    <nav aria-label="Footer navigation">
-      <a href="/try/">Try free</a>
-      <a href="https://github.com/domondi1/inferrail">GitHub</a>
-      <a href="https://pypi.org/project/inferrail/">PyPI</a>
-      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
-      <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Privacy</a>
-    </nav>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>Inferrail. Know what your AI work costs, without keeping what it said.</span>
+      <nav aria-label="Footer">
+        <a href="/try/">Try free</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a href="https://pypi.org/project/inferrail/">PyPI</a>
+        <a href="/labs/">Labs</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Privacy</a>
+      </nav>
+    </div>
   </footer>
-  <script>
-    (() => {
-      const copy = async (text) => { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; } const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); };
-      document.querySelectorAll('.install').forEach((box) => {
-        const code = box.querySelector('code'); const btn = box.querySelector('.copy');
-        if (!code || !btn) return;
-        const original = btn.textContent;
-        btn.addEventListener('click', async () => { try { await copy(code.textContent); btn.textContent='Copied'; setTimeout(() => { btn.textContent=original; }, 1600); } catch { btn.textContent='Copy failed'; } });
-      });
-    })();
-  </script>
+  <script src="site.js"></script>
 </body>
 </html>

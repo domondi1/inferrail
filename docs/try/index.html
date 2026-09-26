@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Try Inferrail free — instant hosted gateway</title>
-  <meta name="description" content="Start a free, no-account Inferrail trial in your browser: a personal base_url, zero-key demo receipts immediately, and an optional real OpenAI/Anthropic key for a real payload-free receipt.">
+  <title>Try Inferrail free: see what one AI job costs</title>
+  <meta name="description" content="Run a demo AI job through your own temporary Inferrail gateway and see what it cost: model calls, tokens, time, and one total. No account, no API key. Add your own OpenAI or Anthropic key for a real request.">
   <link rel="canonical" href="https://tryinferrail.com/try/">
   <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
@@ -12,270 +12,639 @@
   <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <!-- The trial gateway: connect (DNS + TCP + TLS) while the visitor reads,
-       so the "Try free" click costs one round trip, not three. crossorigin
-       matches the page's credential-less fetch() calls. -->
+  <!-- The trial gateway: connect while the visitor reads, so "Run demo"
+       costs one round trip, not three. Keep in step with DEFAULT_BASE_URL. -->
   <link rel="preconnect" href="https://inferrail-cost-gateway.onrender.com" crossorigin>
-  <!-- Fonts load without blocking first paint (they already use
-       display=swap, so text shows in the fallback face until they arrive
-       either way). -->
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet"></noscript>
+  <!-- An exact copy of docs/site.css, inlined so this page has no render-blocking
+       stylesheet (tests/unit/hosted/test_try_page.py). tests/unit/test_site_pages.py
+       fails if the two drift apart: edit site.css, then copy it here. -->
+  <style id="site-css">
+/* Shared styles for tryinferrail.com (docs/). No build step: every page
+   links this one file. Colour roles: --stamp (red) means "do this" or the
+   headline cost; --good (green) means success/available; everything else
+   is neutral paper and ink. */
+:root {
+  --paper: #EFEFE9;
+  --paper-2: #E6E8E0;
+  --tint: #DCE7D8;
+  --card: #FFFFFF;
+  --ink: #14201B;
+  --ink-2: #4E5D54;
+  --ink-3: #6B786F;
+  --rule: #C3C7BE;
+  --stamp: #A8352A;
+  --stamp-dark: #8F2C22;
+  --stamp-tint: #F6E3DF;
+  --good: #2F6343;
+  --good-tint: #DDEBDF;
+  --labs: #5B4E8A;
+  --labs-tint: #E7E3F2;
+  --code-bg: #14201B;
+  --code-ink: #EFEFE9;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --gutter: clamp(16px, 4vw, 56px);
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 40px;
+  --space-5: clamp(56px, 7vw, 104px);
+  --shadow: 6px 6px 0 rgba(20, 32, 27, .08);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--paper); scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--sans); font-size: clamp(16px, 0.9rem + 0.25vw, 18px); line-height: 1.55;
+  overflow-wrap: break-word;
+}
+img { max-width: 100%; }
+a { color: inherit; text-underline-offset: 3px; }
+a:hover { color: var(--stamp); }
+:focus-visible { outline: 3px solid var(--stamp); outline-offset: 3px; }
+code, kbd, pre, .mono { font-family: var(--mono); }
+p code, li code, td code { font-size: .9em; padding: 1px 5px; background: var(--paper-2); border: 1px solid var(--rule); }
+.hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.skip-link { position: absolute; left: 8px; top: -60px; z-index: 10; padding: 10px 14px; background: var(--ink); color: var(--paper); }
+.skip-link:focus { top: 8px; color: var(--paper); }
+
+.wrap { width: 100%; max-width: 1320px; margin: 0 auto; padding: 0 var(--gutter); }
+.measure { max-width: 62ch; }
+
+/* ---------- Header ---------- */
+.site-header { border-bottom: 1px solid var(--ink); background: var(--paper); }
+.site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 68px; }
+.wordmark { display: inline-flex; align-items: center; gap: .55em; font: 700 20px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; text-decoration: none; }
+.wordmark img { width: 28px; height: 28px; display: block; }
+.nav { display: flex; align-items: center; gap: clamp(16px, 2.4vw, 32px); }
+.nav a { font-weight: 500; text-decoration: none; padding: 10px 0; }
+.nav a:hover, .nav a[aria-current="page"] { text-decoration: underline; text-decoration-thickness: 2px; }
+.nav a.button, .nav a.button:hover { text-decoration: none; color: #fff; }
+.nav .button { padding: 10px 18px; min-height: 44px; }
+.nav-toggle { display: none; }
+@media (max-width: 760px) {
+  .site-header .wrap { flex-wrap: wrap; min-height: 60px; }
+  .nav-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 14px; font: 600 15px var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--ink); cursor: pointer; }
+  .header-actions { display: flex; align-items: center; gap: 10px; }
+  .header-actions .button { padding: 10px 14px; }
+  .nav { display: none; flex-basis: 100%; flex-direction: column; align-items: stretch; gap: 0; padding: 0 0 12px; }
+  .nav.open { display: flex; }
+  .nav a { padding: 12px 0; border-top: 1px solid var(--rule); }
+  .nav .nav-try { display: none; }
+}
+@media (min-width: 761px) { .header-actions .button { display: none; } }
+
+/* ---------- Buttons ---------- */
+.button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 48px; padding: 12px 24px; font: 600 17px/1.2 var(--sans);
+  text-decoration: none; cursor: pointer; border: 2px solid transparent; border-radius: 2px;
+}
+.button-primary { color: #fff; background: var(--stamp); border-color: var(--stamp); box-shadow: 4px 4px 0 rgba(20, 32, 27, .18); }
+.button-primary:hover:not(:disabled) { color: #fff; background: var(--stamp-dark); border-color: var(--stamp-dark); }
+.button-big { min-height: 60px; padding: 16px 34px; font-size: 19px; }
+.button-secondary { color: var(--ink); background: var(--card); border-color: var(--ink); }
+.button-secondary:hover:not(:disabled) { color: var(--paper); background: var(--ink); }
+.button-quiet { color: var(--ink); background: transparent; border-color: var(--rule); }
+.button-quiet:hover:not(:disabled) { color: var(--ink); background: var(--paper-2); border-color: var(--ink); }
+.button:disabled { opacity: .6; cursor: progress; }
+.button-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.arrow::after { content: "\2192"; }
+
+/* ---------- Type ---------- */
+.display { margin: 0; font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: -.015em; line-height: .95; }
+h1, h2, h3 { text-wrap: balance; }
+.section-title { margin: 0 0 var(--space-2); font: 700 clamp(30px, 3.6vw, 52px)/1 var(--display); text-transform: uppercase; letter-spacing: -.01em; }
+.section-lede { margin: 0 0 var(--space-4); color: var(--ink-2); font-size: clamp(17px, 1.3vw, 20px); max-width: 60ch; }
+.eyebrow { margin: 0 0 10px; color: var(--stamp); font: 700 14px/1.2 var(--display); letter-spacing: .12em; text-transform: uppercase; }
+.small { font-size: 15px; color: var(--ink-2); }
+
+/* ---------- Sections ---------- */
+.section { padding-block: var(--space-5); }
+.section-tint { background: var(--tint); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.section-paper2 { background: var(--paper-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.card { background: var(--card); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: clamp(20px, 2.2vw, 32px); }
+.card h3 { margin: 0 0 8px; font: 700 clamp(20px, 1.6vw, 24px)/1.2 var(--sans); }
+.card p { margin: 0; color: var(--ink-2); }
+.grid { display: grid; gap: clamp(16px, 2vw, 28px); }
+.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .grid-3 { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) { .grid-4, .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- Status labels (text + colour, never colour alone) ---------- */
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; font: 700 13px/1.4 var(--display); letter-spacing: .1em; text-transform: uppercase; border: 1px solid currentColor; border-radius: 2px; white-space: nowrap; }
+.badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.badge-available { color: var(--good); background: var(--good-tint); }
+.badge-preview { color: #7A4B0E; background: #F5E7CF; }
+.badge-labs { color: var(--labs); background: var(--labs-tint); }
+.badge-later { color: var(--ink-2); background: var(--paper-2); }
+
+/* ---------- Commands & code ---------- */
+.cmd {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 10px 10px 18px; background: var(--code-bg); color: var(--code-ink);
+  border-radius: 2px; min-width: 0;
+}
+.cmd code { font-size: clamp(16px, 1.2vw, 19px); white-space: pre; overflow-x: auto; min-width: 0; padding: 6px 0; }
+.cmd code::before { content: "$ "; color: #8FA396; }
+.cmd.no-prompt code::before { content: none; }
+.copy {
+  flex: none; min-height: 40px; min-width: 76px; padding: 8px 14px; font: 600 15px var(--sans);
+  color: var(--code-ink); background: transparent; border: 1px solid #6F8277; border-radius: 2px; cursor: pointer;
+}
+.copy:hover { background: rgba(239, 239, 233, .12); border-color: var(--code-ink); }
+.copy.copied { color: #BFE3C9; border-color: #BFE3C9; }
+.code-block { position: relative; background: var(--code-bg); color: var(--code-ink); border-radius: 2px; }
+.code-block pre { margin: 0; padding: 18px 18px 18px 18px; overflow-x: auto; font-size: 15px; line-height: 1.6; max-height: 360px; }
+.code-block .copy { position: absolute; top: 10px; right: 10px; background: var(--code-bg); }
+.code-block pre code { white-space: pre; }
+.cmd code, .code-block code { padding-left: 0; padding-right: 0; background: none; border: none; }
+.cmd code { font-size: clamp(16px, 1.2vw, 19px); }
+.code-block code { font-size: 15px; }
+.output {
+  margin: 0; padding: 16px 18px; background: var(--card); border: 1px solid var(--rule);
+  font: 14px/1.6 var(--mono); overflow-x: auto; white-space: pre; color: var(--ink);
+}
+
+/* ---------- Tabs ---------- */
+.tabs [role="tablist"] { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: -1px; }
+.tabs [role="tab"] {
+  min-height: 44px; padding: 8px 16px; font: 600 15px var(--sans); color: var(--ink-2);
+  background: transparent; border: 1px solid transparent; border-bottom: none; cursor: pointer;
+}
+.tabs [role="tab"][aria-selected="true"] { color: var(--paper); background: var(--code-bg); border-color: var(--code-bg); }
+.tabs [role="tab"]:hover:not([aria-selected="true"]) { color: var(--ink); background: var(--paper-2); }
+
+/* ---------- Disclosure ---------- */
+details.disclose { background: var(--card); border: 1px solid var(--rule); }
+details.disclose + details.disclose { margin-top: 12px; }
+details.disclose > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  min-height: 60px; padding: 14px 20px; cursor: pointer; list-style: none; font-weight: 600; font-size: clamp(17px, 1.3vw, 19px);
+}
+details.disclose > summary::-webkit-details-marker { display: none; }
+details.disclose > summary::after { content: "+"; flex: none; font: 400 28px/1 var(--sans); color: var(--ink-2); }
+details.disclose[open] > summary::after { content: "\2212"; }
+details.disclose > summary .summary-sub { display: block; font-weight: 400; font-size: 15px; color: var(--ink-2); }
+details.disclose > .disclose-body { padding: 4px 20px 22px; border-top: 1px solid var(--rule); }
+details.disclose > .disclose-body > :first-child { margin-top: 16px; }
+details.inline { margin-top: 10px; }
+details.inline > summary { cursor: pointer; font-weight: 600; color: var(--ink); min-height: 32px; }
+details.inline > div { margin-top: 8px; color: var(--ink-2); }
+
+/* ---------- Result card (home example and live /try/ result) ---------- */
+.result {
+  background: var(--card); border: 1px solid var(--ink); box-shadow: 8px 8px 0 rgba(20, 32, 27, .12);
+}
+.result-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 16px 22px; border-bottom: 1px solid var(--rule); }
+.result-job { margin: 0; font: 700 clamp(20px, 1.8vw, 26px)/1.2 var(--sans); }
+.result-job-id { display: block; margin-top: 2px; font: 400 14px var(--mono); color: var(--ink-2); }
+.result-status { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--good); }
+.result-status::before { content: "\2713"; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--good); color: #fff; font-size: 13px; }
+.result-status.warn { color: var(--stamp); }
+.result-status.warn::before { content: "!"; background: var(--stamp); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.metric { padding: 18px 22px; border-right: 1px solid var(--rule); min-width: 0; }
+.metric:last-child { border-right: none; }
+.metric-cost { grid-column: 1 / -1; border-right: none; border-bottom: 1px solid var(--rule); display: flex; align-items: baseline; gap: 6px 16px; flex-wrap: wrap; }
+.metric-value { display: block; font: 700 clamp(26px, 2.6vw, 38px)/1.05 var(--display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; white-space: nowrap; }
+.metric-label { display: block; margin-top: 4px; font-size: 15px; color: var(--ink-2); }
+.metric-cost { background: var(--stamp-tint); }
+.metric-cost .metric-value { color: var(--stamp); font-size: clamp(44px, 5vw, 76px); }
+.metric-cost .metric-label { color: var(--ink); font-weight: 600; }
+@media (max-width: 560px) {
+  .metric { padding: 14px 14px; }
+  .metric-cost { padding: 16px 18px; }
+  .metric-value { font-size: 26px; }
+  .metric-label { font-size: 14px; }
+}
+
+/* calls -> job -> cost strip */
+.rollup { display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center; gap: 12px; padding: 16px 22px; background: var(--paper); border-top: 1px solid var(--rule); font-size: 15px; }
+.rollup-calls { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.rollup-calls span { width: 14px; height: 14px; background: var(--ink-2); border-radius: 2px; }
+.rollup-calls span.new { animation: pop .25s ease-out; }
+@keyframes pop { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.rollup-arrow { color: var(--ink-2); font-size: 20px; }
+.rollup-node { font-weight: 600; white-space: nowrap; }
+.rollup-cost { font: 700 18px var(--display); color: var(--stamp); white-space: nowrap; }
+@media (max-width: 560px) {
+  .rollup { display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 14px 16px; }
+  .rollup-calls { flex: 1 1 100%; }
+}
+
+.calls-table { width: 100%; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+.calls-table th { text-align: left; font: 600 13px var(--sans); color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; padding: 8px 10px; border-bottom: 1px solid var(--ink); }
+.calls-table td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; overflow-wrap: anywhere; }
+.calls-table .num { text-align: right; white-space: nowrap; }
+.calls-table tr.more td { color: var(--ink-2); font-style: italic; }
+.table-scroll { overflow-x: auto; }
+
+/* ---------- Footer ---------- */
+.site-footer { border-top: 1px solid var(--ink); padding-block: var(--space-4); color: var(--ink-2); font-size: 15px; }
+.site-footer .wrap { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.site-footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.site-footer a { padding: 6px 0; }
+  </style>
   <style>
-    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --good:#3E6B4F; }
-    * { box-sizing:border-box; }
-    html { background:var(--paper); scroll-behavior:smooth; }
-    body { margin:0; background:var(--paper); color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:clamp(15px,1.05vw,19px); line-height:1.55; }
-    a { color:inherit; }
-    a:focus-visible,button:focus-visible,input:focus-visible { outline:2px solid var(--stamp); outline-offset:3px; }
-    .wrap { width:100%; max-width:1040px; margin:0 auto; padding:0 clamp(24px,4vw,56px); }
-    .masthead { display:flex; justify-content:space-between; align-items:center; min-height:clamp(58px,5vw,78px); border-bottom:1px solid var(--ink); flex-wrap:wrap; gap:10px; }
-    .wordmark,.eyebrow,.button,.copy { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.14em; }
-    .wordmark { font-size:clamp(16px,1.4vw,22px); display:inline-flex; align-items:center; gap:.55em; }
-    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
-    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
-    .nav { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:clamp(10px,2.8vw,28px); font-size:clamp(13px,1vw,16px); }
-    .nav a { text-underline-offset:4px; }
-    .hero { padding:clamp(32px,4vw,64px) 0 clamp(20px,3vw,36px); text-align:center; }
-    h1,h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; line-height:1; letter-spacing:-.02em; text-transform:uppercase; }
-    h1 { font-size:clamp(30px,5.4vw,64px); max-width:24ch; margin:0 auto; }
-    .tagline-2 { display:block; color:var(--ink-2); }
-    .supporting-line { max-width:56ch; margin:clamp(14px,1.8vw,22px) auto 0; color:var(--ink-2); font-size:clamp(14px,1.1vw,19px); }
-    .cta-wrap { display:grid; justify-items:center; gap:12px; margin-top:clamp(22px,2.6vw,36px); }
-    .button-primary { display:inline-block; padding:clamp(16px,1.6vw,22px) clamp(34px,3.6vw,54px); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.1em; font-size:clamp(15px,1.4vw,20px); line-height:1; cursor:pointer; color:var(--paper); background:var(--stamp); border:1px solid var(--stamp); box-shadow:6px 6px 0 rgba(20,32,27,.14); }
-    .button-primary:hover:not(:disabled) { background:#8f2c22; }
-    .button-primary:disabled { opacity:.6; cursor:progress; }
-    .cta-hint { margin:0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    .card { max-width:100%; padding:clamp(20px,2.2vw,30px); margin-top:clamp(18px,2vw,26px); background:#fff; border:1px solid var(--rule); box-shadow:7px 7px 0 rgba(20,32,27,.06); text-align:left; }
-    .eyebrow { margin:0 0 8px; color:var(--stamp); font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.12em; font-size:clamp(11px,.8vw,13px); }
-    .card h3 { margin:0 0 10px; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(17px,1.7vw,22px); font-weight:700; text-transform:uppercase; line-height:1.2; }
-    .card-copy { max-width:70ch; margin:0 0 14px; color:var(--ink-2); font-size:clamp(13.5px,1vw,16px); line-height:1.5; }
-    .install-wrap { margin:12px 0; }
-    .install { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:clamp(10px,1vw,14px); background:var(--ink); color:var(--paper); overflow-x:auto; }
-    .install code { font-family:inherit; font-size:clamp(11.5px,.92vw,14.5px); white-space:pre; }
-    .copy { flex:none; padding:5px 8px; color:var(--paper); background:transparent; border:1px solid var(--paper); font:500 clamp(10px,.7vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
-    .step-note { margin:6px 0 0; color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    .countdown-row { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:10px 14px; background:var(--bar); border:1px solid var(--rule); flex-wrap:wrap; }
-    .countdown-label { color:var(--ink-2); font-size:clamp(11px,.85vw,13px); text-transform:uppercase; letter-spacing:.08em; }
-    .countdown-value { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:clamp(16px,1.6vw,22px); font-variant-numeric:tabular-nums; }
-    .countdown-value.low { color:var(--stamp); }
-    .status-badge { display:inline-block; padding:3px 9px; font:700 clamp(10px,.75vw,12px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.1em; border:1px solid currentColor; }
-    .status-badge.demo { color:var(--ink-2); }
-    .status-badge.real { color:var(--good); }
-    .key-form { display:grid; gap:10px; margin:12px 0; }
-    .key-field { display:grid; gap:4px; }
-    .key-field label { font-size:clamp(11px,.85vw,13px); color:var(--ink-2); text-transform:uppercase; letter-spacing:.06em; }
-    .key-input-row { display:flex; gap:6px; align-items:stretch; }
-    .key-input-row input { flex:1; min-width:0; font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); }
-    .key-field-btn { flex:none; padding:5px 10px; color:var(--ink); background:transparent; border:1px solid var(--rule); font:500 clamp(10px,.75vw,12px) "IBM Plex Mono",monospace; cursor:pointer; }
-    .key-field-btn:hover:not(:disabled) { background:var(--bar); }
-    .key-field-btn:disabled { opacity:.5; cursor:not-allowed; }
-    .key-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .button-ghost { display:inline-block; text-decoration:none; padding:9px 16px; font:700 clamp(12px,.9vw,14px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); background:transparent; border:1px solid var(--ink); cursor:pointer; }
-    .button-ghost:hover { background:var(--ink); color:var(--paper); }
-    .button-ghost:disabled { opacity:.5; cursor:not-allowed; }
-    .key-privacy-note { margin:2px 0 0; color:var(--ink-3); font-size:clamp(11px,.78vw,12.5px); line-height:1.5; }
-    .receipt-row { display:flex; justify-content:space-between; gap:18px; padding:4px 9px; font-size:clamp(13px,1vw,15px); }
-    .receipt-row:nth-of-type(even) { background:var(--bar); }
-    .receipt-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
-    .budget-track { height:14px; background:var(--bar); border:1px solid var(--rule); margin:8px 0; overflow:hidden; }
-    .budget-fill { height:100%; background:var(--stamp); transition:width .3s ease; }
-    .feed-list { display:grid; gap:0; margin-top:10px; max-height:280px; overflow-y:auto; border:1px solid var(--rule); }
-    .feed-empty { padding:14px; color:var(--ink-3); font-size:13px; text-align:center; }
-    .error-banner { margin-top:16px; padding:14px 16px; background:#fff; border:1px solid var(--stamp); color:var(--ink); }
-    .error-banner strong { color:var(--stamp); }
-    .hidden { display:none !important; }
-    .tag-row { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px; }
-    .tag-row .key-field { flex:1 1 180px; }
-    .tag-row input { font-family:"IBM Plex Mono",monospace; font-size:clamp(13px,1vw,15px); padding:8px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); min-width:0; }
-    .work-summary { padding:10px 14px; background:var(--bar); border:1px solid var(--rule); font-size:clamp(13px,1vw,15px); }
-    .work-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:clamp(12px,.95vw,14.5px); }
-    .work-table th { text-align:left; font:700 clamp(10px,.75vw,12px) "IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-2); padding:6px 8px; border-bottom:1px solid var(--ink); }
-    .work-table td { padding:6px 8px; border-bottom:1px solid var(--rule); vertical-align:top; overflow-wrap:anywhere; }
-    .work-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    .work-table .outcome-btns { display:flex; gap:6px; flex-wrap:wrap; }
-    .outcome-btn { padding:3px 8px; font:500 clamp(10px,.72vw,12px) "IBM Plex Mono",monospace; color:var(--ink); background:transparent; border:1px solid var(--rule); cursor:pointer; }
-    .outcome-btn:hover:not(:disabled) { background:var(--bar); }
-    .outcome-btn:disabled { opacity:.5; cursor:not-allowed; }
-    .warn-note { margin:6px 0 0; color:var(--stamp); font-size:clamp(11px,.8vw,13px); }
-    .section-break { height:4px; margin:clamp(28px,4vw,52px) 0 0; border-top:1px solid var(--ink); border-bottom:1px solid var(--ink); }
-    footer { display:flex; justify-content:space-between; gap:24px; padding:20px 0 26px; margin-top:clamp(40px,5vw,72px); border-top:1px solid var(--ink); color:var(--ink-3); font-size:clamp(11px,.8vw,13px); }
-    footer nav { display:flex; flex-wrap:wrap; gap:18px; }
-    @media (max-width:600px) { .masthead{min-height:58px} footer{display:block} footer nav{margin-top:10px} .install code{white-space:pre-wrap; word-break:break-word} .work-table th:nth-child(2),.work-table td:nth-child(2){display:none} }
+    .try-top { padding-top: clamp(28px, 4vw, 64px); padding-bottom: clamp(32px, 4vw, 56px); }
+    .try-grid { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: clamp(28px, 4vw, 72px); align-items: start; }
+    @media (max-width: 1000px) { .try-grid { grid-template-columns: minmax(0, 1fr); } }
+    .try-title { font-size: clamp(44px, 5.2vw, 84px); }
+    .try-sub { margin: 18px 0 0; font-size: clamp(18px, 1.4vw, 21px); color: var(--ink-2); max-width: 36ch; }
+
+    .run-form { margin-top: clamp(24px, 3vw, 36px); }
+    .field label { display: block; font-weight: 600; font-size: 17px; margin-bottom: 6px; }
+    .field .hint { margin: 6px 0 0; font-size: 15px; color: var(--ink-2); }
+    .field input, .field textarea {
+      width: 100%; min-height: 50px; padding: 11px 14px; font: 18px var(--sans); color: var(--ink);
+      background: var(--card); border: 2px solid var(--ink-2); border-radius: 2px;
+    }
+    .field input:focus, .field textarea:focus { border-color: var(--ink); }
+    .field + .field { margin-top: 16px; }
+    .field-mono input { font-family: var(--mono); font-size: 16px; }
+    .run-form .button-big { width: 100%; margin-top: 18px; }
+    .run-meta { margin: 12px 0 0; font-size: 15px; color: var(--ink-2); }
+    .run-status { min-height: 1.5em; margin: 14px 0 0; font-weight: 500; }
+    .run-status.error { color: var(--stamp); }
+    .local-alt { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 16px; color: var(--ink-2); }
+
+    .banner { margin-top: 18px; padding: 16px 18px; background: var(--card); border: 2px solid var(--stamp); }
+    .banner strong { color: var(--stamp); }
+    .banner p { margin: 6px 0 0; color: var(--ink-2); }
+    .note { margin: 14px 0 0; padding: 12px 14px; background: var(--good-tint); border: 1px solid var(--good); }
+
+    /* Result card states */
+    .result.is-empty .metric-value { color: var(--rule); }
+    .result.is-empty .metric-cost { background: var(--paper); }
+    .result.is-empty .rollup { color: var(--ink-2); }
+    .result-eyebrow { display: block; font: 600 13px var(--sans); color: var(--ink-2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+    .result-status.pending { color: var(--ink-2); }
+    .result-status.pending::before { content: "\2026"; background: var(--ink-2); }
+    .result-explain { margin: 0; padding: 16px 22px; border-top: 1px solid var(--rule); font-size: 17px; }
+    .result-demo-note { display: block; margin-top: 4px; font-size: 15px; color: var(--ink-2); }
+    .result-foot { padding: 16px 22px 20px; border-top: 1px solid var(--rule); }
+    .result-foot details.inline > summary { font-size: 17px; }
+    .next-steps { margin-top: 16px; }
+    .next-steps .button { min-height: 48px; }
+    .empty-hint { margin: 0; padding: 16px 22px; border-top: 1px solid var(--rule); color: var(--ink-2); }
+    @media (max-width: 560px) { .next-steps .button { flex: 1 1 100%; } }
+
+    /* Trial panel */
+    .trial { padding-bottom: clamp(40px, 5vw, 80px); }
+    .trial-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 16px 20px; margin-bottom: 16px; background: var(--tint); border: 1px solid var(--rule); }
+    .trial-bar h2 { margin: 0; font: 700 22px var(--sans); }
+    .trial-fact { display: flex; align-items: baseline; gap: 8px; font-size: 16px; }
+    .trial-fact .label { color: var(--ink-2); }
+    .countdown-value { font: 700 20px var(--display); font-variant-numeric: tabular-nums; }
+    .countdown-value.low { color: var(--stamp); }
+    .mode-badge { display: inline-block; padding: 3px 10px; font: 700 13px var(--display); letter-spacing: .1em; text-transform: uppercase; border: 1px solid currentColor; }
+    .mode-badge.demo { color: var(--ink-2); }
+    .mode-badge.real { color: var(--good); background: var(--good-tint); }
+    .trial-notice { margin: 0 0 16px; font-size: 15px; color: var(--ink-2); }
+    .budget-mini { flex: 1 1 220px; min-width: 200px; }
+    .budget-track { height: 10px; background: var(--card); border: 1px solid var(--rule); margin-top: 6px; overflow: hidden; }
+    .budget-fill { height: 100%; background: var(--stamp); transition: width .3s ease; }
+
+    .sub-h { margin: 26px 0 8px; font: 700 19px var(--sans); }
+    .sub-h:first-child { margin-top: 16px; }
+    .body-copy { margin: 0 0 12px; color: var(--ink-2); max-width: 70ch; }
+    .key-form { display: grid; gap: 16px; margin: 12px 0; max-width: 720px; }
+    .key-input-row { display: flex; gap: 8px; align-items: stretch; }
+    .key-input-row input { flex: 1; min-width: 0; }
+    .key-field-btn { flex: none; min-height: 50px; min-width: 64px; padding: 6px 12px; font: 600 15px var(--sans); color: var(--ink); background: var(--card); border: 1px solid var(--rule); cursor: pointer; }
+    .key-field-btn:hover { border-color: var(--ink); }
+    .custody { margin: 0; padding: 12px 14px; background: var(--paper); border-left: 4px solid var(--ink-2); font-size: 16px; }
+    .status-line { margin: 10px 0 0; font-size: 16px; }
+    .warn-note { margin: 8px 0 0; color: var(--stamp); font-size: 15px; font-weight: 500; }
+    .receipt-row { display: flex; justify-content: space-between; gap: 18px; padding: 6px 10px; font-size: 16px; }
+    .receipt-row:nth-of-type(even) { background: var(--paper); }
+    .receipt-row span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .receipt-card { margin-top: 14px; padding: 14px; background: var(--card); border: 1px solid var(--rule); }
+    .feed-list { margin-top: 10px; max-height: 320px; overflow-y: auto; border: 1px solid var(--rule); background: var(--card); font-size: 15px; }
+    .feed-list .receipt-row { font-size: 15px; font-family: var(--mono); }
+    .feed-empty { padding: 16px; color: var(--ink-2); text-align: center; }
+    .work-summary { padding: 12px 14px; background: var(--paper); border: 1px solid var(--rule); }
+    .work-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 15px; }
+    .work-table th { text-align: left; font: 600 13px var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); padding: 8px; border-bottom: 1px solid var(--ink); }
+    .work-table td { padding: 8px; border-bottom: 1px solid var(--rule); vertical-align: top; overflow-wrap: anywhere; }
+    .work-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .outcome-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .outcome-btn { min-height: 36px; padding: 4px 10px; font: 500 14px var(--sans); color: var(--ink); background: var(--card); border: 1px solid var(--rule); cursor: pointer; }
+    .outcome-btn:hover:not(:disabled) { border-color: var(--ink); }
+    .outcome-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .code-tabs { margin-top: 12px; }
+    .code-tabs [role="tabpanel"] .code-block pre { padding-right: 96px; }
+    .base-url .cmd code::before { content: none; }
+    .danger-row { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--rule); }
+    .button-danger { color: var(--stamp); background: var(--card); border-color: var(--stamp); }
+    .button-danger:hover:not(:disabled) { color: #fff; background: var(--stamp); }
+    @media (max-width: 600px) {
+      .work-table th:nth-child(2), .work-table td:nth-child(2) { display: none; }
+      .calls-table .col-model { display: none; }
+      .code-tabs [role="tabpanel"] .code-block pre { padding-right: 18px; padding-top: 58px; }
+      .key-input-row { flex-wrap: wrap; }
+      .key-input-row input { flex-basis: 100%; }
+    }
   </style>
 </head>
 <body>
-  <header class="masthead wrap">
-    <a class="wordmark" href="/"><img class="wordmark-mark" src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
-    <nav class="nav" aria-label="Primary navigation">
-      <a href="/#steps">Self-hosted</a>
-      <a href="/#ap-hosted">Real job</a>
-      <a href="/try/" aria-current="page">Try free</a>
-      <a href="https://github.com/domondi1/inferrail">GitHub</a>
-    </nav>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="/"><img src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
+      <div class="header-actions">
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+      </div>
+      <nav class="nav" id="primary-nav" aria-label="Primary">
+        <a href="/#product">Product</a>
+        <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
+        <a href="/labs/">Labs</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a class="button button-primary nav-try" href="/try/" aria-current="page">Try free</a>
+      </nav>
+    </div>
   </header>
 
-  <main class="wrap">
-    <section class="hero" aria-labelledby="hero-title">
-      <h1 id="hero-title">Try Inferrail free.<span class="tagline-2">No account. Personal gateway in seconds.</span></h1>
-      <p class="supporting-line">A hosted, isolated trial instance — demo receipts immediately, your own OpenAI or Anthropic key if you want a real one. Prefer to keep everything on your own machine instead? <a href="/#steps">Self-host it</a> — same receipt schema, zero trust required in any hosted process.</p>
-      <div class="cta-wrap">
-        <button class="button-primary" id="start-trial-btn" type="button">Try free — instant gateway</button>
-        <p class="cta-hint" id="start-trial-hint">One click. Demo mode needs no key at all.</p>
-      </div>
-      <p class="step-note hidden" id="restore-note" role="status"></p>
-      <div class="error-banner hidden" id="unreachable-banner" role="alert">
-        <strong id="unreachable-banner-title">This hosted trial isn't reachable right now.</strong>
-        <p class="card-copy" id="unreachable-banner-detail" style="margin-top:8px">Either it hasn't been deployed yet, or this instance is temporarily unavailable.</p>
-        <p class="card-copy" style="margin-top:4px">Nothing is broken on your end — <a href="/#steps">self-host Inferrail instead</a> (<code>pip install inferrail &amp;&amp; inferrail serve --quickstart</code>), or try again shortly.</p>
+  <main id="main">
+    <section class="try-top wrap" aria-labelledby="try-title">
+      <div class="try-grid">
+        <div>
+          <h1 class="display try-title" id="try-title">See what one AI job costs.</h1>
+          <p class="try-sub">Run a demo job through your own temporary Inferrail gateway. No account. No API key.</p>
+
+          <form class="run-form" id="run-form" autocomplete="off" novalidate>
+            <div class="field">
+              <label for="work-id-input">Work</label>
+              <input id="work-id-input" maxlength="80" value="Support ticket #42" autocomplete="off" aria-describedby="work-hint">
+              <p class="hint" id="work-hint">The job these calls belong to. For example, a support ticket or an invoice.</p>
+            </div>
+            <button class="button button-primary button-big" id="run-demo-btn" type="submit">Run demo</button>
+            <p class="run-meta">Makes 6 calls to a demo model with made-up prices. Nothing is sent to OpenAI or Anthropic.</p>
+          </form>
+          <p class="run-status" id="run-status" role="status" aria-live="polite"></p>
+          <p class="note hidden" id="restore-note" role="status"></p>
+          <div class="banner hidden" id="unreachable-banner" role="alert">
+            <strong id="unreachable-banner-title">This hosted trial isn't reachable right now.</strong>
+            <p id="unreachable-banner-detail">This instance may be temporarily unavailable.</p>
+            <p>Nothing is wrong on your end. Try again shortly, or <a href="/#local">run Inferrail locally</a> with <code>pip install inferrail</code>.</p>
+          </div>
+          <p class="local-alt">Prefer your own machine? <a href="/#local">Run it locally</a>. Same receipts, nothing hosted.</p>
+        </div>
+
+        <div id="result-area">
+          <div class="result is-empty" id="result" aria-labelledby="result-job">
+            <div class="result-head">
+              <p class="result-job" id="result-job"><span class="result-eyebrow" id="result-eyebrow">Your result</span><span id="result-job-name">Run the demo to see it here</span></p>
+              <span class="result-status pending hidden" id="result-status">Running</span>
+            </div>
+            <div class="metrics">
+              <div class="metric metric-cost"><span class="metric-value" id="m-cost">$&mdash;</span><span class="metric-label">cost of this job</span></div>
+              <div class="metric"><span class="metric-value" id="m-calls">&mdash;</span><span class="metric-label">model calls</span></div>
+              <div class="metric"><span class="metric-value" id="m-tokens">&mdash;</span><span class="metric-label" id="m-tokens-label">tokens</span></div>
+              <div class="metric"><span class="metric-value" id="m-time">&mdash;</span><span class="metric-label">total time</span></div>
+            </div>
+            <div class="rollup">
+              <div class="rollup-calls" id="rollup-calls" aria-hidden="true"></div>
+              <span class="rollup-arrow" aria-hidden="true">&rarr;</span>
+              <span class="rollup-node">1 job</span>
+              <span class="rollup-arrow" aria-hidden="true">&rarr;</span>
+              <span class="rollup-cost" id="rollup-cost">1 cost</span>
+            </div>
+            <p class="empty-hint" id="result-empty-hint">Each model call becomes a receipt. Calls with the same Work add up to one cost.</p>
+            <p class="result-explain hidden" id="result-explain"></p>
+            <div class="result-foot hidden" id="result-foot">
+              <details class="inline" id="call-details">
+                <summary>View details</summary>
+                <div class="table-scroll">
+                  <table class="calls-table" id="calls-table">
+                    <caption class="sr-only">Every call in this job</caption>
+                    <thead><tr><th scope="col">#</th><th scope="col">Step</th><th scope="col" class="col-model">Model</th><th scope="col" class="num">Tokens in / out</th><th scope="col" class="num">Cost</th><th scope="col">Status</th></tr></thead>
+                    <tbody id="calls-rows"></tbody>
+                  </table>
+                </div>
+                <p class="small" id="calls-note" style="margin:10px 0 0"></p>
+              </details>
+              <div class="button-row next-steps">
+                <button class="button button-primary" type="button" id="try-another-btn">Try another</button>
+                <button class="button button-secondary" type="button" data-goto="sec-key">Use my API key</button>
+                <button class="button button-secondary" type="button" data-goto="sec-connect">Connect my app</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="card hidden" id="trial-panel" aria-labelledby="trial-panel-title">
-      <p class="eyebrow" id="trial-panel-title">Your personal gateway</p>
-      <div class="countdown-row">
-        <span class="countdown-label">Deletes in</span>
-        <span class="countdown-value" id="countdown-value">--:--:--</span>
-        <span class="status-badge demo" id="mode-badge">Demo mode</span>
+    <section class="trial wrap hidden" id="trial-panel" aria-labelledby="trial-panel-title">
+      <div class="trial-bar">
+        <h2 id="trial-panel-title">Your trial gateway</h2>
+        <span class="trial-fact"><span class="label">Deletes in</span><span class="countdown-value" id="countdown-value">--:--:--</span></span>
+        <span class="mode-badge demo" id="mode-badge">Demo mode</span>
+        <div class="budget-mini">
+          <span class="trial-fact"><span class="label">Spent today</span><span id="budget-spent">$0.00</span><span class="label">of</span><span id="budget-cap">$1.00</span></span>
+          <div class="budget-track" aria-hidden="true"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
+        </div>
       </div>
-      <p class="step-note" id="trial-notice"></p>
+      <p class="trial-notice" id="trial-notice"></p>
 
-      <div class="install-wrap">
-        <div class="install"><code id="base-url-code"></code><button class="copy" type="button" data-copy-target="base-url-code">Copy</button></div>
-        <p class="step-note">Your personal <code>base_url</code> — point any OpenAI- or Anthropic-compatible client at it.</p>
-      </div>
+      <details class="disclose" id="sec-key">
+        <summary><span>Try with your own API key<span class="summary-sub">Use your OpenAI or Anthropic key for a real request.</span></span></summary>
+        <div class="disclose-body">
+          <p class="custody">Your key is held in this server's memory only, for at most 4 hours. It is never written to disk, logged, or put in a receipt. Real requests are billed to your provider account.</p>
+          <form class="key-form" id="key-form" autocomplete="off">
+            <div class="field">
+              <label for="openai-key-input">OpenAI API key (optional)</label>
+              <div class="key-input-row">
+                <input
+                  type="password" id="openai-key-input" name="inferrail-openai-key-not-a-login-password"
+                  autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
+                  data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                  placeholder="sk-...">
+                <button type="button" class="key-field-btn" data-toggle-visibility="openai-key-input">Show</button>
+                <button type="button" class="key-field-btn" data-clear-field="openai-key-input">Clear</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="anthropic-key-input">Anthropic API key (optional)</label>
+              <div class="key-input-row">
+                <input
+                  type="password" id="anthropic-key-input" name="inferrail-anthropic-key-not-a-login-password"
+                  autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
+                  data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                  placeholder="sk-ant-...">
+                <button type="button" class="key-field-btn" data-toggle-visibility="anthropic-key-input">Show</button>
+                <button type="button" class="key-field-btn" data-clear-field="anthropic-key-input">Clear</button>
+              </div>
+            </div>
+            <div class="button-row">
+              <button class="button button-primary" type="submit" id="submit-keys-btn">Add key</button>
+              <button class="button button-quiet" type="button" id="forget-keys-btn">Forget stored keys</button>
+            </div>
+          </form>
+          <p id="key-status" class="status-line" role="status"></p>
+          <details class="inline">
+            <summary>How key handling works</summary>
+            <div>
+              <p style="margin:0">Your key is used only to send your own requests to the provider you gave it for. Inferrail never uses it for anything else. The page clears the key from its fields as soon as the server accepts it. This trial, and the key, are deleted automatically within 4 hours of adding it, or right away if you end the trial.</p>
+              <p style="margin:10px 0 0">Anyone with this trial's dashboard link can use it, including a key you add, up to the daily cap, until it expires. Would you rather not give a key to any hosted service? <a href="/#local">Run Inferrail locally</a> instead.</p>
+            </div>
+          </details>
+          <h3 class="sub-h">Send a real request</h3>
+          <p class="body-copy" id="real-request-hint">Add a key above first. The request is tagged with the Work from the top of the page.</p>
+          <button class="button button-primary hidden" id="send-real-btn" type="button">Send a real request</button>
+          <div id="real-result"></div>
+        </div>
+      </details>
 
-      <div class="install-wrap">
-        <p class="step-note" style="margin:0 0 4px">Your dashboard link — reopens this trial in any tab or device</p>
-        <div class="install"><code id="dashboard-link-code"></code><button class="copy" type="button" data-copy-target="dashboard-link-code">Copy</button></div>
-        <p class="warn-note">Keep this link private: anyone who has it can use this trial — including any key you add, up to this trial's daily cap — until it expires.</p>
-      </div>
+      <details class="disclose" id="sec-connect">
+        <summary><span>Connect my app<span class="summary-sub">Your personal base_url and copy-paste code.</span></span></summary>
+        <div class="disclose-body">
+          <h3 class="sub-h">Your base_url</h3>
+          <div class="base-url"><div class="cmd"><code id="base-url-code"></code><button class="copy" type="button" data-copy-target="base-url-code" aria-label="Copy base_url">Copy</button></div></div>
+          <p class="body-copy" style="margin-top:8px">Point any OpenAI- or Anthropic-compatible client at it. Add <code>X-Inferrail-Attribute-Work-Id</code> to say which job a call belongs to.</p>
 
-      <h3 style="margin-top:20px">Send a test request</h3>
-      <p class="card-copy">Zero-key demo mode always works. Add a real key below to test with your own account instead.</p>
-      <p class="card-copy" style="margin-bottom:4px">Optional: say which job a request belongs to. That's how Inferrail answers "what did this piece of work cost?" — see the section further down.</p>
-      <div class="tag-row">
-        <div class="key-field"><label for="work-id-input">Work (e.g. one support ticket)</label><input id="work-id-input" maxlength="80" value="support-ticket-1" autocomplete="off"></div>
-        <div class="key-field"><label for="task-id-input">Task (a step within it)</label><input id="task-id-input" maxlength="80" value="draft-reply" autocomplete="off"></div>
-      </div>
-      <div class="key-actions">
-        <button class="button-ghost" id="send-demo-btn" type="button">Send a demo request</button>
-        <button class="button-ghost hidden" id="send-real-btn" type="button">Send a real request (your key)</button>
-      </div>
-      <div id="test-result"></div>
+          <div class="tabs code-tabs">
+            <div role="tablist" aria-label="Code examples">
+              <button role="tab" type="button" id="tab-curl" aria-controls="panel-curl" aria-selected="true">curl</button>
+              <button role="tab" type="button" id="tab-openai" aria-controls="panel-openai" aria-selected="false">OpenAI</button>
+              <button role="tab" type="button" id="tab-anthropic" aria-controls="panel-anthropic" aria-selected="false">Anthropic</button>
+              <button role="tab" type="button" id="tab-langchain" aria-controls="panel-langchain" aria-selected="false">LangChain</button>
+              <button role="tab" type="button" id="tab-js" aria-controls="panel-js" aria-selected="false">JavaScript</button>
+            </div>
+            <div role="tabpanel" id="panel-curl" aria-labelledby="tab-curl"><div class="code-block"><pre><code id="snippet-curl"></code></pre><button class="copy" type="button" data-copy-target="snippet-curl" aria-label="Copy curl example">Copy</button></div></div>
+            <div role="tabpanel" id="panel-openai" aria-labelledby="tab-openai" hidden><div class="code-block"><pre><code id="snippet-openai-py"></code></pre><button class="copy" type="button" data-copy-target="snippet-openai-py" aria-label="Copy OpenAI Python example">Copy</button></div></div>
+            <div role="tabpanel" id="panel-anthropic" aria-labelledby="tab-anthropic" hidden><div class="code-block"><pre><code id="snippet-anthropic-py"></code></pre><button class="copy" type="button" data-copy-target="snippet-anthropic-py" aria-label="Copy Anthropic Python example">Copy</button></div></div>
+            <div role="tabpanel" id="panel-langchain" aria-labelledby="tab-langchain" hidden><div class="code-block"><pre><code id="snippet-langchain"></code></pre><button class="copy" type="button" data-copy-target="snippet-langchain" aria-label="Copy LangChain example">Copy</button></div></div>
+            <div role="tabpanel" id="panel-js" aria-labelledby="tab-js" hidden><div class="code-block"><pre><code id="snippet-fetch"></code></pre><button class="copy" type="button" data-copy-target="snippet-fetch" aria-label="Copy JavaScript example">Copy</button></div></div>
+          </div>
 
-      <h3 style="margin-top:24px">Optional: add your own key</h3>
-      <p class="card-copy">Held in this server's memory only for the life of this trial (at most 4 hours from when you add it) — never written to disk, never logged, never included in any receipt. Skip this entirely and stay in demo mode if you'd rather not.</p>
-      <form class="key-form" id="key-form" autocomplete="off">
-        <div class="key-field">
-          <label for="openai-key-input">OpenAI API key (optional)</label>
-          <div class="key-input-row">
-            <input
-              type="password" id="openai-key-input" name="inferrail-openai-key-not-a-login-password"
-              autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
-              data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
-              placeholder="sk-...">
-            <button type="button" class="key-field-btn" data-toggle-visibility="openai-key-input">Show</button>
-            <button type="button" class="key-field-btn" data-clear-field="openai-key-input">Clear</button>
+          <h3 class="sub-h">Your dashboard link</h3>
+          <p class="body-copy">Reopens this trial in any tab or on any device.</p>
+          <div class="cmd no-prompt"><code id="dashboard-link-code"></code><button class="copy" type="button" data-copy-target="dashboard-link-code" aria-label="Copy dashboard link">Copy</button></div>
+          <p class="warn-note">Keep this link private. Anyone who has it can use this trial, including a key you add, up to the daily cap, until it expires.</p>
+        </div>
+      </details>
+
+      <details class="disclose" id="sec-receipts">
+        <summary><span>Receipts, work and budget<span class="summary-sub">Every receipt this trial made, and cost per job and per task.</span></span></summary>
+        <div class="disclose-body">
+          <h3 class="sub-h">Cost per job</h3>
+          <p class="body-copy">Calls tagged with the same Work add up to one job. Mark how a job turned out to see cost per successful outcome.</p>
+          <div class="work-summary" id="work-summary">No tagged work yet. Run the demo above.</div>
+          <div class="table-scroll">
+            <table class="work-table hidden" id="work-table">
+              <thead><tr><th scope="col">Work</th><th scope="col">Calls</th><th scope="col">Known cost</th><th scope="col">Outcome</th></tr></thead>
+              <tbody id="work-rows"></tbody>
+            </table>
+          </div>
+          <h3 class="sub-h">Cost per task</h3>
+          <div class="table-scroll">
+            <table class="work-table hidden" id="task-table">
+              <thead><tr><th scope="col">Task</th><th scope="col">Calls</th><th scope="col">Known cost</th><th scope="col">Status</th></tr></thead>
+              <tbody id="task-rows"></tbody>
+            </table>
+          </div>
+          <h3 class="sub-h">Live feed</h3>
+          <p class="body-copy">The most recent receipts. Counts, cost, and your tags. Never a prompt or a response.</p>
+          <div class="feed-list" id="feed-list"><div class="feed-empty">No receipts yet. Run the demo above.</div></div>
+        </div>
+      </details>
+
+      <details class="disclose" id="sec-advanced">
+        <summary><span>Advanced setup<span class="summary-sub">Send one demo request with your own Task name.</span></span></summary>
+        <div class="disclose-body">
+          <p class="body-copy">A task is a step inside a job. This sends one demo request tagged with the Work above and the Task below.</p>
+          <div class="field field-mono" style="max-width:420px">
+            <label for="task-id-input">Task</label>
+            <input id="task-id-input" maxlength="80" value="draft-reply" autocomplete="off">
+          </div>
+          <div class="button-row" style="margin-top:14px">
+            <button class="button button-secondary" id="send-demo-btn" type="button">Send one demo request</button>
+          </div>
+          <div id="demo-result"></div>
+        </div>
+      </details>
+
+      <details class="disclose" id="sec-data">
+        <summary><span>Download my data<span class="summary-sub">Keep a copy, or end the trial now.</span></span></summary>
+        <div class="disclose-body">
+          <p class="body-copy">This trial and everything in it are deleted when the countdown ends. Download receipts, work, and task totals as JSON first if you want them. There are no prompts or replies in it: they are never stored.</p>
+          <div class="button-row"><button class="button button-secondary" type="button" id="download-data-btn">Download my data (JSON)</button></div>
+          <p id="download-status" class="status-line" role="status"></p>
+          <h3 class="sub-h">Keep it running</h3>
+          <p class="body-copy">Run the same gateway on your own machine. Free and open source, and your data stays there.</p>
+          <div class="cmd"><code id="self-host-code">pip install inferrail &amp;&amp; inferrail serve --quickstart</code><button class="copy" type="button" data-copy-target="self-host-code" aria-label="Copy self-host command">Copy</button></div>
+          <p class="small" style="margin:8px 0 0">Hosted accounts that keep a trial past its expiry are not available yet.</p>
+          <div class="danger-row">
+            <button class="button button-danger" type="button" id="end-trial-btn">End trial and delete everything</button>
           </div>
         </div>
-        <div class="key-field">
-          <label for="anthropic-key-input">Anthropic API key (optional)</label>
-          <div class="key-input-row">
-            <input
-              type="password" id="anthropic-key-input" name="inferrail-anthropic-key-not-a-login-password"
-              autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
-              data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
-              placeholder="sk-ant-...">
-            <button type="button" class="key-field-btn" data-toggle-visibility="anthropic-key-input">Show</button>
-            <button type="button" class="key-field-btn" data-clear-field="anthropic-key-input">Clear</button>
-          </div>
+      </details>
+
+      <details class="disclose" id="sec-feedback">
+        <summary><span>Report an issue<span class="summary-sub">Goes privately to the team. No account needed.</span></span></summary>
+        <div class="disclose-body">
+          <form class="key-form" id="feedback-form" autocomplete="off">
+            <div class="field">
+              <label for="feedback-message">What happened?</label>
+              <textarea id="feedback-message" rows="3" maxlength="4000" placeholder="Describe the issue..." style="resize:vertical"></textarea>
+            </div>
+            <div class="field">
+              <label for="feedback-contact">Your email (optional, if you want a reply)</label>
+              <input type="email" id="feedback-contact" autocomplete="off" placeholder="you@example.com">
+            </div>
+            <div class="button-row"><button class="button button-secondary" type="submit" id="submit-feedback-btn">Send feedback</button></div>
+          </form>
+          <p id="feedback-status" class="status-line" role="status"></p>
         </div>
-        <div class="key-actions">
-          <button class="button-ghost" type="submit" id="submit-keys-btn">Add key(s)</button>
-          <button class="button-ghost" type="button" id="forget-keys-btn">Forget stored key(s)</button>
+      </details>
+    </section>
+
+    <section class="wrap" style="padding-bottom:clamp(40px,5vw,80px)" aria-label="Privacy">
+      <details class="disclose" id="sec-privacy">
+        <summary><span>How privacy works<span class="summary-sub">What this trial keeps, and what it doesn't.</span></span></summary>
+        <div class="disclose-body">
+          <p class="body-copy">Every call gets a receipt: provider, model, token counts, cost, timing, and the tags you add. A receipt has no field for a prompt or a response. Tags are stored exactly as you send them, so keep secrets out of them.</p>
+          <p class="body-copy">In demo mode nothing leaves this service. With your own key, this hosted process holds the key in memory and handles your traffic, and your request goes to OpenAI or Anthropic as usual, so your provider still sees it. Inferrail's receipts do not contain it.</p>
+          <p class="body-copy">Each trial is isolated from every other trial. Demo data is deleted within 24 hours. Once you add a key, the trial and the key are deleted within 4 hours. <a href="https://github.com/domondi1/inferrail/blob/main/hosted/cost_gateway/README.md">How this trial works</a></p>
         </div>
-        <p class="key-privacy-note">Your key never leaves your control except to proxy your own requests to the provider you gave it for — Inferrail never uses it for anything else, and this trial (and the key) is deleted automatically within 4 hours of adding it. Prefer never handing a key to any hosted process at all? <a href="/#steps">Self-host instead</a> — that's the zero-custody option.</p>
-      </form>
-      <p id="key-status" class="step-note"></p>
-
-      <h3 style="margin-top:24px">Copy-paste into your own code</h3>
-      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">curl</p><div class="install"><code id="snippet-curl"></code><button class="copy" type="button" data-copy-target="snippet-curl">Copy</button></div></div>
-      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">OpenAI Python SDK</p><div class="install"><code id="snippet-openai-py"></code><button class="copy" type="button" data-copy-target="snippet-openai-py">Copy</button></div></div>
-      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">Anthropic Python SDK</p><div class="install"><code id="snippet-anthropic-py"></code><button class="copy" type="button" data-copy-target="snippet-anthropic-py">Copy</button></div></div>
-      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">LangChain (ChatOpenAI)</p><div class="install"><code id="snippet-langchain"></code><button class="copy" type="button" data-copy-target="snippet-langchain">Copy</button></div></div>
-      <div class="install-wrap"><p class="step-note" style="margin:0 0 4px">Plain fetch</p><div class="install"><code id="snippet-fetch"></code><button class="copy" type="button" data-copy-target="snippet-fetch">Copy</button></div></div>
-
-      <h3 style="margin-top:24px">Live feed</h3>
-      <p class="card-copy">Every receipt this trial has produced — payload-free: counts, cost, and whatever attribution you attached, never a prompt or response.</p>
-      <div class="feed-list" id="feed-list"><div class="feed-empty">No receipts yet — send a test request above.</div></div>
-
-      <h3 style="margin-top:24px">Budget burn</h3>
-      <div class="receipt-row"><span>Spent today</span><span id="budget-spent">$0.00</span></div>
-      <div class="budget-track"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
-      <div class="receipt-row"><span>Daily cap (this trial)</span><span id="budget-cap">$1.00</span></div>
-
-      <h3 style="margin-top:24px">What does this work cost?</h3>
-      <p class="card-copy">Every request tagged with the same Work adds up to one unit of work. Mark how it turned out, and you get cost per successful outcome — not just a token bill.</p>
-      <div class="work-summary" id="work-summary">No tagged work yet — send a test request above with a Work filled in.</div>
-      <table class="work-table hidden" id="work-table">
-        <thead><tr><th>Work</th><th>Requests</th><th>Known cost</th><th>Outcome</th></tr></thead>
-        <tbody id="work-rows"></tbody>
-      </table>
-      <p class="step-note" style="margin-top:14px">By task</p>
-      <table class="work-table hidden" id="task-table">
-        <thead><tr><th>Task</th><th>Requests</th><th>Known cost</th><th>Status</th></tr></thead>
-        <tbody id="task-rows"></tbody>
-      </table>
-
-      <h3 style="margin-top:24px">Keep your data</h3>
-      <p class="card-copy">This trial and everything in it are deleted when the countdown ends. Download a copy first if you want one — receipts, work, and task totals as JSON (never prompts or replies; those are never stored).</p>
-      <div class="key-actions"><button class="button-ghost" type="button" id="download-data-btn">Download my data (JSON)</button></div>
-      <p id="download-status" class="step-note"></p>
-      <p class="card-copy" style="margin-top:12px">Want it to keep running? Run the same gateway on your own machine — free and open source, and your data never leaves it:</p>
-      <div class="install"><code id="self-host-code">pip install inferrail &amp;&amp; inferrail serve --quickstart</code><button class="copy" type="button" data-copy-target="self-host-code">Copy</button></div>
-      <p class="step-note">Hosted accounts that keep a trial past its expiry aren't available yet.</p>
-
-      <h3 style="margin-top:24px">Report an issue</h3>
-      <p class="card-copy">Something broken, confusing, or worth telling us? This goes privately to the team — it's never posted publicly, and no account is needed.</p>
-      <form class="key-form" id="feedback-form" autocomplete="off">
-        <div class="key-field">
-          <label for="feedback-message">What happened?</label>
-          <textarea id="feedback-message" rows="3" maxlength="4000" placeholder="Describe the issue..." style="font-family:'IBM Plex Mono',monospace; font-size:clamp(13px,1vw,15px); padding:9px 10px; border:1px solid var(--rule); background:#fff; color:var(--ink); resize:vertical;"></textarea>
-        </div>
-        <div class="key-field">
-          <label for="feedback-contact">Your email (optional, if you want a reply)</label>
-          <input type="email" id="feedback-contact" autocomplete="off" placeholder="you@example.com">
-        </div>
-        <div class="key-actions">
-          <button class="button-ghost" type="submit" id="submit-feedback-btn">Send feedback</button>
-        </div>
-      </form>
-      <p id="feedback-status" class="step-note"></p>
-
-      <p class="key-privacy-note" style="margin-top:18px">Done exploring? <button class="copy" type="button" id="end-trial-btn" style="color:var(--ink);border-color:var(--ink)">End trial now and delete everything</button></p>
+      </details>
     </section>
   </main>
 
-  <footer class="wrap">
-    <span>Inferrail — know what your AI work costs, without keeping what it said</span>
-    <nav aria-label="Footer navigation">
-      <a href="/">Home</a>
-      <a href="https://github.com/domondi1/inferrail">GitHub</a>
-      <a href="https://github.com/domondi1/inferrail/blob/main/hosted/cost_gateway/README.md">How this trial works</a>
-      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
-    </nav>
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>Inferrail. Know what your AI work costs, without keeping what it said.</span>
+      <nav aria-label="Footer">
+        <a href="/">Home</a>
+        <a href="https://github.com/domondi1/inferrail">GitHub</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/hosted/cost_gateway/README.md">How this trial works</a>
+        <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
+      </nav>
+    </div>
   </footer>
 
+  <script src="../site.js"></script>
   <script>
     (() => {
       'use strict';
 
-      // hosted/cost_gateway on an always-on Render instance -- see
-      // hosted/cost_gateway/README.md and LAUNCH.md. Keep the preconnect
-      // <link> in <head> in step with this origin. A `?base_url=` query
-      // param overrides this for local
-      // development/testing, e.g.
+      // hosted/cost_gateway on Render -- see hosted/cost_gateway/README.md
+      // and LAUNCH.md. Keep the preconnect <link> in <head> in step. A `?base_url=` query
+      // param overrides this for local development/testing, e.g.
       // http://127.0.0.1:5500/docs/try/?base_url=http://127.0.0.1:8423
       const DEFAULT_BASE_URL = 'https://inferrail-cost-gateway.onrender.com';
       const BASE_URL = (new URLSearchParams(location.search).get('base_url') || DEFAULT_BASE_URL).replace(/\/$/, '');
@@ -288,30 +657,33 @@
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
       ));
       const fmtUsd = (value) => (value === null || value === undefined ? 'unknown' : '$' + value);
+      // Headline money: the API's exact decimal string, with trailing
+      // zeros past the cents trimmed ("0.000960" -> "$0.00096"). Never
+      // rounded, and null stays "unknown", never "$0".
+      const fmtMoney = (value) => {
+        if (value === null || value === undefined) return 'unknown';
+        let s = String(value);
+        if (s.includes('.')) {
+          s = s.replace(/0+$/, '');
+          const decimals = s.split('.')[1].length;
+          if (decimals < 2) s += '0'.repeat(2 - decimals);
+        }
+        return '$' + s;
+      };
+      const fmtInt = (n) => Number(n).toLocaleString('en-US');
+      const fmtDuration = (ms) => {
+        if (!(ms >= 0)) return '?';
+        if (ms < 10000) return (ms / 1000).toFixed(1) + 's';
+        if (ms < 60000) return Math.round(ms / 1000) + 's';
+        const m = Math.floor(ms / 60000), s = Math.round((ms % 60000) / 1000);
+        return m + 'm ' + String(s).padStart(2, '0') + 's';
+      };
       // Per-tab only (sessionStorage): lets a reload keep the trial
       // without writing the trial token anywhere longer-lived. Wrapped,
       // since storage can be unavailable (private mode, blocked).
       const SESSION_KEY = 'inferrail-trial';
       const saveSession = () => { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify({ t: trial.tenant_id, k: trial.api_key })); } catch (_e) { /* storage unavailable */ } };
       const clearSession = () => { try { sessionStorage.removeItem(SESSION_KEY); } catch (_e) { /* storage unavailable */ } };
-      const copyToClipboard = async (text) => {
-        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
-        const area = document.createElement('textarea');
-        area.value = text; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0';
-        document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
-      };
-
-      // User Timing marks: zero network cost, visible in DevTools'
-      // Performance panel and to performance.getEntriesByType('measure')
-      // -- how scripts/bench_try_page.py reads click-to-ready and
-      // click-to-first-demo. Never allowed to break the page.
-      const perfMark = (name) => { try { performance.mark(name); } catch (_e) { /* unsupported */ } };
-      const perfMeasure = (name, start, { once = false } = {}) => {
-        try {
-          if (once && performance.getEntriesByName(name).length) return;
-          performance.measure(name, start);
-        } catch (_e) { /* start mark missing or API unsupported */ }
-      };
 
       let trial = null; // { tenant_id, api_key, base_url, expires_at, ... }
       // Model state per provider, filled by server-side discovery from the
@@ -328,18 +700,35 @@
       let countdownTimer = null;
       let pollTimer = null;
       // Polling budget. Each trial is rate-limited per minute (60 by
-      // default, service-side), and every request this page makes counts.
-      // An idle tick is ONE call (the receipt feed); work, task and status
-      // are re-fetched only when the receipt total changes, plus every
-      // FULL_REFRESH_EVERY_N_POLLS ticks so changes made from another tab
-      // or device (outcomes, keys) still show up. Polling pauses while
-      // the tab is hidden. tests/unit/hosted/test_try_page.py checks this
-      // budget against the service's rate limit.
+      // default, service-side) and every request this page makes counts,
+      // including the demo job's own calls. An idle tick is ONE call (the
+      // receipt feed); status, work and task totals are re-fetched only
+      // when the receipt total changes, or every FULL_REFRESH_EVERY_N_POLLS
+      // ticks so changes from another tab still show up. Polling pauses
+      // while the tab is hidden or a demo job is running.
       const POLL_INTERVAL_MS = 5000;
       const FULL_REFRESH_EVERY_N_POLLS = 6;
-      const START_TRIAL_TIMEOUT_MS = 15000;
+      const FEED_SIZE = 20;
+      // Past this, stop waiting for a new trial and offer a retry.
+      const START_TRIAL_TIMEOUT_MS = 30000;
+      const SLOW_START_NOTICE_MS = 5000;
       let pollCount = 0;
       let lastReceiptTotal = null;
+      let jobRunning = false;
+
+      // The demo job: one support ticket handled in several model calls,
+      // each tagged with the same Work and its own Task. Every call is a
+      // real request through this trial's gateway to the zero-key demo
+      // model -- the result card only shows what the gateway reports back.
+      const DEMO_JOB_STEPS = [
+        { task: 'read-ticket', label: 'Read the ticket' },
+        { task: 'classify', label: 'Classify it' },
+        { task: 'look-up-account', label: 'Look up the account' },
+        { task: 'draft-reply', label: 'Draft a reply' },
+        { task: 'check-policy', label: 'Check the reply against policy' },
+        { task: 'final-reply', label: 'Write the final reply' },
+      ];
+      const STEP_LABELS = Object.fromEntries(DEMO_JOB_STEPS.map((s) => [s.task, s.label]));
 
       async function apiFetch(path, options) {
         const res = await fetch(BASE_URL + path, options);
@@ -356,9 +745,7 @@
           // Marks this as "we reached the server and it gave a real
           // answer" (rate-limited, out of capacity, ...) as opposed to a
           // genuine connectivity failure (DNS/connection-refused/CORS,
-          // which leaves this property unset) -- startTrial()'s catch
-          // block uses this to show the *real* reason instead of always
-          // assuming the service isn't deployed.
+          // which leaves this property unset).
           err.httpStatus = res.status;
           throw err;
         }
@@ -369,16 +756,36 @@
         return { Authorization: 'Bearer ' + trial.api_key, 'Content-Type': 'application/json' };
       }
 
-      function taggedHeaders() {
+      function workValue() {
+        return $('work-id-input').value.trim();
+      }
+
+      function taggedHeaders(taskOverride) {
         // The same attribution headers any client can send
         // (X-Inferrail-Attribute-<Name>) -- nothing page-specific.
         const headers = authHeaders();
-        const work = $('work-id-input').value.trim();
-        const task = $('task-id-input').value.trim();
+        const work = workValue();
+        const task = taskOverride === undefined ? $('task-id-input').value.trim() : taskOverride;
         if (work) headers['X-Inferrail-Attribute-Work-Id'] = work;
         if (task) headers['X-Inferrail-Attribute-Task-Id'] = task;
         return headers;
       }
+
+      // HTTP header values must be printable ASCII here; anything else
+      // would make fetch() throw before the request is even sent.
+      const headerSafe = (value) => /^[\x20-\x7E]*$/.test(value);
+
+      // User Timing marks: zero network cost, visible in DevTools'
+      // Performance panel -- how scripts/bench_try_page.py reads
+      // click-to-ready and click-to-first-result. Never allowed to break
+      // the page.
+      const perfMark = (name) => { try { performance.mark(name); } catch (_e) { /* unsupported */ } };
+      const perfMeasure = (name, start, { once = false } = {}) => {
+        try {
+          if (once && performance.getEntriesByName(name).length) return;
+          performance.measure(name, start);
+        } catch (_e) { /* start mark missing or API unsupported */ }
+      };
 
       function dashboardLink() {
         // The trial key rides in the URL *fragment* (after #), which
@@ -399,7 +806,7 @@
 
       function renderSnippets() {
         const url = trial.base_url, key = trial.api_key;
-        $('snippet-curl').textContent = `curl -s -X POST ${url}/v1/demo/chat/completions \\\n  -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" \\\n  -d '{"model": "default", "messages": [{"role": "user", "content": "hello"}]}'`;
+        $('snippet-curl').textContent = `curl -s -X POST ${url}/v1/demo/chat/completions \\\n  -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" \\\n  -H "X-Inferrail-Attribute-Work-Id: support-ticket-42" \\\n  -d '{"model": "default", "messages": [{"role": "user", "content": "hello"}]}'`;
         const openaiModel = modelsByProvider.openai.selected;
         const openaiModelArg = openaiModel ? `"${openaiModel}"` : '"YOUR_MODEL_ID"';
         const openaiHint = openaiModel ? '' : '# Add your OpenAI key above and this fills in a model your key can use.\n';
@@ -430,22 +837,22 @@
       }
 
       function resetTrialUI() {
-        // Full panel reset -- key fields, the last test-request result,
+        // Full panel reset -- key fields, the last single-request results,
         // the live feed, and the budget bar -- so ending one trial and
         // starting another (or a natural expiry) never leaves stale
         // data from the previous trial visible, even for a moment.
         resetKeyFields(); resetModels();
         lastReceiptTotal = null; pollCount = 0;
         $('key-status').textContent = '';
-        $('test-result').innerHTML = '';
-        $('feed-list').innerHTML =
-          '<div class="feed-empty">No receipts yet — send a test request above.</div>';
+        $('demo-result').innerHTML = '';
+        $('real-result').innerHTML = '';
+        $('feed-list').innerHTML = '<div class="feed-empty">No receipts yet. Run the demo above.</div>';
         $('budget-spent').textContent = '$0.00';
         $('budget-fill').style.width = '0%';
         $('feedback-message').value = '';
         $('feedback-contact').value = '';
         $('feedback-status').textContent = '';
-        $('work-summary').textContent = 'No tagged work yet — send a test request above with a Work filled in.';
+        $('work-summary').textContent = 'No tagged work yet. Run the demo above.';
         $('work-rows').innerHTML = ''; $('task-rows').innerHTML = '';
         $('work-table').classList.add('hidden'); $('task-table').classList.add('hidden');
         $('download-status').textContent = '';
@@ -460,10 +867,14 @@
 
       function renderKeyStatus() {
         const parts = [];
-        if (trial.openai_configured) parts.push('OpenAI key configured');
-        if (trial.anthropic_configured) parts.push('Anthropic key configured');
-        $('key-status').textContent = parts.length ? parts.join(' · ') : 'No key configured yet — demo mode only.';
-        $('send-real-btn').classList.toggle('hidden', !(trial.openai_configured || trial.anthropic_configured));
+        if (trial.openai_configured) parts.push('OpenAI key added');
+        if (trial.anthropic_configured) parts.push('Anthropic key added');
+        $('key-status').textContent = parts.length ? parts.join(' · ') : 'No key added. Demo mode only.';
+        const hasKey = trial.openai_configured || trial.anthropic_configured;
+        $('send-real-btn').classList.toggle('hidden', !hasKey);
+        $('real-request-hint').textContent = hasKey
+          ? 'Sends one short request with your key, tagged with the Work from the top of the page.'
+          : 'Add a key above first. The request is tagged with the Work from the top of the page.';
       }
 
       function renderBudget() {
@@ -474,17 +885,22 @@
         $('budget-fill').style.width = Math.min(100, (spent / cap) * 100).toFixed(1) + '%';
       }
 
+      function trialGone(message) {
+        stopPolling();
+        resetTrialUI(); clearSession(); trial = null;
+        $('trial-panel').classList.add('hidden');
+        resetResult();
+        $('run-status').classList.remove('error');
+        $('run-status').textContent = message;
+      }
+
       function tickCountdown() {
         if (!trial) return;
         const remaining = (new Date(trial.expires_at).getTime() - Date.now()) / 1000;
         const el = $('countdown-value');
         el.textContent = fmtSeconds(remaining);
         el.classList.toggle('low', remaining < 600);
-        if (remaining <= 0) {
-          stopPolling();
-          resetTrialUI(); clearSession();
-          $('trial-notice').textContent = 'This trial has expired and its data has been deleted. Start a new one above.';
-        }
+        if (remaining <= 0) trialGone('Your trial expired and its data was deleted. Run the demo to start a new one.');
       }
 
       async function refreshStatus() {
@@ -495,15 +911,27 @@
         } catch (e) { /* transient poll failure -- next tick retries, nothing to show the user for one miss */ }
       }
 
+      async function fetchLatestReceipts(n, knownTotal) {
+        // The receipts endpoint returns oldest first, so the newest `n`
+        // live at offset (total - n). Guess the offset from the last known
+        // total (one request when nothing changed), and correct it with a
+        // second request only when the guess was stale.
+        const guess = Math.max(0, (knownTotal || 0) - n);
+        let page = await apiFetch(`/v1/receipts?limit=${n}&offset=${guess}`, { headers: authHeaders() });
+        const want = Math.max(0, page.total - n);
+        if (want !== guess) page = await apiFetch(`/v1/receipts?limit=${n}&offset=${want}`, { headers: authHeaders() });
+        return page;
+      }
+
       async function refreshReceipts() {
         // Returns whether the receipt total changed since the last look --
         // the poll loop uses that to decide whether anything else is stale.
         try {
-          const page = await apiFetch('/v1/receipts?limit=20', { headers: authHeaders() });
+          const page = await fetchLatestReceipts(FEED_SIZE, lastReceiptTotal);
           const changed = page.total !== lastReceiptTotal;
           lastReceiptTotal = page.total;
           const list = $('feed-list');
-          if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet — send a test request above.</div>'; return changed; }
+          if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet. Run the demo above.</div>'; return changed; }
           list.innerHTML = page.receipts.slice().reverse().map((r) => `
             <div class="receipt-row"><span>${esc(r.provider)} / ${esc(r.model)}${r.attributes && r.attributes.work_id ? ' · ' + esc(r.attributes.work_id) : ''}</span><span>${esc(r.status)}</span></div>
             <div class="receipt-row"><span>${esc(r.prompt_tokens ?? '?')} in / ${esc(r.completion_tokens ?? '?')} out</span><span>${esc(fmtUsd(r.estimated_cost_usd))}</span></div>
@@ -516,7 +944,7 @@
         const rows = work.work || [];
         const table = $('work-table');
         if (!rows.length) {
-          $('work-summary').textContent = 'No tagged work yet — send a test request above with a Work filled in.';
+          $('work-summary').textContent = 'No tagged work yet. Run the demo above.';
           table.classList.add('hidden');
         } else {
           let known = 0, unknown = 0, succeeded = 0;
@@ -525,8 +953,8 @@
             unknown += w.unknown_cost_count || 0;
             if (w.outcome_status === 'succeeded') succeeded += 1;
           });
-          let summary = `${rows.length} unit${rows.length === 1 ? '' : 's'} of work · $${known.toFixed(6)} known cost`;
-          if (unknown) summary += ` (+${unknown} request${unknown === 1 ? '' : 's'} with unknown cost)`;
+          let summary = `${rows.length} job${rows.length === 1 ? '' : 's'} · $${known.toFixed(6)} known cost`;
+          if (unknown) summary += ` (+${unknown} call${unknown === 1 ? '' : 's'} with unknown cost)`;
           summary += succeeded
             ? ` · ${succeeded} succeeded → $${(known / succeeded).toFixed(6)} per successful outcome` +
               (succeeded < rows.length ? ' (includes the cost of work that didn\'t succeed)' : '')
@@ -616,7 +1044,7 @@
       }
 
       async function pollOnce() {
-        if (!trial || document.hidden) return;
+        if (!trial || document.hidden || jobRunning) return;
         pollCount += 1;
         const changed = await refreshReceipts();
         if (!trial) return; // ended or expired while that was in flight
@@ -636,15 +1064,14 @@
       }
 
       document.addEventListener('visibilitychange', () => {
-        // Catch up at once when the visitor comes back to the tab, instead
-        // of showing whatever was current when they left it.
-        if (!document.hidden && trial && pollTimer) refreshAll();
+        // Catch up at once when the visitor comes back to the tab.
+        if (!document.hidden && trial && pollTimer && !jobRunning) refreshAll();
       });
 
-      function renderReceiptResult(label, response) {
+      function renderReceiptResult(targetId, label, response) {
         const meta = response.inferrail || {};
-        $('test-result').innerHTML = `
-          <div class="card" style="margin-top:12px">
+        $(targetId).innerHTML = `
+          <div class="receipt-card">
             <p class="eyebrow">${esc(label)}</p>
             <div class="receipt-row"><span>reply</span><span style="text-align:left">${esc((response.choices && response.choices[0] && response.choices[0].message.content) || '(no content)')}</span></div>
             <div class="receipt-row"><span>provider / model</span><span>${esc(meta.provider || '?')} / ${esc(response.model || '?')}</span></div>
@@ -656,19 +1083,21 @@
       async function sendDemoRequest() {
         const btn = $('send-demo-btn');
         if (btn.disabled) return; // guards a fast double-click, not just a slow one
+        if (!headerSafe(workValue()) || !headerSafe($('task-id-input').value.trim())) {
+          $('demo-result').textContent = 'Work and Task names can use plain letters, numbers, spaces and punctuation only.';
+          return;
+        }
         btn.disabled = true;
         const original = btn.textContent;
         btn.textContent = 'Sending…';
-        perfMark('inferrail:demo-click');
         try {
           const response = await apiFetch('/v1/demo/chat/completions', {
             method: 'POST', headers: taggedHeaders(),
             body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
           });
-          renderReceiptResult('Demo receipt (DEMO-priced, no real key used)', response);
-          perfMeasure('inferrail:first-demo', 'inferrail:demo-click', { once: true });
+          renderReceiptResult('demo-result', 'Demo receipt (DEMO-priced, no real key used)', response);
           refreshAll();
-        } catch (e) { $('test-result').textContent = 'Demo request failed: ' + e.message; }
+        } catch (e) { $('demo-result').textContent = 'Demo request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
 
@@ -704,18 +1133,22 @@
         // double-click here is worse than on the demo button, so this
         // guard matters even more.
         if (btn.disabled) return;
+        if (!headerSafe(workValue()) || !headerSafe($('task-id-input').value.trim())) {
+          $('real-result').textContent = 'Work and Task names can use plain letters, numbers, spaces and punctuation only.';
+          return;
+        }
         btn.disabled = true;
         const original = btn.textContent;
         btn.textContent = 'Sending…';
         try {
-          // Unchanged: with both keys added, the button uses OpenAI.
+          // With both keys added, the button uses OpenAI.
           const provider = trial.openai_configured ? 'openai' : 'anthropic';
           if (!modelsByProvider[provider].selected) {
             try { await discoverModels(provider); }
-            catch (e) { $('test-result').textContent = modelProblem(provider, e); return; }
+            catch (e) { $('real-result').textContent = modelProblem(provider, e); return; }
           }
           const model = modelsByProvider[provider].selected;
-          if (!model) { $('test-result').textContent = modelsByProvider[provider].message; return; }
+          if (!model) { $('real-result').textContent = modelsByProvider[provider].message; return; }
           const prompt = [{ role: 'user', content: 'Say hello in five words.' }];
           let response;
           if (provider === 'openai') {
@@ -728,10 +1161,10 @@
             });
             response = { choices: [{ message: { content: (response.content && response.content[0] && response.content[0].text) || '' } }], usage: { prompt_tokens: response.usage && response.usage.input_tokens, completion_tokens: response.usage && response.usage.output_tokens }, model: response.model, inferrail: response.inferrail };
           }
-          const label = `Real receipt — your ${PROVIDER_LABELS[provider]} key · model ${model} (picked automatically from the models your key can use)`;
-          renderReceiptResult(label, response);
+          const label = `Real receipt: your ${PROVIDER_LABELS[provider]} key · model ${model} (picked automatically from the models your key can use)`;
+          renderReceiptResult('real-result', label, response);
           refreshAll();
-        } catch (e) { $('test-result').textContent = 'Real request failed: ' + e.message; }
+        } catch (e) { $('real-result').textContent = 'Real request failed: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
 
@@ -759,7 +1192,7 @@
           // this page's DOM; it must not still be there a moment later.
           resetKeyFields();
           renderModeBadge(); renderKeyStatus(); renderSnippets(); tickCountdown();
-          $('key-status').textContent += ' — cleared from this page.';
+          $('key-status').textContent += '. Cleared from this page.';
           const submitted = [openai && 'openai', anthropic && 'anthropic'].filter(Boolean);
           resetModels(...submitted);
           const notes = await Promise.all(submitted.map((provider) =>
@@ -768,7 +1201,7 @@
         } catch (e) {
           // Deliberately NOT cleared on failure: the visitor may want to
           // fix a typo and resubmit without retyping the whole key.
-          $('key-status').textContent = 'Could not add key(s): ' + e.message;
+          $('key-status').textContent = 'Could not add key: ' + e.message;
         } finally {
           btn.disabled = false; btn.textContent = original;
         }
@@ -785,7 +1218,7 @@
           trial.openai_configured = false; trial.anthropic_configured = false; trial.mode = 'demo';
           resetKeyFields(); resetModels();
           renderModeBadge(); renderKeyStatus(); renderSnippets();
-        } catch (e) { $('key-status').textContent = 'Could not forget key(s): ' + e.message; }
+        } catch (e) { $('key-status').textContent = 'Could not forget keys: ' + e.message; }
         finally { btn.disabled = false; btn.textContent = original; }
       }
 
@@ -796,11 +1229,8 @@
         btn.disabled = true;
         try {
           await apiFetch(`/v1/trial/${trial.tenant_id}`, { method: 'DELETE', headers: authHeaders() });
-          stopPolling();
-          resetTrialUI(); clearSession();
-          $('trial-panel').classList.add('hidden');
-          $('start-trial-btn').disabled = false; $('start-trial-btn').textContent = 'Try free — instant gateway';
-          $('start-trial-hint').textContent = 'Trial ended and deleted. Start a new one any time.';
+          trialGone('Trial ended and deleted. Run the demo any time to start a new one.');
+          window.scrollTo({ top: 0 });
         } catch (e) {
           alert('Could not end trial: ' + e.message);
         } finally {
@@ -825,7 +1255,7 @@
           });
           $('feedback-message').value = '';
           $('feedback-contact').value = '';
-          $('feedback-status').textContent = 'Thanks — that was sent to the team.';
+          $('feedback-status').textContent = 'Thanks. That was sent to the team.';
         } catch (e) {
           $('feedback-status').textContent = 'Could not send feedback: ' + e.message;
         } finally {
@@ -836,13 +1266,12 @@
       function showTrial({ fresh = false } = {}) {
         // `fresh`: this trial was minted a moment ago, so its receipts and
         // work are empty by construction -- resetTrialUI() already shows
-        // exactly that, and fetching them would only put three requests
-        // (plus CORS preflights) in front of the visitor's first click.
+        // exactly that.
         resetTrialUI(); // wipe any leftover UI from a previous trial before showing this one
         $('trial-panel').classList.remove('hidden');
         $('base-url-code').textContent = trial.base_url;
         $('dashboard-link-code').textContent = dashboardLink();
-        $('trial-notice').textContent = trial.notice;
+        $('trial-notice').textContent = trial.notice ? 'About this trial: ' + trial.notice + '.' : '';
         renderModeBadge(); renderKeyStatus(); renderBudget(); renderSnippets();
         saveSession();
         startPolling();
@@ -850,9 +1279,6 @@
         ['openai', 'anthropic'].forEach((provider) => {
           if (trial[provider + '_configured']) discoverModels(provider).catch(() => { /* retried on the next real request */ });
         });
-        $('start-trial-btn').disabled = true;
-        $('start-trial-btn').textContent = 'Gateway ready ✓';
-        perfMeasure('inferrail:trial-ready', 'inferrail:trial-click');
       }
 
       async function restoreTrial() {
@@ -878,51 +1304,238 @@
           });
           trial = Object.assign({}, status, { api_key: saved.k });
           showTrial();
-          note.classList.add('hidden');
+          note.textContent = 'Your trial is open again. Run the demo, or open a section below.';
         } catch (e) {
           clearSession(); trial = null;
           note.textContent = e.httpStatus === 401 || e.httpStatus === 403
-            ? 'That trial has expired or was ended — its data is gone. Start a new one below.'
+            ? 'That trial has expired or was ended, and its data is gone. Run the demo to start a new one.'
             : 'Could not reopen that trial: ' + e.message;
         }
       }
 
       async function startTrial() {
-        const btn = $('start-trial-btn');
+        // Returns true once a trial exists. Called by the demo run; the
+        // visitor never has to start a trial as a separate step.
         perfMark('inferrail:trial-click');
-        btn.disabled = true; btn.textContent = 'Setting up your personal gateway…';
         $('unreachable-banner').classList.add('hidden');
-        // The service is always on, so a healthy start takes well under a
-        // second. If it hasn't answered by START_TRIAL_TIMEOUT_MS, stop
-        // waiting and offer a retry rather than leave the button spinning.
+        setRunStatus('Starting your personal gateway…');
+        // The hosting can pause the service after a quiet period, and the
+        // first request then waits while it starts. Say so only once a
+        // start is actually slow, so a warm start never mentions it.
+        const slowTimer = setTimeout(() => {
+          setRunStatus('Still starting. The first start after a quiet period can take a little longer.');
+        }, SLOW_START_NOTICE_MS);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), START_TRIAL_TIMEOUT_MS);
         try {
           trial = await apiFetch('/v1/trial', { method: 'POST', signal: controller.signal });
           showTrial({ fresh: true });
-          $('start-trial-hint').textContent = 'Your gateway is ready below.';
-          $('trial-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          perfMeasure('inferrail:trial-ready', 'inferrail:trial-click');
+          $('restore-note').classList.add('hidden');
+          return true;
         } catch (e) {
+          trial = null;
           if (e.httpStatus !== undefined) {
             // We reached the service and it gave a real answer -- show
             // that answer, not a generic "not deployed" guess.
             $('unreachable-banner-title').textContent =
               e.httpStatus === 429
-                ? "You've hit the trial rate limit for this network."
+                ? "You've hit the trial limit for this network."
                 : `The trial service returned an error (HTTP ${e.httpStatus}).`;
             $('unreachable-banner-detail').textContent = e.message;
           } else if (e.name === 'AbortError') {
             $('unreachable-banner-title').textContent = "The trial service didn't respond in time.";
             $('unreachable-banner-detail').textContent = 'Please try again in a moment.';
           } else {
-            $('unreachable-banner-title').textContent = "Couldn't reach the trial service.";
-            $('unreachable-banner-detail').textContent = 'Check your connection and try again.';
+            $('unreachable-banner-title').textContent = "This hosted trial isn't reachable right now.";
+            $('unreachable-banner-detail').textContent = 'This instance may be temporarily unavailable.';
           }
           $('unreachable-banner').classList.remove('hidden');
-          btn.disabled = false; btn.textContent = 'Try again';
+          setRunStatus('');
+          return false;
         } finally {
-          clearTimeout(timeout);
+          clearTimeout(slowTimer); clearTimeout(timeout);
         }
+      }
+
+      // ---------- The demo job and its result card ----------
+
+      function setRunStatus(text, isError) {
+        const el = $('run-status');
+        el.textContent = text;
+        el.classList.toggle('error', Boolean(isError));
+      }
+
+      function resetResult() {
+        const card = $('result');
+        card.classList.add('is-empty');
+        $('result-eyebrow').textContent = 'Your result';
+        $('result-job-name').textContent = 'Run the demo to see it here';
+        $('result-status').classList.add('hidden');
+        ['m-cost', 'm-calls', 'm-tokens', 'm-time'].forEach((id) => { $(id).innerHTML = id === 'm-cost' ? '$&mdash;' : '&mdash;'; });
+        $('m-tokens-label').textContent = 'tokens';
+        $('rollup-calls').innerHTML = '';
+        $('rollup-cost').textContent = '1 cost';
+        $('result-empty-hint').classList.remove('hidden');
+        $('result-explain').classList.add('hidden');
+        $('result-foot').classList.add('hidden');
+        $('calls-rows').innerHTML = '';
+        $('calls-note').textContent = '';
+      }
+
+      function setResultStatus(state, text) {
+        const el = $('result-status');
+        el.classList.remove('hidden', 'pending', 'warn');
+        if (state !== 'ok') el.classList.add(state);
+        el.textContent = text;
+      }
+
+      function addCallSquare() {
+        const sq = document.createElement('span');
+        sq.className = 'new';
+        $('rollup-calls').appendChild(sq);
+      }
+
+      function renderJobResult(work, receipts, runErrors) {
+        const card = $('result');
+        card.classList.remove('is-empty');
+        const cost = work.known_attributed_inference_cost_usd;
+        const unknown = work.unknown_cost_count || 0;
+        const ok = work.inference_status === 'success' && !runErrors;
+        setResultStatus(ok ? 'ok' : 'warn', ok ? 'Job completed' : 'Job finished with errors');
+        $('result-eyebrow').textContent = 'Demo job · DEMO prices, no real provider called';
+        $('result-job-name').textContent = work.work_id;
+
+        $('m-cost').textContent = fmtMoney(cost);
+        $('rollup-cost').textContent = fmtMoney(cost);
+        $('m-calls').textContent = fmtInt(work.receipt_count);
+        // Tokens are summed from the receipts themselves; if not every
+        // receipt for this Work was loaded, say so rather than undercount.
+        const complete = receipts.length === work.receipt_count;
+        const known = receipts.filter((r) => r.prompt_tokens !== null && r.completion_tokens !== null);
+        if (complete && known.length === receipts.length) {
+          $('m-tokens').textContent = fmtInt(known.reduce((sum, r) => sum + r.prompt_tokens + r.completion_tokens, 0));
+          $('m-tokens-label').textContent = 'tokens';
+        } else {
+          $('m-tokens').innerHTML = '&mdash;';
+          $('m-tokens-label').textContent = 'tokens (not all loaded)';
+        }
+        const started = work.started_at ? Date.parse(work.started_at) : NaN;
+        const ended = work.ended_at ? Date.parse(work.ended_at) : NaN;
+        $('m-time').textContent = fmtDuration(ended - started);
+
+        // One square per call in the whole job (not just this run).
+        const squares = $('rollup-calls');
+        while (squares.children.length < Math.min(work.receipt_count, 60)) addCallSquare();
+
+        let explain = `${work.receipt_count} model call${work.receipt_count === 1 ? '' : 's'}, all tagged with the same Work, added up to one cost.`;
+        if (unknown) explain += ` ${unknown} call${unknown === 1 ? ' has' : 's have'} an unknown cost and ${unknown === 1 ? 'is' : 'are'} not in the total.`;
+        $('result-explain').innerHTML = esc(explain) +
+          '<span class="result-demo-note">Inferrail kept the counts, cost and timing. Not the prompts or replies.</span>';
+        $('result-explain').classList.remove('hidden');
+        $('result-empty-hint').classList.add('hidden');
+
+        $('calls-rows').innerHTML = receipts.map((r, i) => {
+          const task = r.attributes && r.attributes.task_id;
+          const step = task ? (STEP_LABELS[task] || task) : '(no task)';
+          return `<tr><td>${i + 1}</td><td>${esc(step)}</td><td class="col-model">${esc(r.provider)} / ${esc(r.model)}</td>` +
+            `<td class="num">${esc(r.prompt_tokens ?? '?')} / ${esc(r.completion_tokens ?? '?')}</td>` +
+            `<td class="num">${esc(fmtUsd(r.estimated_cost_usd))}</td><td>${esc(r.status)}</td></tr>`;
+        }).join('');
+        $('calls-note').textContent = complete
+          ? 'One row per receipt. Prices are DEMO prices: made-up round numbers, not real provider pricing.'
+          : `Showing the ${receipts.length} most recent calls for this Work.`;
+        $('result-foot').classList.remove('hidden');
+      }
+
+      async function runDemoJob(ev) {
+        if (ev) ev.preventDefault();
+        if (jobRunning) return;
+        const work = workValue();
+        if (!work) { setRunStatus('Give the job a name first, for example "Support ticket #42".', true); $('work-id-input').focus(); return; }
+        if (!headerSafe(work)) { setRunStatus('Use plain letters, numbers, spaces and punctuation in the Work name.', true); $('work-id-input').focus(); return; }
+        const btn = $('run-demo-btn');
+        jobRunning = true;
+        btn.disabled = true;
+        btn.textContent = 'Running…';
+        perfMark('inferrail:demo-click');
+        let startFailed = false;
+        try {
+          if (!trial && !(await startTrial())) { startFailed = true; return; }
+
+          const card = $('result');
+          card.classList.remove('is-empty');
+          $('result-eyebrow').textContent = 'Demo job';
+          $('result-job-name').textContent = work;
+          setResultStatus('pending', 'Running');
+          ['m-cost', 'm-calls', 'm-tokens', 'm-time'].forEach((id) => { $(id).innerHTML = '&hellip;'; });
+          $('rollup-calls').innerHTML = '';
+          $('rollup-cost').textContent = '…';
+          $('result-explain').classList.add('hidden');
+          $('result-foot').classList.add('hidden');
+          $('call-details').open = false;
+          if (window.matchMedia('(max-width: 1000px)').matches) {
+            $('result-area').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+
+          let runErrors = 0;
+          for (let i = 0; i < DEMO_JOB_STEPS.length; i += 1) {
+            const step = DEMO_JOB_STEPS[i];
+            setRunStatus(`Call ${i + 1} of ${DEMO_JOB_STEPS.length}: ${step.label}…`);
+            try {
+              await apiFetch('/v1/demo/chat/completions', {
+                method: 'POST', headers: taggedHeaders(step.task),
+                body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content: step.label + ' for ' + work + '.' }] }),
+              });
+              addCallSquare();
+              $('m-calls').textContent = String(i + 1);
+            } catch (e) {
+              runErrors += 1;
+              if (e.httpStatus === 429) {
+                setRunStatus('This trial is sending requests too fast. Wait a few seconds, then run it again.', true);
+              } else if (e.httpStatus === 401 || e.httpStatus === 403) {
+                trialGone('Your trial has expired or was ended. Run the demo to start a new one.');
+                return;
+              } else {
+                setRunStatus('A demo call failed: ' + e.message, true);
+              }
+              break;
+            }
+          }
+
+          // The result comes from the gateway, not from this page: the
+          // work summary (calls, cost, time) and the receipts themselves.
+          const summary = await apiFetch(`/v1/work/${encodeURIComponent(work)}`, { headers: authHeaders() });
+          const page = await fetchLatestReceipts(200, lastReceiptTotal);
+          lastReceiptTotal = null; // make the next poll refresh everything
+          const receipts = page.receipts.filter((r) => r.attributes && r.attributes.work_id === work);
+          renderJobResult(summary, receipts, runErrors);
+          perfMeasure('inferrail:first-demo', 'inferrail:demo-click', { once: true });
+          if (!runErrors) setRunStatus('');
+          refreshStatus();
+        } catch (e) {
+          if (e.httpStatus === 404) { resetResult(); setRunStatus('No calls were recorded for this job. Please try again.', true); }
+          else setRunStatus('Could not load the result: ' + e.message, true);
+        } finally {
+          jobRunning = false;
+          btn.disabled = false; btn.textContent = 'Run demo';
+          if (startFailed) btn.textContent = 'Try again';
+        }
+      }
+
+      function nextWorkName(name) {
+        // "Support ticket #42" -> "Support ticket #43"; no number -> "name 2".
+        const m = name.match(/^(.*?)(\d+)(\D*)$/);
+        return m ? m[1] + String(Number(m[2]) + 1) + m[3] : name + ' 2';
+      }
+
+      function goTo(sectionId) {
+        const section = $(sectionId);
+        if (!section) return;
+        section.open = true;
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const focusable = section.querySelector('input, button:not(.copy), [role="tab"]');
+        if (focusable) setTimeout(() => focusable.focus({ preventScroll: true }), 350);
       }
 
       let warmedAt = 0;
@@ -937,9 +1550,16 @@
         document.head.appendChild(link);
       };
       ['pointerenter', 'focus', 'touchstart'].forEach((type) => {
-        $('start-trial-btn').addEventListener(type, warmConnection, { passive: true });
+        $('run-demo-btn').addEventListener(type, warmConnection, { passive: true });
       });
-      $('start-trial-btn').addEventListener('click', startTrial);
+      $('run-form').addEventListener('submit', runDemoJob);
+      $('try-another-btn').addEventListener('click', () => {
+        $('work-id-input').value = nextWorkName(workValue() || 'Support ticket #42');
+        runDemoJob();
+      });
+      document.querySelectorAll('[data-goto]').forEach((btn) => {
+        btn.addEventListener('click', () => goTo(btn.getAttribute('data-goto')));
+      });
       $('send-demo-btn').addEventListener('click', sendDemoRequest);
       $('send-real-btn').addEventListener('click', sendRealRequest);
       $('key-form').addEventListener('submit', submitKeys);
@@ -971,15 +1591,6 @@
           );
           if (toggle) toggle.textContent = 'Show';
           input.focus();
-        });
-      });
-      document.querySelectorAll('[data-copy-target]').forEach((btn) => {
-        const original = btn.textContent;
-        btn.addEventListener('click', async () => {
-          const code = document.getElementById(btn.getAttribute('data-copy-target'));
-          if (!code) return;
-          try { await copyToClipboard(code.textContent); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = original; }, 1600); }
-          catch { btn.textContent = 'Copy failed'; }
         });
       });
       restoreTrial();
