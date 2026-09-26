@@ -1391,7 +1391,8 @@ def _events(service_module, caplog, name: str) -> list[dict]:
 
 
 def _fast_purge_env(monkeypatch) -> None:
-    monkeypatch.setenv("COST_GATEWAY_DEMO_TTL_SECONDS", "0.1")
+    monkeypatch.setenv("COST_GATEWAY_DEMO_TTL_SECONDS", "1")
+    monkeypatch.setenv("COST_GATEWAY_REAL_KEY_TTL_SECONDS", "0.1")
     monkeypatch.setenv("COST_GATEWAY_PURGE_GRACE_SECONDS", "0")
     monkeypatch.setenv("COST_GATEWAY_PURGE_INTERVAL_SECONDS", "0.05")
 
