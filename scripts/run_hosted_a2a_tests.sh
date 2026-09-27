@@ -27,6 +27,7 @@ if [ "$#" -eq 0 ]; then
         tests/unit/hosted/test_a2a_economic_authority_sessions.py \
         tests/unit/hosted/test_a2a_economic_authority_transport.py \
         tests/unit/hosted/test_a2a_economic_authority_deployment_readiness.py \
+        tests/unit/hosted/test_a2a_economic_authority_production_db_guard.py \
         tests/unit/hosted/test_requirements_txt_installs_a_working_server.py \
         tests/unit/hosted/test_a2a_economic_authority_agent_card.py
 fi

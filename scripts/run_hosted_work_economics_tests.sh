@@ -19,6 +19,7 @@ DEFAULT_TARGETS=(
     tests/unit/hosted/test_work_economics_paid_path.py
     tests/unit/hosted/test_work_economics_capability.py
     tests/unit/hosted/test_work_economics_store.py
+    tests/unit/hosted/test_work_economics_production_db_guard.py
 )
 # test_work_economics_service.py is deliberately NOT listed: it is
 # skip-gated on real CDP credentials (it talks to the real CDP facilitator

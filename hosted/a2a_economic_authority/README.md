@@ -349,7 +349,17 @@ Set:
   persistent disk for the two durable SQLite databases (not secret, but
   the files they point at must be on private storage -- see "Durable" vs.
   "Not durable" above for exactly what each file does and does not
-  survive a restart).
+  survive a restart). In this shape `main()` refuses to start unless each
+  path is set, is not an in-memory database, does not resolve (after
+  symlinks) to anywhere under `/tmp`, `/var/tmp`, `/dev/shm` or the
+  platform temporary directory, has an existing writable parent directory,
+  and already exists -- see the next variable. The explicit local shape
+  (`--db-path`/`--capability-db-path`) accepts any path.
+- `ECONOMIC_AUTHORITY_ALLOW_NEW_DB=1` -- only for an intentional first
+  start, when neither database exists yet; unset it afterwards. Without
+  it, a missing database file (including just one of the two) stops
+  startup, because a new, empty database is also what a redeploy onto
+  non-persistent storage looks like.
 - `PORT` -- injected by most hosting platforms (not secret).
 
 Then run `python3 server.py` (no CLI args -- this is the production
