@@ -95,6 +95,57 @@
     /* ---------- More ---------- */
     .more-card { display: flex; flex-direction: column; gap: 12px; }
     .more-card .button { align-self: flex-start; margin-top: auto; }
+
+    /* ---------- Company ---------- */
+    /* Footer links land on a card. The three cards share a row on desktop,
+       so moving between them may not scroll at all: mark the target card. */
+    .company-card { scroll-margin-top: 24px; }
+    .company-card:target { outline: 3px solid var(--stamp); outline-offset: 4px; }
+    .company-card .contact { margin-top: auto; }
+    .company-card .contact .small { overflow-wrap: anywhere; }
+    .people { display: grid; gap: 18px; margin: 0; padding: 0; list-style: none; }
+    .people li + li { padding-top: 18px; border-top: 1px solid var(--rule); }
+    .card .person { margin: 0; color: var(--ink); }
+    .person strong { font-weight: 700; }
+    .person .role { color: var(--ink-2); }
+    .card .person-line { margin-top: 2px; }
+    /* Institutional marks: small context next to the visible name, never
+       larger than the text around them. Height is fixed; width follows the
+       file's own aspect ratio. */
+    .marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin: 8px 0 0; font-size: 15px; color: var(--ink-2); }
+    .mark { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .mark img { display: block; height: 16px; width: auto; max-width: 96px; object-fit: contain; }
+    /* The Microsoft file carries built-in white space around the four
+       squares, so it is sized a little larger and pulled in by that space
+       (layout only; the image itself is untouched) to align with the text. */
+    .mark img.mark-microsoft { height: 33px; margin: -6px; }
+    .mark img.mark-brown { height: 30px; }
+    .mark img.mark-williams { height: 30px; }
+    .card .role-title { margin-top: 4px; color: var(--ink); font-weight: 600; }
+    .company-card details.inline ul { margin: 0; padding-left: 20px; }
+    .company-card details.inline li + li { margin-top: 4px; }
+    /* Careers interest form: collapsed behind one button so the card stays
+       short. While it is open, cards stop stretching to the tallest one. */
+    .company-grid:has(details.apply[open]) { align-items: start; }
+    details.apply > summary { list-style: none; align-self: flex-start; }
+    details.apply > summary::-webkit-details-marker { display: none; }
+    details.apply[open] > summary { margin-bottom: 18px; }
+    .apply-form { display: grid; gap: 14px; }
+    .apply-form[hidden] { display: none; }
+    .apply-form .field label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 16px; color: var(--ink); }
+    .apply-form .field input, .apply-form .field textarea {
+      width: 100%; min-height: 46px; padding: 10px 12px; font: 16px var(--sans); color: var(--ink);
+      background: var(--card); border: 2px solid var(--ink-2); border-radius: 2px;
+    }
+    .apply-form .field textarea { resize: vertical; }
+    .apply-form .field input:focus, .apply-form .field textarea:focus { border-color: var(--ink); }
+    .apply-form .button { justify-self: start; }
+    .apply-form .small { margin: 0; }
+    .apply-trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    .apply-status { margin: 12px 0 0; font-size: 16px; }
+    .apply-status:empty { display: none; }
+    .apply-status.ok { padding: 12px 14px; color: var(--good); background: var(--good-tint); border: 1px solid var(--good); font-weight: 600; }
+    .apply-status.error { color: var(--stamp); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -110,6 +161,7 @@
         <a href="#product">Product</a>
         <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
         <a href="/labs/">Labs</a>
+        <a href="#company">Company</a>
         <a href="https://github.com/domondi1/inferrail">GitHub</a>
         <a class="button button-primary nav-try" href="/try/">Try free</a>
       </nav>
@@ -409,21 +461,202 @@ work-support-1   failed      2         $0.007825</pre>
         </div>
       </div>
     </section>
+    <!-- Company: after the product story, deliberately compact. -->
+    <section class="section section-paper2" id="company" aria-labelledby="company-title">
+      <div class="wrap">
+        <h2 class="section-title" id="company-title">Company</h2>
+        <p class="section-lede">A small founding team, building Inferrail in the open.</p>
+        <div class="grid grid-3 company-grid">
+          <div class="card more-card company-card" id="team">
+            <h3>Founding Team</h3>
+            <ul class="people">
+              <li>
+                <p class="person"><strong>Daniel O.</strong> <span class="role">&middot; Founder</span></p>
+                <p class="person-line">Security &amp; AI infrastructure</p>
+                <p class="marks">
+                  <span class="mark"><img class="mark-microsoft" src="assets/marks/microsoft.png" alt="" width="33" height="33">Microsoft Security</span>
+                  <span class="mark"><img class="mark-brown" src="assets/marks/brown-university.gif" alt="" width="22" height="30">Brown University</span>
+                </p>
+              </li>
+              <li>
+                <p class="person"><strong>David O.</strong> <span class="role">&middot; Head of Growth</span></p>
+                <p class="marks">
+                  <span class="mark"><img class="mark-williams" src="assets/marks/williams-college.jpeg" alt="" width="30" height="30">Williams College</span>
+                </p>
+              </li>
+            </ul>
+          </div>
+          <div class="card more-card company-card" id="careers">
+            <h3>Build with us</h3>
+            <p>We're a small founding team building infrastructure for understanding the economics of AI work. We're especially interested in people who can help put Inferrail in the hands of developers and teams who need it.</p>
+            <p class="role-title">Founding Growth &amp; Distribution</p>
+            <details class="inline">
+              <summary>What this role involves</summary>
+              <div>
+                <ul>
+                  <li>Find and recruit early users</li>
+                  <li>Build relationships with developer communities</li>
+                  <li>Run creative distribution experiments</li>
+                  <li>Turn developer interest into product adoption</li>
+                  <li>Identify high-value design partners</li>
+                  <li>Help tell the Inferrail story clearly</li>
+                  <li>Learn directly from users and bring what you learn back into the product</li>
+                </ul>
+              </div>
+            </details>
+            <details class="apply contact" id="careers-apply">
+              <summary class="button button-secondary">Tell us about yourself</summary>
+              <!-- Submissions go to Formspree, which forwards them to the
+                   Inferrail team. The endpoint is public by design (not a
+                   secret). The script below submits in-page. -->
+              <form id="careers-form" class="apply-form" method="post" action="https://formspree.io/f/mzezkykw">
+                <input type="hidden" name="_subject" value="Inferrail careers: Founding Growth &amp; Distribution">
+                <input type="hidden" name="role" value="Founding Growth &amp; Distribution">
+                <div class="field">
+                  <label for="cf-name">Name</label>
+                  <input id="cf-name" name="name" type="text" maxlength="120" autocomplete="name" required>
+                </div>
+                <div class="field">
+                  <label for="cf-email">Email</label>
+                  <input id="cf-email" name="email" type="email" maxlength="255" autocomplete="email" required>
+                </div>
+                <div class="field">
+                  <label for="cf-link">LinkedIn, GitHub, or portfolio URL</label>
+                  <input id="cf-link" name="link" type="url" maxlength="500" placeholder="https://" autocomplete="url">
+                </div>
+                <div class="field">
+                  <label for="cf-help">What are you interested in helping with?</label>
+                  <textarea id="cf-help" name="interested_in" rows="3" maxlength="2000" required></textarea>
+                </div>
+                <div class="field">
+                  <label for="cf-why">Why Inferrail?</label>
+                  <textarea id="cf-why" name="why_inferrail" rows="3" maxlength="2000" required></textarea>
+                </div>
+                <div class="field">
+                  <label for="cf-work">Anything you've built, grown, distributed, or worked on that we should see?</label>
+                  <textarea id="cf-work" name="work_to_see" rows="3" maxlength="2000"></textarea>
+                </div>
+                <div class="apply-trap" aria-hidden="true">
+                  <label for="cf-gotcha">Leave this empty</label>
+                  <input id="cf-gotcha" name="_gotcha" type="text" tabindex="-1" autocomplete="off">
+                </div>
+                <button class="button button-secondary" type="submit">I'm interested</button>
+                <p class="small">Your submission is sent securely through Formspree to the Inferrail team and used only to review and respond to your interest.</p>
+              </form>
+              <p class="apply-status" id="careers-status" role="status" aria-live="polite" tabindex="-1"></p>
+            </details>
+          </div>
+          <div class="card more-card company-card" id="investors">
+            <h3>Investors</h3>
+            <p>We're open to conversations with investors who believe in infrastructure for accountable AI economics.</p>
+            <div class="contact">
+              <a class="button button-secondary" href="mailto:daniel_omondi@alumni.brown.edu">Talk with Daniel</a>
+              <p class="small" style="margin-top:8px">daniel_omondi@alumni.brown.edu</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="site-footer">
-    <div class="wrap">
-      <span>Inferrail. Know what your AI work costs, without keeping what it said.</span>
-      <nav aria-label="Footer">
-        <a href="/try/">Try free</a>
-        <a href="https://github.com/domondi1/inferrail">GitHub</a>
-        <a href="https://pypi.org/project/inferrail/">PyPI</a>
-        <a href="/labs/">Labs</a>
-        <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a>
-        <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Privacy</a>
+    <div class="wrap footer-grid">
+      <div class="footer-brand">
+        <a class="footer-name" href="/">Inferrail</a>
+        <p>Know what your AI work costs, without keeping what it said.</p>
+        <address>
+          Seattle, WA &middot; Pier 70 waterfront<br>
+          2801 Alaskan Way, Seattle, WA 98121<br>
+          <a href="tel:+14012634011">+1 (401) 263-4011</a>
+        </address>
+      </div>
+      <nav aria-labelledby="footer-product">
+        <p class="footer-heading" id="footer-product">Product</p>
+        <ul>
+          <li><a href="/#product">Overview</a></li>
+          <li><a href="/try/">Try free</a></li>
+          <li><a href="/ap/">AP recovery</a></li>
+          <li><a href="https://github.com/domondi1/inferrail/tree/main/inferrail-mcp">MCP server</a></li>
+          <li><a href="/labs/">Labs</a></li>
+        </ul>
       </nav>
+      <nav aria-labelledby="footer-developers">
+        <p class="footer-heading" id="footer-developers">Developers</p>
+        <ul>
+          <li><a href="https://github.com/domondi1/inferrail#readme">Docs</a></li>
+          <li><a href="https://github.com/domondi1/inferrail">GitHub</a></li>
+          <li><a href="https://pypi.org/project/inferrail/">PyPI</a></li>
+          <li><a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Privacy</a></li>
+        </ul>
+      </nav>
+      <nav aria-labelledby="footer-company">
+        <p class="footer-heading" id="footer-company">Company</p>
+        <ul>
+          <li><a href="/#team">Founding Team</a></li>
+          <li><a href="/#careers">Careers</a></li>
+          <li><a href="/#investors">Investors</a></li>
+        </ul>
+      </nav>
+      <nav aria-labelledby="footer-connect">
+        <p class="footer-heading" id="footer-connect">Connect</p>
+        <ul>
+          <li><a href="https://www.linkedin.com/company/inferrail/?viewAsMember=true" aria-label="Inferrail on LinkedIn">LinkedIn <span aria-hidden="true">&#8599;</span></a></li>
+          <li><a href="https://x.com/tryinferrail" aria-label="Inferrail on X">X <span aria-hidden="true">&#8599;</span></a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap">
+      <div class="footer-legal">
+        <span>&copy; 2026 Inferrail. All rights reserved.</span>
+        <span>Open-source software licensed under <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">Apache 2.0</a></span>
+        <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">Privacy</a>
+      </div>
     </div>
   </footer>
   <script src="site.js"></script>
+  <script>
+    // Careers interest form: submits in-page to the endpoint in the form's
+    // action, so the visitor stays on this page. One request at a time.
+    (() => {
+      const form = document.getElementById('careers-form');
+      const status = document.getElementById('careers-status');
+      if (!form || !status) return;
+      const btn = form.querySelector('button[type="submit"]');
+      const label = btn.textContent;
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      let sending = false;
+      const show = (kind, text) => { status.className = 'apply-status ' + kind; status.textContent = text; };
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        if (sending) return;
+        const email = form.elements.email;
+        email.setCustomValidity(EMAIL_RE.test(email.value.trim()) ? '' : 'Enter a valid email address.');
+        if (!form.reportValidity()) return;
+        // Honeypot: people never see this field; bots fill it. Pretend success.
+        if (form.elements._gotcha.value) { form.hidden = true; show('ok', 'Thanks. We have your note.'); return; }
+        sending = true;
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        show('', '');
+        try {
+          const res = await fetch(form.getAttribute('action'), {
+            method: 'POST', body: new FormData(form), headers: { Accept: 'application/json' },
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          form.reset();
+          form.hidden = true;
+          show('ok', "Thanks. We have your note and we'll get back to you.");
+          status.focus();
+        } catch (_e) {
+          show('error', 'Your answers were not sent. Please try again in a moment, or email daniel_omondi@alumni.brown.edu.');
+        } finally {
+          sending = false;
+          btn.disabled = false;
+          btn.textContent = label;
+        }
+      });
+      form.elements.email.addEventListener('input', (ev) => ev.target.setCustomValidity(''));
+    })();
+  </script>
 </body>
 </html>

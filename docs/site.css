@@ -230,7 +230,16 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
 .table-scroll { overflow-x: auto; }
 
 /* ---------- Footer ---------- */
-.site-footer { border-top: 1px solid var(--ink); padding-block: var(--space-4); color: var(--ink-2); font-size: 15px; }
-.site-footer .wrap { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
-.site-footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
-.site-footer a { padding: 6px 0; }
+.site-footer { border-top: 1px solid var(--ink); padding-block: var(--space-4) var(--space-3); color: var(--ink-2); font-size: 15px; }
+.footer-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+.footer-name { font: 700 16px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); text-decoration: none; }
+.footer-brand p { margin: 10px 0 0; max-width: 36ch; }
+.footer-brand address { margin-top: 14px; font-style: normal; font-size: 14px; }
+.footer-heading { margin: 0 0 6px; font: 700 13px/1.2 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+.site-footer ul { margin: 0; padding: 0; list-style: none; }
+.site-footer li a { display: inline-block; padding: 5px 0; }
+.footer-legal { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: var(--space-4); padding-top: var(--space-2); border-top: 1px solid var(--rule); font-size: 14px; }
+@media (max-width: 900px) {
+  .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3) var(--space-2); }
+  .footer-brand { grid-column: 1 / -1; }
+}
