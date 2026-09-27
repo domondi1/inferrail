@@ -82,6 +82,34 @@ jobs:
       - name: Boundary check (belt-and-suspenders alongside the dedicated job)
         run: bash scripts/check_no_internal_content.sh
 
+  hosted-work-economics:
+    # Dedicated, required job for hosted/work_economics/'s paid path. The
+    # main `test` job installs only `[dev,mcp]`, so these tests self-skip
+    # there. This job installs `[hosted]` and runs them against the real
+    # x402 SDK with a credential-free fake facilitator -- no CDP secrets,
+    # no network -- and fails if anything is skipped.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev and hosted dependencies
+        run: pip install -e ".[dev,hosted]"
+
+      - name: Lint (ruff) -- hosted/work_economics and its paid-path tests
+        run: >-
+          ruff check hosted/work_economics
+          tests/unit/hosted/_x402_fake_facilitator.py
+          tests/unit/hosted/test_x402_sdk_contract.py
+          tests/unit/hosted/test_work_economics_paid_path.py
+
+      - name: Test -- x402 SDK contract + Work Economics paid path (zero skips)
+        shell: bash
+        run: bash scripts/run_hosted_work_economics_tests.sh
+
   ap-exceptions:
     # Dedicated job for AP invoice-exception recovery: the main `test` job
     # only installs `[dev,mcp]`, so OpenAIRetryAdapter's `openai` import is
