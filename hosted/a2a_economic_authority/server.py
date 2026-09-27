@@ -139,6 +139,8 @@ import argparse
 import json
 import os
 import sys
+import tempfile
+from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
 
@@ -518,6 +520,83 @@ def _wire_session_purchase_route(
         return JSONResponse(response_body, status_code=status_code, headers=_NO_STORE_HEADERS)
 
 
+ALLOW_NEW_DB_ENV_VAR = "ECONOMIC_AUTHORITY_ALLOW_NEW_DB"
+
+# Locations whose contents do not survive a restart/redeploy on common
+# hosts. `tempfile.gettempdir()` is added at check time.
+_EPHEMERAL_ROOTS = ("/tmp", "/var/tmp", "/dev/shm")
+
+
+class ProductionDbPathError(ValueError):
+    """The production-shape database path is unsafe for payment state."""
+
+
+def resolve_production_db_path(
+    raw: str | None,
+    *,
+    env_var: str,
+    allow_new_env_var: str,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Validates the purchase database path for the production shape.
+
+    These databases hold the only record of which session purchases were
+    paid, plus every delegation and capability credential, so production
+    must never silently run on storage that a restart or redeploy wipes. Rules, in order:
+
+    1. The path must be set explicitly (no default).
+    2. It must not be an in-memory SQLite database.
+    3. After resolving symlinks, it must not be under /tmp, /var/tmp,
+       /dev/shm, or the platform temporary directory.
+    4. Its parent directory must exist and be writable.
+    5. If the file does not exist yet, `allow_new_env_var` must be exactly
+       "1" -- a fresh, empty database at startup is also what a redeploy
+       onto an ephemeral disk looks like, so creating one is opt-in.
+
+    Duplicated deliberately in hosted/work_economics/service.py (each
+    hosted service is a standalone deployable); both copies are held
+    to the same cases by tests/unit/hosted/_production_db_guard_cases.py.
+    """
+    environ = os.environ if environ is None else environ
+    if not raw:
+        raise ProductionDbPathError(
+            f"{env_var} must be set to a database file on persistent storage"
+        )
+    if raw == ":memory:" or raw.startswith("file::memory:") or "mode=memory" in raw:
+        raise ProductionDbPathError(f"{env_var} must not be an in-memory database ({raw!r})")
+
+    path = Path(raw).expanduser().resolve()
+    roots = {Path(root).resolve() for root in (*_EPHEMERAL_ROOTS, tempfile.gettempdir())}
+    for root in sorted(roots):
+        if path == root or path.is_relative_to(root):
+            raise ProductionDbPathError(
+                f"{env_var}={raw!r} resolves to {path}, under temporary storage ({root}); "
+                "use a path on a persistent disk"
+            )
+
+    parent = path.parent
+    if not parent.is_dir():
+        raise ProductionDbPathError(f"{env_var}: parent directory {parent} does not exist")
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise ProductionDbPathError(f"{env_var}: parent directory {parent} is not writable")
+
+    if path.exists():
+        if not path.is_file():
+            raise ProductionDbPathError(f"{env_var}: {path} exists but is not a regular file")
+        if not os.access(path, os.R_OK | os.W_OK):
+            raise ProductionDbPathError(f"{env_var}: {path} is not readable and writable")
+        return path
+
+    if environ.get(allow_new_env_var) != "1":
+        raise ProductionDbPathError(
+            f"{env_var}: {path} does not exist. Refusing to start on a new, empty "
+            "database, because that is also what a redeploy onto non-persistent "
+            f"storage looks like. For an intentional first start, set "
+            f"{allow_new_env_var}=1 for that start only, then unset it."
+        )
+    return path
+
+
 def main() -> None:
     """Two invocation shapes, mirroring `hosted/work_economics/service.py`'s
     own explicit-args-vs-production convention:
@@ -595,6 +674,28 @@ def main() -> None:
                 "advertise the real public HTTPS URL, which cannot be derived "
                 "from an internal bind host/port"
             )
+
+    if not explicit_args:
+        # After the checks above, so an unset ECONOMIC_AUTHORITY_BASE_URL is
+        # still reported first. The explicit (local/test) shape accepts any
+        # path, temporary ones included.
+        try:
+            db_path = str(
+                resolve_production_db_path(
+                    db_path,
+                    env_var="ECONOMIC_AUTHORITY_DB_PATH",
+                    allow_new_env_var=ALLOW_NEW_DB_ENV_VAR,
+                )
+            )
+            capability_db_path = str(
+                resolve_production_db_path(
+                    capability_db_path,
+                    env_var="ECONOMIC_AUTHORITY_CAPABILITY_DB_PATH",
+                    allow_new_env_var=ALLOW_NEW_DB_ENV_VAR,
+                )
+            )
+        except ProductionDbPathError as exc:
+            parser.error(str(exc))
 
     import uvicorn
 

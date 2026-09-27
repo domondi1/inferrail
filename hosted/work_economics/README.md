@@ -36,6 +36,25 @@ Any host that can run a long-lived Python HTTPS process works. Set:
 - `X402_RESOURCE_URL` — the public HTTPS URL for `POST /invoke` (used in the
   x402 Bazaar discovery listing and route config)
 - `PORT` — injected by most hosting platforms
+- `WORK_ECONOMICS_DB_PATH` — **required**: the purchase database file, on a
+  persistent disk. It is the only record of which purchases were paid and
+  delivered.
+- `WORK_ECONOMICS_ALLOW_NEW_DB=1` — only for an intentional first start
+  (see below); unset it afterwards.
 
 Then run `python3 service.py` (no CLI args — this is the production shape:
 binds `0.0.0.0`, reads `$PORT`).
+
+In this shape the service refuses to start unless `WORK_ECONOMICS_DB_PATH`:
+
+- is set (there is no default);
+- is not an in-memory database, and does not resolve (after symlinks) to
+  anywhere under `/tmp`, `/var/tmp`, `/dev/shm` or the platform temporary
+  directory;
+- has an existing, writable parent directory;
+- already exists — unless `WORK_ECONOMICS_ALLOW_NEW_DB=1` is set. A new,
+  empty database at startup is also what a redeploy onto non-persistent
+  storage looks like, so creating one has to be deliberate.
+
+The explicit local shape above (`python3 service.py <db_path> <port>`)
+accepts any path, including temporary ones.
