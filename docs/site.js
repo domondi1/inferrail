@@ -60,6 +60,15 @@
     if (link) openDetails(link.getAttribute('data-open'));
   });
   if (location.hash) openDetails(location.hash.slice(1));
+  // Arriving from another page, the browser jumps to the anchor before web
+  // fonts load; the font swap then reflows the page and pushes the target
+  // out of view. Re-align once fonts are ready.
+  if (location.hash && document.fonts) {
+    document.fonts.ready.then(() => {
+      const el = document.getElementById(location.hash.slice(1));
+      if (el) el.scrollIntoView();
+    });
+  }
 
   // Tabs: .tabs > [role=tablist] > [role=tab][aria-controls]. Arrow keys
   // move between tabs (WAI-ARIA tabs pattern, automatic activation).
