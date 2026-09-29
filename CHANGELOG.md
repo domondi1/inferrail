@@ -6,6 +6,26 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Fixed
+
+- Anthropic prompt-cache tokens were left out of receipts: only
+  `input_tokens` was priced, so a cached request got a known cost that
+  understated the real one. Receipts now count cache writes and reads in
+  `prompt_tokens` (total input), record them in four new nullable fields
+  (`cache_creation_input_tokens`, `cache_creation_5m_input_tokens`,
+  `cache_creation_1h_input_tokens`, `cache_read_input_tokens`), and price
+  them at the 5-minute write, 1-hour write, and read rates. The built-in
+  Anthropic catalog now carries those rates. Cost is `null` (unknown) when
+  cache tokens can't be priced exactly: a price entry without the cache
+  rate, or cache writes reported without the 5-minute/1-hour split.
+  Budget overrun detection uses the same calculation.
+- `/v1/messages` responses now pass Anthropic's cache usage fields back to
+  the client as reported. Uncached responses are unchanged.
+- Existing SQLite receipt stores gain the four cache columns on open
+  (additive; existing rows read back as `null`).
+
 ## v0.4.5 — 2026-09-26
 
 ### Added

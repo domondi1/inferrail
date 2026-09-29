@@ -306,6 +306,19 @@ inspectable config file and gives you a telemetry record for every request
   different, differently-priced model under a colliding name. See
   `docs/adr/0005-privacy-preserving-economic-receipts.md` and
   `docs/adr/0014-anthropic-messages-passthrough.md`.
+- Anthropic prompt caching: cache writes and reads are part of
+  `prompt_tokens` (total input) and are also recorded separately on the
+  receipt (`cache_creation_input_tokens`, `cache_creation_5m_input_tokens`,
+  `cache_creation_1h_input_tokens`, `cache_read_input_tokens`). They are
+  priced at the cache rates in the price entry (the built-in Anthropic
+  catalog includes them; an operator `pricing:` entry can declare
+  `cache_write_5m_usd_per_million`, `cache_write_1h_usd_per_million`,
+  `cache_read_usd_per_million`). If a cache rate is missing, or cache
+  writes arrive without the 5-minute/1-hour split, the cost is `null`,
+  never a cost that leaves cache tokens out.
+- OpenAI cached input (`prompt_tokens_details.cached_tokens`) is not
+  modeled yet: it is priced at the full input rate, so a cached OpenAI
+  request's cost is overstated, not understated.
 - Unresolvable pricing (unknown model, or an
   `openai_compatible`/`anthropic_compatible` provider with no override
   configured) leaves `pricing`/`estimated_cost_usd` explicitly `null` on

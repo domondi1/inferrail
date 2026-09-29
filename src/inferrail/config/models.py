@@ -177,6 +177,13 @@ class PriceEntry(BaseModel):
     output_usd_per_million: Decimal = Field(gt=0)
     source: str
     verified_date: date
+    # Prompt-cache rates (Anthropic: 5-minute and 1-hour cache writes,
+    # cache reads). Optional: a request that reports cache tokens against
+    # an entry without the matching rate gets cost `None`, never a cost
+    # that silently prices cache tokens at the base input rate or at zero.
+    cache_write_5m_usd_per_million: Decimal | None = Field(default=None, gt=0)
+    cache_write_1h_usd_per_million: Decimal | None = Field(default=None, gt=0)
+    cache_read_usd_per_million: Decimal | None = Field(default=None, gt=0)
 
 
 class InferrailConfig(BaseModel):

@@ -95,7 +95,10 @@ from inferrail.errors import (
 )
 from inferrail.errors.codes import code_for, docs_url_for
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
-from inferrail.gateway.anthropic_schemas import MessagesRequest, MessagesResponse
+from inferrail.gateway.anthropic_schemas import (
+    MessagesRequest,
+    absent_cache_usage_fields,
+)
 from inferrail.gateway.attribution import extract_attributes
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import (
@@ -1577,7 +1580,7 @@ def create_app(data_dir: Path) -> FastAPI:
         payload: MessagesRequest,
         request: Request,
         tenant: Tenant = _require_auth,
-    ) -> MessagesResponse | StreamingResponse:
+    ) -> JSONResponse | StreamingResponse:
         """Real Anthropic-compatible passthrough, using this tenant's own
         submitted key -- never Inferrail's. Same passthrough-routing
         reasoning as `chat_completions` above."""
@@ -1609,9 +1612,16 @@ def create_app(data_dir: Path) -> FastAPI:
                 _stream_and_close(body, provider), media_type="text/event-stream"
             )
         try:
-            return await engine.execute(payload, attributes=attributes)
+            result = await engine.execute(payload, attributes=attributes)
         finally:
             await provider.aclose()
+        # Same serialization as the self-hosted route: prompt-cache usage
+        # fields the provider didn't report are left out, not sent as null.
+        return JSONResponse(
+            result.model_dump(
+                mode="json", exclude={"usage": absent_cache_usage_fields(result.usage)}
+            )
+        )
 
     # Registered last so it wraps every other middleware: its request line
     # and request id cover 413s, 504s, and CORS preflights too.

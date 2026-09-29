@@ -55,6 +55,7 @@ from inferrail.providers.anthropic_base import (
     AnthropicNormalizedResponse,
 )
 from inferrail.receipts.builder import build_receipt, new_receipt_id
+from inferrail.receipts.calculator import CacheTokens, parse_anthropic_cache_usage
 from inferrail.receipts.sinks import ReceiptSink
 from inferrail.routing.router import Router, RoutingContext, RoutingDecision
 from inferrail.telemetry.events import ErrorCategory, InferenceEvent
@@ -86,6 +87,14 @@ def _categorize(exc: InferrailError) -> ErrorCategory:
     return "provider"
 
 
+def _total_input_tokens(input_tokens: int | None, cache: CacheTokens | None) -> int | None:
+    """Anthropic's `input_tokens` excludes prompt-cache tokens; total input
+    is `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`."""
+    if input_tokens is None:
+        return None
+    return input_tokens + (cache.total if cache is not None else 0)
+
+
 class _AnthropicSseBookkeeper:
     """Reads forwarded SSE bytes *only* to recover final usage — never
     gates, reorders, or mutates anything, same contract as
@@ -95,12 +104,29 @@ class _AnthropicSseBookkeeper:
     arrives once on `message_start`; `output_tokens` arrives on one or
     more `message_delta` events as a *cumulative* count, so the last
     value observed is the final one — never summed across events.
+    Prompt-cache counts arrive on `message_start` alongside `input_tokens`;
+    if a `message_delta` also carries input/cache counts (cumulative, like
+    `output_tokens`), the later value wins.
     """
 
     def __init__(self) -> None:
         self._buffer = b""
-        self.prompt_tokens: int | None = None
+        self._input_tokens: int | None = None
         self.completion_tokens: int | None = None
+        self.cache: CacheTokens | None = None
+
+    @property
+    def prompt_tokens(self) -> int | None:
+        """Total input: uncached `input_tokens` plus any cache tokens."""
+        return _total_input_tokens(self._input_tokens, self.cache)
+
+    def _take_input_usage(self, usage: dict[str, object]) -> None:
+        if "input_tokens" in usage:
+            value = usage.get("input_tokens")
+            self._input_tokens = value if isinstance(value, int) else None
+        cache = parse_anthropic_cache_usage(usage)
+        if cache is not None:
+            self.cache = cache
 
     def feed(self, chunk: bytes) -> None:
         self._buffer += chunk.replace(b"\r\n", b"\n")
@@ -125,12 +151,14 @@ class _AnthropicSseBookkeeper:
             if event_type == "message_start":
                 message = obj.get("message")
                 usage = message.get("usage") if isinstance(message, dict) else None
-                if isinstance(usage, dict) and "input_tokens" in usage:
-                    self.prompt_tokens = usage.get("input_tokens")
+                if isinstance(usage, dict):
+                    self._take_input_usage(usage)
             elif event_type == "message_delta":
                 usage = obj.get("usage")
-                if isinstance(usage, dict) and "output_tokens" in usage:
-                    self.completion_tokens = usage.get("output_tokens")
+                if isinstance(usage, dict):
+                    if "output_tokens" in usage:
+                        self.completion_tokens = usage.get("output_tokens")
+                    self._take_input_usage(usage)
 
 
 @dataclass
@@ -303,6 +331,8 @@ class AnthropicInferenceEngine:
                 continue
 
             latency_ms = self._elapsed_ms(started)
+            cache = parse_anthropic_cache_usage(result.cache_usage or {})
+            prompt_tokens = _total_input_tokens(result.input_tokens, cache)
             self._telemetry.emit(
                 InferenceEvent(
                     request_id=request_id,
@@ -311,14 +341,14 @@ class AnthropicInferenceEngine:
                     model=decision.model,
                     status="success",
                     total_latency_ms=latency_ms,
-                    prompt_tokens=result.input_tokens,
+                    prompt_tokens=prompt_tokens,
                     completion_tokens=result.output_tokens,
                     retry_count=attempt,
                 )
             )
             receipt_attributes = self._augment_overrun(
                 attributes, decision.provider_name, decision.model,
-                result.input_tokens, result.output_tokens,
+                prompt_tokens, result.output_tokens, cache,
             )
             self._receipts.emit(
                 build_receipt(
@@ -328,12 +358,13 @@ class AnthropicInferenceEngine:
                     provider=decision.provider_name,
                     model=decision.model,
                     status="success",
-                    prompt_tokens=result.input_tokens,
+                    prompt_tokens=prompt_tokens,
                     completion_tokens=result.output_tokens,
                     attributes=receipt_attributes,
                     total_latency_ms=latency_ms,
                     retry_count=attempt,
                     pricing_resolver=self._pricing_resolver,
+                    cache=cache,
                 )
             )
             return self._build_response(request_id, decision, result, latency_ms, attempt)
@@ -435,7 +466,7 @@ class AnthropicInferenceEngine:
         )
         receipt_attributes = self._augment_overrun(
             ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
-            bookkeeper.prompt_tokens, bookkeeper.completion_tokens,
+            bookkeeper.prompt_tokens, bookkeeper.completion_tokens, bookkeeper.cache,
         )
         self._receipts.emit(
             build_receipt(
@@ -451,6 +482,7 @@ class AnthropicInferenceEngine:
                 total_latency_ms=latency_ms,
                 retry_count=ctx.attempts_used,
                 pricing_resolver=self._pricing_resolver,
+                cache=bookkeeper.cache,
             )
         )
 
@@ -468,9 +500,12 @@ class AnthropicInferenceEngine:
             model=decision.model,
             stop_reason=result.stop_reason,
             stop_sequence=result.stop_sequence,
-            usage=MessagesUsage(
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
+            usage=MessagesUsage.model_validate(
+                {
+                    **(result.cache_usage or {}),
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                }
             ),
             inferrail=InferrailMetadata(
                 request_id=request_id,
@@ -533,6 +568,7 @@ class AnthropicInferenceEngine:
         model: str,
         prompt_tokens: int | None,
         completion_tokens: int | None,
+        cache: CacheTokens | None = None,
     ) -> dict[str, str]:
         """See `gateway.execution.InferenceEngine._augment_overrun`."""
         if self._budgets is None:
@@ -543,6 +579,7 @@ class AnthropicInferenceEngine:
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache=cache,
         )
 
     @staticmethod
