@@ -58,7 +58,11 @@ CREATE TABLE IF NOT EXISTS receipts (
     work_id TEXT,
     project TEXT,
     total_latency_ms REAL NOT NULL,
-    retry_count INTEGER NOT NULL
+    retry_count INTEGER NOT NULL,
+    cache_creation_input_tokens INTEGER,
+    cache_creation_5m_input_tokens INTEGER,
+    cache_creation_1h_input_tokens INTEGER,
+    cache_read_input_tokens INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_receipts_ts ON receipts(ts);
@@ -71,7 +75,20 @@ _COLUMNS = [
     "receipt_id", "request_id", "ts", "route", "provider", "model", "status",
     "prompt_tokens", "completion_tokens", "pricing_json", "estimated_cost_usd",
     "attributes_json", "work_id", "project", "total_latency_ms", "retry_count",
+    "cache_creation_input_tokens", "cache_creation_5m_input_tokens",
+    "cache_creation_1h_input_tokens", "cache_read_input_tokens",
 ]
+
+# Nullable columns added after the table's first release. A store created
+# by an older version gets them via ALTER TABLE on open; existing rows read
+# back as NULL (= "provider reported no cache fields"), which is what they
+# were. Additive only: no existing column changes.
+_ADDED_COLUMNS = (
+    ("cache_creation_input_tokens", "INTEGER"),
+    ("cache_creation_5m_input_tokens", "INTEGER"),
+    ("cache_creation_1h_input_tokens", "INTEGER"),
+    ("cache_read_input_tokens", "INTEGER"),
+)
 
 
 def looks_like_sqlite(path: Path) -> bool:
@@ -98,6 +115,10 @@ class ReceiptsStore:
         conn = self._connect()
         try:
             conn.executescript(SCHEMA)
+            existing = {row["name"] for row in conn.execute("PRAGMA table_info(receipts)")}
+            for name, sql_type in _ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE receipts ADD COLUMN {name} {sql_type}")
             conn.commit()
         finally:
             conn.close()
@@ -277,6 +298,10 @@ def _receipt_to_row(receipt: InferenceReceipt) -> tuple[Any, ...]:
         receipt.attributes.get("project"),
         receipt.total_latency_ms,
         receipt.retry_count,
+        receipt.cache_creation_input_tokens,
+        receipt.cache_creation_5m_input_tokens,
+        receipt.cache_creation_1h_input_tokens,
+        receipt.cache_read_input_tokens,
     )
 
 
@@ -299,6 +324,10 @@ def _row_to_receipt(row: sqlite3.Row) -> InferenceReceipt:
         status=row["status"],
         prompt_tokens=row["prompt_tokens"],
         completion_tokens=row["completion_tokens"],
+        cache_creation_input_tokens=row["cache_creation_input_tokens"],
+        cache_creation_5m_input_tokens=row["cache_creation_5m_input_tokens"],
+        cache_creation_1h_input_tokens=row["cache_creation_1h_input_tokens"],
+        cache_read_input_tokens=row["cache_read_input_tokens"],
         pricing=pricing,
         estimated_cost_usd=cost,
         attributes=json.loads(row["attributes_json"]),

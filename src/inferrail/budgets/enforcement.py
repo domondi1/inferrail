@@ -36,7 +36,7 @@ from inferrail.budgets.schema import Budget
 from inferrail.budgets.store import BudgetStore
 from inferrail.errors import BudgetExceededError
 from inferrail.pricing.resolver import PricingResolver
-from inferrail.receipts.calculator import calculate_cost_usd
+from inferrail.receipts.calculator import CacheTokens, calculate_cost_with_cache_usd
 from inferrail.receipts.sqlite_store import ReceiptsStore
 
 _logger = logging.getLogger("inferrail.budgets")
@@ -226,6 +226,7 @@ class BudgetEnforcer:
         model: str,
         prompt_tokens: int | None,
         completion_tokens: int | None,
+        cache: CacheTokens | None = None,
     ) -> dict[str, str]:
         """Post-flight counterpart to `check` — see
         `augment_attributes_with_overrun`'s docstring. Keeps `ReceiptsStore`
@@ -241,6 +242,7 @@ class BudgetEnforcer:
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache=cache,
             matching=matching,
             receipts=self._receipts,
             pricing_resolver=self._pricing_resolver,
@@ -257,6 +259,7 @@ def augment_attributes_with_overrun(
     matching: list[Budget],
     receipts: ReceiptsStore,
     pricing_resolver: PricingResolver,
+    cache: CacheTokens | None = None,
 ) -> dict[str, str]:
     """Post-flight reconciliation: if this request's *actual* cost pushes
     any matching budget over its limit, return `attributes` plus a
@@ -266,13 +269,15 @@ def augment_attributes_with_overrun(
     request — adding the actual cost gives the correct post-request
     total. Returns `attributes` unchanged (same object) when there's
     nothing to add — no tokens yet, no matching budgets, or no known
-    price."""
+    price (including cache tokens that can't be priced exactly)."""
     if not matching or prompt_tokens is None or completion_tokens is None:
         return attributes
     price = pricing_resolver.resolve(provider, model)
     if price is None:
         return attributes
-    actual_cost = calculate_cost_usd(prompt_tokens, completion_tokens, price)
+    actual_cost = calculate_cost_with_cache_usd(prompt_tokens, completion_tokens, price, cache)
+    if actual_cost is None:
+        return attributes
 
     worst_overrun: Decimal | None = None
     for budget in matching:

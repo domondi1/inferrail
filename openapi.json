@@ -682,6 +682,40 @@
       },
       "MessagesUsage": {
         "properties": {
+          "cache_creation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Creation"
+          },
+          "cache_creation_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Creation Input Tokens"
+          },
+          "cache_read_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Input Tokens"
+          },
           "input_tokens": {
             "anyOf": [
               {

@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Literal
 
 from inferrail.pricing.resolver import PricingResolver
-from inferrail.receipts.calculator import calculate_cost_usd
+from inferrail.receipts.calculator import CacheTokens, calculate_cost_with_cache_usd
 from inferrail.receipts.schema import InferenceReceipt
 
 
@@ -37,6 +37,7 @@ def build_receipt(
     total_latency_ms: float,
     retry_count: int,
     pricing_resolver: PricingResolver,
+    cache: CacheTokens | None = None,
 ) -> InferenceReceipt:
     """Build a receipt for one execution attempt.
 
@@ -46,13 +47,23 @@ def build_receipt(
     request, a provider that omitted usage, or an unrecognized model —
     leaves `pricing`/`estimated_cost_usd` explicitly `None` rather than a
     fabricated `0`.
+
+    `prompt_tokens` is total input. `cache` carries any prompt-cache
+    tokens the provider reported inside that total; if they can't be
+    priced exactly (see `calculate_cost_with_cache_usd`), cost *and*
+    pricing are `None` -- a known-looking cost that silently leaves out
+    cache tokens is worse than an honest unknown.
     """
     pricing = None
     cost: Decimal | None = None
     if prompt_tokens is not None and completion_tokens is not None:
         pricing = pricing_resolver.resolve(provider, model)
         if pricing is not None:
-            cost = calculate_cost_usd(prompt_tokens, completion_tokens, pricing)
+            cost = calculate_cost_with_cache_usd(
+                prompt_tokens, completion_tokens, pricing, cache
+            )
+            if cost is None:
+                pricing = None
 
     return InferenceReceipt(
         receipt_id=receipt_id,
@@ -63,6 +74,10 @@ def build_receipt(
         status=status,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cache_creation_input_tokens=cache.creation if cache is not None else None,
+        cache_creation_5m_input_tokens=cache.creation_5m if cache is not None else None,
+        cache_creation_1h_input_tokens=cache.creation_1h if cache is not None else None,
+        cache_read_input_tokens=cache.read if cache is not None else None,
         pricing=pricing,
         estimated_cost_usd=cost,
         attributes=attributes,

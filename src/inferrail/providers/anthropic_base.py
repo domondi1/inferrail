@@ -71,6 +71,11 @@ class AnthropicNormalizedResponse(BaseModel):
     stop_sequence: str | None
     input_tokens: int | None
     output_tokens: int | None
+    # Anthropic's `usage` cache fields, verbatim (`cache_creation_input_tokens`,
+    # `cache_read_input_tokens`, `cache_creation`), or None if absent. Kept
+    # raw so the response can pass them back to the client unchanged and
+    # the receipt builder can price them.
+    cache_usage: dict[str, object] | None = None
     raw_id: str | None = None
     raw_model: str | None = None
 
