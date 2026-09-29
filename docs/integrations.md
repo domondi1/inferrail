@@ -57,7 +57,7 @@ tool/function calling. Rejected with an error rather than silently
 dropped: `n != 1`, list-shaped (multi-part or image) message content, and
 any unmodeled field such as `response_format`. See [examples/basic_chat_request.py](../examples/basic_chat_request.py).
 
-## Anthropic SDK and Claude Code
+## Anthropic SDK
 
 `POST /v1/messages` is a separate Anthropic-compatible passthrough with
 streaming and tool use ([ADR 0014](adr/0014-anthropic-messages-passthrough.md)).
@@ -75,9 +75,13 @@ client.messages.create(
 )
 ```
 
-Or `export ANTHROPIC_BASE_URL=http://127.0.0.1:8000`, which is also how
-you point Claude Code at the gateway. See
+Or `export ANTHROPIC_BASE_URL=http://127.0.0.1:8000`. See
 [examples/anthropic_messages_request.py](../examples/anthropic_messages_request.py).
+
+**Claude Code is not supported yet.** Current Claude Code versions send
+request fields the gateway does not forward (`thinking`,
+`context_management`, `output_config`), so the gateway rejects the first
+request with HTTP 400.
 
 > The `inferrail serve --quickstart` banner in release 0.4.3 prints the
 > Anthropic base URL with a trailing `/v1`, which makes the SDK request

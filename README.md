@@ -199,6 +199,13 @@ Supported today: `POST /v1/chat/completions` (OpenAI-compatible, with
 streaming and tool calls), `POST /v1/messages` (Anthropic-compatible,
 with streaming and tool use), and `GET /health`. Any client or framework
 that lets you set a base URL and sends those shapes can use the gateway.
+Request fields the gateway does not forward are rejected with a clear
+error, never silently dropped. Today that includes, on
+`/v1/chat/completions`: `response_format` (structured outputs / JSON
+mode), `max_completion_tokens`, `seed`, the `developer` role, and message
+content sent as an array of parts; on `/v1/messages`: `thinking`,
+`context_management`, and `output_config`. The OpenAI Responses API and
+embeddings are not supported.
 Attribution, work grouping, framework examples, and MCP setup are in
 [docs/integrations.md](docs/integrations.md).
 
@@ -272,7 +279,7 @@ Full tool contract: [inferrail-mcp/README.md](inferrail-mcp/README.md).
 
 | Capability | Status |
 |---|---|
-| Text LLM gateway, cost receipts, reports, attribution | **Available** in the 0.4.3 developer preview on PyPI |
+| Text LLM gateway, cost receipts, reports, attribution | **Available** in the developer preview on PyPI |
 | Work grouping and application-declared outcomes | **Available**. Reports known cost only and counts unknown-cost receipts separately |
 | Budget checks | **Available**, opt-in. Applies only to supported requests through this gateway; unpriced models are not checked ([details](docs/self-hosting.md#budgets)) |
 | Local dashboard (`serve --app-mode`), read-only MCP tools | **Available**. Both ship in the PyPI package ([MCP](#mcp)) |
