@@ -809,7 +809,7 @@
   },
   "info": {
     "title": "Inferrail",
-    "version": "0.4.5"
+    "version": "0.4.6"
   },
   "openapi": "3.1.0",
   "paths": {

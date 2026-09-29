@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.6 — 2026-09-29
 
 ### Fixed
 
