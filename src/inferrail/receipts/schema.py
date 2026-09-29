@@ -53,8 +53,17 @@ class InferenceReceipt(BaseModel):
     # actually known -- never fabricated, never a guessed `0`.
     status: Literal["success", "error", "partial"]
 
+    # Total input tokens. For a provider that reports prompt-cache tokens
+    # separately (Anthropic), this includes them: uncached input + cache
+    # writes + cache reads. The four cache fields below say how much of it
+    # was cached; all four are None when the provider reported no cache
+    # fields at all.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    cache_creation_5m_input_tokens: int | None = None
+    cache_creation_1h_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
 
     # Both are None together, always: no price without a matching cost, and
     # never a cost without the price snapshot that produced it (see

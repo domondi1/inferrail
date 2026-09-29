@@ -3,11 +3,15 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from inferrail.errors import GatewayAuthenticationError
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
-from inferrail.gateway.anthropic_schemas import MessagesRequest, MessagesResponse
+from inferrail.gateway.anthropic_schemas import (
+    MessagesRequest,
+    MessagesResponse,
+    absent_cache_usage_fields,
+)
 from inferrail.gateway.attribution import extract_attributes
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
@@ -122,10 +126,19 @@ async def chat_completions(
 )
 async def messages(
     payload: MessagesRequest, request: Request
-) -> MessagesResponse | StreamingResponse:
+) -> MessagesResponse | StreamingResponse | JSONResponse:
     engine: AnthropicInferenceEngine = request.app.state.anthropic_engine
     attributes = extract_attributes(request.headers)
     if payload.stream:
         body = await engine.prepare_stream(payload, attributes=attributes)
         return StreamingResponse(body, media_type="text/event-stream")
-    return await engine.execute(payload, attributes=attributes)
+    result = await engine.execute(payload, attributes=attributes)
+    # Serialized here rather than by `response_model` so prompt-cache usage
+    # fields the provider didn't report are left out, not sent as null: an
+    # uncached response stays exactly what it was. The documented schema
+    # (`response_model` above) is unchanged.
+    return JSONResponse(
+        result.model_dump(
+            mode="json", exclude={"usage": absent_cache_usage_fields(result.usage)}
+        )
+    )

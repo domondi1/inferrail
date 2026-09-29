@@ -170,6 +170,7 @@ class AnthropicProvider:
             stop_sequence=data.get("stop_sequence"),
             input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"),
+            cache_usage=_cache_usage_fields(usage),
             raw_id=data.get("id"),
             raw_model=data.get("model"),
         )
@@ -229,3 +230,13 @@ class AnthropicProvider:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+_CACHE_USAGE_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens", "cache_creation")
+
+
+def _cache_usage_fields(usage: dict[str, object]) -> dict[str, object] | None:
+    """The prompt-cache fields of an Anthropic `usage` object, or None if it
+    has none (see `inferrail.receipts.calculator.parse_anthropic_cache_usage`)."""
+    fields = {k: usage[k] for k in _CACHE_USAGE_KEYS if k in usage}
+    return fields or None

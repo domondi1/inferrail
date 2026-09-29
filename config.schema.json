@@ -22,6 +22,57 @@
       "additionalProperties": false,
       "description": "A verified per-model price, with the provenance to audit it later.\n\nUsed both for the built-in catalog (`inferrail.pricing.builtin`) and\nfor operator overrides (`InferrailConfig.pricing`). `source` and\n`verified_date` are mandatory in both cases \u2014 Inferrail never persists\na price it can't explain the origin of. Values are `Decimal`, not\n`float`: money is never computed with binary floating point here.",
       "properties": {
+        "cache_read_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Read Usd Per Million"
+        },
+        "cache_write_1h_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Write 1H Usd Per Million"
+        },
+        "cache_write_5m_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Write 5M Usd Per Million"
+        },
         "input_usd_per_million": {
           "anyOf": [
             {

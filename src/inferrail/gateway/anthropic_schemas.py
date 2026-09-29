@@ -53,6 +53,23 @@ class MessagesRequest(BaseModel):
 class MessagesUsage(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # Anthropic's prompt-cache usage, passed back exactly as the provider
+    # reported it (`input_tokens` above excludes these, as upstream).
+    # Omitted from the response body when the provider didn't report them
+    # (see `absent_cache_usage_fields`), so an uncached response is
+    # unchanged on the wire.
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation: dict[str, object] | None = None
+
+
+_CACHE_USAGE_FIELDS = ("cache_creation_input_tokens", "cache_read_input_tokens", "cache_creation")
+
+
+def absent_cache_usage_fields(usage: MessagesUsage) -> set[str]:
+    """Cache usage fields the provider didn't report, to leave out of the
+    serialized response."""
+    return {name for name in _CACHE_USAGE_FIELDS if getattr(usage, name) is None}
 
 
 class MessagesResponse(BaseModel):
