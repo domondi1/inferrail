@@ -20,8 +20,8 @@ providers:
 
   # Optional: only needed to use POST /v1/messages (Anthropic-compatible
   # passthrough — see docs/adr/0014-anthropic-messages-passthrough.md).
-  # Point Claude Code (or any Anthropic SDK client) at
-  # http://127.0.0.1:8000 with this configured and ANTHROPIC_API_KEY set.
+  # Point an Anthropic SDK client at http://127.0.0.1:8000 with this
+  # configured and ANTHROPIC_API_KEY set.
   # anthropic:
   #   type: anthropic
   #   api_key_env: ANTHROPIC_API_KEY

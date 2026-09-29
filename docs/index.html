@@ -254,7 +254,7 @@
           <div class="card benefit">
             <span class="benefit-icon" aria-hidden="true">&harr;</span>
             <h3>Works with what you use</h3>
-            <p>OpenAI SDK, Anthropic SDK, Claude Code, LangChain, and curl.</p>
+            <p>OpenAI SDK, Anthropic SDK, LangChain, and curl.</p>
           </div>
         </div>
       </div>
@@ -329,7 +329,7 @@ work-support-1   failed      2         $0.007825</pre>
               </div>
               <div class="recipe">
                 <h4>Point your SDK at it</h4>
-                <p>OpenAI SDK: <code>base_url="http://127.0.0.1:8000/v1"</code>. Claude Code or the Anthropic SDK:</p>
+                <p>OpenAI SDK: <code>base_url="http://127.0.0.1:8000/v1"</code>. Anthropic SDK:</p>
                 <div class="cmd"><code>export ANTHROPIC_BASE_URL=http://127.0.0.1:8000</code><button class="copy" type="button" aria-label="Copy Anthropic base URL command">Copy</button></div>
               </div>
               <div class="recipe">
@@ -420,7 +420,7 @@ work-support-1   failed      2         $0.007825</pre>
         <div class="grid grid-2">
           <ul class="status-list" aria-label="Core capabilities">
             <li><strong>OpenAI-compatible gateway</strong><span class="desc">Streaming and tool calls pass through.</span><span class="badge badge-available">Available</span></li>
-            <li><strong>Anthropic-compatible gateway</strong><span class="desc">Native <code>/v1/messages</code>. Works with Claude Code.</span><span class="badge badge-available">Available</span></li>
+            <li><strong>Anthropic-compatible gateway</strong><span class="desc">Native <code>/v1/messages</code> for the Anthropic SDK. Claude Code is not supported yet.</span><span class="badge badge-available">Available</span></li>
             <li><strong>Cost receipts per call</strong><span class="desc">Token counts and cost. No prompt or response.</span><span class="badge badge-available">Available</span></li>
             <li><strong>Cost per job</strong><span class="desc">Group calls by job and record outcomes.</span><span class="badge badge-available">Available</span></li>
             <li><strong>Budgets</strong><span class="desc">Daily and scoped caps that block or warn.</span><span class="badge badge-available">Available</span></li>

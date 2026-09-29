@@ -139,8 +139,11 @@ inspectable config file and gives you a telemetry record for every request
   priced via the catalog) for `type: anthropic`/`anthropic_compatible`
   providers, backed by its own `AnthropicProvider` adapter and execution
   engine — not a translation of `/v1/chat/completions`. See
-  docs/adr/0014-anthropic-messages-passthrough.md. This is what makes
-  pointing Claude Code (or any Anthropic-SDK client) at Inferrail work.
+  docs/adr/0014-anthropic-messages-passthrough.md. This is what lets an
+  Anthropic-SDK client point at Inferrail. Claude Code is not supported
+  yet: current versions send `thinking`, `context_management`, and
+  `output_config`, which this route rejects (see
+  docs/integrations.md).
 - Static routing: the request's `model` field selects a named route in
   `inferrail.yaml`, which maps to a provider + underlying model
   deterministically. No cost/latency/capability-aware selection.
@@ -159,7 +162,9 @@ inspectable config file and gives you a telemetry record for every request
   counts when available, retry count. No prompt or response content by
   default.
 - Two local telemetry sinks: console (structured log line) and a local
-  JSONL file. Nothing leaves the machine.
+  JSONL file. Nothing leaves the machine through them. (The separate
+  usage ping sends nothing unless an endpoint is configured; see
+  "Usage/presence beacon" below.)
 - A payload-free `InferenceReceipt` emitted for every request (success or
   failure): provider, model, token counts, a `Decimal` cost computed from
   measured usage and a verified price, the price's provenance (source +
@@ -435,8 +440,8 @@ local control API when `--app-mode` is on — see
   `INFERRAIL_AP_DB` if you already have one elsewhere. An empty store
   (the common case for anyone not using the AP module) shows "nothing
   pending review," never an error.
-- **Connect** (built): copy-paste snippets (curl, Claude Code/Anthropic
-  SDK env var, the Anthropic Messages API, the OpenAI Python SDK,
+- **Connect** (built): copy-paste snippets (curl, Anthropic SDK env
+  var, the Anthropic Messages API, the OpenAI Python SDK,
   LangChain) with copy buttons, each generated against
   `window.location.origin` — since the dashboard is served by the exact
   same process as the gateway, these are copy-paste-correct for *this*
@@ -542,10 +547,6 @@ Not a hidden limitation — these are the honest edges of v0.1:
 - Intelligent/adaptive routing of any kind
 - Historical price versioning (a receipt embeds the price snapshot used at
   the time, but there is no queryable price-history store)
-- A web dashboard — `inferrail report` is a local CLI table,
-  deliberately. (The local control API a future dashboard would consume
-  now exists — see "Local control API and `--app-mode`" above — but no
-  UI is built against it yet.)
 - Any hosted/cloud component — see "OSS vs. hosted" below
 - Non-LLM economic events (browser, search, compute/sandbox, MCP tool
   cost) in `TaskTransaction` — its only event type today is `inference`;

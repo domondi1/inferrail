@@ -27,7 +27,7 @@ function snippets(base: string): Snippet[] {
   }'`,
     },
     {
-      title: "Claude Code / any Anthropic SDK client",
+      title: "Any Anthropic SDK client",
       blurb:
         "Set this before launching the tool -- the SDKs' own base-URL env var. " +
         "Needs an anthropic route configured in inferrail.yaml first.",
