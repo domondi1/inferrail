@@ -299,6 +299,7 @@ and non-goals: [docs/PRODUCT.md](docs/PRODUCT.md).
 
 ## Documentation
 
+- [Give one AI agent run a dollar budget](docs/recipes/agent-run-budget.md): the per-run budget recipe
 - [docs/integrations.md](docs/integrations.md): clients, attribution, work tracking, voice, MCP
 - [docs/self-hosting.md](docs/self-hosting.md): install, configuration, storage, budgets, dashboard
 - [docs/PRODUCT.md](docs/PRODUCT.md): exact current scope
