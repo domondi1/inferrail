@@ -24,6 +24,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from inferrail.budgets.enforcement import (
@@ -198,7 +199,11 @@ class AnthropicInferenceEngine(BudgetAdmission):
         self._budgets = budgets
 
     async def execute(
-        self, request: MessagesRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> MessagesResponse:
         request_id = f"req_{uuid.uuid4().hex[:20]}"
         started = time.perf_counter()
@@ -210,11 +215,15 @@ class AnthropicInferenceEngine(BudgetAdmission):
 
         return await self._execute_with_retries(
             request_id, decision, provider, normalized_request, started, attributes,
-            self._budget_state(request),
+            self._budget_state(request, declared_budget_usd),
         )
 
     async def prepare_stream(
-        self, request: MessagesRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> AsyncIterator[bytes]:
         """See `gateway.execution.InferenceEngine.prepare_stream` — same
         two-phase design and the same reason it must complete (including
@@ -229,12 +238,14 @@ class AnthropicInferenceEngine(BudgetAdmission):
         )
         ctx = await self._open_stream_with_retries(
             request_id, decision, provider, normalized_request, started, attributes,
-            self._budget_state(request),
+            self._budget_state(request, declared_budget_usd),
         )
         return self._iter_stream(ctx)
 
     @staticmethod
-    def _budget_state(request: MessagesRequest) -> BudgetState:
+    def _budget_state(
+        request: MessagesRequest, declared_budget_usd: Decimal | None = None
+    ) -> BudgetState:
         """See `gateway.execution.InferenceEngine._budget_state`. `max_tokens`
         is always present here (Anthropic's Messages API requires it), so
         there is no fallback-constant case on this path."""
@@ -243,7 +254,9 @@ class AnthropicInferenceEngine(BudgetAdmission):
             + approx_char_count(request.system)
             + approx_char_count(request.tools)
         )
-        return BudgetState(prompt_chars, request.max_tokens)
+        return BudgetState(
+            prompt_chars, request.max_tokens, declared_budget_usd=declared_budget_usd
+        )
 
     async def _resolve(
         self,

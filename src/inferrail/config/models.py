@@ -39,6 +39,23 @@ class ProviderConfig(BaseModel):
     type: ProviderType
     api_key_env: str
     base_url: str | None = None
+    # Coexistence (running in front of another gateway such as LiteLLM or
+    # OpenRouter): opt-in, operator-asserted. `price_as` applies a vendor's
+    # built-in list-price catalog to this compatible upstream (the receipt's
+    # pricing source records the assertion); `request_stream_usage` asks the
+    # upstream for the final usage chunk on streams, as Inferrail already
+    # does for verified OpenAI. See docs/adr/0022.
+    price_as: Literal["openai", "anthropic"] | None = None
+    request_stream_usage: bool = False
+
+    @model_validator(mode="after")
+    def _price_as_only_for_compatible(self) -> ProviderConfig:
+        if self.price_as is not None and not self.type.endswith("_compatible"):
+            raise ValueError(
+                "price_as only applies to an *_compatible provider; the vendor's own "
+                "provider type already uses its catalog"
+            )
+        return self
 
     def resolved_base_url(self) -> str:
         if self.base_url:
@@ -123,6 +140,13 @@ class BudgetsConfig(BaseModel):
 
     enabled: bool = False
     path: str = "./inferrail-budgets.db"
+    # Per-run budgets without pre-registration — see
+    # docs/adr/0022-per-run-budget-declaration.md. A request carrying a
+    # work_id may declare its run's ceiling (X-Inferrail-Budget-Usd), or
+    # inherit `per_work_default_usd`; `per_work_max_usd` caps declarations.
+    allow_declared_budgets: bool = True
+    per_work_default_usd: Decimal | None = Field(default=None, gt=0)
+    per_work_max_usd: Decimal | None = Field(default=None, gt=0)
 
 
 class UsagePingConfig(BaseModel):

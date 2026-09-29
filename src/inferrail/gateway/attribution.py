@@ -17,8 +17,15 @@ them. See docs/integrations.md's "Attribution" section.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
+
+from inferrail.errors import BudgetDeclarationError
 
 _HEADER_PREFIX = "x-inferrail-attribute-"
+BUDGET_HEADER = "x-inferrail-budget-usd"
+# A sanity bound on a declared per-run ceiling, not a policy: operators set
+# their own with budgets.per_work_max_usd (docs/adr/0022).
+_MAX_DECLARABLE_USD = Decimal("1000000")
 
 
 def extract_attributes(headers: Mapping[str, str]) -> dict[str, str]:
@@ -41,3 +48,31 @@ def extract_attributes(headers: Mapping[str, str]) -> dict[str, str]:
             continue
         attributes[key] = raw_value
     return attributes
+
+
+def extract_declared_budget(headers: Mapping[str, str]) -> Decimal | None:
+    """Parse `X-Inferrail-Budget-Usd`, a run's declared dollar ceiling
+    (docs/adr/0022-per-run-budget-declaration.md). `None` when absent.
+    Anything that isn't a finite, positive decimal (up to a sanity bound)
+    is refused with `BudgetDeclarationError` before any provider call,
+    never ignored. Unlike attribute headers, the value is not stored as an
+    attribute; it becomes the run's budget, and it is never forwarded
+    upstream."""
+    raw = None
+    for name, value in headers.items():
+        if name.lower() == BUDGET_HEADER:
+            raw = value
+            break
+    if raw is None:
+        return None
+    try:
+        amount = Decimal(raw.strip())
+    except (InvalidOperation, ValueError):
+        amount = None
+    if amount is None or not amount.is_finite() or amount <= 0 or amount > _MAX_DECLARABLE_USD:
+        raise BudgetDeclarationError(
+            reason="invalid",
+            message="X-Inferrail-Budget-Usd must be a positive decimal amount in USD, "
+            f"at most {_MAX_DECLARABLE_USD} (e.g. 0.50)",
+        )
+    return amount

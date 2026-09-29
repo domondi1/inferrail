@@ -41,6 +41,7 @@ class OpenAIProvider:
         base_url: str,
         client: httpx.AsyncClient | None = None,
         is_verified_openai: bool = False,
+        request_stream_usage: bool = False,
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
@@ -52,6 +53,9 @@ class OpenAIProvider:
         # `openai_compatible` endpoint that merely shares the wire shape
         # is never assumed to support an extension it never advertised.
         self._is_verified_openai = is_verified_openai
+        # Operator opt-in for a compatible upstream known to support it
+        # (e.g. another gateway in front of OpenAI) — see ProviderConfig.
+        self._request_stream_usage = request_stream_usage
         # `client` is injectable so tests can pass an httpx.MockTransport
         # instead of hitting the network, while exercising the exact same
         # request-building and error-normalization code paths. The auth
@@ -141,7 +145,7 @@ class OpenAIProvider:
         self._require_api_key()
         payload = self._build_payload(request)
         payload["stream"] = True
-        if self._is_verified_openai:
+        if self._is_verified_openai or self._request_stream_usage:
             # Ask for the final usage chunk unless the caller decided
             # include_usage themselves; any other stream_options keys they
             # sent are kept. Without usage a streamed call has no cost, and

@@ -4,6 +4,11 @@
       "additionalProperties": false,
       "description": "Where the `Budget` store (`inferrail.budgets.store.BudgetStore`)\nlives, and whether the gateway actually enforces it.\n\n`enabled` defaults to `False` so an operator who hasn't configured\nany budgets never pays for the enforcement path (and, more\nimportantly, so `inferrail serve`/`create_app` never touches\n`path` on disk at all unless budgets are explicitly turned on \u2014 see\ndocs/adr/0015-budget-enforcement.md). `inferrail budget set|list|rm`\nmanage the store's contents independently of this flag (via their\nown `--db`), so budgets can be authored before enforcement is\nswitched on.",
       "properties": {
+        "allow_declared_budgets": {
+          "default": true,
+          "title": "Allow Declared Budgets",
+          "type": "boolean"
+        },
         "enabled": {
           "default": false,
           "title": "Enabled",
@@ -13,6 +18,40 @@
           "default": "./inferrail-budgets.db",
           "title": "Path",
           "type": "string"
+        },
+        "per_work_default_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Work Default Usd"
+        },
+        "per_work_max_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Work Max Usd"
         }
       },
       "title": "BudgetsConfig",
@@ -137,6 +176,27 @@
           ],
           "default": null,
           "title": "Base Url"
+        },
+        "price_as": {
+          "anyOf": [
+            {
+              "enum": [
+                "openai",
+                "anthropic"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price As"
+        },
+        "request_stream_usage": {
+          "default": false,
+          "title": "Request Stream Usage",
+          "type": "boolean"
         },
         "type": {
           "enum": [

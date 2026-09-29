@@ -44,10 +44,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from inferrail.budgets.schema import Budget
-from inferrail.budgets.store import BudgetStore, Reservation
+from inferrail.budgets.schema import Budget, new_budget_id
+from inferrail.budgets.store import AdmissionTransaction, BudgetStore, Reservation
 from inferrail.errors import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
     BudgetUnpricedModelError,
     InferrailError,
@@ -184,11 +185,21 @@ class BudgetEnforcer:
     spend can't be tracked without an indexed, queryable store."""
 
     def __init__(
-        self, store: BudgetStore, receipts: ReceiptsStore, pricing_resolver: PricingResolver
+        self,
+        store: BudgetStore,
+        receipts: ReceiptsStore,
+        pricing_resolver: PricingResolver,
+        *,
+        per_work_default_usd: Decimal | None = None,
+        per_work_max_usd: Decimal | None = None,
+        allow_declared_budgets: bool = True,
     ) -> None:
         self._store = store
         self._receipts = receipts
         self._pricing_resolver = pricing_resolver
+        self._per_work_default_usd = per_work_default_usd
+        self._per_work_max_usd = per_work_max_usd
+        self._allow_declared_budgets = allow_declared_budgets
 
     def reserve(
         self,
@@ -199,8 +210,15 @@ class BudgetEnforcer:
         attributes: Mapping[str, str],
         prompt_chars: int,
         max_completion_tokens: int,
+        declared_limit_usd: Decimal | None = None,
     ) -> Reservation | None:
         """Admit one provider attempt atomically, or refuse it.
+
+        `declared_limit_usd` is the run's own declared ceiling
+        (`X-Inferrail-Budget-Usd`); with it, or with a configured
+        `per_work_default_usd`, a per_work budget for the request's work_id
+        is created on first use inside this same transaction — see
+        docs/adr/0022-per-run-budget-declaration.md.
 
         Returns the new `Reservation` (to be settled with `release` or
         `hold` once the attempt ends), or `None` when there is nothing to
@@ -216,6 +234,7 @@ class BudgetEnforcer:
             pricing_resolver=self._pricing_resolver,
         )
         with self._store.admission() as txn:
+            self._apply_per_work_declaration(txn, attributes, declared_limit_usd)
             budgets = matching_budgets(txn.budgets(), attributes)
             if not budgets:
                 return None
@@ -265,6 +284,62 @@ class BudgetEnforcer:
             )
             txn.insert(reservation)
             return reservation
+
+    def _apply_per_work_declaration(
+        self,
+        txn: AdmissionTransaction,
+        attributes: Mapping[str, str],
+        declared_limit_usd: Decimal | None,
+    ) -> None:
+        """Resolve a declared or default per-run budget (ADR-0022). The
+        first budget for a work_id wins and is never changed by a header;
+        a differing declaration is refused, never silently applied."""
+        work_id = attributes.get("work_id")
+        if declared_limit_usd is not None:
+            if not self._allow_declared_budgets:
+                raise BudgetDeclarationError(
+                    reason="disabled",
+                    message="per-run budget declarations are turned off on this gateway "
+                    "(budgets.allow_declared_budgets: false)",
+                )
+            if not work_id:
+                raise BudgetDeclarationError(
+                    reason="missing_work_id",
+                    message="X-Inferrail-Budget-Usd needs X-Inferrail-Attribute-Work-Id: a "
+                    "budget is declared for one unit of work",
+                )
+            if self._per_work_max_usd is not None and declared_limit_usd > self._per_work_max_usd:
+                raise BudgetDeclarationError(
+                    reason="above_max",
+                    message=f"declared budget ${declared_limit_usd} is above this gateway's "
+                    f"per-run maximum ${self._per_work_max_usd} (budgets.per_work_max_usd)",
+                )
+        if not work_id:
+            return
+        limit = declared_limit_usd if declared_limit_usd is not None else self._per_work_default_usd
+        budget_id = new_budget_id("work_id", work_id, "per_work")
+        existing = txn.get_budget(budget_id)
+        if existing is not None:
+            if declared_limit_usd is not None and existing.limit_usd != declared_limit_usd:
+                raise BudgetDeclarationError(
+                    reason="conflict",
+                    message=f"work_id '{work_id}' already has a ${existing.limit_usd} per-run "
+                    f"budget; a request declared ${declared_limit_usd}. The first budget for a "
+                    "work_id is kept and never changed by a header",
+                )
+            return
+        if limit is None:
+            return
+        txn.insert_budget(
+            Budget(
+                budget_id=budget_id,
+                scope="work_id",
+                scope_value=work_id,
+                window="per_work",
+                mode="block",
+                limit_usd=limit,
+            )
+        )
 
     def release(self, reservation: Reservation) -> None:
         """The attempt's cost is committed (its receipt is already written)

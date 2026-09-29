@@ -21,6 +21,13 @@ PyPI release (the hosted service and website ship independently of the
   (still counted, shown as `budget_held_usd`, never as cost) when the
   provider may have billed without reporting usage. See
   `docs/adr/0021-atomic-budget-reservations.md`.
+- **Per-run budgets without pre-registration:** `X-Inferrail-Budget-Usd`
+  (with `X-Inferrail-Attribute-Work-Id`) declares a run's dollar ceiling,
+  or `budgets.per_work_default_usd` gives every new work_id one. The
+  budget is created atomically on first use. A conflicting declaration is
+  refused (`INFERRAIL_E013`); declarations never loosen other budgets.
+  New config: `budgets.allow_declared_budgets`,
+  `budgets.per_work_default_usd`, `budgets.per_work_max_usd`.
 - **Budgets: unpriced models are refused under a block budget**
   (`INFERRAIL_E012`, HTTP 402). They used to be admitted unmetered.
 - **Streaming:** streamed calls without reported usage no longer count

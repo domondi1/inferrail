@@ -24,7 +24,12 @@ from inferrail.budgets.enforcement import (
     settle_as_hold,
 )
 from inferrail.budgets.store import Reservation
-from inferrail.errors import BudgetExceededError, BudgetUnpricedModelError, InferrailError
+from inferrail.errors import (
+    BudgetDeclarationError,
+    BudgetExceededError,
+    BudgetUnpricedModelError,
+    InferrailError,
+)
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.receipts.sinks import ReceiptSink
 from inferrail.routing.router import RoutingDecision
@@ -39,6 +44,8 @@ class BudgetState:
     prompt_chars: int
     max_completion_tokens: int
     held_usd: Decimal = field(default_factory=Decimal)
+    # The run's declared per-work ceiling (ADR-0022), if the caller sent one.
+    declared_budget_usd: Decimal | None = None
 
 
 class BudgetAdmission:
@@ -84,6 +91,17 @@ class BudgetAdmission:
         block is visible in the store", so this must never fail silently.
         """
         if self._budgets is None:
+            if budget.declared_budget_usd is not None:
+                exc = BudgetDeclarationError(
+                    reason="disabled",
+                    message="X-Inferrail-Budget-Usd was sent, but budgets are not enabled on "
+                    "this gateway (budgets.enabled: false); the declaration can't be enforced",
+                )
+                self._emit_failure(
+                    request_id, decision.route_name, decision.provider_name,
+                    decision.model, attempt, started, exc, attributes,
+                )
+                raise exc
             return None
         try:
             return self._budgets.reserve(
@@ -93,7 +111,15 @@ class BudgetAdmission:
                 attributes=attributes,
                 prompt_chars=budget.prompt_chars,
                 max_completion_tokens=budget.max_completion_tokens,
+                declared_limit_usd=budget.declared_budget_usd,
             )
+        except BudgetDeclarationError as exc:
+            self._emit_failure(
+                request_id, decision.route_name, decision.provider_name,
+                decision.model, attempt, started, exc,
+                augment_attributes_with_held(attributes, budget.held_usd),
+            )
+            raise
         except (BudgetExceededError, BudgetUnpricedModelError) as exc:
             self._emit_failure(
                 request_id, decision.route_name, decision.provider_name,

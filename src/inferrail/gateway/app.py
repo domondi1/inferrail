@@ -30,6 +30,7 @@ from inferrail.config.models import InferrailConfig
 from inferrail.dashboard import find_dashboard_dist
 from inferrail.errors import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
     BudgetUnpricedModelError,
     ConfigurationError,
@@ -73,6 +74,7 @@ _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
     (BudgetUnpricedModelError, 402),
+    (BudgetDeclarationError, 400),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),
@@ -109,6 +111,8 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
             "projected_total_usd": str(exc.projected_total_usd),
             "reserved_usd": str(exc.reserved_usd),
         }
+    if isinstance(exc, BudgetDeclarationError):
+        return {"reason": exc.reason}
     if isinstance(exc, BudgetUnpricedModelError):
         return {"budget_id": exc.budget_id, "provider": exc.provider, "model": exc.model}
     return None
@@ -173,7 +177,12 @@ def create_app(
     if config.budgets.enabled:
         assert isinstance(receipts, ReceiptsStore)  # guaranteed by config validation above
         budget_store = BudgetStore(config.budgets.path)
-        budget_enforcer = BudgetEnforcer(budget_store, receipts, pricing_resolver)
+        budget_enforcer = BudgetEnforcer(
+            budget_store, receipts, pricing_resolver,
+            per_work_default_usd=config.budgets.per_work_default_usd,
+            per_work_max_usd=config.budgets.per_work_max_usd,
+            allow_declared_budgets=config.budgets.allow_declared_budgets,
+        )
     # app_data is computed here (pure path derivation, no disk I/O) rather
     # than only inside `if app_mode:` below, because the usage-ping wrapper
     # has to be in place *before* the engines are constructed -- they hold

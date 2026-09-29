@@ -1,5 +1,6 @@
 from inferrail.errors.exceptions import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
     BudgetUnpricedModelError,
     ConfigurationError,
@@ -16,6 +17,7 @@ from inferrail.errors.exceptions import (
 
 __all__ = [
     "AuthenticationError",
+    "BudgetDeclarationError",
     "BudgetExceededError",
     "BudgetUnpricedModelError",
     "ConfigurationError",

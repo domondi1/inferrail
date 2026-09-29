@@ -191,6 +191,19 @@ class BudgetExceededError(InferrailError):
         self.reserved_usd = reserved_usd
 
 
+class BudgetDeclarationError(InferrailError):
+    """A per-run budget declaration (``X-Inferrail-Budget-Usd``, or the
+    configured default) can't be applied — refused before the provider is
+    contacted (see docs/adr/0022-per-run-budget-declaration.md). ``reason``
+    is one of ``invalid``, ``missing_work_id``, ``above_max``,
+    ``disabled``, ``conflict``. Every field is a number, an operator
+    setting, or a caller-supplied work id — never request content."""
+
+    def __init__(self, *, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 class BudgetUnpricedModelError(InferrailError):
     """A "block"-mode budget applies to this request, but its model has no
     verified price — so there is no dollar amount to reserve against the

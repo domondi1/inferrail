@@ -59,6 +59,7 @@ def build_providers(config: InferrailConfig, *, require_keys: bool = True) -> di
             is_verified_openai=(
                 provider_config.type == "openai" and provider_config.base_url is None
             ),
+            request_stream_usage=provider_config.request_stream_usage,
         )
     return providers
 

@@ -95,6 +95,21 @@ class AdmissionTransaction:
         ).fetchall()
         return [_row_to_budget(row) for row in rows]
 
+    def get_budget(self, budget_id: str) -> Budget | None:
+        row = self._conn.execute(
+            f"SELECT {', '.join(_COLUMNS)} FROM budgets WHERE budget_id = ?", (budget_id,)
+        ).fetchone()
+        return _row_to_budget(row) if row is not None else None
+
+    def insert_budget(self, budget: Budget) -> None:
+        """Create a budget within the admission transaction (ADR-0022), so
+        concurrent first requests for an unseen work_id all see it."""
+        self._conn.execute(
+            f"""INSERT INTO budgets ({", ".join(_COLUMNS)})
+                VALUES ({", ".join("?" for _ in _COLUMNS)})""",
+            _budget_to_row(budget),
+        )
+
     def reserved_usd(self, budget: Budget, since: datetime | None) -> Decimal:
         """Sum of outstanding (active or held) reservations this budget's
         scope covers, created at or after `since` (its window start)."""

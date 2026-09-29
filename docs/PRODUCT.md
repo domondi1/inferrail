@@ -386,6 +386,23 @@ here:
   carries a separate `budget_held_usd` attribute. Reservations persist
   across restarts and are never released automatically (fail-closed);
   they stop counting once the budget's window rolls over.
+- **Per-run budgets without pre-registration**
+  (docs/adr/0022-per-run-budget-declaration.md): a request carrying
+  `X-Inferrail-Attribute-Work-Id` can declare its run's ceiling with
+  `X-Inferrail-Budget-Usd: 0.50`, or inherit `budgets.per_work_default_usd`.
+  The run's `per_work` block budget is created on first use, inside the
+  same atomic admission as the reservation, so concurrent first requests
+  for a new run can't slip past it.
+  - The first budget for a work_id wins. A later request declaring a
+    different amount is refused (HTTP 400, `INFERRAIL_E013`), and a
+    header never loosens any other budget.
+  - `budgets.per_work_max_usd` caps declarations (refused, not clamped),
+    and `budgets.allow_declared_budgets: false` turns them off.
+  - Invalid values, a declaration without a work_id, and a declaration
+    sent while budgets are disabled are refused, never ignored.
+  - The header is never forwarded upstream.
+  - Sub-agents share a run's budget by reusing its work_id; there's no
+    budget hierarchy.
 - With a `block` budget in scope, a model with no verified price is
   refused (HTTP 402, `INFERRAIL_E012`) — there's no amount to reserve.
   Add a `pricing:` override to use it.

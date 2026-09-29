@@ -58,6 +58,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from inferrail.budgets.enforcement import (
@@ -197,7 +198,11 @@ class InferenceEngine(BudgetAdmission):
         self._budgets = budgets
 
     async def execute(
-        self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: ChatCompletionRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> ChatCompletionResponse:
         request_id = f"req_{uuid.uuid4().hex[:20]}"
         started = time.perf_counter()
@@ -210,11 +215,15 @@ class InferenceEngine(BudgetAdmission):
 
         return await self._execute_with_retries(
             request_id, decision, provider, normalized_request, started, attributes,
-            self._budget_state(request),
+            self._budget_state(request, declared_budget_usd),
         )
 
     async def prepare_stream(
-        self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: ChatCompletionRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> AsyncIterator[bytes]:
         """Validate, route, and open the upstream stream through the first
         chunk. See module docstring for why this must complete — including
@@ -230,12 +239,14 @@ class InferenceEngine(BudgetAdmission):
         )
         ctx = await self._open_stream_with_retries(
             request_id, decision, provider, normalized_request, started, attributes,
-            self._budget_state(request),
+            self._budget_state(request, declared_budget_usd),
         )
         return self._iter_stream(ctx)
 
     @staticmethod
-    def _budget_state(request: ChatCompletionRequest) -> BudgetState:
+    def _budget_state(
+        request: ChatCompletionRequest, declared_budget_usd: Decimal | None = None
+    ) -> BudgetState:
         """Inputs for each attempt's reservation estimate. Tool definitions
         and `response_format` count toward the prompt (the provider bills
         them as input tokens). `max_completion_tokens` wins over
@@ -254,7 +265,9 @@ class InferenceEngine(BudgetAdmission):
             max_completion_tokens = request.max_tokens
         else:
             max_completion_tokens = _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE
-        return BudgetState(prompt_chars, max_completion_tokens)
+        return BudgetState(
+            prompt_chars, max_completion_tokens, declared_budget_usd=declared_budget_usd
+        )
 
     def _reject_unsupported(
         self,

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from inferrail.errors.exceptions import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
     BudgetUnpricedModelError,
     ConfigurationError,
@@ -138,6 +139,16 @@ _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
             remediation="Add a pricing override for this model ('pricing:' in "
             "inferrail.yaml) so requests can be reserved against the budget, or use a "
             "priced model. Not retryable as-is.",
+        ),
+    ),
+    (
+        BudgetDeclarationError,
+        ErrorCode(
+            code="INFERRAIL_E013",
+            summary="A per-run budget declaration can't be applied.",
+            remediation="Send X-Inferrail-Budget-Usd as a positive decimal together with "
+            "X-Inferrail-Attribute-Work-Id, at or below budgets.per_work_max_usd, and the same "
+            "value for every request of one work_id. Not retryable as-is.",
         ),
     ),
     (

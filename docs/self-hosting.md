@@ -94,7 +94,11 @@ as `budget_held_usd`, never as its cost. A request whose actual cost
 exceeds its reservation still completes; the overrun is recorded as
 `budget_overrun_usd`, and later requests are refused. Setting
 `max_tokens` or `max_completion_tokens` keeps reservations close to real
-cost. Budgets only cover supported requests routed through this gateway.
+cost. To protect one agent run without creating a budget first, send
+`X-Inferrail-Attribute-Work-Id: <run id>` and
+`X-Inferrail-Budget-Usd: 0.50` on its requests, or set
+`budgets.per_work_default_usd` so every new work_id gets a ceiling (see
+[ADR 0022](adr/0022-per-run-budget-declaration.md)). Budgets only cover supported requests routed through this gateway.
 They do not see other traffic on your provider account. With a `block`
 budget in scope, a model with no known price is refused
 (`INFERRAIL_E012`); add a `pricing:` override to use it. See
