@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import builtins
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_budget_reservations_work_id ON budget_reservations(work_id);
+CREATE INDEX IF NOT EXISTS idx_budgets_scope ON budgets(scope, scope_value);
 CREATE INDEX IF NOT EXISTS idx_budget_reservations_project ON budget_reservations(project);
 """
 
@@ -92,6 +93,25 @@ class AdmissionTransaction:
     def budgets(self) -> list[Budget]:
         rows = self._conn.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM budgets ORDER BY budget_id"
+        ).fetchall()
+        return [_row_to_budget(row) for row in rows]
+
+    def candidate_budgets(self, attributes: Mapping[str, str]) -> list[Budget]:
+        """Only the budgets that can match this request (global, its
+        project, its work_id), through the (scope, scope_value) index. Per-run
+        budgets accumulate one row per work_id, so admission must not read
+        every row (docs/adr/0022)."""
+        clauses = ["scope = 'global'"]
+        params: list[object] = []
+        for scope in ("project", "work_id"):
+            value = attributes.get(scope)
+            if value:
+                clauses.append("(scope = ? AND scope_value = ?)")
+                params.extend([scope, value])
+        rows = self._conn.execute(
+            f"SELECT {', '.join(_COLUMNS)} FROM budgets WHERE {' OR '.join(clauses)} "
+            "ORDER BY budget_id",
+            params,
         ).fetchall()
         return [_row_to_budget(row) for row in rows]
 

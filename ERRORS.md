@@ -21,6 +21,7 @@ about it) and `error.docs_url` (this file, anchored to the code):
 
 | Code | Exception type | Meaning | Remediation |
 |---|---|---|---|
+| <a id="inferrail_e014"></a>`INFERRAIL_E014` | `UpstreamBudgetExceededError` | The upstream gateway or provider refused the request: its own budget or quota is exhausted. | Raise or reset the budget/quota on that upstream (for example the gateway key's budget); retrying won't help until then. Not retryable as-is. |
 | <a id="inferrail_e001"></a>`INFERRAIL_E001` | `GatewayAuthenticationError` | Missing or invalid Inferrail gateway credentials. | Set the 'Authorization: Bearer <token>' header to match INFERRAIL_GATEWAY_TOKEN. |
 | <a id="inferrail_e002"></a>`INFERRAIL_E002` | `AuthenticationError` | The upstream provider rejected Inferrail's own credentials. | Check the API key referenced by the provider's api_key_env in inferrail.yaml. |
 | <a id="inferrail_e003"></a>`INFERRAIL_E003` | `RateLimitError` | The upstream provider is rate-limiting requests. | Safe to retry with backoff; Inferrail already retries this automatically up to the route's max_retries. |

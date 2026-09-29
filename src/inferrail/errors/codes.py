@@ -26,6 +26,7 @@ from inferrail.errors.exceptions import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 
 DOCS_URL_BASE = "https://github.com/domondi1/inferrail/blob/main/ERRORS.md"
@@ -42,6 +43,16 @@ class ErrorCode:
 # gateway/app.py's `_STATUS_BY_ERROR` table intentionally, since both
 # answer "what kind of InferrailError is this" from the same hierarchy.
 _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
+    (
+        UpstreamBudgetExceededError,
+        ErrorCode(
+            code="INFERRAIL_E014",
+            summary="The upstream gateway or provider refused the request: its own budget "
+            "or quota is exhausted.",
+            remediation="Raise or reset the budget/quota on that upstream (for example the "
+            "gateway key's budget); retrying won't help until then. Not retryable as-is.",
+        ),
+    ),
     (
         GatewayAuthenticationError,
         ErrorCode(

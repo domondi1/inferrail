@@ -28,6 +28,11 @@ PyPI release (the hosted service and website ship independently of the
   refused (`INFERRAIL_E013`); declarations never loosen other budgets.
   New config: `budgets.allow_declared_budgets`,
   `budgets.per_work_default_usd`, `budgets.per_work_max_usd`.
+- **Downstream budget refusals** (LiteLLM `budget_exceeded`, Vercel
+  `quota_for_entity_exceeded`, OpenAI `insufficient_quota`, HTTP 402, or
+  a budget-mentioning 403/429) are now `INFERRAIL_E014` (HTTP 402, not
+  retried). Before this they were reported as rate limits (with a
+  "retry" hint) or as auth failures.
 - **Budgets: unpriced models are refused under a block budget**
   (`INFERRAIL_E012`, HTTP 402). They used to be admitted unmetered.
 - **Streaming:** streamed calls without reported usage no longer count

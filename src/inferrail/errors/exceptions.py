@@ -140,6 +140,34 @@ class ProviderTimeoutError(ProviderError):
     retryable = True
 
 
+class UpstreamBudgetExceededError(ProviderError):
+    """The upstream (typically another gateway Inferrail sits in front of)
+    refused the request because of *its own* budget or quota, e.g. LiteLLM
+    ``budget_exceeded`` (429), Vercel ``quota_for_entity_exceeded`` (402),
+    OpenAI ``insufficient_quota`` (429), otari "exceeded budget limit" (403).
+
+    Not a rate limit and not an auth failure: retrying won't help until
+    that budget changes, so this is never retried and is reported as HTTP
+    402 (which SDKs don't auto-retry, unlike 429). ``status_code`` and
+    ``upstream_type`` keep the downstream semantics. ``safe_summary`` is
+    categorical only; the upstream's free text is never persisted."""
+
+    retryable = False
+
+    def __init__(
+        self, message: str, *, provider: str, status_code: int, upstream_type: str
+    ) -> None:
+        super().__init__(
+            message,
+            provider=provider,
+            status_code=status_code,
+            retryable=False,
+            safe_summary=f"provider '{provider}' refused the request: upstream budget or "
+            f"quota exhausted (HTTP {status_code}, {upstream_type[:64]})",
+        )
+        self.upstream_type = upstream_type
+
+
 class BudgetExceededError(InferrailError):
     """A "block"-mode budget would be exceeded by this request — raised
     before the provider is ever contacted (see

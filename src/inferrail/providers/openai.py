@@ -21,6 +21,7 @@ from inferrail.errors import (
     ProviderError,
     ProviderTimeoutError,
     RateLimitError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.providers.base import (
     FunctionCall,
@@ -28,6 +29,7 @@ from inferrail.providers.base import (
     NormalizedChatResponse,
     ToolCall,
 )
+from inferrail.providers.upstream_errors import upstream_budget_refusal_type
 
 
 class OpenAIProvider:
@@ -237,6 +239,11 @@ class OpenAIProvider:
     def _error_for_status(self, response: httpx.Response) -> ProviderError:
         status = response.status_code
         message = self._extract_error_message(response)
+        budget_type = upstream_budget_refusal_type(response)
+        if budget_type is not None:
+            return UpstreamBudgetExceededError(
+                message, provider=self.name, status_code=status, upstream_type=budget_type
+            )
         safe_summary = self._extract_safe_summary(response)
         if status in (401, 403):
             return AuthenticationError(

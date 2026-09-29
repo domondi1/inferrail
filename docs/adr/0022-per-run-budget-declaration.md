@@ -101,8 +101,12 @@ project budgets still apply exactly as before.
   `work_id`, a value above the operator ceiling, a conflict, or
   declarations turned off.
 - **Storage growth:** each declared or defaulted run leaves one small
-  budget row. `inferrail budget rm` removes one; bulk cleanup is future
-  work.
+  budget row (and its receipts). Admission reads only the budgets that
+  can match a request (global, its project, its work_id) through a
+  `(scope, scope_value)` index. Measured: median admission stayed at
+  2–3 ms with 0 to 50,000 accumulated per-run rows (it was 914 ms at
+  50,000 with a full scan). `inferrail budget rm` removes one row;
+  lifecycle cleanup (e.g. expiring finished runs) is a follow-up.
 
 ### Running in front of another gateway (coexistence)
 
@@ -128,8 +132,17 @@ friction found in testing:
   and its reservation is held.
 
 Each gateway enforces only its own budgets, so nothing is counted twice.
-A downstream gateway's refusal (for example a 429 from its own budget) is
-an HTTP error, so Inferrail releases the reservation.
+
+**A downstream budget refusal isn't a rate limit.** When the upstream
+refuses because of its own budget or quota, Inferrail returns
+`INFERRAIL_E014` (HTTP 402). That covers LiteLLM `budget_exceeded` (429),
+Vercel `quota_for_entity_exceeded` (402), OpenAI `insufficient_quota`
+(429), a 402, and a 403/429 whose `detail`/message mentions a budget
+(otari: "API key has exceeded budget limit"). The request is not
+retried, and the details carry the upstream status and type. We return
+402 rather than passing through a 429 because SDKs automatically retry
+429s. The upstream's free text is used only to classify, and is never
+stored. The reservation is released (an HTTP refusal isn't billed).
 
 ## Consequences
 

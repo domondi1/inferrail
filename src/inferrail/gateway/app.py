@@ -43,6 +43,7 @@ from inferrail.errors import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.errors.codes import code_for, docs_url_for
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
@@ -75,6 +76,7 @@ _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (BudgetExceededError, 402),
     (BudgetUnpricedModelError, 402),
     (BudgetDeclarationError, 400),
+    (UpstreamBudgetExceededError, 402),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),
@@ -111,6 +113,8 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
             "projected_total_usd": str(exc.projected_total_usd),
             "reserved_usd": str(exc.reserved_usd),
         }
+    if isinstance(exc, UpstreamBudgetExceededError):
+        return {"upstream_status": str(exc.status_code), "upstream_type": exc.upstream_type}
     if isinstance(exc, BudgetDeclarationError):
         return {"reason": exc.reason}
     if isinstance(exc, BudgetUnpricedModelError):

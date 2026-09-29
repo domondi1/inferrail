@@ -13,6 +13,7 @@ from inferrail.errors.exceptions import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "RateLimitError",
     "RoutingError",
     "UnsupportedFeatureError",
+    "UpstreamBudgetExceededError",
 ]

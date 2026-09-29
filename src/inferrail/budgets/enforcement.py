@@ -235,7 +235,7 @@ class BudgetEnforcer:
         )
         with self._store.admission() as txn:
             self._apply_per_work_declaration(txn, attributes, declared_limit_usd)
-            budgets = matching_budgets(txn.budgets(), attributes)
+            budgets = matching_budgets(txn.candidate_budgets(attributes), attributes)
             if not budgets:
                 return None
             if estimate is None:

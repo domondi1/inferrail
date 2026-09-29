@@ -464,3 +464,25 @@ def test_header_is_refused_not_ignored_when_budgets_are_disabled(
     assert response.status_code == 400
     assert response.json()["error"]["details"]["reason"] == "disabled"
     assert upstream.requests == []
+
+
+def test_admission_reads_only_budgets_that_can_match(tmp_path: Path) -> None:
+    """Per-run rows accumulate (one per work_id); admission must look up
+    only global + this project + this work_id, not scan every row."""
+    h = make_harness(tmp_path)
+    h.add_budget("5", scope="global", window="daily")
+    h.add_budget("5", scope="project", scope_value="acme", window="monthly")
+    h.add_budget("5", scope="project", scope_value="other", window="monthly")
+    h.add_budget("5", scope_value="someone-else")
+    enforcer = _enforcer(h)
+
+    with h.budgets.admission() as txn:
+        found = sorted(
+            b.budget_id for b in txn.candidate_budgets({"work_id": WORK_ID, "project": "acme"})
+        )
+
+    assert found == ["global:_:daily", "project:acme:monthly"]
+    reservation = _reserve(enforcer, attributes={"work_id": WORK_ID, "project": "acme"},
+                           declared_limit_usd=Decimal("1"))
+    assert reservation is not None  # and the declared budget was created and applied
+    assert f"work_id:{WORK_ID}:per_work" in {b.budget_id for b in h.budgets.list()}

@@ -403,12 +403,17 @@ here:
   - The header is never forwarded upstream.
   - Sub-agents share a run's budget by reusing its work_id; there's no
     budget hierarchy.
+  - Each run leaves one budget row. Admission stays fast as rows
+    accumulate (indexed lookup), and there's no automatic cleanup yet
+    (`inferrail budget rm` removes one).
 - **In front of an existing OpenAI-compatible gateway** (docs/adr/0022;
   tested locally in front of LiteLLM and otari, other gateways untested): on an `openai_compatible` provider,
   `price_as: openai|anthropic` applies that vendor's list-price catalog
   (operator-asserted, and recorded as such on the price source), and
   `request_stream_usage: true` asks the upstream for stream usage. Both
-  are opt-in. Each gateway enforces only its own budgets.
+  are opt-in. Each gateway enforces only its own budgets. A downstream
+  budget/quota refusal is returned as `INFERRAIL_E014` (HTTP 402, not
+  retried), not as a rate limit.
 - With a `block` budget in scope, a model with no verified price is
   refused (HTTP 402, `INFERRAIL_E012`) — there's no amount to reserve.
   Add a `pricing:` override to use it.
