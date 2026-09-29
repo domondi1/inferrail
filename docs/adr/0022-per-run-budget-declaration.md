@@ -104,6 +104,32 @@ project budgets still apply exactly as before.
   budget row. `inferrail budget rm` removes one; bulk cleanup is future
   work.
 
+### Running in front of another gateway (coexistence)
+
+A team can keep its current gateway (LiteLLM, otari, OpenRouter, …) and
+add Inferrail in front of it just for per-run control:
+
+    framework → Inferrail → existing gateway → provider
+
+Two opt-in settings on an `openai_compatible` provider remove the
+friction found in testing:
+
+- `price_as: openai` (or `anthropic`) is the operator asserting that this
+  upstream bills at that vendor's list prices. The built-in catalog then
+  applies, also for vendor-prefixed ids (`openai/gpt-4o-mini`,
+  `openai:gpt-4o-mini`). The price's recorded source says it was
+  applied through `price_as`, so it's never presented as verified.
+  Explicit `pricing:` overrides still win. Without either, a block budget
+  refuses the model (E012), as before.
+- `request_stream_usage: true` asks the upstream for the final usage
+  chunk on streams, as Inferrail already does for verified OpenAI.
+  Without it, a stream whose client didn't request usage stays unpriced
+  and its reservation is held.
+
+Each gateway enforces only its own budgets, so nothing is counted twice.
+A downstream gateway's refusal (for example a 429 from its own budget) is
+an HTTP error, so Inferrail releases the reservation.
+
 ## Consequences
 
 - Protecting one run becomes one extra header, or zero extra headers with

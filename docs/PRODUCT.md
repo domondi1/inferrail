@@ -403,6 +403,12 @@ here:
   - The header is never forwarded upstream.
   - Sub-agents share a run's budget by reusing its work_id; there's no
     budget hierarchy.
+- **In front of an existing gateway** (LiteLLM, otari, OpenRouter-style
+  endpoints; docs/adr/0022): on an `openai_compatible` provider,
+  `price_as: openai|anthropic` applies that vendor's list-price catalog
+  (operator-asserted, and recorded as such on the price source), and
+  `request_stream_usage: true` asks the upstream for stream usage. Both
+  are opt-in. Each gateway enforces only its own budgets.
 - With a `block` budget in scope, a model with no verified price is
   refused (HTTP 402, `INFERRAIL_E012`) — there's no amount to reserve.
   Add a `pricing:` override to use it.
