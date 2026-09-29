@@ -1,5 +1,5 @@
 """Opt-in provider settings for running Inferrail in front of another
-gateway (LiteLLM, OpenRouter, ...) — see docs/adr/0022's coexistence note.
+OpenAI-compatible gateway — see docs/adr/0022's coexistence note.
 
 - `price_as` asserts that an OpenAI-compatible upstream bills at a
   vendor's list prices, so the built-in catalog applies. The receipt's

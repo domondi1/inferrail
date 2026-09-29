@@ -106,8 +106,9 @@ project budgets still apply exactly as before.
 
 ### Running in front of another gateway (coexistence)
 
-A team can keep its current gateway (LiteLLM, otari, OpenRouter, …) and
-add Inferrail in front of it just for per-run control:
+A team can keep its current OpenAI-compatible gateway and add Inferrail
+in front of it just for per-run control. This was tested locally in front
+of LiteLLM and otari; other gateways haven't been tested:
 
     framework → Inferrail → existing gateway → provider
 

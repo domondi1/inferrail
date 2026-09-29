@@ -403,8 +403,8 @@ here:
   - The header is never forwarded upstream.
   - Sub-agents share a run's budget by reusing its work_id; there's no
     budget hierarchy.
-- **In front of an existing gateway** (LiteLLM, otari, OpenRouter-style
-  endpoints; docs/adr/0022): on an `openai_compatible` provider,
+- **In front of an existing OpenAI-compatible gateway** (docs/adr/0022;
+  tested locally in front of LiteLLM and otari, other gateways untested): on an `openai_compatible` provider,
   `price_as: openai|anthropic` applies that vendor's list-price catalog
   (operator-asserted, and recorded as such on the price source), and
   `request_stream_usage: true` asks the upstream for stream usage. Both
