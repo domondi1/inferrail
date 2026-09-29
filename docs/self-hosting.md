@@ -83,12 +83,23 @@ inferrail budget set --help
 ```
 
 A `block` budget rejects a request with HTTP 402 **before** any provider
-is contacted, using a conservative upper-bound estimate. Budgets only
-cover supported requests routed through this gateway. They do not see
-other traffic on your provider account. A request for a model with no
-known price has no estimate, so it is **not** checked against the limit
-and is allowed through. See
-[ADR 0015](adr/0015-budget-enforcement.md).
+is contacted when the request's reservation, a conservative estimate,
+would exceed what's left of the limit. What's left is the limit minus
+recorded spend, minus the reservations of other requests still in
+flight. Admission is atomic, so parallel calls sharing a budget (for
+example one agent run's `work_id`) can't each spend the same remaining
+dollars. When a call can't be priced afterwards (a timeout, or a stream
+without usage), its reservation stays counted and is shown on the receipt
+as `budget_held_usd`, never as its cost. A request whose actual cost
+exceeds its reservation still completes; the overrun is recorded as
+`budget_overrun_usd`, and later requests are refused. Setting
+`max_tokens` or `max_completion_tokens` keeps reservations close to real
+cost. Budgets only cover supported requests routed through this gateway.
+They do not see other traffic on your provider account. With a `block`
+budget in scope, a model with no known price is refused
+(`INFERRAIL_E012`); add a `pricing:` override to use it. See
+[ADR 0015](adr/0015-budget-enforcement.md) and
+[ADR 0021](adr/0021-atomic-budget-reservations.md).
 
 ## Local dashboard and control API
 

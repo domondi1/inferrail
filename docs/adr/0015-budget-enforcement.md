@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted. Admission (the pre-flight check), unknown-price handling, and the request-field surface are partly superseded by
+[0021](0021-atomic-budget-reservations.md): admission now reserves atomically, and an unpriced model is refused under a block budget.
 
 ## Context
 

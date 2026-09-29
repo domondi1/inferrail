@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from inferrail.errors.exceptions import (
     AuthenticationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -127,6 +128,16 @@ _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
             summary="A block-mode budget would be exceeded by this request.",
             remediation="Raise the budget's limit_usd ('inferrail budget set'), narrow "
             "its scope, or wait for its window to reset. Not retryable as-is.",
+        ),
+    ),
+    (
+        BudgetUnpricedModelError,
+        ErrorCode(
+            code="INFERRAIL_E012",
+            summary="A block-mode budget applies, but the model has no verified price.",
+            remediation="Add a pricing override for this model ('pricing:' in "
+            "inferrail.yaml) so requests can be reserved against the budget, or use a "
+            "priced model. Not retryable as-is.",
         ),
     ),
     (

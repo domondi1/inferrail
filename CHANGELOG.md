@@ -6,6 +6,38 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Changed
+
+- **Budgets: atomic reservations.** Block-mode admission now reserves a
+  conservative estimate against `limit − committed spend − outstanding
+  reservations` inside one SQLite write transaction, so concurrent
+  requests sharing a budget (parallel tool calls, sub-agents, several
+  gateway processes) can no longer each pass the check and spend the
+  same remaining dollars. Each attempt, including each retry, is
+  admitted on its own and settled when it ends: released once its cost
+  is recorded or the provider answered with an HTTP error, and held
+  (still counted, shown as `budget_held_usd`, never as cost) when the
+  provider may have billed without reporting usage. See
+  `docs/adr/0021-atomic-budget-reservations.md`.
+- **Budgets: unpriced models are refused under a block budget**
+  (`INFERRAIL_E012`, HTTP 402). They used to be admitted unmetered.
+- **Streaming:** streamed calls without reported usage no longer count
+  as $0 against a block budget; their reservation is held. For a
+  verified OpenAI provider, usage is now requested whenever the caller
+  didn't set `stream_options.include_usage` themselves.
+- **`/v1/chat/completions` field policy:** provider-valid fields used
+  by agent frameworks are forwarded unchanged (`response_format`,
+  `max_completion_tokens`, `seed`, `metadata`, `store`,
+  `reasoning_effort`, `verbosity`, `prediction`, `prompt_cache_*`,
+  `safety_identifier`, penalties, `logit_bias`, `service_tier` of
+  `auto`/`default`); the `developer` role, `name`, assistant `refusal`,
+  and text content-part arrays are accepted; a non-streaming response
+  carries the model's `refusal`. Fields billed in ways the catalog
+  doesn't price, or not yet returned, are rejected with a stated reason.
+  Unknown message keys are now rejected instead of silently dropped.
+
 ## v0.4.6 — 2026-09-29
 
 ### Fixed

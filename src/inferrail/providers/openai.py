@@ -98,6 +98,7 @@ class OpenAIProvider:
             payload["stream_options"] = request.stream_options
         if request.user is not None:
             payload["user"] = request.user
+        payload.update(request.passthrough)
         return payload
 
     async def complete(
@@ -140,8 +141,15 @@ class OpenAIProvider:
         self._require_api_key()
         payload = self._build_payload(request)
         payload["stream"] = True
-        if self._is_verified_openai and "stream_options" not in payload:
-            payload["stream_options"] = {"include_usage": True}
+        if self._is_verified_openai:
+            # Ask for the final usage chunk unless the caller decided
+            # include_usage themselves; any other stream_options keys they
+            # sent are kept. Without usage a streamed call has no cost, and
+            # under a block budget its reservation is held instead.
+            stream_options = dict(request.stream_options or {})
+            if "include_usage" not in stream_options:
+                stream_options["include_usage"] = True
+                payload["stream_options"] = stream_options
 
         try:
             async with self._client.stream(
@@ -192,6 +200,7 @@ class OpenAIProvider:
 
         return NormalizedChatResponse(
             content=message.get("content"),
+            refusal=message.get("refusal"),
             finish_reason=choice.get("finish_reason"),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),

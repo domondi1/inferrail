@@ -28,7 +28,7 @@ class ReceiptsPage(BaseModel):
 class BudgetSpend(BaseModel):
     """Response body for `GET /v1/local/budgets/spend` -- one entry per
     configured budget, reusing `budgets.enforcement.spent_so_far_usd`
-    directly (the same function `BudgetEnforcer.check` itself uses) so
+    directly (the same function `BudgetEnforcer.reserve` itself uses) so
     the dashboard's burn bar can never drift from what enforcement
     actually computes. `has_unpriced_usage=true` means this budget's
     spend is a floor, not the true total -- rendered distinctly, never

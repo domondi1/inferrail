@@ -199,13 +199,16 @@ Supported today: `POST /v1/chat/completions` (OpenAI-compatible, with
 streaming and tool calls), `POST /v1/messages` (Anthropic-compatible,
 with streaming and tool use), and `GET /health`. Any client or framework
 that lets you set a base URL and sends those shapes can use the gateway.
-Request fields the gateway does not forward are rejected with a clear
-error, never silently dropped. Today that includes, on
-`/v1/chat/completions`: `response_format` (structured outputs / JSON
-mode), `max_completion_tokens`, `seed`, the `developer` role, and message
-content sent as an array of parts; on `/v1/messages`: `thinking`,
-`context_management`, and `output_config`. The OpenAI Responses API and
-embeddings are not supported.
+On `/v1/chat/completions`, provider-valid fields such as
+`response_format` (structured outputs), `max_completion_tokens`, `seed`,
+`metadata`, `store`, and `reasoning_effort` are forwarded unchanged, and
+the `developer` role and text content-part arrays are accepted. Fields the
+gateway can't account for correctly (for example audio output, web search,
+non-default `service_tier`) and unknown fields are rejected with a clear
+error, never silently dropped; the full list is in
+[docs/PRODUCT.md](docs/PRODUCT.md). On `/v1/messages`, `thinking`,
+`context_management`, and `output_config` are rejected. The OpenAI
+Responses API and embeddings are not supported.
 Attribution, work grouping, framework examples, and MCP setup are in
 [docs/integrations.md](docs/integrations.md).
 
@@ -281,7 +284,7 @@ Full tool contract: [inferrail-mcp/README.md](inferrail-mcp/README.md).
 |---|---|
 | Text LLM gateway, cost receipts, reports, attribution | **Available** in the developer preview on PyPI |
 | Work grouping and application-declared outcomes | **Available**. Reports known cost only and counts unknown-cost receipts separately |
-| Budget checks | **Available**, opt-in. Applies only to supported requests through this gateway; unpriced models are not checked ([details](docs/self-hosting.md#budgets)) |
+| Budget checks | **Available**, opt-in. Applies only to supported requests through this gateway; concurrent requests are admitted atomically; a block budget refuses unpriced models ([details](docs/self-hosting.md#budgets)) |
 | Local dashboard (`serve --app-mode`), read-only MCP tools | **Available**. Both ship in the PyPI package ([MCP](#mcp)) |
 | AP invoice-exception recovery (`inferrail ap demo`) | **Experimental** workflow with a bounded contract ([docs](docs/capabilities/ap-invoice-exception-recovery.md)) |
 | Hosted cost-gateway trial ([tryinferrail.com/try](https://tryinferrail.com/try/)) | **Preview**. With a real key, the hosted process holds it in memory, and the trial expires within 4 hours of adding it ([key handling](hosted/cost_gateway/README.md)) |

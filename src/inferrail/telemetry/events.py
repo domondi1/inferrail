@@ -31,7 +31,8 @@ ErrorCategory = Literal[
     "cancelled",
     # A block-mode budget rejected the request pre-flight, before any
     # provider was contacted — see
-    # inferrail.budgets.enforcement.BudgetEnforcer.check.
+    # inferrail.budgets.enforcement.BudgetEnforcer.reserve (also covers an
+    # unpriced model refused under a block budget).
     "budget_exceeded",
 ]
 

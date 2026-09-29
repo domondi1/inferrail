@@ -91,16 +91,32 @@ inspectable config file and gives you a telemetry record for every request
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
   for single-turn or multi-turn text chat (see limits below). Every
   top-level request field is explicitly categorized, never silently
-  dropped: `model`, `messages`, `temperature`, `max_tokens`, `top_p`,
-  `stop`, `stream`, `stream_options`, `tools`, `tool_choice`,
-  `parallel_tool_calls`, and `user` are accepted and forwarded (`user`
-  reaches the upstream provider verbatim, for its own abuse
-  monitoring/rate limiting — Inferrail itself never reads it); `n != 1`
-  is explicitly rejected (see below); any other field the request body
-  contains — `response_format`, `frequency_penalty`, `presence_penalty`,
-  `seed`, `logprobs`, `top_logprobs`, or anything else this schema
-  doesn't model — is rejected with `INFERRAIL_E006` naming the field,
-  never accepted and quietly ignored.
+  dropped (docs/adr/0021-atomic-budget-reservations.md):
+  - **Interpreted and forwarded:** `model`, `messages`, `temperature`,
+    `max_tokens`, `max_completion_tokens`, `top_p`, `stop`, `stream`,
+    `stream_options`, `tools`, `tool_choice`, `parallel_tool_calls`,
+    `user` (`user` reaches the upstream provider verbatim, for its own
+    abuse monitoring/rate limiting — Inferrail itself never reads it).
+  - **Forwarded unchanged, never interpreted or stored:**
+    `response_format` (structured outputs), `seed`,
+    `frequency_penalty`, `presence_penalty`, `logit_bias`, `metadata`,
+    `store`, `reasoning_effort`, `verbosity`, `prediction`,
+    `prompt_cache_key`, `prompt_cache_retention`,
+    `prompt_cache_options`, `safety_identifier`, and `service_tier`
+    when it is `auto` or `default`.
+  - **Rejected with a stated reason (`INFERRAIL_E006`):** `n != 1`;
+    other `service_tier` values and `audio`/`modalities`/
+    `web_search_options` (billed in ways the pricing catalog doesn't
+    cover); `logprobs`/`top_logprobs` (not returned on non-streaming
+    responses yet); the deprecated `functions`/`function_call`.
+  - **Anything else** is rejected with `INFERRAIL_E006` naming the
+    field, never accepted and quietly ignored.
+
+  Messages accept the `system`, `developer`, `user`, `assistant`, and
+  `tool` roles, `name`, `refusal` on assistant messages, and `content`
+  as a string or an array of `{"type": "text"}` parts. Other content
+  part types and unknown message keys are rejected. A non-streaming
+  response carries the model's `refusal` when it returns one.
 - Real SSE streaming (`stream: true`): upstream bytes are proxied
   byte-for-byte as they arrive, never buffered and re-chunked. Retries
   only ever happen before the first byte reaches the client — once a
@@ -346,11 +362,40 @@ here:
   `block` mode, with a `limit_usd`. Manage them with `inferrail budget
   set|list|rm`.
 - `block` mode rejects a request with HTTP 402 *before any provider is
-  contacted*, using a catalog-based upper-bound cost estimate (never a
-  real token count — Inferrail has no tokenizer dependency) — the
-  response body's `error.details` carries `budget_id`/`limit_usd`/
-  `spent_so_far_usd`/`estimated_request_usd` so a caller can react
-  programmatically, not just read a message. The block itself still
+  contacted* when its reservation would exceed the remaining budget.
+  Remaining = `limit_usd` − committed (priced) spend − outstanding
+  reservations of other in-flight or held requests; admission reserves
+  atomically (one SQLite write transaction on the budgets file), so
+  concurrent requests — parallel tool calls, sub-agents, several gateway
+  processes on one budgets file — can't each spend the same remaining
+  dollars (docs/adr/0021-atomic-budget-reservations.md). The reserved
+  amount is a conservative catalog-based estimate (never a real token
+  count — Inferrail has no tokenizer dependency) that counts messages,
+  tool definitions, and `response_format`, plus `max_completion_tokens`
+  / `max_tokens` (or a fixed 4096 when neither is sent). The response
+  body's `error.details` carries `budget_id`/`limit_usd`/
+  `spent_so_far_usd`/`reserved_usd`/`estimated_request_usd` so a
+  caller can react programmatically, not just read a message.
+- Each provider attempt (including each retry) is admitted on its own.
+  When it ends, its reservation is released if its cost is known (after
+  the receipt is written) or the provider answered with an HTTP error;
+  it is **held** — still counted against the budget — if the provider
+  may have billed but no priced usage came back (a timeout, a dropped
+  connection, a stream without usage, a cancelled stream). A held
+  amount is never shown as cost: the receipt's cost stays `null` and it
+  carries a separate `budget_held_usd` attribute. Reservations persist
+  across restarts and are never released automatically (fail-closed);
+  they stop counting once the budget's window rolls over.
+- With a `block` budget in scope, a model with no verified price is
+  refused (HTTP 402, `INFERRAIL_E012`) — there's no amount to reserve.
+  Add a `pricing:` override to use it.
+- Overshoot semantics: the admission race is closed, but a request
+  whose *actual* cost exceeds its reservation (e.g. no `max_tokens`
+  and a longer answer than the 4096-token assumption, or text that
+  tokenizes denser than the estimate assumes) still completes; the
+  excess is recorded as `budget_overrun_usd` and later requests are
+  refused. This is a pre-call ceiling on reservations, not a guarantee
+  that spend can never exceed the limit. The block itself still
   produces a normal (costless) receipt carrying a `budget_id` attribute
   (`budgets.enforcement.augment_attributes_with_block`), so it's visible
   in `inferrail report` like any other rejected request, *and*
@@ -417,7 +462,7 @@ local control API when `--app-mode` is on — see
 - **Budgets** (built): create/remove budgets (`POST`/`DELETE
   /v1/local/budgets`), a burn bar per budget over `GET
   /v1/local/budgets/spend` (reuses `budgets.enforcement.spent_so_far_usd`
-  directly — the exact function `BudgetEnforcer.check` itself uses, so
+  directly — the exact function `BudgetEnforcer.reserve` itself uses, so
   the bar can never drift from what enforcement actually computed), and
   a blocked-request log. The log is real, not inferred from error text:
   a pre-flight block now stamps the receipt's `attributes.budget_id`
@@ -531,7 +576,8 @@ active-user numbers. Deploying a collector instance and configuring
 Not a hidden limitation — these are the honest edges of v0.1:
 
 - Multiple choices (`n != 1`) is rejected
-- Multi-part / image / audio message content — only plain string content
+- Image / audio / file message content — only string content or
+  `{"type": "text"}` parts
 - Cost estimates for anything outside the built-in catalog or an explicit
   operator `pricing:` override — an unrecognized (provider, model) always
   produces `null`, never a guessed cost (see "Cost and receipts" above)
