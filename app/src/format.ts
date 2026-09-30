@@ -54,3 +54,50 @@ export function formatWorkCost(
     hasUnknown: true,
   };
 }
+
+/** Plain-English budget wording for the dashboard, so a reader sees
+ * "Work item budget" and "blocks requests over the limit" before the
+ * underlying scope/window/mode identifiers. The identifiers themselves
+ * stay visible in smaller type next to this wording. */
+export function budgetName(scope: string, scopeValue: string | null): string {
+  if (scope === "global") return "All requests";
+  return scopeValue ?? scope;
+}
+
+export function budgetKind(scope: string, window: string, mode: string): string {
+  const what =
+    scope === "work_id" ? "Work item budget" : scope === "project" ? "Project budget" : "Budget";
+  const when = window === "daily" ? ", per day" : window === "monthly" ? ", per month" : "";
+  const how = mode === "block" ? "blocks requests over the limit" : "warns only, never blocks";
+  return `${what}${when} · ${how}`;
+}
+
+/** How many receipts in a blocked-request log came from one budget. */
+export function blockedCountFor(
+  budgetId: string,
+  blocked: { attributes: Record<string, string> }[],
+): number {
+  return blocked.filter((r) => r.attributes.budget_id === budgetId).length;
+}
+
+/** A receipt the budget refused before any provider was contacted. */
+export function isBudgetBlock(r: { status: string; attributes: Record<string, string> }): boolean {
+  return r.status === "error" && Boolean(r.attributes.budget_id);
+}
+
+export function inferenceStatusText(status: string): string {
+  switch (status) {
+    case "success":
+      return "all calls succeeded";
+    case "partial":
+      return "some calls failed or were blocked";
+    case "error":
+      return "all calls failed or were blocked";
+    default:
+      return "unknown";
+  }
+}
+
+export function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}

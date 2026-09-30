@@ -215,3 +215,114 @@ main {
   font-size: 13px;
   margin-bottom: 20px;
 }
+
+/* Budget cards and the work detail hero: the money figures carry the
+   meaning, so they get the largest type on the screen; identifiers stay
+   visible in small type underneath. */
+.budget-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.budget-card {
+  border-top: 1px solid var(--ink);
+  padding: 16px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.budget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
+.budget-name {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.budget-kind {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 40px;
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.figure-label {
+  font-family: var(--font-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.figure-value {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure-value.stamp {
+  color: var(--stamp);
+}
+
+.figure-value.unknown {
+  color: var(--ink-3);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.figure-note {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.budget-bar {
+  height: 8px;
+  background: var(--rule);
+}
+
+.budget-bar > div {
+  height: 100%;
+  background: var(--ink);
+}
+
+.budget-bar > div.over {
+  background: var(--stamp);
+}
+
+.budget-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--stamp);
+}
+
+.budget-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.work-hero {
+  margin: 12px 0 24px;
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listRecentReceipts, streamReceipts, type Receipt } from "../api";
-import { attrSummary, formatCost, formatTime } from "../format";
+import { attrSummary, formatCost, formatTime, isBudgetBlock } from "../format";
 
 const MAX_ROWS = 200;
 
@@ -71,6 +71,7 @@ export function LiveFeed(): JSX.Element {
         <div className="receipt-list">
           {receipts.map((r) => {
             const cost = formatCost(r.estimated_cost_usd);
+            const blocked = isBudgetBlock(r);
             return (
               <div key={r.receipt_id} className={`receipt-row status-${r.status}`}>
                 <span className="receipt-time">{formatTime(r.timestamp)}</span>
@@ -80,9 +81,9 @@ export function LiveFeed(): JSX.Element {
                     <span className="receipt-attrs"> — {attrSummary(r.attributes)}</span>
                   )}
                 </span>
-                <span className="receipt-attrs">{r.status}</span>
+                <span className="receipt-attrs">{blocked ? "blocked by budget" : r.status}</span>
                 <span className={`receipt-cost ${cost.unknown ? "unknown" : ""}`}>
-                  {cost.text}
+                  {blocked ? "not sent" : cost.text}
                 </span>
               </div>
             );
