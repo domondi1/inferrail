@@ -9,43 +9,43 @@ Local control API token (also saved at <tmp>/data/inferrail/local-api-token):
 Dashboard: http://127.0.0.1:8000/dashboard/?token=<token>
   (receipts land here live -- the 'Live Feed' screen -- as requests arrive)
 
-INFO:     Started server process [188503]
+INFO:     Started server process [194387]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:54014 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54022 - "GET /dashboard/?token=<token> HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54022 - "GET /dashboard/assets/index-Db8u7IOL.js HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54028 - "GET /dashboard/assets/index-C9Ujp_yu.css HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54022 - "GET /v1/local/receipts?limit=1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54022 - "GET /v1/local/stream?token=<token> HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54028 - "GET /v1/local/receipts?limit=200&offset=0 HTTP/1.1" 200 OK
-HTTP Request: POST http://127.0.0.1:49075/v1/chat/completions "HTTP/1.0 200 OK"
-{"request_id":"req_0bdd4389dd1c450b8419","timestamp":"2026-09-30T03:32:24.433041Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":712.9165970000031,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 200 OK
-HTTP Request: POST http://127.0.0.1:49075/v1/chat/completions "HTTP/1.0 200 OK"
-{"request_id":"req_c2e682cda7de4c75ac10","timestamp":"2026-09-30T03:32:25.161972Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":707.4110559988185,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 200 OK
-HTTP Request: POST http://127.0.0.1:49075/v1/chat/completions "HTTP/1.0 200 OK"
-{"request_id":"req_cc7bda7c5d754b8e8b89","timestamp":"2026-09-30T03:32:25.881858Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":709.8462760004622,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 200 OK
-HTTP Request: POST http://127.0.0.1:49075/v1/chat/completions "HTTP/1.0 200 OK"
-{"request_id":"req_ddc416c5b104450f8ef9","timestamp":"2026-09-30T03:32:26.596551Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":705.1441359999444,"time_to_first_token_ms":null,"prompt_tokens":2049,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 200 OK
-{"request_id":"req_93fbf93fcac445a8915b","timestamp":"2026-09-30T03:32:26.606701Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"error","error_category":"budget_exceeded","error_message":"budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010830 = $0.043313 > limit $0.04","http_status":null,"total_latency_ms":1.436448999811546,"time_to_first_token_ms":null,"prompt_tokens":null,"completion_tokens":null,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:33774 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42840 - "GET /dashboard/?token=<token> HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42840 - "GET /dashboard/assets/index-Db8u7IOL.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42852 - "GET /dashboard/assets/index-C9Ujp_yu.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42840 - "GET /v1/local/receipts?limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42840 - "GET /v1/local/stream?token=<token> HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42852 - "GET /v1/local/receipts?limit=200&offset=0 HTTP/1.1" 200 OK
+HTTP Request: POST http://127.0.0.1:34623/v1/chat/completions "HTTP/1.0 200 OK"
+{"request_id":"req_3e0b9db874d140ba9ee4","timestamp":"2026-09-30T03:41:34.215270Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":706.8703149998328,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+HTTP Request: POST http://127.0.0.1:34623/v1/chat/completions "HTTP/1.0 200 OK"
+{"request_id":"req_12fb95e39f32430c90df","timestamp":"2026-09-30T03:41:34.946051Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":706.8168349996995,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+HTTP Request: POST http://127.0.0.1:34623/v1/chat/completions "HTTP/1.0 200 OK"
+{"request_id":"req_32c7fdaab1bc4185b29e","timestamp":"2026-09-30T03:41:35.658436Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":704.896799999915,"time_to_first_token_ms":null,"prompt_tokens":2048,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+HTTP Request: POST http://127.0.0.1:34623/v1/chat/completions "HTTP/1.0 200 OK"
+{"request_id":"req_25881120337d4663a055","timestamp":"2026-09-30T03:41:36.372522Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"success","error_category":null,"error_message":null,"http_status":null,"total_latency_ms":706.2811619998683,"time_to_first_token_ms":null,"prompt_tokens":2049,"completion_tokens":300,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+{"request_id":"req_e779301934d343b9afa9","timestamp":"2026-09-30T03:41:36.381224Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"error","error_category":"budget_exceeded","error_message":"budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010830 = $0.043313 > limit $0.04","http_status":null,"total_latency_ms":1.3948770010756562,"time_to_first_token_ms":null,"prompt_tokens":null,"completion_tokens":null,"retry_count":0,"estimated_cost_usd":null}
 request failed with BudgetExceededError: budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010830 = $0.043313 > limit $0.04
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 402 Payment Required
-{"request_id":"req_06de35bf9daf42059d1c","timestamp":"2026-09-30T03:32:26.615703Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"error","error_category":"budget_exceeded","error_message":"budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010828 = $0.043311 > limit $0.04","http_status":null,"total_latency_ms":1.9286490005470114,"time_to_first_token_ms":null,"prompt_tokens":null,"completion_tokens":null,"retry_count":0,"estimated_cost_usd":null}
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 402 Payment Required
+{"request_id":"req_4ffe84da25f24485a8f7","timestamp":"2026-09-30T03:41:36.386596Z","route":"passthrough","provider":"stand-in","model":"gpt-4o","status":"error","error_category":"budget_exceeded","error_message":"budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010828 = $0.043311 > limit $0.04","http_status":null,"total_latency_ms":1.3324350002221763,"time_to_first_token_ms":null,"prompt_tokens":null,"completion_tokens":null,"retry_count":0,"estimated_cost_usd":null}
 request failed with BudgetExceededError: budget 'work_id:contract-review-42:per_work' (work_id=contract-review-42, window=per_work, mode=block) would be exceeded: spent $0.032483 + estimated $0.010828 = $0.043311 > limit $0.04
-INFO:     127.0.0.1:54044 - "POST /v1/chat/completions HTTP/1.1" 402 Payment Required
-INFO:     127.0.0.1:54048 - "GET /v1/local/work/contract-review-42 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54064 - "GET /v1/local/budgets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54076 - "GET /v1/local/budgets/spend HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54090 - "GET /v1/local/receipts?status=error&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54090 - "GET /v1/local/budgets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54076 - "GET /v1/local/budgets/spend HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54064 - "GET /v1/local/receipts?status=error&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42864 - "POST /v1/chat/completions HTTP/1.1" 402 Payment Required
+INFO:     127.0.0.1:42880 - "GET /v1/local/work/contract-review-42 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42890 - "GET /v1/local/budgets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42894 - "GET /v1/local/budgets/spend HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42898 - "GET /v1/local/receipts?status=error&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42898 - "GET /v1/local/budgets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42894 - "GET /v1/local/budgets/spend HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42890 - "GET /v1/local/receipts?status=error&limit=100 HTTP/1.1" 200 OK
 INFO:     Shutting down
 INFO:     Waiting for application shutdown.
 INFO:     Application shutdown complete.
-INFO:     Finished server process [188503]
+INFO:     Finished server process [194387]

@@ -329,6 +329,17 @@ def capture(package_spec: str) -> None:
                     if rows.count() > seen:
                         seen = rows.count()
                         page.wait_for_timeout(120)
+                        if not any(s["scene"] == "dashboard" for s in shots):
+                            # Establishing shot: the whole app at normal framing,
+                            # as the first receipt lands; then back to close crops.
+                            page.set_viewport_size({"width": 960, "height": 600})
+                            page.wait_for_timeout(150)
+                            name = f"{len(shots):02d}-dashboard.png"
+                            page.screenshot(path=str(SHOTS / name))
+                            shots.append({"file": name, "scene": "dashboard"})
+                            page.set_viewport_size({"width": 600, "height": 1000})
+                            page.wait_for_timeout(150)
+                            continue
                         if not feed_h:
                             # Fixed crop: just the rows, with room for all six.
                             row = rows.first.bounding_box()
@@ -472,25 +483,27 @@ def _scenes(meta: dict[str, Any]) -> list[Frame]:
     cap = "A real local run: start Inferrail and its dashboard"
     frames += _typing(cap, [], SERVE_CMD)
     started = [f"$ {SERVE_CMD}", dash]
-    frames.append(Frame(cap, 1500, lines=started))
+    frames.append(Frame(cap, 1000, lines=started))
 
     cap = "Give one AI job a $0.04 spending limit"
     frames += _typing(cap, [], SHOW_CMD)
     tagged = [f"$ {SHOW_CMD}", *shown, ""]
-    frames.append(Frame(cap, 2000, lines=tagged))
+    frames.append(Frame(cap, 1700, lines=tagged))
 
     cap = "Run the job: six model calls"
     frames += _typing(cap, tagged, RUN_CMD)
-    frames.append(Frame(cap, 2300, lines=[*tagged, f"$ {RUN_CMD}", *ran]))
+    frames.append(Frame(cap, 2200, lines=[*tagged, f"$ {RUN_CMD}", *ran]))
 
     screens = meta["screens"]
+    dashboard = next(s for s in screens if s["scene"] == "dashboard")
+    frames.append(Frame("The local Inferrail dashboard", 1700, screen=dashboard["file"]))
     feed = [s for s in screens if s["scene"] == "feed"]
     cap = "Each call is recorded with what it cost"
     for i, s in enumerate(feed):
-        frames.append(Frame(cap, 1100 if i == len(feed) - 1 else 300, screen=s["file"]))
+        frames.append(Frame(cap, 900 if i == len(feed) - 1 else 300, screen=s["file"]))
 
     work = next(s for s in screens if s["scene"] == "work")
-    frames.append(Frame("What the job spent", 2800, screen=work["file"]))
+    frames.append(Frame("What the job spent", 2600, screen=work["file"]))
 
     budgets = next(s for s in screens if s["scene"] == "budgets")
     cap = "Limit reached: the rest were blocked before the model"

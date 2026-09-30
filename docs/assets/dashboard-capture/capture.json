@@ -1,6 +1,6 @@
 {
   "inferrail_version": "0.4.7",
-  "label": "0.4.7+79963c5",
+  "label": "0.4.7+3e0c3e4",
   "package": "this checkout",
   "python": "3.12.1",
   "platform": "linux",
@@ -14,8 +14,8 @@
   ],
   "screens": [
     {
-      "file": "00-feed.png",
-      "scene": "feed"
+      "file": "00-dashboard.png",
+      "scene": "dashboard"
     },
     {
       "file": "01-feed.png",
