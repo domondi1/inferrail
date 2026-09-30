@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.8 — 2026-09-30
 
 ### Changed
 
@@ -27,6 +27,15 @@ PyPI release (the hosted service and website ship independently of the
   blocks instead of recent ones. It now reads the newest page, and
   blocked counts built from it are marked "N+" when they can only be a
   lower bound.
+
+### Verification
+
+Released on the automated suite (including the dashboard's unit tests)
+and a local end-to-end run of the packaged dashboard: `inferrail serve
+--app-mode` in front of a local stand-in upstream, six budgeted calls on
+one work_id, with the Live Feed, Work and Budgets screens checked in a
+browser. A run against a real provider key was not repeated for this
+release.
 
 ## v0.4.7 — 2026-09-30
 
