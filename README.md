@@ -32,6 +32,34 @@ Inferrail is a gateway you run yourself that tracks token usage and estimated LL
 features below are implemented and tested, but CLI flags, config shape,
 and receipt fields may still change before 1.0.
 
+## Give one AI agent run a dollar budget
+
+An agent run often fans out into many model calls at once. Send two
+headers on every call of the run and Inferrail enforces a dollar budget
+for the whole run, outside the agent:
+
+```python
+client = AsyncOpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="unused",  # the provider key stays in the gateway
+    default_headers={
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",  # every call of this run
+        "X-Inferrail-Budget-Usd": "0.50",             # the run's budget, created on first use
+    },
+)
+```
+
+- Each call reserves its estimated cost atomically before it's sent, so
+  parallel calls can't all spend the same remaining dollars.
+- Once the run's budget can't cover a call, that call gets HTTP 402 and
+  never reaches the provider.
+- `inferrail work run-7f3a` prints the run's final cost afterwards.
+
+Full walkthrough and exact limits:
+[docs/recipes/agent-run-budget.md](docs/recipes/agent-run-budget.md).
+How this behaves under a 30-call burst, next to other budget systems:
+[per-run-budget-benchmark](https://github.com/domondi1/per-run-budget-benchmark).
+
 ## Privacy boundary
 
 For each supported request, the gateway writes one receipt to a local
