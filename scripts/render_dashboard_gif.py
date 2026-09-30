@@ -416,6 +416,7 @@ class Frame:
     hold_ms: int
     lines: list[str] | None = None
     screen: str | None = None
+    fit_to: str | None = None  # place `screen` at this screen's scale and origin
 
 
 def _font(size: int, bold: bool = False) -> Any:
@@ -444,10 +445,14 @@ def _draw(frame: Frame, label: str) -> Any:
         # Fit the crop to the frame, keeping its aspect; any margin is the
         # dashboard's own paper background.
         shot = Image.open(SHOTS / frame.screen).convert("RGB")
-        scale = min(WIDTH / shot.width, BODY_H / shot.height)
+        ref = Image.open(SHOTS / (frame.fit_to or frame.screen))
+        scale = min(WIDTH / ref.width, BODY_H / ref.height)
+        origin = (
+            (WIDTH - round(ref.width * scale)) // 2,
+            STRIP_H + (BODY_H - round(ref.height * scale)) // 2,
+        )
         size = (round(shot.width * scale), round(shot.height * scale))
-        shot = shot.resize(size, Image.Resampling.LANCZOS)
-        img.paste(shot, ((WIDTH - size[0]) // 2, STRIP_H + (BODY_H - size[1]) // 2))
+        img.paste(shot.resize(size, Image.Resampling.LANCZOS), origin)
         return img
 
     regular, bold = _font(FONT_SIZE), _font(FONT_SIZE, bold=True)
@@ -490,7 +495,7 @@ def _scenes(meta: dict[str, Any]) -> list[Frame]:
     tagged = [f"$ {SHOW_CMD}", *shown, ""]
     frames.append(Frame(cap, 1700, lines=tagged))
 
-    cap = "Run the job: six model calls"
+    cap = "Run the job: it tries six model calls"
     frames += _typing(cap, tagged, RUN_CMD)
     frames.append(Frame(cap, 2200, lines=[*tagged, f"$ {RUN_CMD}", *ran]))
 
@@ -502,10 +507,12 @@ def _scenes(meta: dict[str, Any]) -> list[Frame]:
     for i, s in enumerate(feed):
         frames.append(Frame(cap, 900 if i == len(feed) - 1 else 300, screen=s["file"]))
 
+    # The work and budget frames share one scale and origin, so the money
+    # figures stay put and the blocked details appear beneath them.
     work = next(s for s in screens if s["scene"] == "work")
-    frames.append(Frame("What the job spent", 2600, screen=work["file"]))
-
     budgets = next(s for s in screens if s["scene"] == "budgets")
+    frames.append(Frame("What the job spent", 2600, screen=work["file"], fit_to=budgets["file"]))
+
     cap = "Limit reached: the rest were blocked before the model"
     frames.append(Frame(cap, 4800, screen=budgets["file"]))
     return frames
