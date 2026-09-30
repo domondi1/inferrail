@@ -5,6 +5,7 @@ import {
   budgetKind,
   budgetName,
   burnFraction,
+  countText,
   formatCost,
   formatTime,
   formatWorkCost,
@@ -117,5 +118,11 @@ describe("budget wording", () => {
     expect(inferenceStatusText("partial")).toBe("some calls failed or were blocked");
     expect(plural(1, "request", "requests")).toBe("1 request");
     expect(plural(2, "request", "requests")).toBe("2 requests");
+  });
+
+  it("marks a partial count as a lower bound", () => {
+    expect(countText(2, true, "request", "requests")).toBe("2 requests");
+    expect(countText(1, true, "request", "requests")).toBe("1 request");
+    expect(countText(1000, false, "request", "requests")).toBe("1000+ requests");
   });
 });

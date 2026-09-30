@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
+  countBlockedForWork,
   getWork,
-  listBlockedReceipts,
   listBudgets,
   listBudgetSpend,
   listWork,
@@ -10,14 +10,7 @@ import {
   type BudgetSpend,
   type WorkSummary,
 } from "../api";
-import {
-  formatCost,
-  formatTime,
-  formatWorkCost,
-  inferenceStatusText,
-  isBudgetBlock,
-  plural,
-} from "../format";
+import { formatCost, formatTime, formatWorkCost, inferenceStatusText, plural } from "../format";
 import { navigateTo } from "../useHashRoute";
 
 function WorkRow({ w, onOpen }: { w: WorkSummary; onOpen: (id: string) => void }): JSX.Element {
@@ -51,14 +44,14 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }):
   const [detail, setDetail] = useState<WorkSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [budget, setBudget] = useState<{ budget: Budget; spend?: BudgetSpend } | null>(null);
-  const [blocked, setBlocked] = useState(0);
+  const [blocked, setBlocked] = useState({ count: 0, complete: true });
 
   useEffect(() => {
     let cancelled = false;
     setDetail(null);
     setError(null);
     setBudget(null);
-    setBlocked(0);
+    setBlocked({ count: 0, complete: true });
     getWork(workId)
       .then((d) => !cancelled && setDetail(d))
       .catch((e: unknown) => {
@@ -67,8 +60,8 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }):
       });
     // Budget context is optional: without --app-mode budgets, or on any
     // failure, the detail still renders from the work rollup alone.
-    Promise.all([listBudgets(), listBudgetSpend(), listBlockedReceipts()])
-      .then(([budgets, spend, blockedRows]) => {
+    Promise.all([listBudgets(), listBudgetSpend(), countBlockedForWork(workId)])
+      .then(([budgets, spend, blockedForWork]) => {
         if (cancelled) return;
         const own = budgets.find(
           (b) => b.scope === "work_id" && b.scope_value === workId && b.window === "per_work",
@@ -76,9 +69,7 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }):
         if (own) {
           setBudget({ budget: own, spend: spend.find((s) => s.budget_id === own.budget_id) });
         }
-        setBlocked(
-          blockedRows.filter((r) => isBudgetBlock(r) && r.attributes.work_id === workId).length,
-        );
+        setBlocked(blockedForWork);
       })
       .catch(() => undefined);
     return () => {
@@ -109,10 +100,13 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }):
               <span className="figure-value">{formatCost(budget.budget.limit_usd).text}</span>
             </div>
           )}
-          {blocked > 0 && (
+          {blocked.count > 0 && (
             <div className="figure">
               <span className="figure-label">Blocked by budget</span>
-              <span className="figure-value stamp">{blocked}</span>
+              <span className="figure-value stamp">
+                {blocked.count}
+                {blocked.complete ? "" : "+"}
+              </span>
             </div>
           )}
         </div>

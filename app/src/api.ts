@@ -150,14 +150,43 @@ export async function deleteBudget(budgetId: string): Promise<void> {
 /** The blocked-request log: every receipt a real budget block produced
  * (`status: "error"` + a `budget_id` attribute -- see
  * `budgets.enforcement.augment_attributes_with_block`), newest first.
- * Fetches one page of error receipts and filters client-side for the
+ * Reads the newest page of error receipts and filters client-side for the
  * `budget_id` marker, since not every `status: "error"` receipt is a
- * budget block (a provider failure looks the same otherwise). */
-export async function listBlockedReceipts(limit = 100): Promise<Receipt[]> {
-  const page = await fetchLocal<{ receipts: Receipt[] }>(
-    `/v1/local/receipts?status=error&limit=${limit}`,
+ * budget block (a provider failure looks the same otherwise). The
+ * endpoint pages oldest-first, so like `listRecentReceipts` this reads
+ * `total` first and asks for the tail page. `complete` is false when
+ * older error receipts exist beyond that page, so counts derived from
+ * `rows` are lower bounds. */
+export async function listBlockedReceipts(
+  limit = 1000,
+): Promise<{ rows: Receipt[]; complete: boolean }> {
+  const probe = await fetchLocal<{ receipts: Receipt[]; total: number }>(
+    "/v1/local/receipts?status=error&limit=1",
   );
-  return page.receipts.filter((r) => Boolean(r.attributes.budget_id)).reverse();
+  const offset = Math.max(0, probe.total - limit);
+  const page = await fetchLocal<{ receipts: Receipt[] }>(
+    `/v1/local/receipts?status=error&limit=${limit}&offset=${offset}`,
+  );
+  return {
+    rows: page.receipts.filter((r) => Boolean(r.attributes.budget_id)).reverse(),
+    complete: offset === 0,
+  };
+}
+
+/** How many of one work_id's requests a budget blocked, using the
+ * endpoint's own work_id filter. `complete` is false only if that work
+ * has more than `limit` error receipts. */
+export async function countBlockedForWork(
+  workId: string,
+  limit = 1000,
+): Promise<{ count: number; complete: boolean }> {
+  const page = await fetchLocal<{ receipts: Receipt[]; total: number }>(
+    `/v1/local/receipts?work_id=${encodeURIComponent(workId)}&status=error&limit=${limit}`,
+  );
+  return {
+    count: page.receipts.filter((r) => Boolean(r.attributes.budget_id)).length,
+    complete: page.total <= limit,
+  };
 }
 
 /** The most recent receipts this install has already produced, newest

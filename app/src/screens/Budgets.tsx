@@ -18,10 +18,13 @@ import {
   budgetKind,
   budgetName,
   burnFraction,
+  countText,
   formatCost,
   formatTime,
   plural,
 } from "../format";
+
+const BLOCKED_LOG_ROWS = 100;
 
 function windowsFor(scope: BudgetScope): BudgetWindow[] {
   return scope === "work_id" ? ["per_work", "daily", "monthly"] : ["daily", "monthly"];
@@ -117,11 +120,13 @@ function BudgetRow({
   budget,
   spend,
   blockedCount,
+  blockedComplete,
   onDeleted,
 }: {
   budget: Budget;
   spend: BudgetSpend | undefined;
   blockedCount: number;
+  blockedComplete: boolean;
   onDeleted: () => void;
 }): JSX.Element {
   const fraction = spend ? burnFraction(spend.spent_usd, budget.limit_usd) : 0;
@@ -148,7 +153,7 @@ function BudgetRow({
         <div className="figure">
           <span className="figure-label">Blocked</span>
           <span className={`figure-value ${blockedCount > 0 ? "stamp" : ""}`}>
-            {plural(blockedCount, "request", "requests")}
+            {countText(blockedCount, blockedComplete, "request", "requests")}
           </span>
         </div>
       </div>
@@ -157,8 +162,11 @@ function BudgetRow({
       </div>
       {blockedCount > 0 && budget.mode === "block" && (
         <p className="budget-note">
-          {plural(blockedCount, "request was", "requests were")} stopped before reaching the
-          provider, so {blockedCount === 1 ? "it was" : "they were"} never billed.
+          {blockedComplete
+            ? plural(blockedCount, "request was", "requests were")
+            : `${blockedCount}+ requests were`}{" "}
+          stopped before reaching the provider, so {blockedCount === 1 ? "it was" : "they were"}{" "}
+          never billed.
         </p>
       )}
       <div className="budget-meta">
@@ -208,6 +216,7 @@ export function Budgets(): JSX.Element {
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
   const [spend, setSpend] = useState<Map<string, BudgetSpend>>(new Map());
   const [blocked, setBlocked] = useState<Receipt[]>([]);
+  const [blockedComplete, setBlockedComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
@@ -219,7 +228,8 @@ export function Budgets(): JSX.Element {
       ]);
       setBudgets(b);
       setSpend(new Map(s.map((entry) => [entry.budget_id, entry])));
-      setBlocked(blockedRows);
+      setBlocked(blockedRows.rows);
+      setBlockedComplete(blockedRows.complete);
       setError(null);
     } catch {
       setError("Failed to load budgets");
@@ -255,6 +265,7 @@ export function Budgets(): JSX.Element {
               budget={b}
               spend={spend.get(b.budget_id)}
               blockedCount={blockedCountFor(b.budget_id, blocked)}
+              blockedComplete={blockedComplete}
               onDeleted={() => void onDelete(b.budget_id)}
             />
           ))}
@@ -264,7 +275,7 @@ export function Budgets(): JSX.Element {
       <h2 className="screen-title" style={{ fontSize: 20, marginTop: 32 }}>
         Blocked before reaching the provider
       </h2>
-      <BlockedLog rows={blocked} />
+      <BlockedLog rows={blocked.slice(0, BLOCKED_LOG_ROWS)} />
 
       <h2 className="screen-title" style={{ fontSize: 20, marginTop: 32 }}>
         Add a budget

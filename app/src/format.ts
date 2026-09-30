@@ -101,3 +101,9 @@ export function inferenceStatusText(status: string): string {
 export function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** A count that may only cover part of the history: "N+" when it is a
+ * lower bound, never presented as exact. */
+export function countText(n: number, complete: boolean, one: string, many: string): string {
+  return complete ? plural(n, one, many) : `${n}+ ${many}`;
+}
