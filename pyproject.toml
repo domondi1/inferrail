@@ -17,6 +17,8 @@ keywords = [
     "openai-compatible",
     "inference-gateway",
     "cost-attribution",
+    "llm-budget",
+    "agent-budget",
     "cost-tracking",
     "llm-observability",
     "self-hosted",

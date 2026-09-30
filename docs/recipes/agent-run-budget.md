@@ -119,6 +119,100 @@ Unknown-cost inference receipts:   0
 Refused calls appear as receipts with no cost. Nothing was billed for
 them.
 
+## Framework snippets
+
+Every framework below talks to Inferrail through its normal OpenAI
+client. What changes is only where the run id and budget go. Each
+snippet was run against `inferrail==0.4.7` with two concurrent runs:
+the runs stayed separate, and the run with the small budget got a 402.
+
+### LangChain
+
+One model object; pass the run's headers on each call:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+                 api_key="unused", max_tokens=200)
+
+llm.invoke("Summarize the ticket.", extra_headers={
+    "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+    "X-Inferrail-Budget-Usd": "0.50",
+})
+```
+
+Tested with `langchain-openai` 1.6.6.
+
+### LangChain agents and LangGraph
+
+An agent makes several model calls per run, so give each run its own
+model with the headers set once:
+
+```python
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+
+def agent_for_run(run_id: str, budget_usd: str):
+    model = ChatOpenAI(
+        model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+        api_key="unused", max_tokens=200,
+        default_headers={
+            "X-Inferrail-Attribute-Work-Id": run_id,
+            "X-Inferrail-Budget-Usd": budget_usd,
+        },
+    )
+    return create_agent(model, tools=[...])
+
+agent_for_run("run-7f3a", "0.50").invoke(
+    {"messages": [{"role": "user", "content": "..."}]})
+```
+
+A refused call raises `openai.APIStatusError` with `status_code == 402`.
+Tested with `langchain` 1.4.3 and `langgraph` 1.2.12
+(`create_react_agent` behaves the same).
+
+### OpenAI Agents SDK
+
+One client for the whole process; the run's headers go in its
+`RunConfig`, so concurrent runs don't share a budget by accident:
+
+```python
+from agents import Agent, ModelSettings, RunConfig, Runner, set_default_openai_api, set_default_openai_client
+from openai import AsyncOpenAI
+
+set_default_openai_api("chat_completions")
+set_default_openai_client(AsyncOpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused"))
+
+agent = Agent(name="support", instructions="...", model="gpt-4o-mini",
+              model_settings=ModelSettings(max_tokens=200))
+
+await Runner.run(agent, "...", run_config=RunConfig(model_settings=ModelSettings(extra_headers={
+    "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+    "X-Inferrail-Budget-Usd": "0.50",
+})))
+```
+
+Tested with `openai-agents` 0.22.3 (Chat Completions API; the Responses
+API isn't supported by Inferrail yet).
+
+### Haystack
+
+`OpenAIChatGenerator` with `api_base_url` pointing at Inferrail, and the
+run's headers in `generation_kwargs`:
+
+```python
+pipeline.run({
+    "llm": {"generation_kwargs": {"max_tokens": 300, "extra_headers": {
+        "X-Inferrail-Attribute-Work-Id": "support-ticket-4812",
+        "X-Inferrail-Budget-Usd": "0.05",
+    }}},
+    # ... your other components' inputs
+})
+```
+
+Tested with `haystack-ai` 3.2.0.
+
 ## Using an existing gateway instead of calling the provider directly
 
 Inferrail can sit in front of an OpenAI-compatible gateway you already
