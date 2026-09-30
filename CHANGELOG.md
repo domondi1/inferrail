@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.7 — 2026-09-30
 
 ### Changed
 
@@ -66,6 +66,13 @@ error. Check them if you upgrade from 0.4.6:
   `INFERRAIL_E014` (it was 401).
 
 No config key, CLI command or endpoint was removed.
+
+### Verification
+
+Released on the automated suite, local end-to-end runs with the OpenAI
+Agents SDK against a fake upstream, and local runs in front of LiteLLM
+and otari. A run against a real provider key was not repeated for this
+release.
 
 ## v0.4.6 — 2026-09-29
 
