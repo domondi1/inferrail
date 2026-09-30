@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { attrSummary, burnFraction, formatCost, formatTime, formatWorkCost } from "./format";
+import {
+  attrSummary,
+  blockedCountFor,
+  budgetKind,
+  budgetName,
+  burnFraction,
+  countText,
+  formatCost,
+  formatTime,
+  formatWorkCost,
+  inferenceStatusText,
+  isBudgetBlock,
+  plural,
+} from "./format";
 
 describe("formatCost", () => {
   it("renders a null cost as unknown, never as $0", () => {
@@ -67,5 +80,49 @@ describe("attrSummary", () => {
 
   it("includes only work_id when project is absent", () => {
     expect(attrSummary({ work_id: "w1" })).toBe("work:w1");
+  });
+});
+
+describe("budget wording", () => {
+  it("names a work budget by its work id and global as all requests", () => {
+    expect(budgetName("work_id", "contract-review-42")).toBe("contract-review-42");
+    expect(budgetName("global", null)).toBe("All requests");
+  });
+
+  it("describes scope, window and mode in plain words", () => {
+    expect(budgetKind("work_id", "per_work", "block")).toBe(
+      "Work item budget · blocks requests over the limit",
+    );
+    expect(budgetKind("global", "daily", "warn")).toBe(
+      "Budget, per day · warns only, never blocks",
+    );
+  });
+
+  it("counts blocked receipts per budget", () => {
+    const rows = [
+      { attributes: { budget_id: "a" } },
+      { attributes: { budget_id: "b" } },
+      { attributes: { budget_id: "a" } },
+    ];
+    expect(blockedCountFor("a", rows)).toBe(2);
+    expect(blockedCountFor("c", rows)).toBe(0);
+  });
+
+  it("treats only budget-refused errors as blocks", () => {
+    expect(isBudgetBlock({ status: "error", attributes: { budget_id: "a" } })).toBe(true);
+    expect(isBudgetBlock({ status: "error", attributes: {} })).toBe(false);
+    expect(isBudgetBlock({ status: "success", attributes: { budget_id: "a" } })).toBe(false);
+  });
+
+  it("explains inference status and pluralizes counts", () => {
+    expect(inferenceStatusText("partial")).toBe("some calls failed or were blocked");
+    expect(plural(1, "request", "requests")).toBe("1 request");
+    expect(plural(2, "request", "requests")).toBe("2 requests");
+  });
+
+  it("marks a partial count as a lower bound", () => {
+    expect(countText(2, true, "request", "requests")).toBe("2 requests");
+    expect(countText(1, true, "request", "requests")).toBe("1 request");
+    expect(countText(1000, false, "request", "requests")).toBe("1000+ requests");
   });
 });

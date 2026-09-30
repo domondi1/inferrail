@@ -13,7 +13,18 @@ import {
   listBudgetSpend,
   listBudgets,
 } from "../api";
-import { attrSummary, burnFraction, formatCost, formatTime } from "../format";
+import {
+  blockedCountFor,
+  budgetKind,
+  budgetName,
+  burnFraction,
+  countText,
+  formatCost,
+  formatTime,
+  plural,
+} from "../format";
+
+const BLOCKED_LOG_ROWS = 100;
 
 function windowsFor(scope: BudgetScope): BudgetWindow[] {
   return scope === "work_id" ? ["per_work", "daily", "monthly"] : ["daily", "monthly"];
@@ -108,58 +119,67 @@ function NewBudgetForm({ onCreated }: { onCreated: () => void }): JSX.Element {
 function BudgetRow({
   budget,
   spend,
+  blockedCount,
+  blockedComplete,
   onDeleted,
 }: {
   budget: Budget;
   spend: BudgetSpend | undefined;
+  blockedCount: number;
+  blockedComplete: boolean;
   onDeleted: () => void;
 }): JSX.Element {
   const fraction = spend ? burnFraction(spend.spent_usd, budget.limit_usd) : 0;
   const over = spend ? Number(spend.spent_usd) > Number(budget.limit_usd) : false;
-  const label = budget.scope === "global" ? "global" : `${budget.scope}:${budget.scope_value}`;
 
   return (
-    <div className="receipt-row">
-      <span className="receipt-time">{budget.window}</span>
-      <span className="receipt-model">
-        {label}
-        <span className="receipt-attrs"> — {budget.mode}</span>
-        <div
-          style={{
-            marginTop: 6,
-            height: 6,
-            background: "var(--rule)",
-            width: "100%",
-            maxWidth: 240,
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${fraction * 100}%`,
-              background: over ? "var(--stamp)" : "var(--ink)",
-            }}
-          />
+    <div className="budget-card">
+      <div className="budget-head">
+        <span className="budget-name">{budgetName(budget.scope, budget.scope_value)}</span>
+        <span className="budget-kind">{budgetKind(budget.scope, budget.window, budget.mode)}</span>
+      </div>
+      <div className="figures">
+        <div className="figure">
+          <span className="figure-label">Spent</span>
+          <span className="figure-value">
+            {spend ? formatCost(spend.spent_usd).text : "…"}
+            {spend?.has_unpriced_usage && <span className="figure-note"> +unpriced</span>}
+          </span>
         </div>
-      </span>
-      <span className="receipt-attrs">
-        {spend ? (
-          <>
-            {formatCost(spend.spent_usd).text} / {formatCost(budget.limit_usd).text}
-            {spend.has_unpriced_usage && " (+unpriced)"}
-          </>
-        ) : (
-          "loading…"
-        )}
-      </span>
-      <button
-        className="nav-tab"
-        onClick={() => onDeleted()}
-        title="remove this budget"
-        style={{ fontSize: 10 }}
-      >
-        Remove
-      </button>
+        <div className="figure">
+          <span className="figure-label">Budget</span>
+          <span className="figure-value">{formatCost(budget.limit_usd).text}</span>
+        </div>
+        <div className="figure">
+          <span className="figure-label">Blocked</span>
+          <span className={`figure-value ${blockedCount > 0 ? "stamp" : ""}`}>
+            {countText(blockedCount, blockedComplete, "request", "requests")}
+          </span>
+        </div>
+      </div>
+      <div className="budget-bar">
+        <div className={over ? "over" : ""} style={{ width: `${fraction * 100}%` }} />
+      </div>
+      {blockedCount > 0 && budget.mode === "block" && (
+        <p className="budget-note">
+          {blockedComplete
+            ? plural(blockedCount, "request was", "requests were")
+            : `${blockedCount}+ requests were`}{" "}
+          stopped before reaching the provider, so{" "}
+          {blockedComplete && blockedCount === 1 ? "it was" : "they were"} never billed.
+        </p>
+      )}
+      <div className="budget-meta">
+        <span>{budget.budget_id}</span>
+        <button
+          className="nav-tab"
+          onClick={() => onDeleted()}
+          title="remove this budget"
+          style={{ fontSize: 10 }}
+        >
+          Remove
+        </button>
+      </div>
     </div>
   );
 }
@@ -167,19 +187,20 @@ function BudgetRow({
 function BlockedLog({ rows }: { rows: Receipt[] }): JSX.Element {
   if (rows.length === 0) {
     return (
-      <p className="empty-state">No blocked requests yet — nothing has hit a "block"-mode budget.</p>
+      <p className="empty-state">
+        No blocked requests yet. A blocking budget stops a request before it reaches the provider,
+        and it shows up here.
+      </p>
     );
   }
   return (
     <div className="receipt-list">
       {rows.map((r) => (
-        <div key={r.receipt_id} className="receipt-row status-error">
+        <div key={r.receipt_id} className="receipt-row status-error" title={r.attributes.budget_id}>
           <span className="receipt-time">{formatTime(r.timestamp)}</span>
           <span className="receipt-model">
-            {r.attributes.budget_id}
-            {attrSummary(r.attributes) && (
-              <span className="receipt-attrs"> — {attrSummary(r.attributes)}</span>
-            )}
+            {r.attributes.work_id ?? r.attributes.project ?? r.attributes.budget_id}
+            <span className="receipt-attrs"> — over budget, not sent</span>
           </span>
           <span className="receipt-attrs">
             {r.provider}/{r.model}
@@ -195,6 +216,7 @@ export function Budgets(): JSX.Element {
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
   const [spend, setSpend] = useState<Map<string, BudgetSpend>>(new Map());
   const [blocked, setBlocked] = useState<Receipt[]>([]);
+  const [blockedComplete, setBlockedComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
@@ -206,7 +228,8 @@ export function Budgets(): JSX.Element {
       ]);
       setBudgets(b);
       setSpend(new Map(s.map((entry) => [entry.budget_id, entry])));
-      setBlocked(blockedRows);
+      setBlocked(blockedRows.rows);
+      setBlockedComplete(blockedRows.complete);
       setError(null);
     } catch {
       setError("Failed to load budgets");
@@ -226,22 +249,26 @@ export function Budgets(): JSX.Element {
     <div>
       <h1 className="screen-title">Budgets</h1>
       <p className="screen-subtitle">
-        Spend caps, checked before every request. A "block" budget rejects a request before any
-        provider is contacted; "warn" never blocks, only records the overrun.
+        Spending limits, checked before every request. A blocking budget stops a request before it
+        reaches the provider; a warning budget only records the overrun.
       </p>
       {error && <p className="empty-state">{error}</p>}
-      <NewBudgetForm onCreated={() => void refresh()} />
       {budgets === null && !error && <p className="empty-state">Loading…</p>}
       {budgets && budgets.length === 0 && (
-        <p className="empty-state">No budgets configured yet — add one above.</p>
+        <p className="empty-state">
+          No budgets yet. Add one at the bottom of this page, or send an{" "}
+          <code>X-Inferrail-Budget-Usd</code> header with a work item&apos;s requests.
+        </p>
       )}
       {budgets && budgets.length > 0 && (
-        <div className="receipt-list">
+        <div className="budget-list">
           {budgets.map((b) => (
             <BudgetRow
               key={b.budget_id}
               budget={b}
               spend={spend.get(b.budget_id)}
+              blockedCount={blockedCountFor(b.budget_id, blocked)}
+              blockedComplete={blockedComplete}
               onDeleted={() => void onDelete(b.budget_id)}
             />
           ))}
@@ -249,9 +276,14 @@ export function Budgets(): JSX.Element {
       )}
 
       <h2 className="screen-title" style={{ fontSize: 20, marginTop: 32 }}>
-        Blocked requests
+        Blocked before reaching the provider
       </h2>
-      <BlockedLog rows={blocked} />
+      <BlockedLog rows={blocked.slice(0, BLOCKED_LOG_ROWS)} />
+
+      <h2 className="screen-title" style={{ fontSize: 20, marginTop: 32 }}>
+        Add a budget
+      </h2>
+      <NewBudgetForm onCreated={() => void refresh()} />
     </div>
   );
 }

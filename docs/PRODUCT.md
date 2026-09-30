@@ -478,16 +478,23 @@ local control API when `--app-mode` is on — see
 - **Live Feed** (built): every receipt this install produces, streamed
   in as it happens over `GET /v1/local/stream`. An unknown cost renders
   as the word "unknown", styled distinctly from a real, known `$0.0000`
-  — never collapsed into the same thing.
+  — never collapsed into the same thing. A request a budget refused
+  reads "blocked by budget" and "not sent" instead.
 - **Work** (built): cost per `work_id`, over `GET /v1/local/work`;
   clicking a row drills into `GET /v1/local/work/{work_id}` for its full
-  rollup (receipt count, status, outcome, started/ended timestamps). A
+  rollup (receipt count, status, outcome, started/ended timestamps). The
+  drill-down leads with what the work item spent, its own per-work
+  budget if it has one, and how many of its requests a budget blocked
+  (counted with `GET /v1/local/receipts?work_id=…&status=error`). A
   `work_id` with some priced receipts and some unpriceable ones shows
   both — e.g. `$0.0007 (+2 unknown)` — never a single misleading total.
   Client-side routing is hash-based (`#/work`, `#/work/<id>`), so the
   drill-down is a real, bookmarkable/back-button-able URL without the
   server needing a SPA catch-all route.
-- **Budgets** (built): create/remove budgets (`POST`/`DELETE
+- **Budgets** (built): one card per budget leading with Spent, Budget,
+  and how many requests it blocked, in plain wording ("Work item budget
+  · blocks requests over the limit") with the budget id in small type;
+  create/remove budgets (`POST`/`DELETE
   /v1/local/budgets`), a burn bar per budget over `GET
   /v1/local/budgets/spend` (reuses `budgets.enforcement.spent_so_far_usd`
   directly — the exact function `BudgetEnforcer.reserve` itself uses, so
@@ -498,7 +505,9 @@ local control API when `--app-mode` is on — see
   `augment_attributes_with_overrun` already used) so the dashboard can
   tell a genuine budget block apart from any other `status: "error"`
   receipt. `GET /v1/local/receipts` gained an optional `status` filter
-  to support this.
+  to support this. The log and the per-budget counts read the newest
+  1,000 error receipts; a count is shown as "N+" when older ones exist
+  beyond that.
 - **Recover** (built): the pending human-review queue —
   `GET /v1/local/ap/pending` (every work_id whose AP invoice-exception
   decision is `awaiting_human_review`, built from
