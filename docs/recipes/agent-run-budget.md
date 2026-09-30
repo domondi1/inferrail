@@ -122,8 +122,10 @@ them.
 ## Framework snippets
 
 Every framework below talks to Inferrail through its normal OpenAI
-client. What changes is only where the run id and budget go. Each
-snippet was run against `inferrail==0.4.7` with two concurrent runs:
+client. Short standalone pages: [LangGraph](langgraph-run-budget.md),
+[OpenAI Agents SDK](openai-agents-sdk-run-budget.md),
+[CrewAI](crewai-run-budget.md). What changes is only where the run id and budget go. Each
+snippet was run against `inferrail==0.4.8` with two concurrent runs:
 the runs stayed separate, and the run with the small budget got a 402.
 
 ### LangChain
@@ -142,7 +144,7 @@ llm.invoke("Summarize the ticket.", extra_headers={
 })
 ```
 
-Tested with `langchain-openai` 1.6.6.
+Tested with `langchain-openai` 1.6.7.
 
 ### LangChain agents and LangGraph
 
@@ -212,6 +214,65 @@ pipeline.run({
 ```
 
 Tested with `haystack-ai` 3.2.0.
+
+### CrewAI
+
+Give each crew run its own `LLM` with the run's headers. Every agent in
+the crew that uses it shares the run's budget, including delegated work:
+
+```python
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+          api_key="unused", max_tokens=200,
+          extra_headers={
+              "X-Inferrail-Attribute-Work-Id": "crew-run-7f3a",
+              "X-Inferrail-Budget-Usd": "0.50",
+          })
+# pass llm=llm to each Agent in this crew run
+```
+
+CrewAI retries a failed call up to its retry limit; each retry of a
+refused call is also refused before the provider, so it costs nothing.
+Tested with `crewai` 1.15.23.
+
+### LlamaIndex
+
+```python
+from llama_index.llms.openai_like import OpenAILike
+
+llm = OpenAILike(model="gpt-4o-mini", api_base="http://127.0.0.1:8000/v1",
+                 api_key="unused", is_chat_model=True, max_tokens=200,
+                 default_headers={
+                     "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+                     "X-Inferrail-Budget-Usd": "0.50",
+                 })
+```
+
+Create one per run. Tested with `llama-index-llms-openai-like` 0.8.0.
+
+### Microsoft Agent Framework
+
+Use the Chat Completions client (Inferrail doesn't serve the Responses
+API yet), one per run:
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatCompletionClient
+
+client = OpenAIChatCompletionClient(
+    model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1", api_key="unused",
+    default_headers={
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    })
+agent = Agent(client=client, instructions="...", tools=[...],
+              default_options={"max_tokens": 200})
+```
+
+A refused call surfaces as `ChatClientException` wrapping the 402.
+Tested with `agent-framework-core` 1.19.0 and `agent-framework-openai`
+1.14.4.
 
 ## Using an existing gateway instead of calling the provider directly
 
