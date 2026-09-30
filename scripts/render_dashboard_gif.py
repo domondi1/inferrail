@@ -1,25 +1,31 @@
 """Capture a real gateway + dashboard run and render it as the README GIF.
 
+The GIF tells one story: an AI job gets a $0.04 spending limit, its model
+calls are recorded with their cost, and once the limit is reached the
+remaining calls are blocked before they reach the model.
+
 Two steps, both reproducible:
 
-1. ``--capture`` installs the published ``inferrail`` package (plus the
-   ``openai`` SDK) into a fresh virtual environment, starts
-   ``inferrail serve --app-mode`` from it with an isolated data directory,
-   runs a small agent script that tags six model calls with one customer,
-   one ``work_id`` and a per-run budget, and screenshots the real local
-   dashboard with Playwright while those receipts arrive. The model
-   upstream is a local stand-in speaking the OpenAI chat-completions wire
-   format, so no API key is used and no provider is billed. Everything
-   else (gateway, budgets, receipts, dashboard) is the installed package.
-   Command output, screenshots and a ``capture.json`` land in
-   ``docs/assets/dashboard-capture/``.
+1. ``--capture`` installs ``inferrail`` (plus the ``openai`` SDK) into a
+   fresh virtual environment, starts ``inferrail serve --app-mode`` from it
+   with an isolated data directory, runs a small agent script that tags
+   six model calls with one ``work_id`` and a per-run budget, and
+   screenshots the real local dashboard with Playwright while those
+   receipts arrive. The model upstream is a local stand-in speaking the
+   OpenAI chat-completions wire format, so no API key is used and no
+   provider is billed. Everything else (gateway, budgets, receipts,
+   dashboard) is the installed package. By default the package is this
+   checkout (``--package .``); pass ``--package inferrail`` to capture
+   the latest PyPI release instead. Command output, screenshots and a
+   ``capture.json`` land in ``docs/assets/dashboard-capture/``.
 2. Rendering reads only those captured files and composes frames with
    Pillow. Terminal text comes from the captured stdout (the local API
-   token and temporary paths are masked); browser frames are the
-   screenshots. The only additions are a caption strip and a ring marking
-   where a real click happened.
+   token and temporary paths are masked); dashboard frames are crops of
+   the screenshots, scaled to fill the frame. The only addition is a
+   caption strip above each frame, outside the product UI.
 
-Usage (from a checkout; needs network for the install step)::
+Usage (from a checkout; the install step needs network, and Node to
+bundle the dashboard when capturing a checkout)::
 
     python -m pip install pillow playwright && python -m playwright install chromium
     python scripts/render_dashboard_gif.py --capture   # re-run, then render
@@ -58,9 +64,8 @@ POSTER_PATH = ASSETS / "inferrail-dashboard-demo-poster.png"
 
 PORT = 8000
 WORK_ID = "contract-review-42"
-INSTALL_CMD = "pip install inferrail"
 SERVE_CMD = "inferrail serve --app-mode --config inferrail.yaml"
-SHOW_CMD = "cat agent_run.py"
+SHOW_CMD = "grep Inferrail agent_run.py"
 RUN_CMD = "python agent_run.py"
 
 # The stand-in upstream: a provider named for what it is, priced with the
@@ -82,21 +87,22 @@ default_provider: stand-in
 AGENT_RUN = f'''\
 from openai import APIStatusError, OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:{PORT}/v1", api_key="unused", default_headers={{
-    "X-Inferrail-Attribute-Customer": "acme",
-    "X-Inferrail-Attribute-Work-Id": "{WORK_ID}",
-    "X-Inferrail-Budget-Usd": "0.04",
-}})
+job = {{
+    "X-Inferrail-Attribute-Work-Id": "{WORK_ID}",  # one AI job
+    "X-Inferrail-Budget-Usd": "0.04",  # its spending limit, in dollars
+}}
+client = OpenAI(base_url="http://127.0.0.1:{PORT}/v1", api_key="unused", default_headers=job)
 contract = open("contract.txt").read()
 
-for step in ["extract clauses", "check liability", "check renewal",
-             "compare to playbook", "draft summary", "draft reply"]:
+steps = ["extract clauses", "check liability", "check renewal",
+         "compare to playbook", "draft summary", "draft reply"]
+for step in steps:
     try:
         client.chat.completions.create(model="gpt-4o", max_tokens=400, messages=[
             {{"role": "user", "content": f"{{step}}:\\n{{contract}}"}}])
         print(f"{{step:<20}} answered")
     except APIStatusError as e:
-        print(f"{{step:<20}} refused {{e.status_code}}, provider not called")
+        print(f"{{step:<20}} blocked ({{e.status_code}}): over budget, not sent to the model")
 '''
 
 # Synthetic input: roughly 2,000 tokens of placeholder contract text.
@@ -168,8 +174,21 @@ def _wait_for(url: str, timeout: float = 20) -> None:
     sys.exit(f"timed out waiting for {url}")
 
 
+def _git_label() -> str:
+    sha = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", "src", "app/src", "pyproject.toml"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return f"{sha}{'-dirty' if dirty else ''}"
+
+
 def capture(package_spec: str) -> None:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import Page, sync_playwright
 
     with socket.socket() as s:
         if s.connect_ex(("127.0.0.1", PORT)) == 0:
@@ -177,6 +196,8 @@ def capture(package_spec: str) -> None:
     SHOTS.mkdir(parents=True, exist_ok=True)
     for old in SHOTS.glob("*.png"):
         old.unlink()
+    local = package_spec in (".", str(REPO))
+    spec = str(REPO) if local else package_spec
 
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -185,22 +206,18 @@ def capture(package_spec: str) -> None:
         work.mkdir()
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
         bindir = venv / ("Scripts" if os.name == "nt" else "bin")
-        pip = subprocess.run(
+        subprocess.run(
             [
                 str(bindir / "python"),
                 "-m",
                 "pip",
                 "install",
+                "-q",
                 "--no-cache-dir",
-                package_spec,
+                spec,
                 "openai",
             ],
-            capture_output=True,
-            text=True,
             check=True,
-        ).stdout
-        installed = next(
-            line for line in pip.splitlines() if line.startswith("Successfully installed")
         )
         version = subprocess.run(
             [
@@ -212,6 +229,7 @@ def capture(package_spec: str) -> None:
             text=True,
             check=True,
         ).stdout.strip()
+        label = f"{version}+{_git_label()}" if local else version
 
         upstream_port = _free_port()
         upstream = ThreadingHTTPServer(("127.0.0.1", upstream_port), _StandIn)
@@ -229,6 +247,13 @@ def capture(package_spec: str) -> None:
             INFERRAIL_TELEMETRY="0",
             PYTHONUNBUFFERED="1",
         )
+
+        def run(cmd: str) -> str:
+            return subprocess.run(
+                cmd.split(), cwd=work, env=env, capture_output=True, text=True, check=True
+            ).stdout
+
+        show_out = run(SHOW_CMD)
         serve_log = tmp / "serve.log"
         with serve_log.open("w") as log:
             server = subprocess.Popen(
@@ -244,26 +269,44 @@ def capture(package_spec: str) -> None:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
                 page = browser.new_page(
-                    viewport={"width": 768, "height": 512}, device_scale_factor=1.25
+                    viewport={"width": 600, "height": 1000}, device_scale_factor=2
                 )
 
-                def shot(scene: str, click: Any = None) -> None:
+                def shot(
+                    scene: str,
+                    top_sel: str,
+                    bottom_sel: str,
+                    height: float = 0,
+                    right_sel: str = "",
+                ) -> None:
+                    """Screenshot the region from one element's top to another's
+                    bottom (or a fixed height), across the content column, or
+                    only as far right as `right_sel` reaches."""
+                    top = page.locator(top_sel).first.bounding_box()
+                    bottom = page.locator(bottom_sel).last.bounding_box()
+                    assert top and bottom
+                    pad = 14
+                    x, y = top["x"] - pad, top["y"] - pad
+                    w = max(top["width"], bottom["width"]) + 2 * pad
+                    if right_sel:
+                        right = page.locator(right_sel).last.bounding_box()
+                        assert right
+                        w = max(top["width"], right["x"] + right["width"] - top["x"]) + 2 * pad
+                    h = height or (bottom["y"] + bottom["height"] - top["y"] + 2 * pad)
                     name = f"{len(shots):02d}-{scene}.png"
-                    page.screenshot(path=str(SHOTS / name))
-                    entry: dict[str, Any] = {"file": name, "scene": scene}
-                    if click is not None:
-                        box = click.bounding_box()
-                        entry["click"] = [
-                            round((box["x"] + box["width"] / 2) * 1.25),
-                            round((box["y"] + box["height"] / 2) * 1.25),
-                        ]
-                    shots.append(entry)
+                    page.screenshot(
+                        path=str(SHOTS / name), clip={"x": x, "y": y, "width": w, "height": h}
+                    )
+                    shots.append({"file": name, "scene": scene})
 
-                page.goto(dashboard)
-                page.wait_for_selector("text=CONNECTED")
-                page.wait_for_timeout(400)
-                shot("feed")
-                # Run the agent while the Live Feed is open; screenshot each new row.
+                def goto(route: str, ready: str, page: Page = page) -> None:
+                    page.goto(f"{dashboard}{route}")
+                    page.wait_for_selector(ready)
+                    page.wait_for_timeout(500)
+
+                goto("", "text=Connected")
+                # Run the agent while the Live Feed is open; the feed polls once
+                # a second, so keep watching until every call's receipt shows.
                 agent = subprocess.Popen(
                     [str(bindir / "python"), "agent_run.py"],
                     cwd=work,
@@ -271,10 +314,10 @@ def capture(package_spec: str) -> None:
                     stdout=subprocess.PIPE,
                     text=True,
                 )
-                # The feed polls once a second, so keep watching after the
-                # agent exits until every call's receipt is on screen.
-                rows = page.locator("text=work:" + WORK_ID)
-                seen, expected, deadline = 0, None, time.time() + 60
+                rows = page.locator(".receipt-row")
+                feed_h = 0.0
+                seen, expected, agent_out = 0, None, ""
+                deadline = time.time() + 60
                 while expected is None or seen < expected:
                     if time.time() > deadline:
                         sys.exit(f"Live Feed showed {seen} of {expected} receipts")
@@ -286,48 +329,25 @@ def capture(package_spec: str) -> None:
                     if rows.count() > seen:
                         seen = rows.count()
                         page.wait_for_timeout(120)
-                        shot("feed")
+                        if not feed_h:
+                            # Fixed crop: just the rows, with room for all six.
+                            row = rows.first.bounding_box()
+                            assert row
+                            feed_h = 6 * row["height"] + 28
+                        shot("feed", ".receipt-list", ".receipt-list", height=feed_h)
                     page.wait_for_timeout(60)
 
-                work_tab = page.get_by_role("link", name="Work", exact=True)
-                if work_tab.count() == 0:
-                    work_tab = page.get_by_text("Work", exact=True).first
-                shot("feed", click=work_tab)
-                work_tab.click()
-                page.wait_for_selector("text=" + WORK_ID)
-                page.wait_for_timeout(400)
-                row = page.get_by_text(WORK_ID, exact=True).first
-                shot("work")
-                shot("work", click=row)
-                row.click()
-                page.wait_for_selector("text=Receipts")
-                page.wait_for_timeout(400)
-                shot("detail")
-                budgets_tab = page.get_by_text("Budgets", exact=True).first
-                shot("detail", click=budgets_tab)
-                budgets_tab.click()
-                page.wait_for_selector("text=work_id:" + WORK_ID)
-                page.wait_for_timeout(400)
-                shot("budgets")
+                goto(f"#/work/{WORK_ID}", "text=Blocked by budget")
+                shot("work", "h2.screen-title", ".work-hero", right_sel=".work-hero .figure")
+                goto("#/budgets", ".budget-card .budget-note")
+                page.wait_for_selector(".receipt-row.status-error")
+                shot("budgets", ".budget-card", ".receipt-list")
                 browser.close()
 
-            data = tmp / "data" / "inferrail"
-            evidence_cmds = {
-                "report-by-customer.txt": [
-                    "inferrail",
-                    "report",
-                    "--by",
-                    "customer",
-                    "--receipts",
-                    str(data / "receipts.db"),
-                ],
-                "work.txt": ["inferrail", "work", WORK_ID, "--receipts", str(data / "receipts.db")],
-            }
+            receipts = str(tmp / "data" / "inferrail" / "receipts.db")
             evidence = {
-                name: subprocess.run(
-                    cmd, cwd=work, env=env, capture_output=True, text=True, check=True
-                ).stdout
-                for name, cmd in evidence_cmds.items()
+                "work.txt": run(f"inferrail work {WORK_ID} --receipts {receipts}"),
+                "report-by-work.txt": run(f"inferrail report --by work_id --receipts {receipts}"),
             }
         finally:
             server.terminate()
@@ -337,32 +357,35 @@ def capture(package_spec: str) -> None:
         def mask(text: str) -> str:
             return text.replace(token, "<token>").replace(str(tmp), "<tmp>")
 
-        (CAPTURE / "pip.txt").write_text(installed + "\n")
+        for stale in ("pip.txt", "report-by-customer.txt"):
+            (CAPTURE / stale).unlink(missing_ok=True)
         (CAPTURE / "serve.txt").write_text(mask(serve_log.read_text()))
         (CAPTURE / "agent_run.py").write_text(AGENT_RUN)
+        (CAPTURE / "show.txt").write_text(show_out)
         (CAPTURE / "agent_run.txt").write_text(agent_out)
         (CAPTURE / "inferrail.yaml").write_text(CONFIG_YAML.format(upstream_port="<port>"))
         for name, text in evidence.items():
             (CAPTURE / name).write_text(mask(text))
         meta = {
             "inferrail_version": version,
-            "package_spec": package_spec,
+            "label": label,
+            "package": "this checkout" if local else package_spec,
             "python": platform.python_version(),
             "platform": platform.system().lower(),
             "api_keys_in_env": False,
             "upstream": "local stand-in (scripts/render_dashboard_gif.py), no provider called",
             "upstream_latency_s": UPSTREAM_LATENCY_S,
-            "commands": [INSTALL_CMD, SERVE_CMD, RUN_CMD],
+            "commands": [SERVE_CMD, SHOW_CMD, RUN_CMD],
             "screens": shots,
         }
         (CAPTURE / "capture.json").write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"captured inferrail {version} to {CAPTURE.relative_to(REPO)} ({len(shots)} screens)")
+    print(f"captured inferrail {label} to {CAPTURE.relative_to(REPO)} ({len(shots)} screens)")
 
 
 # --- rendering -------------------------------------------------------------
 
-WIDTH, BODY_H, STRIP_H = 960, 640, 46
-FONT_SIZE, LINE_H, PAD_X, PAD_TOP = 17, 24, 26, 22
+WIDTH, BODY_H, STRIP_H = 960, 600, 44
+FONT_SIZE, LINE_H, PAD_X, PAD_TOP = 21, 31, 28, 28
 
 BG = (11, 22, 34)
 FG = (214, 222, 230)
@@ -370,10 +393,10 @@ DIM = (127, 140, 153)
 PROMPT = (43, 196, 217)
 OK = (126, 211, 146)
 BAD = (240, 128, 112)
-STRIP_BG = (17, 24, 28)
-STRIP_FG = (236, 239, 233)
-STRIP_DIM = (150, 160, 165)
-RING = (214, 80, 60)
+PAPER = (239, 239, 233)  # the dashboard's own background (--paper)
+STRIP_BG = (20, 32, 27)  # the dashboard's --ink
+STRIP_FG = (239, 239, 233)
+STRIP_DIM = (139, 151, 142)
 
 
 @dataclass
@@ -382,7 +405,6 @@ class Frame:
     hold_ms: int
     lines: list[str] | None = None
     screen: str | None = None
-    click: list[int] | None = None
 
 
 def _font(size: int, bold: bool = False) -> Any:
@@ -396,24 +418,25 @@ def _font(size: int, bold: bool = False) -> Any:
     return ImageFont.truetype(name, size)
 
 
-def _draw(frame: Frame, version: str) -> Any:
+def _draw(frame: Frame, label: str) -> Any:
     from PIL import Image, ImageDraw
 
-    img = Image.new("RGB", (WIDTH, STRIP_H + BODY_H), BG)
+    img = Image.new("RGB", (WIDTH, STRIP_H + BODY_H), BG if frame.lines is not None else PAPER)
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, WIDTH, STRIP_H], fill=STRIP_BG)
-    d.text((PAD_X, 13), frame.caption, font=_font(17, bold=True), fill=STRIP_FG)
-    tag = f"inferrail {version} · stand-in model, no key"
-    small = _font(13)
-    d.text((WIDTH - PAD_X - small.getlength(tag), 16), tag, font=small, fill=STRIP_DIM)
+    d.text((PAD_X, 12), frame.caption, font=_font(17, bold=True), fill=STRIP_FG)
+    tag = f"inferrail {label} · stand-in model, no key"
+    small = _font(11)
+    d.text((WIDTH - PAD_X - small.getlength(tag), 17), tag, font=small, fill=STRIP_DIM)
 
     if frame.screen is not None:
+        # Fit the crop to the frame, keeping its aspect; any margin is the
+        # dashboard's own paper background.
         shot = Image.open(SHOTS / frame.screen).convert("RGB")
-        img.paste(shot.crop((0, 0, WIDTH, BODY_H)), (0, STRIP_H))
-        if frame.click:
-            x, y = frame.click[0], frame.click[1] + STRIP_H
-            for r, w in ((20, 3), (27, 2)):
-                d.ellipse([x - r, y - r, x + r, y + r], outline=RING, width=w)
+        scale = min(WIDTH / shot.width, BODY_H / shot.height)
+        size = (round(shot.width * scale), round(shot.height * scale))
+        shot = shot.resize(size, Image.Resampling.LANCZOS)
+        img.paste(shot, ((WIDTH - size[0]) // 2, STRIP_H + (BODY_H - size[1]) // 2))
         return img
 
     regular, bold = _font(FONT_SIZE), _font(FONT_SIZE, bold=True)
@@ -425,65 +448,53 @@ def _draw(frame: Frame, version: str) -> Any:
             d.text((PAD_X + char_w * 2, y), line[2:], font=bold, fill=FG)
         elif line.rstrip().endswith("answered"):
             d.text((PAD_X, y), line, font=regular, fill=OK)
-        elif "refused" in line:
+        elif " blocked (" in line:
             d.text((PAD_X, y), line, font=regular, fill=BAD)
         else:
             d.text((PAD_X, y), line, font=regular, fill=FG if line.strip() else DIM)
     return img
 
 
-def _typing(caption: str, prefix: list[str], cmd: str, steps: int = 5) -> list[Frame]:
-    frames = [
-        Frame(caption, 70, lines=prefix + [f"$ {cmd[: round(len(cmd) * s / steps)]}"])
-        for s in range(1, steps + 1)
+def _typing(caption: str, prefix: list[str], cmd: str, steps: int = 3) -> list[Frame]:
+    return [
+        Frame(caption, 60, lines=prefix + [f"$ {cmd[: round(len(cmd) * s / steps)]}"])
+        for s in range(1, steps)
     ]
-    frames[-1].hold_ms = 300
-    return frames
 
 
 def _scenes(meta: dict[str, Any]) -> list[Frame]:
-    installed = (CAPTURE / "pip.txt").read_text().split()
-    pkg = next(p for p in installed if p.startswith("inferrail-"))
     serve = (CAPTURE / "serve.txt").read_text().splitlines()
     dash = next(line for line in serve if line.startswith("Dashboard:"))
-    live = next(line for line in serve if line.strip().startswith("(receipts land here"))
-    script = (CAPTURE / "agent_run.py").read_text().rstrip("\n").splitlines()
+    shown = (CAPTURE / "show.txt").read_text().rstrip("\n").splitlines()
     ran = (CAPTURE / "agent_run.txt").read_text().rstrip("\n").splitlines()
 
     frames: list[Frame] = []
-    cap = "1  Install"
-    frames += _typing(cap, [], INSTALL_CMD)
-    frames.append(Frame(cap, 1100, lines=[f"$ {INSTALL_CMD}", f"Successfully installed {pkg} …"]))
-
-    cap = "2  Start the gateway and dashboard"
+    cap = "A real local run: start Inferrail and its dashboard"
     frames += _typing(cap, [], SERVE_CMD)
-    frames.append(Frame(cap, 2000, lines=[f"$ {SERVE_CMD}", "…", dash, live]))
+    started = [f"$ {SERVE_CMD}", dash]
+    frames.append(Frame(cap, 1500, lines=started))
 
-    cap = "3  Tag one job and give it a $0.04 budget"
-    frames.append(Frame(cap, 3600, lines=[f"$ {SHOW_CMD}", *script]))
-    frames += _typing(cap, [], RUN_CMD)
-    frames.append(Frame(cap, 2600, lines=[f"$ {RUN_CMD}", *ran]))
+    cap = "Give one AI job a $0.04 spending limit"
+    frames += _typing(cap, [], SHOW_CMD)
+    tagged = [f"$ {SHOW_CMD}", *shown, ""]
+    frames.append(Frame(cap, 2000, lines=tagged))
+
+    cap = "Run the job: six model calls"
+    frames += _typing(cap, tagged, RUN_CMD)
+    frames.append(Frame(cap, 2300, lines=[*tagged, f"$ {RUN_CMD}", *ran]))
 
     screens = meta["screens"]
-    feed = [s for s in screens if s["scene"] == "feed" and "click" not in s]
-    cap = "4  Each model call becomes a receipt"
+    feed = [s for s in screens if s["scene"] == "feed"]
+    cap = "Each call is recorded with what it cost"
     for i, s in enumerate(feed):
-        frames.append(Frame(cap, 1500 if i == len(feed) - 1 else 420, screen=s["file"]))
-    for s in screens:
-        if s["scene"] == "feed" and "click" in s:
-            frames.append(Frame(cap, 650, screen=s["file"], click=s["click"]))
+        frames.append(Frame(cap, 1100 if i == len(feed) - 1 else 300, screen=s["file"]))
 
-    cap = "5  What that work cost"
-    work = [s for s in screens if s["scene"] == "work"]
-    frames.append(Frame(cap, 1300, screen=work[0]["file"]))
-    frames.append(Frame(cap, 650, screen=work[1]["file"], click=work[1]["click"]))
-    detail = [s for s in screens if s["scene"] == "detail"]
-    frames.append(Frame(cap, 2600, screen=detail[0]["file"]))
-    frames.append(Frame(cap, 650, screen=detail[1]["file"], click=detail[1]["click"]))
+    work = next(s for s in screens if s["scene"] == "work")
+    frames.append(Frame("What the job spent", 2800, screen=work["file"]))
 
-    cap = "6  Over budget: refused before the provider"
     budgets = next(s for s in screens if s["scene"] == "budgets")
-    frames.append(Frame(cap, 5000, screen=budgets["file"]))
+    cap = "Limit reached: the rest were blocked before the model"
+    frames.append(Frame(cap, 4800, screen=budgets["file"]))
     return frames
 
 
@@ -492,14 +503,13 @@ def render() -> None:
 
     meta = json.loads((CAPTURE / "capture.json").read_text())
     frames = _scenes(meta)
-    images = [_draw(f, meta["inferrail_version"]) for f in frames]
-    # One shared palette built from a terminal frame and a dashboard frame.
-    sample = Image.new("RGB", (WIDTH, (STRIP_H + BODY_H) * 2))
-    sample.paste(images[len(images) - 1], (0, 0))
-    terminal = next(im for im, f in zip(images, frames, strict=True) if f.lines)
-    sample.paste(terminal, (0, STRIP_H + BODY_H))
-    palette = sample.quantize(colors=64, method=Image.Quantize.MEDIANCUT)
-    quantized = [im.quantize(palette=palette, dither=Image.Dither.NONE) for im in images]
+    images = [_draw(f, meta["label"]) for f in frames]
+    # A palette per frame keeps both the terminal colors and the
+    # dashboard's paper tones exact.
+    quantized = [
+        im.quantize(colors=64, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        for im in images
+    ]
     quantized[0].save(
         GIF_PATH,
         save_all=True,
@@ -526,9 +536,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--package",
-        default="inferrail",
-        help="pip requirement to install for the capture (default: latest from PyPI; "
-        "use '.' to capture this checkout)",
+        default=".",
+        help="pip requirement to capture (default: this checkout; "
+        "'inferrail' captures the latest PyPI release)",
     )
     args = parser.parse_args()
     if args.capture:

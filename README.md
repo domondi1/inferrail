@@ -8,8 +8,8 @@
 
 <p align="center">
 Inferrail is a gateway you run yourself, between your app and OpenAI or Anthropic.
-It turns every model call into a local cost receipt you can attribute to a customer,
-a workflow, or a single job, and it doesn't copy prompt or response bodies into those receipts.
+It shows what each AI job costs, blocks calls that would push a job past its spending limit,
+and doesn't copy prompts or responses into its records.
 </p>
 
 <p align="center">
@@ -27,10 +27,10 @@ a workflow, or a single job, and it doesn't copy prompt or response bodies into 
 </p>
 
 <p align="center">
-  <img src="docs/assets/inferrail-dashboard-demo.gif" width="860" alt="Recording of a real Inferrail run: pip install inferrail; start the gateway with the local dashboard; an agent script tags six model calls with customer acme, work_id contract-review-42 and a $0.04 budget; four calls are answered and two are refused with HTTP 402 before reaching the provider; the dashboard's Live Feed shows each receipt arriving; the Work screen shows contract-review-42 cost $0.0325 across six receipts; the Budgets screen shows $0.0325 of $0.0400 used and the two blocked requests.">
+  <img src="docs/assets/inferrail-dashboard-demo.gif" width="860" alt="Recording of a real Inferrail run. The gateway starts with its local dashboard. An agent script gives one AI job, contract-review-42, a $0.04 spending limit and makes six model calls: four are answered and two are blocked with HTTP 402 before reaching the model. The dashboard lists each call with its cost, then shows the job spent $0.0325 of its $0.0400 budget, with 2 requests blocked before reaching the provider.">
 </p>
 
-<p align="center"><em>A real run of <code>inferrail</code> 0.4.7 and its dashboard, with a local stand-in model: no API key, no provider charges. <a href="docs/assets/dashboard-capture/">How it was recorded</a></em></p>
+<p align="center"><em>A real run of the Inferrail gateway and dashboard, with a local stand-in model: no API key, no provider charges. <a href="docs/assets/dashboard-capture/">How it was recorded</a></em></p>
 
 **Developer preview.** Everything below is implemented and tested.
 CLI flags, config, and receipt fields may still change before 1.0.

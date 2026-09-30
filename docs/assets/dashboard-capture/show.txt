@@ -1,0 +1,2 @@
+    "X-Inferrail-Attribute-Work-Id": "contract-review-42",  # one AI job
+    "X-Inferrail-Budget-Usd": "0.04",  # its spending limit, in dollars

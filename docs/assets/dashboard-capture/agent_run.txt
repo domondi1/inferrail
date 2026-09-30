@@ -2,5 +2,5 @@ extract clauses      answered
 check liability      answered
 check renewal        answered
 compare to playbook  answered
-draft summary        refused 402, provider not called
-draft reply          refused 402, provider not called
+draft summary        blocked (402): over budget, not sent to the model
+draft reply          blocked (402): over budget, not sent to the model
