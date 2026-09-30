@@ -6,6 +6,28 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Changed
+
+- **Dashboard: the money comes first.** Each budget on the Budgets
+  screen is a card that leads with Spent, Budget, and how many requests
+  it blocked, in plain wording ("Work item budget · blocks requests over
+  the limit"), with the budget id kept in small type. A work item's
+  detail page leads with what it spent, its per-work budget if it has
+  one, and how many of its requests a budget blocked. The Live Feed
+  labels a budget refusal "blocked by budget / not sent" instead of
+  "error / unknown". Presentation only: no API or schema change.
+
+### Fixed
+
+- **Dashboard: the blocked-request log showed the oldest blocks.** It
+  asked for the first page of error receipts, and that endpoint pages
+  oldest-first, so an install with more than 100 error receipts saw old
+  blocks instead of recent ones. It now reads the newest page, and
+  blocked counts built from it are marked "N+" when they can only be a
+  lower bound.
+
 ## v0.4.7 — 2026-09-30
 
 ### Changed
