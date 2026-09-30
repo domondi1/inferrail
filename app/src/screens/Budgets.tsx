@@ -165,8 +165,8 @@ function BudgetRow({
           {blockedComplete
             ? plural(blockedCount, "request was", "requests were")
             : `${blockedCount}+ requests were`}{" "}
-          stopped before reaching the provider, so {blockedCount === 1 ? "it was" : "they were"}{" "}
-          never billed.
+          stopped before reaching the provider, so{" "}
+          {blockedComplete && blockedCount === 1 ? "it was" : "they were"} never billed.
         </p>
       )}
       <div className="budget-meta">
@@ -255,7 +255,10 @@ export function Budgets(): JSX.Element {
       {error && <p className="empty-state">{error}</p>}
       {budgets === null && !error && <p className="empty-state">Loading…</p>}
       {budgets && budgets.length === 0 && (
-        <p className="empty-state">No budgets yet. Add one at the bottom of this page, or send an <code>X-Inferrail-Budget-Usd</code> header with a work item's requests.</p>
+        <p className="empty-state">
+          No budgets yet. Add one at the bottom of this page, or send an{" "}
+          <code>X-Inferrail-Budget-Usd</code> header with a work item&apos;s requests.
+        </p>
       )}
       {budgets && budgets.length > 0 && (
         <div className="budget-list">
