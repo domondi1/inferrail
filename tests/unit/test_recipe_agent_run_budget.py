@@ -15,6 +15,10 @@ from pathlib import Path
 import httpx
 import pytest
 
+# The example is client code built on the `openai` SDK, which the main CI
+# job doesn't install; the ap-exceptions job (which does) runs this file.
+pytest.importorskip("openai")
+
 from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import InferrailConfig
 from inferrail.gateway import app as app_module
