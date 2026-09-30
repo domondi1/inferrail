@@ -58,6 +58,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from inferrail.budgets.enforcement import (
@@ -66,11 +67,13 @@ from inferrail.budgets.enforcement import (
 from inferrail.budgets.enforcement import (
     BudgetEnforcer,
     approx_char_count,
-    augment_attributes_with_block,
+    augment_attributes_with_held,
 )
+from inferrail.budgets.store import Reservation
 from inferrail.errors import (
     AuthenticationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -79,7 +82,9 @@ from inferrail.errors import (
     RoutingError,
     UnsupportedFeatureError,
 )
+from inferrail.gateway.budget_admission import BudgetAdmission, BudgetState
 from inferrail.gateway.schemas import (
+    ACCEPTED_SERVICE_TIERS,
     ChatCompletionChoice,
     ChatCompletionChoiceMessage,
     ChatCompletionRequest,
@@ -102,7 +107,7 @@ _StreamStatus = Literal["success", "error", "partial"]
 
 
 def _categorize(exc: InferrailError) -> ErrorCategory:
-    if isinstance(exc, BudgetExceededError):
+    if isinstance(exc, BudgetExceededError | BudgetUnpricedModelError):
         return "budget_exceeded"
     if isinstance(exc, AuthenticationError):
         return "authentication"
@@ -168,9 +173,11 @@ class _StreamContext:
     attempts_used: int
     remaining: AsyncGenerator[bytes, None]
     first_chunk: bytes | None
+    budget: BudgetState
+    reservation: Reservation | None
 
 
-class InferenceEngine:
+class InferenceEngine(BudgetAdmission):
     """Executes one chat completion request end to end."""
 
     def __init__(
@@ -191,7 +198,11 @@ class InferenceEngine:
         self._budgets = budgets
 
     async def execute(
-        self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: ChatCompletionRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> ChatCompletionResponse:
         request_id = f"req_{uuid.uuid4().hex[:20]}"
         started = time.perf_counter()
@@ -201,14 +212,18 @@ class InferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
-        self._check_budgets(request, decision, request_id, started, attributes)
 
         return await self._execute_with_retries(
-            request_id, decision, provider, normalized_request, started, attributes
+            request_id, decision, provider, normalized_request, started, attributes,
+            self._budget_state(request, declared_budget_usd),
         )
 
     async def prepare_stream(
-        self, request: ChatCompletionRequest, *, attributes: dict[str, str] | None = None
+        self,
+        request: ChatCompletionRequest,
+        *,
+        attributes: dict[str, str] | None = None,
+        declared_budget_usd: Decimal | None = None,
     ) -> AsyncIterator[bytes]:
         """Validate, route, and open the upstream stream through the first
         chunk. See module docstring for why this must complete — including
@@ -222,57 +237,37 @@ class InferenceEngine:
         decision, provider, normalized_request = await self._resolve(
             request, request_id, started, attributes
         )
-        self._check_budgets(request, decision, request_id, started, attributes)
         ctx = await self._open_stream_with_retries(
-            request_id, decision, provider, normalized_request, started, attributes
+            request_id, decision, provider, normalized_request, started, attributes,
+            self._budget_state(request, declared_budget_usd),
         )
         return self._iter_stream(ctx)
 
-    def _check_budgets(
-        self,
-        request: ChatCompletionRequest,
-        decision: RoutingDecision,
-        request_id: str,
-        started: float,
-        attributes: dict[str, str],
-    ) -> None:
-        """Pre-flight budget check — raises `BudgetExceededError` (an
-        `InferrailError`, caught by `gateway/app.py` like any other) before
-        the provider is ever contacted. A no-op when no `BudgetEnforcer`
-        is wired (the default — see `InferrailConfig.budgets.enabled`).
-        `max_tokens` may be `None` for an OpenAI request; the fallback
-        constant is a documented, conservative assumption, never a
-        fabricated exact count — see
-        `budgets.enforcement.DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE`.
-
-        A block is recorded through the same `_emit_failure` path as any
-        other pre-execution rejection — MISSION.md's acceptance criterion
-        is not just "blocked before the provider is called" but "the
-        block is visible in the store", so this must never fail silently.
-        """
-        if self._budgets is None:
-            return
-        prompt_chars = approx_char_count([m.model_dump() for m in request.messages])
-        max_completion_tokens = (
-            request.max_tokens
-            if request.max_tokens is not None
-            else _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE
+    @staticmethod
+    def _budget_state(
+        request: ChatCompletionRequest, declared_budget_usd: Decimal | None = None
+    ) -> BudgetState:
+        """Inputs for each attempt's reservation estimate. Tool definitions
+        and `response_format` count toward the prompt (the provider bills
+        them as input tokens). `max_completion_tokens` wins over
+        `max_tokens`; when neither is set, the fallback constant is a
+        documented, conservative assumption, never a fabricated exact
+        count — see
+        `budgets.enforcement.DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE`."""
+        prompt_chars = (
+            approx_char_count([m.model_dump() for m in request.messages])
+            + approx_char_count(request.tools)
+            + approx_char_count(request.response_format)
         )
-        try:
-            self._budgets.check(
-                provider=decision.provider_name,
-                model=decision.model,
-                attributes=attributes,
-                prompt_chars=prompt_chars,
-                max_completion_tokens=max_completion_tokens,
-            )
-        except BudgetExceededError as exc:
-            self._emit_failure(
-                request_id, decision.route_name, decision.provider_name,
-                decision.model, 0, started, exc,
-                augment_attributes_with_block(attributes, exc),
-            )
-            raise
+        if request.max_completion_tokens is not None:
+            max_completion_tokens = request.max_completion_tokens
+        elif request.max_tokens is not None:
+            max_completion_tokens = request.max_tokens
+        else:
+            max_completion_tokens = _DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE
+        return BudgetState(
+            prompt_chars, max_completion_tokens, declared_budget_usd=declared_budget_usd
+        )
 
     def _reject_unsupported(
         self,
@@ -290,6 +285,20 @@ class InferenceEngine:
                 unsupported_error, attributes,
             )
             raise unsupported_error
+        if (
+            request.service_tier is not None
+            and request.service_tier not in ACCEPTED_SERVICE_TIERS
+        ):
+            tier_error = UnsupportedFeatureError(
+                f"service_tier '{request.service_tier}' is not supported by Inferrail: "
+                "it is billed at different rates from the pricing catalog's, so cost "
+                "and budgets would be wrong — use 'auto' or 'default'"
+            )
+            self._emit_failure(
+                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started,
+                tier_error, attributes,
+            )
+            raise tier_error
 
     async def _resolve(
         self,
@@ -330,6 +339,7 @@ class InferenceEngine:
             parallel_tool_calls=request.parallel_tool_calls,
             stream_options=request.stream_options,
             user=request.user,
+            passthrough=request.forwarded_fields(),
         )
         return decision, provider, normalized_request
 
@@ -341,22 +351,31 @@ class InferenceEngine:
         normalized_request: NormalizedChatRequest,
         started: float,
         attributes: dict[str, str],
+        budget: BudgetState,
     ) -> ChatCompletionResponse:
         for attempt in range(decision.max_retries + 1):
+            reservation = self._admit(request_id, decision, started, attributes, attempt, budget)
             try:
                 result = await provider.complete(
                     normalized_request, timeout=decision.timeout_seconds
                 )
             except InferrailError as exc:
+                self._settle_failed_attempt(reservation, exc, budget)
                 is_last_attempt = attempt == decision.max_retries
                 if not exc.retryable or is_last_attempt:
                     self._emit_failure(
                         request_id, decision.route_name, decision.provider_name,
-                        decision.model, attempt, started, exc, attributes,
+                        decision.model, attempt, started, exc,
+                        augment_attributes_with_held(attributes, budget.held_usd),
                     )
                     raise
                 await asyncio.sleep(_RETRY_BACKOFF_BASE_SECONDS * (attempt + 1))
                 continue
+            except BaseException as exc:
+                # Cancellation (or any non-Inferrail failure) mid-attempt:
+                # the request may already be with the provider — hold.
+                self._settle_failed_attempt(reservation, exc, budget)
+                raise
 
             latency_ms = self._elapsed_ms(started)
             self._telemetry.emit(
@@ -376,7 +395,7 @@ class InferenceEngine:
                 attributes, decision.provider_name, decision.model,
                 result.prompt_tokens, result.completion_tokens,
             )
-            self._receipts.emit(
+            self._settle_and_emit_receipt(
                 build_receipt(
                     receipt_id=new_receipt_id(),
                     request_id=request_id,
@@ -390,7 +409,9 @@ class InferenceEngine:
                     total_latency_ms=latency_ms,
                     retry_count=attempt,
                     pricing_resolver=self._pricing_resolver,
-                )
+                ),
+                reservation,
+                budget,
             )
             return self._build_response(request_id, decision, result, latency_ms, attempt)
 
@@ -405,8 +426,10 @@ class InferenceEngine:
         normalized_request: NormalizedChatRequest,
         started: float,
         attributes: dict[str, str],
+        budget: BudgetState,
     ) -> _StreamContext:
         for attempt in range(decision.max_retries + 1):
+            reservation = self._admit(request_id, decision, started, attributes, attempt, budget)
             generator = provider.stream(normalized_request, timeout=decision.timeout_seconds)
             try:
                 first_chunk: bytes | None = await generator.__anext__()
@@ -417,21 +440,28 @@ class InferenceEngine:
                 # pre-first-byte in spirit, since the connection already
                 # succeeded.
                 return _StreamContext(
-                    request_id, decision, started, attributes, attempt, generator, None
+                    request_id, decision, started, attributes, attempt, generator, None,
+                    budget, reservation,
                 )
             except InferrailError as exc:
+                self._settle_failed_attempt(reservation, exc, budget)
                 is_last_attempt = attempt == decision.max_retries
                 if not exc.retryable or is_last_attempt:
                     self._emit_failure(
                         request_id, decision.route_name, decision.provider_name,
-                        decision.model, attempt, started, exc, attributes,
+                        decision.model, attempt, started, exc,
+                        augment_attributes_with_held(attributes, budget.held_usd),
                     )
                     raise
                 await asyncio.sleep(_RETRY_BACKOFF_BASE_SECONDS * (attempt + 1))
                 continue
+            except BaseException as exc:
+                self._settle_failed_attempt(reservation, exc, budget)
+                raise
 
             return _StreamContext(
-                request_id, decision, started, attributes, attempt, generator, first_chunk
+                request_id, decision, started, attributes, attempt, generator, first_chunk,
+                budget, reservation,
             )
 
         raise AssertionError("retry loop exited without returning or raising")
@@ -511,7 +541,10 @@ class InferenceEngine:
             ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
             bookkeeper.prompt_tokens, bookkeeper.completion_tokens,
         )
-        self._receipts.emit(
+        # The upstream connection was established and returned a success
+        # status, so the provider may have billed this stream whatever
+        # happened next: without priced usage, its reservation is held.
+        self._settle_and_emit_receipt(
             build_receipt(
                 receipt_id=new_receipt_id(),
                 request_id=ctx.request_id,
@@ -525,7 +558,9 @@ class InferenceEngine:
                 total_latency_ms=latency_ms,
                 retry_count=ctx.attempts_used,
                 pricing_resolver=self._pricing_resolver,
-            )
+            ),
+            ctx.reservation,
+            ctx.budget,
         )
 
     def _build_response(
@@ -548,6 +583,7 @@ class InferenceEngine:
                 ChatCompletionChoice(
                     message=ChatCompletionChoiceMessage(
                         content=result.content,
+                        refusal=result.refusal,
                         tool_calls=result.tool_calls,
                     ),
                     finish_reason=result.finish_reason,

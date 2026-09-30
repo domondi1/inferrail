@@ -21,6 +21,7 @@ about it) and `error.docs_url` (this file, anchored to the code):
 
 | Code | Exception type | Meaning | Remediation |
 |---|---|---|---|
+| <a id="inferrail_e014"></a>`INFERRAIL_E014` | `UpstreamBudgetExceededError` | The upstream gateway or provider refused the request: its own budget or quota is exhausted. | Raise or reset the budget/quota on that upstream (for example the gateway key's budget); retrying won't help until then. Not retryable as-is. |
 | <a id="inferrail_e001"></a>`INFERRAIL_E001` | `GatewayAuthenticationError` | Missing or invalid Inferrail gateway credentials. | Set the 'Authorization: Bearer <token>' header to match INFERRAIL_GATEWAY_TOKEN. |
 | <a id="inferrail_e002"></a>`INFERRAIL_E002` | `AuthenticationError` | The upstream provider rejected Inferrail's own credentials. | Check the API key referenced by the provider's api_key_env in inferrail.yaml. |
 | <a id="inferrail_e003"></a>`INFERRAIL_E003` | `RateLimitError` | The upstream provider is rate-limiting requests. | Safe to retry with backoff; Inferrail already retries this automatically up to the route's max_retries. |
@@ -31,4 +32,6 @@ about it) and `error.docs_url` (this file, anchored to the code):
 | <a id="inferrail_e008"></a>`INFERRAIL_E008` | `ConfigurationError` | Inferrail's own configuration is missing, invalid, or unusable. | Run 'inferrail config check' for the specific validation error. |
 | <a id="inferrail_e009"></a>`INFERRAIL_E009` | `ProviderError` | The upstream provider request failed for an unrecognized reason. | Check provider status; Inferrail retries automatically if the failure looks transient (5xx). |
 | <a id="inferrail_e010"></a>`INFERRAIL_E010` | `BudgetExceededError` | A block-mode budget would be exceeded by this request. | Raise the budget's limit_usd ('inferrail budget set'), narrow its scope, or wait for its window to reset. Not retryable as-is. |
+| <a id="inferrail_e012"></a>`INFERRAIL_E012` | `BudgetUnpricedModelError` | A block-mode budget applies, but the model has no verified price. | Add a pricing override for this model ('pricing:' in inferrail.yaml) so requests can be reserved against the budget, or use a priced model. Not retryable as-is. |
+| <a id="inferrail_e013"></a>`INFERRAIL_E013` | `BudgetDeclarationError` | A per-run budget declaration can't be applied. | Send X-Inferrail-Budget-Usd as a positive decimal together with X-Inferrail-Attribute-Work-Id, at or below budgets.per_work_max_usd, and the same value for every request of one work_id. Not retryable as-is. |
 | <a id="inferrail_e011"></a>`INFERRAIL_E011` | `LocalApiAuthenticationError` | Missing or invalid local control API credentials. | Set the 'Authorization: Bearer <token>' header to match the per-install token printed by 'inferrail serve --app-mode'. |

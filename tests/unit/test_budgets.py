@@ -18,7 +18,7 @@ from inferrail.budgets.enforcement import (
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.config.models import PriceEntry, ProviderConfig
-from inferrail.errors import BudgetExceededError
+from inferrail.errors import BudgetExceededError, BudgetUnpricedModelError
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.receipts.builder import new_receipt_id
 from inferrail.receipts.schema import InferenceReceipt
@@ -326,29 +326,31 @@ def test_spent_so_far_scopes_by_project(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# BudgetEnforcer.check
+# BudgetEnforcer.reserve (pre-flight admission)
 # ---------------------------------------------------------------------------
 
 
-def test_check_is_noop_with_no_budgets(tmp_path: Path) -> None:
+def test_reserve_is_noop_with_no_budgets(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path / "budgets.db")
     receipts = ReceiptsStore(tmp_path / "receipts.db")
     enforcer = BudgetEnforcer(store, receipts, _resolver())
 
-    enforcer.check(
+    enforcer.reserve(
+        request_id="req_test",
         provider="openai", model="gpt-4o-mini", attributes={}, prompt_chars=10,
         max_completion_tokens=10,
     )  # must not raise
 
 
-def test_check_blocks_when_projected_exceeds_limit(tmp_path: Path) -> None:
+def test_reserve_blocks_when_projected_exceeds_limit(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path / "budgets.db")
     receipts = ReceiptsStore(tmp_path / "receipts.db")
     store.set(_budget("global", None, "daily", "block", "0.01"))
     enforcer = BudgetEnforcer(store, receipts, _resolver())
 
     with pytest.raises(BudgetExceededError) as exc_info:
-        enforcer.check(
+        enforcer.reserve(
+            request_id="req_test",
             provider="openai", model="gpt-4o-mini", attributes={}, prompt_chars=100,
             max_completion_tokens=1_000_000,
         )
@@ -358,7 +360,7 @@ def test_check_blocks_when_projected_exceeds_limit(tmp_path: Path) -> None:
     assert exc.projected_total_usd > exc.limit_usd
 
 
-def test_check_does_not_raise_in_warn_mode(
+def test_reserve_does_not_raise_in_warn_mode(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     store = BudgetStore(tmp_path / "budgets.db")
@@ -366,31 +368,39 @@ def test_check_does_not_raise_in_warn_mode(
     store.set(_budget("global", None, "daily", "warn", "0.01"))
     enforcer = BudgetEnforcer(store, receipts, _resolver())
 
-    enforcer.check(
+    enforcer.reserve(
+        request_id="req_test",
         provider="openai", model="gpt-4o-mini", attributes={}, prompt_chars=100,
         max_completion_tokens=1_000_000,
     )  # must not raise despite exceeding the limit
 
 
-def test_check_is_noop_when_price_unknown(tmp_path: Path) -> None:
+def test_reserve_refuses_unknown_price_under_a_block_budget(tmp_path: Path) -> None:
+    # Changed in docs/adr/0021: an unpriced model used to be skipped
+    # (admitted unmetered); a block budget now refuses it, since there is
+    # no dollar amount to reserve. Warn-only is covered in
+    # test_budget_reservations.py.
     store = BudgetStore(tmp_path / "budgets.db")
     receipts = ReceiptsStore(tmp_path / "receipts.db")
     store.set(_budget("global", None, "daily", "block", "0.0000001"))
     enforcer = BudgetEnforcer(store, receipts, _resolver())
 
-    enforcer.check(
-        provider="openai", model="totally-unrecognized-model", attributes={},
-        prompt_chars=1_000_000, max_completion_tokens=1_000_000,
-    )  # unknown price -> nothing to project -> never blocks
+    with pytest.raises(BudgetUnpricedModelError):
+        enforcer.reserve(
+            request_id="req_test",
+            provider="openai", model="totally-unrecognized-model", attributes={},
+            prompt_chars=1_000_000, max_completion_tokens=1_000_000,
+        )
 
 
-def test_check_ignores_non_matching_scoped_budget(tmp_path: Path) -> None:
+def test_reserve_ignores_non_matching_scoped_budget(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path / "budgets.db")
     receipts = ReceiptsStore(tmp_path / "receipts.db")
     store.set(_budget("project", "acme", "monthly", "block", "0.01"))
     enforcer = BudgetEnforcer(store, receipts, _resolver())
 
-    enforcer.check(
+    enforcer.reserve(
+        request_id="req_test",
         provider="openai", model="gpt-4o-mini", attributes={"project": "someone-else"},
         prompt_chars=100, max_completion_tokens=1_000_000,
     )  # must not raise: this request isn't scoped to the "acme" project

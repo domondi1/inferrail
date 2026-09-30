@@ -13,7 +13,9 @@ from dataclasses import dataclass
 
 from inferrail.errors.exceptions import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -24,6 +26,7 @@ from inferrail.errors.exceptions import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 
 DOCS_URL_BASE = "https://github.com/domondi1/inferrail/blob/main/ERRORS.md"
@@ -40,6 +43,16 @@ class ErrorCode:
 # gateway/app.py's `_STATUS_BY_ERROR` table intentionally, since both
 # answer "what kind of InferrailError is this" from the same hierarchy.
 _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
+    (
+        UpstreamBudgetExceededError,
+        ErrorCode(
+            code="INFERRAIL_E014",
+            summary="The upstream gateway or provider refused the request: its own budget "
+            "or quota is exhausted.",
+            remediation="Raise or reset the budget/quota on that upstream (for example the "
+            "gateway key's budget); retrying won't help until then. Not retryable as-is.",
+        ),
+    ),
     (
         GatewayAuthenticationError,
         ErrorCode(
@@ -127,6 +140,26 @@ _CODES: list[tuple[type[InferrailError], ErrorCode]] = [
             summary="A block-mode budget would be exceeded by this request.",
             remediation="Raise the budget's limit_usd ('inferrail budget set'), narrow "
             "its scope, or wait for its window to reset. Not retryable as-is.",
+        ),
+    ),
+    (
+        BudgetUnpricedModelError,
+        ErrorCode(
+            code="INFERRAIL_E012",
+            summary="A block-mode budget applies, but the model has no verified price.",
+            remediation="Add a pricing override for this model ('pricing:' in "
+            "inferrail.yaml) so requests can be reserved against the budget, or use a "
+            "priced model. Not retryable as-is.",
+        ),
+    ),
+    (
+        BudgetDeclarationError,
+        ErrorCode(
+            code="INFERRAIL_E013",
+            summary="A per-run budget declaration can't be applied.",
+            remediation="Send X-Inferrail-Budget-Usd as a positive decimal together with "
+            "X-Inferrail-Attribute-Work-Id, at or below budgets.per_work_max_usd, and the same "
+            "value for every request of one work_id. Not retryable as-is.",
         ),
     ),
     (

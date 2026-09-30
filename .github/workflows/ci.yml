@@ -152,6 +152,9 @@ jobs:
           pytest tests/unit/ap tests/unit/hosted/test_ap_exceptions_service.py \
             tests/integration/test_ap_crash_recovery.py -v
 
+      - name: Test -- agent-run budget recipe example (needs openai)
+        run: pytest tests/unit/test_recipe_agent_run_budget.py -v -rs
+
   cost-gateway:
     # Dedicated job for the hosted Cost Gateway (self-serve trial), same
     # reasoning as the `ap-exceptions` job above: lints/type-checks

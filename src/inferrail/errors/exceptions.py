@@ -140,10 +140,38 @@ class ProviderTimeoutError(ProviderError):
     retryable = True
 
 
+class UpstreamBudgetExceededError(ProviderError):
+    """The upstream (typically another gateway Inferrail sits in front of)
+    refused the request because of *its own* budget or quota, e.g. LiteLLM
+    ``budget_exceeded`` (429), Vercel ``quota_for_entity_exceeded`` (402),
+    OpenAI ``insufficient_quota`` (429), otari "exceeded budget limit" (403).
+
+    Not a rate limit and not an auth failure: retrying won't help until
+    that budget changes, so this is never retried and is reported as HTTP
+    402 (which SDKs don't auto-retry, unlike 429). ``status_code`` and
+    ``upstream_type`` keep the downstream semantics. ``safe_summary`` is
+    categorical only; the upstream's free text is never persisted."""
+
+    retryable = False
+
+    def __init__(
+        self, message: str, *, provider: str, status_code: int, upstream_type: str
+    ) -> None:
+        super().__init__(
+            message,
+            provider=provider,
+            status_code=status_code,
+            retryable=False,
+            safe_summary=f"provider '{provider}' refused the request: upstream budget or "
+            f"quota exhausted (HTTP {status_code}, {upstream_type[:64]})",
+        )
+        self.upstream_type = upstream_type
+
+
 class BudgetExceededError(InferrailError):
     """A "block"-mode budget would be exceeded by this request — raised
     before the provider is ever contacted (see
-    ``inferrail.budgets.enforcement.BudgetEnforcer.check``). Every field
+    ``inferrail.budgets.enforcement.BudgetEnforcer.reserve``). Every field
     here is structurally incapable of carrying prompt/response content
     (all of it is numbers, or config the operator themselves wrote), so
     unlike ``ProviderError`` no separate ``safe_summary`` override is
@@ -165,12 +193,14 @@ class BudgetExceededError(InferrailError):
         spent_so_far_usd: Decimal,
         estimated_request_usd: Decimal,
         projected_total_usd: Decimal,
+        reserved_usd: Decimal = Decimal(0),
     ) -> None:
         scoped = f"{scope}={scope_value}" if scope_value is not None else scope
+        reserved = f" + reserved ${reserved_usd}" if reserved_usd else ""
         message = (
             f"budget '{budget_id}' ({scoped}, window={window}, mode={mode}) would be "
-            f"exceeded: spent ${spent_so_far_usd} + estimated ${estimated_request_usd} "
-            f"= ${projected_total_usd} > limit ${limit_usd}"
+            f"exceeded: spent ${spent_so_far_usd}{reserved} + estimated "
+            f"${estimated_request_usd} = ${projected_total_usd} > limit ${limit_usd}"
         )
         super().__init__(message)
         self.budget_id = budget_id
@@ -182,3 +212,40 @@ class BudgetExceededError(InferrailError):
         self.spent_so_far_usd = spent_so_far_usd
         self.estimated_request_usd = estimated_request_usd
         self.projected_total_usd = projected_total_usd
+        #: Outstanding reservations of other in-flight (or held) requests
+        #: in this budget's scope — kept apart from `spent_so_far_usd`,
+        #: which is only ever committed, priced spend. See
+        #: docs/adr/0021-atomic-budget-reservations.md.
+        self.reserved_usd = reserved_usd
+
+
+class BudgetDeclarationError(InferrailError):
+    """A per-run budget declaration (``X-Inferrail-Budget-Usd``, or the
+    configured default) can't be applied — refused before the provider is
+    contacted (see docs/adr/0022-per-run-budget-declaration.md). ``reason``
+    is one of ``invalid``, ``missing_work_id``, ``above_max``,
+    ``disabled``, ``conflict``. Every field is a number, an operator
+    setting, or a caller-supplied work id — never request content."""
+
+    def __init__(self, *, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class BudgetUnpricedModelError(InferrailError):
+    """A "block"-mode budget applies to this request, but its model has no
+    verified price — so there is no dollar amount to reserve against the
+    budget. Refused before the provider is contacted rather than admitted
+    unmetered (see docs/adr/0021-atomic-budget-reservations.md). Like
+    ``BudgetExceededError``, every field is operator config or a model
+    id, never request content, so ``str(self)`` is telemetry-safe."""
+
+    def __init__(self, *, budget_id: str, provider: str, model: str) -> None:
+        super().__init__(
+            f"budget '{budget_id}' is in block mode, but model '{model}' on provider "
+            f"'{provider}' has no verified price, so this request can't be reserved "
+            "against it"
+        )
+        self.budget_id = budget_id
+        self.provider = provider
+        self.model = model

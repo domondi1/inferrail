@@ -12,7 +12,7 @@ from inferrail.gateway.anthropic_schemas import (
     MessagesResponse,
     absent_cache_usage_fields,
 )
-from inferrail.gateway.attribution import extract_attributes
+from inferrail.gateway.attribution import extract_attributes, extract_declared_budget
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 
@@ -63,7 +63,9 @@ async def health() -> dict[str, str]:
     "message content. `model` selects a named route from `inferrail.yaml`, not a provider "
     "model id directly (docs/adr/0002). Optional `X-Inferrail-Attribute-<Name>` headers "
     "attach business attribution (e.g. `X-Inferrail-Attribute-Customer: acme`), persisted "
-    "on the resulting payload-free receipt and never forwarded upstream. The non-streaming "
+    "on the resulting payload-free receipt and never forwarded upstream. With "
+    "`X-Inferrail-Attribute-Work-Id`, `X-Inferrail-Budget-Usd` declares that run's dollar "
+    "ceiling (docs/adr/0022), also never forwarded. The non-streaming "
     "response is OpenAI-shaped plus a non-standard `inferrail` metadata block; standard "
     "OpenAI clients ignore it. A streaming response is a plain upstream-shaped SSE stream "
     "with no such metadata injected into it, to preserve exact protocol fidelity.",
@@ -87,10 +89,13 @@ async def chat_completions(
 ) -> ChatCompletionResponse | StreamingResponse:
     engine: InferenceEngine = request.app.state.engine
     attributes = extract_attributes(request.headers)
+    declared = extract_declared_budget(request.headers)
     if payload.stream:
-        body = await engine.prepare_stream(payload, attributes=attributes)
+        body = await engine.prepare_stream(
+            payload, attributes=attributes, declared_budget_usd=declared
+        )
         return StreamingResponse(body, media_type="text/event-stream")
-    return await engine.execute(payload, attributes=attributes)
+    return await engine.execute(payload, attributes=attributes, declared_budget_usd=declared)
 
 
 @router.post(
@@ -129,10 +134,15 @@ async def messages(
 ) -> MessagesResponse | StreamingResponse | JSONResponse:
     engine: AnthropicInferenceEngine = request.app.state.anthropic_engine
     attributes = extract_attributes(request.headers)
+    declared = extract_declared_budget(request.headers)
     if payload.stream:
-        body = await engine.prepare_stream(payload, attributes=attributes)
+        body = await engine.prepare_stream(
+            payload, attributes=attributes, declared_budget_usd=declared
+        )
         return StreamingResponse(body, media_type="text/event-stream")
-    result = await engine.execute(payload, attributes=attributes)
+    result = await engine.execute(
+        payload, attributes=attributes, declared_budget_usd=declared
+    )
     # Serialized here rather than by `response_model` so prompt-cache usage
     # fields the provider didn't report are left out, not sent as null: an
     # uncached response stays exactly what it was. The documented schema

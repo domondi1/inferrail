@@ -53,9 +53,11 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 The response is the standard `choices`/`usage` shape plus a non-standard
 `inferrail` block (route, provider, latency, retries) that OpenAI clients
 ignore. Supported: text messages, streaming (`stream: true`), and
-tool/function calling. Rejected with an error rather than silently
-dropped: `n != 1`, list-shaped (multi-part or image) message content, and
-any unmodeled field such as `response_format`. See [examples/basic_chat_request.py](../examples/basic_chat_request.py).
+tool/function calling, structured outputs (`response_format`), and the
+other provider-valid fields listed in [PRODUCT.md](PRODUCT.md). Rejected
+with an error rather than silently dropped: `n != 1`, non-text content
+parts, fields whose cost the gateway can't account for, and any unknown
+field. See [examples/basic_chat_request.py](../examples/basic_chat_request.py).
 
 ## Anthropic SDK
 

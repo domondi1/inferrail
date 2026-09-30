@@ -21,6 +21,7 @@ from inferrail.errors import (
     ProviderError,
     ProviderTimeoutError,
     RateLimitError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.providers.base import (
     FunctionCall,
@@ -28,6 +29,7 @@ from inferrail.providers.base import (
     NormalizedChatResponse,
     ToolCall,
 )
+from inferrail.providers.upstream_errors import upstream_budget_refusal_type
 
 
 class OpenAIProvider:
@@ -41,6 +43,7 @@ class OpenAIProvider:
         base_url: str,
         client: httpx.AsyncClient | None = None,
         is_verified_openai: bool = False,
+        request_stream_usage: bool = False,
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
@@ -52,6 +55,9 @@ class OpenAIProvider:
         # `openai_compatible` endpoint that merely shares the wire shape
         # is never assumed to support an extension it never advertised.
         self._is_verified_openai = is_verified_openai
+        # Operator opt-in for a compatible upstream known to support it
+        # (e.g. another gateway in front of OpenAI) — see ProviderConfig.
+        self._request_stream_usage = request_stream_usage
         # `client` is injectable so tests can pass an httpx.MockTransport
         # instead of hitting the network, while exercising the exact same
         # request-building and error-normalization code paths. The auth
@@ -98,6 +104,7 @@ class OpenAIProvider:
             payload["stream_options"] = request.stream_options
         if request.user is not None:
             payload["user"] = request.user
+        payload.update(request.passthrough)
         return payload
 
     async def complete(
@@ -140,8 +147,15 @@ class OpenAIProvider:
         self._require_api_key()
         payload = self._build_payload(request)
         payload["stream"] = True
-        if self._is_verified_openai and "stream_options" not in payload:
-            payload["stream_options"] = {"include_usage": True}
+        if self._is_verified_openai or self._request_stream_usage:
+            # Ask for the final usage chunk unless the caller decided
+            # include_usage themselves; any other stream_options keys they
+            # sent are kept. Without usage a streamed call has no cost, and
+            # under a block budget its reservation is held instead.
+            stream_options = dict(request.stream_options or {})
+            if "include_usage" not in stream_options:
+                stream_options["include_usage"] = True
+                payload["stream_options"] = stream_options
 
         try:
             async with self._client.stream(
@@ -192,6 +206,7 @@ class OpenAIProvider:
 
         return NormalizedChatResponse(
             content=message.get("content"),
+            refusal=message.get("refusal"),
             finish_reason=choice.get("finish_reason"),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
@@ -224,6 +239,11 @@ class OpenAIProvider:
     def _error_for_status(self, response: httpx.Response) -> ProviderError:
         status = response.status_code
         message = self._extract_error_message(response)
+        budget_type = upstream_budget_refusal_type(response)
+        if budget_type is not None:
+            return UpstreamBudgetExceededError(
+                message, provider=self.name, status_code=status, upstream_type=budget_type
+            )
         safe_summary = self._extract_safe_summary(response)
         if status in (401, 403):
             return AuthenticationError(

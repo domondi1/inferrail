@@ -359,22 +359,24 @@ def test_chat_completions_forwards_user_field_to_provider(
 def test_chat_completions_rejects_unmodeled_field_as_unsupported_feature(
     monkeypatch: pytest.MonkeyPatch, base_config: InferrailConfig
 ) -> None:
-    # response_format is a real OpenAI parameter Inferrail doesn't forward
-    # or transform — it must be explicitly rejected, never silently
-    # dropped while the request appears to succeed (see gateway/schemas.py
-    # and gateway/app.py's RequestValidationError handler).
+    # A field that is neither interpreted nor on the forward list must be
+    # explicitly rejected, never silently dropped while the request appears
+    # to succeed (see gateway/schemas.py and gateway/app.py's
+    # RequestValidationError handler). `response_format`, this test's
+    # original example, is forwarded since docs/adr/0021 — see
+    # test_field_policy.py.
     provider = FakeProvider()
     client = _make_client(monkeypatch, base_config, provider)
 
     response = client.post(
         "/v1/chat/completions",
-        json=_chat_body(response_format={"type": "json_object"}),
+        json=_chat_body(some_future_field={"type": "json_object"}),
     )
 
     assert response.status_code == 400
     body = response.json()
     assert body["error"]["code"] == "INFERRAIL_E006"
-    assert "response_format" in body["error"]["message"]
+    assert "some_future_field" in body["error"]["message"]
     assert len(provider.calls) == 0  # never reached the provider
 
 

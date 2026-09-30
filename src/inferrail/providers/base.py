@@ -26,7 +26,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-Role = Literal["system", "user", "assistant", "tool"]
+Role = Literal["system", "developer", "user", "assistant", "tool"]
 
 
 class FunctionCall(BaseModel):
@@ -42,11 +42,32 @@ class ToolCall(BaseModel):
     function: FunctionCall
 
 
+class TextContentPart(BaseModel):
+    """One `{"type": "text"}` content part — the only part type accepted.
+    Image/audio/file parts are rejected, not silently dropped (see
+    docs/adr/0021-atomic-budget-reservations.md's field policy)."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["text"]
+    text: str
+
+
 class ChatMessage(BaseModel):
+    # Forbid, not ignore: a message key this model doesn't know would
+    # otherwise vanish silently before the request is forwarded.
+    model_config = {"extra": "forbid"}
+
     role: Role
     # None for an assistant message that only carries tool_calls, and for
-    # provider-shaped messages generally where content is nullable.
-    content: str | None = None
+    # provider-shaped messages generally where content is nullable. A list
+    # of text parts is forwarded as-is (agent frameworks send both shapes).
+    content: str | list[TextContentPart] | None = None
+    # An optional participant name, forwarded verbatim.
+    name: str | None = None
+    # An assistant message the model refused — agent frameworks replay it
+    # in conversation history.
+    refusal: str | None = None
     # Present on assistant messages that requested tool execution.
     tool_calls: list[ToolCall] | None = None
     # Present on role="tool" messages: which tool_call this result answers.
@@ -73,6 +94,10 @@ class NormalizedChatRequest(BaseModel):
     # abuse-monitoring/rate-limiting can key off it. Never used by Inferrail
     # itself for anything.
     user: str | None = None
+    # Provider-valid request fields Inferrail forwards without interpreting
+    # (`gateway.schemas.FORWARDED_FIELDS`), exactly as the client sent them.
+    # Never persisted anywhere — only ever merged into the upstream payload.
+    passthrough: dict[str, object] = Field(default_factory=dict)
 
 
 class NormalizedChatResponse(BaseModel):
@@ -82,6 +107,9 @@ class NormalizedChatResponse(BaseModel):
     finish_reason: str | None
     prompt_tokens: int | None
     completion_tokens: int | None
+    # The model's refusal message (e.g. under structured outputs), passed
+    # back to the client — never persisted.
+    refusal: str | None = None
     tool_calls: list[ToolCall] | None = None
     raw_model: str | None = None
     provider_request_id: str | None = None

@@ -61,4 +61,20 @@ class PricingResolver:
             if catalog is not None:
                 return catalog.get(model)
 
+        if provider_config is not None and provider_config.price_as is not None:
+            # Operator-asserted: this compatible upstream (e.g. another
+            # gateway) bills at that vendor's list prices. Recorded as such
+            # on the price's source, never presented as verified.
+            vendor = provider_config.price_as
+            # Gateways namespace model ids by vendor: "openai/gpt-4o-mini"
+            # (OpenRouter, LiteLLM) or "openai:gpt-4o-mini" (any-llm/otari).
+            name = model.removeprefix(f"{vendor}/").removeprefix(f"{vendor}:")
+            entry = _BUILTIN_CATALOGS[vendor].get(name)
+            if entry is None:
+                return None
+            return entry.model_copy(
+                update={"source": f"{entry.source} (price_as={vendor} on provider "
+                                  f"'{provider_name}', operator-asserted)"}
+            )
+
         return None

@@ -24,11 +24,13 @@ from inferrail.errors import (
     ProviderError,
     ProviderTimeoutError,
     RateLimitError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.providers.anthropic_base import (
     AnthropicNormalizedRequest,
     AnthropicNormalizedResponse,
 )
+from inferrail.providers.upstream_errors import upstream_budget_refusal_type
 
 _ANTHROPIC_API_VERSION = "2023-06-01"
 
@@ -180,6 +182,11 @@ class AnthropicProvider:
         # shape as OpenAI's -- the same extraction logic applies unchanged.
         status = response.status_code
         message = self._extract_error_message(response)
+        budget_type = upstream_budget_refusal_type(response)
+        if budget_type is not None:
+            return UpstreamBudgetExceededError(
+                message, provider=self.name, status_code=status, upstream_type=budget_type
+            )
         safe_summary = self._extract_safe_summary(response)
         if status in (401, 403):
             return AuthenticationError(

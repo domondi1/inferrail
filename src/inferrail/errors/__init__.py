@@ -1,6 +1,8 @@
 from inferrail.errors.exceptions import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -11,11 +13,14 @@ from inferrail.errors.exceptions import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 
 __all__ = [
     "AuthenticationError",
+    "BudgetDeclarationError",
     "BudgetExceededError",
+    "BudgetUnpricedModelError",
     "ConfigurationError",
     "GatewayAuthenticationError",
     "InferrailError",
@@ -26,4 +31,5 @@ __all__ = [
     "RateLimitError",
     "RoutingError",
     "UnsupportedFeatureError",
+    "UpstreamBudgetExceededError",
 ]

@@ -74,12 +74,15 @@ InferenceEngine.execute (gateway/execution.py)
         |         (routing/router.py: static lookup of request.model
         |          in inferrail.yaml's `routes`)
         |
-        +--> BudgetEnforcer.check(...) — no-op unless budgets.enabled
-        |         (budgets/enforcement.py: pre-flight upper-bound
-        |          estimate + spent-so-far vs. every matching budget;
-        |          raises BudgetExceededError for an exceeded
-        |          block-mode budget, *before* the provider is ever
-        |          contacted — see docs/adr/0015)
+        +--> per attempt: BudgetEnforcer.reserve(...) — no-op unless
+        |         budgets.enabled (budgets/enforcement.py, via
+        |          gateway/budget_admission.py: atomically reserves a
+        |          conservative estimate against spent-so-far + other
+        |          outstanding reservations for every matching budget;
+        |          raises BudgetExceededError / BudgetUnpricedModelError
+        |          for a block-mode budget, *before* the provider is
+        |          ever contacted; the reservation is released or held
+        |          once the attempt ends — see docs/adr/0015, 0021)
         |
         +--> normalize into NormalizedChatRequest
         |         (provider-agnostic shape: model, messages, sampling

@@ -30,7 +30,9 @@ from inferrail.config.models import InferrailConfig
 from inferrail.dashboard import find_dashboard_dist
 from inferrail.errors import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     ConfigurationError,
     GatewayAuthenticationError,
     InferrailError,
@@ -41,12 +43,13 @@ from inferrail.errors import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.errors.codes import code_for, docs_url_for
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.routes import router as api_router
-from inferrail.gateway.schemas import ErrorDetail, ErrorResponse
+from inferrail.gateway.schemas import REJECTED_FIELD_REASONS, ErrorDetail, ErrorResponse
 from inferrail.localapi.routes import router as local_api_router
 from inferrail.localapi.token import ensure_local_api_token
 from inferrail.pricing.resolver import PricingResolver
@@ -71,6 +74,9 @@ _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (LocalApiAuthenticationError, 401),
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
+    (BudgetUnpricedModelError, 402),
+    (BudgetDeclarationError, 400),
+    (UpstreamBudgetExceededError, 402),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),
@@ -105,7 +111,14 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
             "spent_so_far_usd": str(exc.spent_so_far_usd),
             "estimated_request_usd": str(exc.estimated_request_usd),
             "projected_total_usd": str(exc.projected_total_usd),
+            "reserved_usd": str(exc.reserved_usd),
         }
+    if isinstance(exc, UpstreamBudgetExceededError):
+        return {"upstream_status": str(exc.status_code), "upstream_type": exc.upstream_type}
+    if isinstance(exc, BudgetDeclarationError):
+        return {"reason": exc.reason}
+    if isinstance(exc, BudgetUnpricedModelError):
+        return {"budget_id": exc.budget_id, "provider": exc.provider, "model": exc.model}
     return None
 
 
@@ -168,7 +181,12 @@ def create_app(
     if config.budgets.enabled:
         assert isinstance(receipts, ReceiptsStore)  # guaranteed by config validation above
         budget_store = BudgetStore(config.budgets.path)
-        budget_enforcer = BudgetEnforcer(budget_store, receipts, pricing_resolver)
+        budget_enforcer = BudgetEnforcer(
+            budget_store, receipts, pricing_resolver,
+            per_work_default_usd=config.budgets.per_work_default_usd,
+            per_work_max_usd=config.budgets.per_work_max_usd,
+            allow_declared_budgets=config.budgets.allow_declared_budgets,
+        )
     # app_data is computed here (pure path derivation, no disk I/O) rather
     # than only inside `if app_mode:` below, because the usage-ping wrapper
     # has to be in place *before* the engines are constructed -- they hold
@@ -307,15 +325,25 @@ def create_app(
         # failure (missing/mistyped field) keeps FastAPI's default handling
         # unchanged.
         unsupported_fields = sorted(
-            str(error["loc"][-1]) for error in exc.errors() if error["type"] == "extra_forbidden"
+            {
+                str(error["loc"][-1])
+                for error in exc.errors()
+                if error["type"] == "extra_forbidden"
+            }
         )
         if not unsupported_fields:
             return await request_validation_exception_handler(req, exc)
+        described = [
+            f"{field} ({REJECTED_FIELD_REASONS[field]})"
+            if field in REJECTED_FIELD_REASONS
+            else field
+            for field in unsupported_fields
+        ]
         return await handle_inferrail_error(
             req,
             UnsupportedFeatureError(
                 "request included field(s) Inferrail does not forward or transform: "
-                f"{', '.join(unsupported_fields)} — see docs/PRODUCT.md for the exact "
+                f"{', '.join(described)} — see docs/PRODUCT.md for the exact "
                 "supported request surface; unsupported fields are rejected, never "
                 "silently ignored"
             ),

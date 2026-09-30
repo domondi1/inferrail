@@ -1,19 +1,20 @@
 """The wire format: an OpenAI-compatible ``/v1/chat/completions`` contract.
 
-Only what Inferrail actually implements is modeled here. Notably still
-unsupported: ``n != 1``, multi-part/image content. A request using either
-is rejected with a clear 400, not silently ignored. Streaming and tool
-calling *are* supported as of Phase 3 — see docs/PRODUCT.md for the full
-supported-surface list.
+Request fields follow an explicit three-list policy (see
+docs/adr/0021-atomic-budget-reservations.md): fields Inferrail
+interprets, provider-valid fields it forwards unchanged
+(``FORWARDED_FIELDS``), and fields it rejects with a stated reason
+(``REJECTED_FIELD_REASONS``). Still unsupported: ``n != 1``, non-text
+content parts. See docs/PRODUCT.md for the full supported-surface list.
 
-``ChatCompletionRequest`` forbids unmodeled top-level fields
+``ChatCompletionRequest`` forbids every other top-level field
 (``model_config``'s ``extra: "forbid"``) rather than silently dropping
-them, the default Pydantic v2 behavior. A client sending, say,
-``response_format`` or ``seed`` — real OpenAI parameters this codebase
-doesn't yet forward — gets a clear ``INFERRAIL_E006`` error naming the
-field, never a response that silently ignored it. See
-``gateway/app.py``'s ``RequestValidationError`` handler, which promotes
-that failure into Inferrail's normal error shape.
+it, the default Pydantic v2 behavior, and ``ChatMessage`` does the same
+per message. A client sending an unlisted field gets a clear
+``INFERRAIL_E006`` error naming it, never a response that silently
+ignored it — this is not blind pass-through. See ``gateway/app.py``'s
+``RequestValidationError`` handler, which promotes that failure into
+Inferrail's normal error shape.
 
 The non-standard top-level ``inferrail`` field carries routing/telemetry
 metadata (route, provider, latency, retries). Clients that only speak
@@ -28,13 +29,52 @@ from pydantic import BaseModel, Field, field_validator
 
 from inferrail.providers.base import ChatMessage, ToolCall
 
+# Provider-valid fields forwarded to the upstream unchanged. Inferrail
+# reads only `max_completion_tokens` (for the budget reservation
+# estimate) and `service_tier` (see `ACCEPTED_SERVICE_TIERS`); the rest
+# it never interprets. None is stored.
+FORWARDED_FIELDS = frozenset(
+    {
+        "max_completion_tokens",
+        "response_format",
+        "seed",
+        "frequency_penalty",
+        "presence_penalty",
+        "logit_bias",
+        "metadata",
+        "store",
+        "reasoning_effort",
+        "verbosity",
+        "prediction",
+        "prompt_cache_key",
+        "prompt_cache_retention",
+        "prompt_cache_options",
+        "safety_identifier",
+        "service_tier",
+    }
+)
+
+# Other tiers are billed at different rates from the pricing catalog's,
+# so a receipt's cost (and a budget reservation) would be wrong.
+ACCEPTED_SERVICE_TIERS = frozenset({"auto", "default"})
+
+# Real OpenAI fields that are rejected on purpose, with the reason given
+# in the INFERRAIL_E006 error.
+REJECTED_FIELD_REASONS: dict[str, str] = {
+    "audio": "audio output tokens aren't priced",
+    "modalities": "audio output tokens aren't priced",
+    "web_search_options": "per-call web search fees aren't priced",
+    "logprobs": "logprobs aren't returned on non-streaming responses yet",
+    "top_logprobs": "logprobs aren't returned on non-streaming responses yet",
+    "functions": "deprecated by the provider; use tools",
+    "function_call": "deprecated by the provider; use tool_choice",
+}
+
 
 class ChatCompletionRequest(BaseModel):
     # Forbid, not the Pydantic default "ignore": a field this schema
-    # doesn't model (response_format, frequency_penalty, presence_penalty,
-    # seed, logprobs, top_logprobs, ...) must fail loudly, never vanish
-    # silently while the request still appears to succeed. See module
-    # docstring.
+    # doesn't model must fail loudly, never vanish silently while the
+    # request still appears to succeed. See module docstring.
     model_config = {"extra": "forbid"}
 
     # Selects an Inferrail *route* (inferrail.yaml: routes.<name>) if one by
@@ -55,11 +95,34 @@ class ChatCompletionRequest(BaseModel):
     tools: list[dict[str, object]] | None = None
     tool_choice: str | dict[str, object] | None = None
     parallel_tool_calls: bool | None = None
-    # Passthrough only — Inferrail auto-injects {"include_usage": true}
-    # for a verified OpenAI provider when the caller didn't set this, so a
-    # streaming receipt can still be built (see providers/openai.py's
-    # `stream()`). A caller's own value always wins.
+    # Passthrough only — Inferrail adds {"include_usage": true} for a
+    # verified OpenAI provider when the caller didn't set include_usage, so
+    # a streaming receipt can still be built (see providers/openai.py's
+    # `stream()`). A caller's own include_usage always wins.
     stream_options: dict[str, object] | None = None
+
+    # FORWARDED_FIELDS — typed only as loosely as needed to never alter
+    # the value that is forwarded.
+    max_completion_tokens: int | None = None
+    response_format: dict[str, object] | None = None
+    seed: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    logit_bias: dict[str, object] | None = None
+    metadata: dict[str, object] | None = None
+    store: bool | None = None
+    reasoning_effort: str | None = None
+    verbosity: str | None = None
+    prediction: dict[str, object] | None = None
+    prompt_cache_key: str | None = None
+    prompt_cache_retention: str | None = None
+    prompt_cache_options: dict[str, object] | None = None
+    safety_identifier: str | None = None
+    service_tier: str | None = None
+
+    def forwarded_fields(self) -> dict[str, object]:
+        """The FORWARDED_FIELDS the client actually set, as sent."""
+        return self.model_dump(include=set(FORWARDED_FIELDS), exclude_none=True)
 
     @field_validator("stop", mode="before")
     @classmethod
@@ -74,6 +137,7 @@ class ChatCompletionChoiceMessage(BaseModel):
     # None when the message only carries tool_calls (finish_reason ==
     # "tool_calls"), matching the upstream OpenAI shape.
     content: str | None = None
+    refusal: str | None = None
     tool_calls: list[ToolCall] | None = None
 
 

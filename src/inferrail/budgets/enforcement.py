@@ -1,17 +1,28 @@
-"""Pre-flight budget checking and post-flight overrun reconciliation.
+"""Pre-flight budget admission (with atomic reservations) and post-flight
+overrun reconciliation.
 
-Pre-flight (`BudgetEnforcer.check`, called from the gateway before a
-provider is ever contacted — see `gateway/execution.py` and
+Pre-flight (`BudgetEnforcer.reserve`, called from the gateway before
+each provider attempt — see `gateway/execution.py` and
 `gateway/anthropic_execution.py`): for every budget whose scope matches
 the request's attribution (global always matches; project/work_id match
 on `attributes["project"]`/`attributes["work_id"]`), compute
 spent-so-far (from `ReceiptsStore.query()`, honest — only ever sums
-receipts with a real, priced cost) plus a catalog-based *upper bound*
+receipts with a real, priced cost) plus outstanding reservations of
+other in-flight or held attempts, plus a catalog-based conservative
 estimate of this request's own cost. If a "block"-mode budget would be
 exceeded, raise `BudgetExceededError` before the provider is ever called
-— see docs/adr/0015-budget-enforcement.md. A "warn"-mode budget that
+— see docs/adr/0015-budget-enforcement.md. Otherwise the estimate is
+reserved, all inside one SQLite write transaction, so concurrent
+requests can't each spend the same remaining dollars — see
+docs/adr/0021-atomic-budget-reservations.md. A "warn"-mode budget that
 would be exceeded never raises; it's surfaced only via
 `budget_overrun_usd` after the fact (see below).
+
+Settlement (`release` / `hold`, called by the engines once an attempt
+ends): released when the attempt's cost is known (after its receipt is
+written) or the provider definitely rejected it; held — still counted,
+never shown as cost — when the provider may have billed but no cost can
+be computed. `settle_as_hold` is that rule.
 
 Post-flight (`augment_attributes_with_overrun`, called once actual usage
 is known, right before the receipt is emitted): recomputes spend using
@@ -27,14 +38,23 @@ project an overrun.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from inferrail.budgets.schema import Budget
-from inferrail.budgets.store import BudgetStore
-from inferrail.errors import BudgetExceededError
+from inferrail.budgets.schema import Budget, new_budget_id
+from inferrail.budgets.store import AdmissionTransaction, BudgetStore, Reservation
+from inferrail.errors import (
+    AuthenticationError,
+    BudgetDeclarationError,
+    BudgetExceededError,
+    BudgetUnpricedModelError,
+    InferrailError,
+    ProviderError,
+    ProviderTimeoutError,
+)
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.receipts.calculator import CacheTokens, calculate_cost_with_cache_usd
 from inferrail.receipts.sqlite_store import ReceiptsStore
@@ -165,24 +185,47 @@ class BudgetEnforcer:
     spend can't be tracked without an indexed, queryable store."""
 
     def __init__(
-        self, store: BudgetStore, receipts: ReceiptsStore, pricing_resolver: PricingResolver
+        self,
+        store: BudgetStore,
+        receipts: ReceiptsStore,
+        pricing_resolver: PricingResolver,
+        *,
+        per_work_default_usd: Decimal | None = None,
+        per_work_max_usd: Decimal | None = None,
+        allow_declared_budgets: bool = True,
     ) -> None:
         self._store = store
         self._receipts = receipts
         self._pricing_resolver = pricing_resolver
+        self._per_work_default_usd = per_work_default_usd
+        self._per_work_max_usd = per_work_max_usd
+        self._allow_declared_budgets = allow_declared_budgets
 
-    def check(
+    def reserve(
         self,
         *,
+        request_id: str,
         provider: str,
         model: str,
         attributes: Mapping[str, str],
         prompt_chars: int,
         max_completion_tokens: int,
-    ) -> None:
-        budgets = matching_budgets(self._store.list(), attributes)
-        if not budgets:
-            return
+        declared_limit_usd: Decimal | None = None,
+    ) -> Reservation | None:
+        """Admit one provider attempt atomically, or refuse it.
+
+        `declared_limit_usd` is the run's own declared ceiling
+        (`X-Inferrail-Budget-Usd`); with it, or with a configured
+        `per_work_default_usd`, a per_work budget for the request's work_id
+        is created on first use inside this same transaction — see
+        docs/adr/0022-per-run-budget-declaration.md.
+
+        Returns the new `Reservation` (to be settled with `release` or
+        `hold` once the attempt ends), or `None` when there is nothing to
+        reserve against — no matching budget, or an unpriced model under
+        warn-mode budgets only. Raises `BudgetExceededError` or
+        `BudgetUnpricedModelError` before any provider call.
+        """
         estimate = estimate_upper_bound_usd(
             prompt_chars=prompt_chars,
             max_completion_tokens=max_completion_tokens,
@@ -190,33 +233,123 @@ class BudgetEnforcer:
             model=model,
             pricing_resolver=self._pricing_resolver,
         )
-        for budget in budgets:
-            spent = spent_so_far_usd(self._receipts, budget)
+        with self._store.admission() as txn:
+            self._apply_per_work_declaration(txn, attributes, declared_limit_usd)
+            budgets = matching_budgets(txn.candidate_budgets(attributes), attributes)
+            if not budgets:
+                return None
             if estimate is None:
-                # Unknown price: there is nothing to project against this
-                # budget's limit. Never fabricate a $0 estimate to force a
-                # decision either way — see build_receipt's own rule.
-                continue
-            projected = spent.spent_usd + estimate
-            if projected <= budget.limit_usd:
-                continue
-            if budget.mode == "block":
-                raise BudgetExceededError(
-                    budget_id=budget.budget_id,
-                    scope=budget.scope,
-                    scope_value=budget.scope_value,
-                    window=budget.window,
-                    mode=budget.mode,
-                    limit_usd=budget.limit_usd,
-                    spent_so_far_usd=spent.spent_usd,
-                    estimated_request_usd=estimate,
-                    projected_total_usd=projected,
+                # No price, so no dollar amount to reserve. Never fabricate
+                # a $0 estimate: a block budget refuses (fail closed); warn
+                # budgets have nothing to project and admit unmetered.
+                for budget in budgets:
+                    if budget.mode == "block":
+                        raise BudgetUnpricedModelError(
+                            budget_id=budget.budget_id, provider=provider, model=model
+                        )
+                return None
+            for budget in budgets:
+                spent = spent_so_far_usd(self._receipts, budget)
+                reserved = txn.reserved_usd(budget, _window_start(budget.window))
+                projected = spent.spent_usd + reserved + estimate
+                if projected <= budget.limit_usd:
+                    continue
+                if budget.mode == "block":
+                    raise BudgetExceededError(
+                        budget_id=budget.budget_id,
+                        scope=budget.scope,
+                        scope_value=budget.scope_value,
+                        window=budget.window,
+                        mode=budget.mode,
+                        limit_usd=budget.limit_usd,
+                        spent_so_far_usd=spent.spent_usd,
+                        estimated_request_usd=estimate,
+                        projected_total_usd=projected,
+                        reserved_usd=reserved,
+                    )
+                _logger.warning(
+                    "budget '%s' (warn mode) would be exceeded: spent $%s + reserved $%s "
+                    "+ estimated $%s = $%s > limit $%s",
+                    budget.budget_id, spent.spent_usd, reserved, estimate, projected,
+                    budget.limit_usd,
                 )
-            _logger.warning(
-                "budget '%s' (warn mode) would be exceeded: spent $%s + estimated "
-                "$%s = $%s > limit $%s",
-                budget.budget_id, spent.spent_usd, estimate, projected, budget.limit_usd,
+            reservation = Reservation(
+                reservation_id=f"rsv_{uuid.uuid4().hex[:20]}",
+                request_id=request_id,
+                project=attributes.get("project"),
+                work_id=attributes.get("work_id"),
+                amount_usd=estimate,
+                state="active",
+                created_at=datetime.now(UTC),
             )
+            txn.insert(reservation)
+            return reservation
+
+    def _apply_per_work_declaration(
+        self,
+        txn: AdmissionTransaction,
+        attributes: Mapping[str, str],
+        declared_limit_usd: Decimal | None,
+    ) -> None:
+        """Resolve a declared or default per-run budget (ADR-0022). The
+        first budget for a work_id wins and is never changed by a header;
+        a differing declaration is refused, never silently applied."""
+        work_id = attributes.get("work_id")
+        if declared_limit_usd is not None:
+            if not self._allow_declared_budgets:
+                raise BudgetDeclarationError(
+                    reason="disabled",
+                    message="per-run budget declarations are turned off on this gateway "
+                    "(budgets.allow_declared_budgets: false)",
+                )
+            if not work_id:
+                raise BudgetDeclarationError(
+                    reason="missing_work_id",
+                    message="X-Inferrail-Budget-Usd needs X-Inferrail-Attribute-Work-Id: a "
+                    "budget is declared for one unit of work",
+                )
+            if self._per_work_max_usd is not None and declared_limit_usd > self._per_work_max_usd:
+                raise BudgetDeclarationError(
+                    reason="above_max",
+                    message=f"declared budget ${declared_limit_usd} is above this gateway's "
+                    f"per-run maximum ${self._per_work_max_usd} (budgets.per_work_max_usd)",
+                )
+        if not work_id:
+            return
+        limit = declared_limit_usd if declared_limit_usd is not None else self._per_work_default_usd
+        budget_id = new_budget_id("work_id", work_id, "per_work")
+        existing = txn.get_budget(budget_id)
+        if existing is not None:
+            if declared_limit_usd is not None and existing.limit_usd != declared_limit_usd:
+                raise BudgetDeclarationError(
+                    reason="conflict",
+                    message=f"work_id '{work_id}' already has a ${existing.limit_usd} per-run "
+                    f"budget; a request declared ${declared_limit_usd}. The first budget for a "
+                    "work_id is kept and never changed by a header",
+                )
+            return
+        if limit is None:
+            return
+        txn.insert_budget(
+            Budget(
+                budget_id=budget_id,
+                scope="work_id",
+                scope_value=work_id,
+                window="per_work",
+                mode="block",
+                limit_usd=limit,
+            )
+        )
+
+    def release(self, reservation: Reservation) -> None:
+        """The attempt's cost is committed (its receipt is already written)
+        or it was never billed: stop counting the reservation."""
+        self._store.release_reservation(reservation.reservation_id)
+
+    def hold(self, reservation: Reservation) -> None:
+        """The attempt may have been billed but its cost is unknown: keep
+        counting the reserved amount against the budget."""
+        self._store.hold_reservation(reservation.reservation_id)
 
     def augment_overrun(
         self,
@@ -293,7 +426,7 @@ def augment_attributes_with_overrun(
 
 
 def augment_attributes_with_block(
-    attributes: dict[str, str], exc: BudgetExceededError
+    attributes: dict[str, str], exc: BudgetExceededError | BudgetUnpricedModelError
 ) -> dict[str, str]:
     """Marks a receipt as a real pre-flight budget block, not just any
     other request failure -- both are `status: "error"` receipts
@@ -305,3 +438,38 @@ def augment_attributes_with_block(
     key added into the receipt's own generic attributes dict, not a new
     schema field."""
     return {**attributes, "budget_id": exc.budget_id}
+
+
+def attempt_may_have_billed(exc: BaseException) -> bool:
+    """Whether a failed provider attempt may still have been billed —
+    decides release vs. hold when no usage came back. Only a provider
+    that answered with an HTTP error status (or a local check that fails
+    before any network call) is taken as "not billed"; a timeout, a
+    transport failure, or a cancellation mid-request may have reached
+    the provider, and a malformed 2xx response almost certainly did."""
+    if not isinstance(exc, InferrailError):
+        return True  # e.g. asyncio.CancelledError: unknown, so conservative
+    if isinstance(exc, ProviderTimeoutError):
+        return True
+    if isinstance(exc, ProviderError) and exc.status_code is not None:
+        return exc.status_code < 400
+    if isinstance(exc, AuthenticationError):
+        return False  # the local missing-key check, raised before any request is sent
+    return isinstance(exc, ProviderError)
+
+
+def settle_as_hold(*, cost_known: bool, may_have_billed: bool) -> bool:
+    """The settlement rule (docs/adr/0021): hold only when the provider may
+    have billed and there's no priced cost to commit instead."""
+    return may_have_billed and not cost_known
+
+
+def augment_attributes_with_held(attributes: dict[str, str], held_usd: Decimal) -> dict[str, str]:
+    """Marks a receipt whose request left reserved dollars held against
+    its budget(s) — a system-computed key, like `budget_overrun_usd`. It
+    is the reservation amount, deliberately *not* written as the
+    receipt's cost: `estimated_cost_usd` stays null when cost is
+    unknown."""
+    if not held_usd:
+        return attributes
+    return {**attributes, "budget_held_usd": str(held_usd)}
