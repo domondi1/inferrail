@@ -1,0 +1,8 @@
+Work:                              contract-review-42
+Customer-declared outcome:         undeclared
+Inference execution status:         partial
+Inference receipts:                 6
+Known attributed inference cost:    $0.032483
+Unknown-cost inference receipts:    0
+Inference started:                  2026-09-30T03:01:09.841783+00:00
+Inference ended:                    2026-09-30T03:01:12.008803+00:00

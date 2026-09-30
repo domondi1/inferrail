@@ -1,0 +1,68 @@
+{
+  "inferrail_version": "0.4.7",
+  "package_spec": "inferrail",
+  "python": "3.12.1",
+  "platform": "linux",
+  "api_keys_in_env": false,
+  "upstream": "local stand-in (scripts/render_dashboard_gif.py), no provider called",
+  "upstream_latency_s": 0.7,
+  "commands": [
+    "pip install inferrail",
+    "inferrail serve --app-mode --config inferrail.yaml",
+    "python agent_run.py"
+  ],
+  "screens": [
+    {
+      "file": "00-feed.png",
+      "scene": "feed"
+    },
+    {
+      "file": "01-feed.png",
+      "scene": "feed"
+    },
+    {
+      "file": "02-feed.png",
+      "scene": "feed"
+    },
+    {
+      "file": "03-feed.png",
+      "scene": "feed"
+    },
+    {
+      "file": "04-feed.png",
+      "scene": "feed",
+      "click": [
+        432,
+        36
+      ]
+    },
+    {
+      "file": "05-work.png",
+      "scene": "work"
+    },
+    {
+      "file": "06-work.png",
+      "scene": "work",
+      "click": [
+        451,
+        238
+      ]
+    },
+    {
+      "file": "07-detail.png",
+      "scene": "detail"
+    },
+    {
+      "file": "08-detail.png",
+      "scene": "detail",
+      "click": [
+        533,
+        36
+      ]
+    },
+    {
+      "file": "09-budgets.png",
+      "scene": "budgets"
+    }
+  ]
+}

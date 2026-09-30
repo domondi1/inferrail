@@ -236,14 +236,55 @@ by `task_id` ([ADR 0008](adr/0008-task-transactions.md)).
 
 ## MCP
 
+`inferrail mcp` is a stdio MCP server with two read-only tools over your
+local receipts file:
+
+| Tool | What it answers |
+|---|---|
+| `get_spend` | Known cost, tokens, and request counts grouped by `provider`, `model`, `route`, or any attribute you tag requests with (`customer`, `workflow`, `work_id`), optionally within a time window. Requests with unknown pricing are counted separately, not as `$0`. |
+| `get_health` | Whether the gateway answers `GET /health`, plus the most recent receipt. |
+
+Neither runs inference, spends provider budget, changes configuration, or
+writes files. Receipts store usage and cost metadata without persisting
+prompt or response bodies, so the tools have none to return. Grouping by
+`customer`, `workflow`, or `work_id` only covers requests that were sent
+with that tag ([Attribution](#attribution)).
+
+Claude Code:
+
 ```bash
-pip install inferrail
-claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- inferrail mcp
+claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx inferrail mcp
 ```
 
-`inferrail-mcp` exposes the local receipt ledger to MCP clients as two
-read-only tools: `get_spend` (aggregate by provider, model, route, or
-attribute) and `get_health` (gateway reachability and latest receipt).
-Neither runs inference or writes files; receipts store usage and cost
-metadata without persisting prompt or response bodies. Client config and receipts-path setup:
-[README](../README.md#mcp). Full contract: [inferrail-mcp/README.md](../inferrail-mcp/README.md).
+Claude Desktop, Cursor, and other clients that use `mcpServers` (VS Code
+uses the same entry under `servers`):
+
+```json
+{
+  "mcpServers": {
+    "inferrail": {
+      "command": "uvx",
+      "args": ["inferrail", "mcp"],
+      "env": {
+        "INFERRAIL_RECEIPTS_PATH": "/absolute/path/to/inferrail-receipts.jsonl"
+      }
+    }
+  }
+}
+```
+
+Without `uvx`: `pip install inferrail`, then use `inferrail mcp` as the
+command.
+
+Set `INFERRAIL_RECEIPTS_PATH` to your receipts file. Clients start the
+server from their own working directory, so the default
+`./inferrail-receipts.jsonl` is rarely the right place. For
+`serve --app-mode`, point it at `receipts.db` in Inferrail's data
+directory (`~/.local/share/inferrail` on Linux,
+`~/Library/Application Support/inferrail` on macOS, `%APPDATA%\inferrail`
+on Windows).
+
+Then ask, for example: *"How much did work contract-review-42 cost?"* If
+your requests carried `work_id=contract-review-42`, the agent calls
+`get_spend` with `by: "work_id"` and reads that group. Full tool
+contract: [inferrail-mcp/README.md](../inferrail-mcp/README.md).

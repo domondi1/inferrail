@@ -1,0 +1,4 @@
+CUSTOMER  REQUESTS  FAILED  INPUT TOKENS  OUTPUT TOKENS  COST (USD)  UNKNOWN COST
+acme      6         2       8193          1200           $0.032483               
+--------  --------  ------  ------------  -------------  ----------  ------------
+TOTAL     6         2       8193          1200           $0.032483               
