@@ -50,6 +50,23 @@ PyPI release (the hosted service and website ship independently of the
   doesn't price, or not yet returned, are rejected with a stated reason.
   Unknown message keys are now rejected instead of silently dropped.
 
+### Upgrade notes
+
+Three changes turn something that used to pass silently into an explicit
+error. Check them if you upgrade from 0.4.6:
+
+- A message key outside `role`, `content`, `name`, `refusal`,
+  `tool_calls` and `tool_call_id` (for example `cache_control` or
+  `reasoning_content`) now gets `INFERRAIL_E006` (HTTP 400). Earlier
+  versions dropped it before forwarding, so the provider never saw it.
+- With a block budget, a model with no known price is refused
+  (`INFERRAIL_E012`) instead of running unmetered. Add a `pricing:`
+  entry, or use a warn budget, if you relied on the old behaviour.
+- An upstream 403 that mentions a budget or quota is now HTTP 402
+  `INFERRAIL_E014` (it was 401).
+
+No config key, CLI command or endpoint was removed.
+
 ## v0.4.6 — 2026-09-29
 
 ### Fixed
