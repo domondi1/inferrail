@@ -6,6 +6,33 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Added
+
+- **`inferrail.start()`: the gateway inside your Python process.** Starts
+  the same gateway `inferrail serve` runs on a background thread, on a
+  free local port, with budgets on and no config file, and returns its
+  base URL. Point any OpenAI-compatible client at it and send the
+  per-run headers. `inferrail.stop()` shuts it down; it also stops when
+  the process exits. Admission, pricing, streaming, receipts and
+  refusals are unchanged (same app). See
+  [ADR 0023](docs/adr/0023-embedded-start.md).
+
+### Changed
+
+- **`inferrail work <id>` finds runs recorded by `inferrail.start()` or
+  `inferrail serve --app-mode`** without `--receipts`, when no config is
+  given. `./inferrail-receipts.jsonl` is still read first when it has the
+  run, so existing quickstart usage is unchanged. `report` and
+  `transaction` use the same fallback.
+
+### Docs
+
+- The README quickstart and the per-run budget recipe now start with
+  `inferrail.start()`; `inferrail serve` + `inferrail.yaml` stays as the
+  way to run a separate, shared gateway.
+
 ## v0.4.8 — 2026-09-30
 
 ### Changed

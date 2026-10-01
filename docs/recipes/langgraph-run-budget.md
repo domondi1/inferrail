@@ -10,24 +10,19 @@ call, that call gets HTTP 402 and never reaches the provider.
 
 ```bash
 pip install inferrail
-export OPENAI_API_KEY=sk-...        # only the gateway process sees it
+export OPENAI_API_KEY=sk-...
 ```
 
-`inferrail.yaml`:
+```python
+import inferrail
 
-```yaml
-providers:
-  openai: {type: openai, api_key_env: OPENAI_API_KEY}
-routes:
-  default: {provider: openai, model: gpt-4o-mini}
-default_provider: openai
-receipts: {sink: sqlite, path: ./receipts.db}
-budgets: {enabled: true, path: ./budgets.db}
+base_url = inferrail.start()   # the gateway, on a background thread in this process
 ```
 
-```bash
-inferrail serve --config inferrail.yaml     # http://127.0.0.1:8000/v1
-```
+No config file and no second terminal: it reads the provider key from
+your environment and keeps receipts and budgets in your user data
+directory. To run Inferrail as its own process instead, see
+[the recipe](agent-run-budget.md#1-start-inferrail-with-budgets-on).
 
 ## Give the run a budget
 
@@ -41,7 +36,7 @@ from openai import APIStatusError
 
 def agent_for_run(run_id: str, budget_usd: str):
     model = ChatOpenAI(
-        model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+        model="gpt-4o-mini", base_url=base_url,
         api_key="unused", max_tokens=200,
         default_headers={
             "X-Inferrail-Attribute-Work-Id": run_id,   # every call of this run
@@ -61,12 +56,12 @@ except APIStatusError as e:
 
 `langgraph.prebuilt.create_react_agent` works the same way. Tested with
 `langchain` 1.4.3, `langchain-openai` 1.6.7, `langgraph` 1.2.12 and `inferrail` 0.4.8,
-two concurrent runs.
+two concurrent runs, through both `inferrail serve` and `inferrail.start()`.
 
 ## Read the run's cost
 
 ```bash
-inferrail work run-7f3a --config inferrail.yaml
+inferrail work run-7f3a
 ```
 
 Refused calls show up as receipts with no cost; nothing was billed for

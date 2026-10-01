@@ -23,8 +23,27 @@ What you get:
 
 ```bash
 pip install inferrail
-export OPENAI_API_KEY=sk-...          # stays in the gateway's environment
+export OPENAI_API_KEY=sk-...
 ```
+
+In your app:
+
+```python
+import inferrail
+
+base_url = inferrail.start()   # e.g. http://127.0.0.1:53721/v1
+```
+
+`inferrail.start()` runs the Inferrail gateway on a background thread in
+your process, on a free local port, with budgets on and no config file.
+It reads the provider key from your environment. Receipts and budgets
+go to SQLite files in your user data directory, so `inferrail work`
+finds them later. Calling it again returns the same URL;
+`inferrail.stop()` shuts it down (it also stops when your process
+exits).
+
+**Or run it as its own process**, for example one gateway shared by
+several services:
 
 `inferrail.yaml`:
 
@@ -42,8 +61,8 @@ budgets: {enabled: true, path: ./budgets.db}
 inferrail serve --config inferrail.yaml     # http://127.0.0.1:8000/v1
 ```
 
-Budgets use SQLite files next to the config. There's no database server
-to run.
+Budgets and admission work the same either way. The snippets below use
+`base_url`; with `inferrail serve` it's `http://127.0.0.1:8000/v1`.
 
 ## 2. Mark the run and declare its budget
 
@@ -55,7 +74,7 @@ from openai import AsyncOpenAI
 
 run_id = "run-7f3a"                       # your run / job / request id
 client = AsyncOpenAI(
-    base_url="http://127.0.0.1:8000/v1",
+    base_url=base_url,                    # from inferrail.start(), or your gateway's URL
     api_key="unused",                     # the provider key lives in the gateway
     default_headers={
         "X-Inferrail-Attribute-Work-Id": run_id,   # which run this call belongs to
@@ -106,7 +125,7 @@ room for 4 → 4 answered, 4 refused, 4 provider calls.
 ## 4. Read the run's final cost
 
 ```bash
-inferrail work run-7f3a --config inferrail.yaml
+inferrail work run-7f3a                     # with inferrail serve: add --config inferrail.yaml
 ```
 
 ```text
@@ -125,8 +144,10 @@ Every framework below talks to Inferrail through its normal OpenAI
 client. Short standalone pages: [LangGraph](langgraph-run-budget.md),
 [OpenAI Agents SDK](openai-agents-sdk-run-budget.md),
 [CrewAI](crewai-run-budget.md). What changes is only where the run id and budget go. Each
-snippet was run against `inferrail==0.4.8` with two concurrent runs:
-the runs stayed separate, and the run with the small budget got a 402.
+snippet uses the `base_url` from step 1. Each was run with two concurrent
+runs, both through `inferrail serve` (0.4.8) and through
+`inferrail.start()`: the runs stayed separate, and the run with the small
+budget got a 402.
 
 ### LangChain
 
@@ -135,7 +156,7 @@ One model object; pass the run's headers on each call:
 ```python
 from langchain_openai import ChatOpenAI
 
-llm = ChatOpenAI(model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+llm = ChatOpenAI(model="gpt-4o-mini", base_url=base_url,
                  api_key="unused", max_tokens=200)
 
 llm.invoke("Summarize the ticket.", extra_headers={
@@ -157,7 +178,7 @@ from langchain_openai import ChatOpenAI
 
 def agent_for_run(run_id: str, budget_usd: str):
     model = ChatOpenAI(
-        model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+        model="gpt-4o-mini", base_url=base_url,
         api_key="unused", max_tokens=200,
         default_headers={
             "X-Inferrail-Attribute-Work-Id": run_id,
@@ -184,7 +205,7 @@ from agents import Agent, ModelSettings, RunConfig, Runner, set_default_openai_a
 from openai import AsyncOpenAI
 
 set_default_openai_api("chat_completions")
-set_default_openai_client(AsyncOpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused"))
+set_default_openai_client(AsyncOpenAI(base_url=base_url, api_key="unused"))
 
 agent = Agent(name="support", instructions="...", model="gpt-4o-mini",
               model_settings=ModelSettings(max_tokens=200))
@@ -223,7 +244,7 @@ the crew that uses it shares the run's budget, including delegated work:
 ```python
 from crewai import LLM
 
-llm = LLM(model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+llm = LLM(model="gpt-4o-mini", base_url=base_url,
           api_key="unused", max_tokens=200,
           extra_headers={
               "X-Inferrail-Attribute-Work-Id": "crew-run-7f3a",
@@ -241,7 +262,7 @@ Tested with `crewai` 1.15.23.
 ```python
 from llama_index.llms.openai_like import OpenAILike
 
-llm = OpenAILike(model="gpt-4o-mini", api_base="http://127.0.0.1:8000/v1",
+llm = OpenAILike(model="gpt-4o-mini", api_base=base_url,
                  api_key="unused", is_chat_model=True, max_tokens=200,
                  default_headers={
                      "X-Inferrail-Attribute-Work-Id": "run-7f3a",
@@ -261,7 +282,7 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIChatCompletionClient
 
 client = OpenAIChatCompletionClient(
-    model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1", api_key="unused",
+    model="gpt-4o-mini", base_url=base_url, api_key="unused",
     default_headers={
         "X-Inferrail-Attribute-Work-Id": "run-7f3a",
         "X-Inferrail-Budget-Usd": "0.50",

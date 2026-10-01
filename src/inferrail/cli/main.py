@@ -25,7 +25,7 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-from inferrail.appdata import ensure_app_data_dir
+from inferrail.appdata import app_data_dir, ensure_app_data_dir
 from inferrail.budgets.schema import Budget, new_budget_id
 from inferrail.budgets.store import BudgetStore
 from inferrail.cli.ap import (
@@ -40,7 +40,7 @@ from inferrail.cli.demo import run_demo
 from inferrail.cli.doctor import run_doctor
 from inferrail.cli.pricing import run_pricing_update
 from inferrail.cli.receipts_io import run_receipts_export, run_receipts_import
-from inferrail.cli.report import run_report
+from inferrail.cli.report import load_receipts, run_report
 from inferrail.cli.telemetry import (
     run_telemetry_disable,
     run_telemetry_enable,
@@ -423,19 +423,45 @@ def _resolve_receipts_path(args: argparse.Namespace) -> Path | None:
     """
     if args.receipts is not None:
         return Path(args.receipts)
-    if args.config is None and not Path("inferrail.yaml").exists():
+    if _receipts_path_is_implicit(args):
         # No explicit --config, and no default inferrail.yaml to read
-        # receipts.path from — fall back to the same default
-        # `inferrail try`/`inferrail serve --quickstart` write to, so
-        # `inferrail report --by customer` (or `inferrail transaction ...`)
-        # works immediately after the quickstart path with no extra flags.
-        return Path(QUICKSTART_RECEIPTS_PATH)
+        # receipts.path from — fall back to where the zero-config paths
+        # write: the quickstart file in the cwd (`inferrail try`,
+        # `inferrail serve --quickstart`), else the app-data receipts
+        # (`inferrail.start()`, `inferrail serve --app-mode`), so
+        # `inferrail report`/`transaction`/`work` work right after either
+        # with no extra flags.
+        found = _implicit_receipts_paths()
+        return found[0] if found else Path(QUICKSTART_RECEIPTS_PATH)
     try:
         config = load_config(args.config or "inferrail.yaml")
     except ConfigurationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
     return Path(config.receipts.path)
+
+
+def _receipts_path_is_implicit(args: argparse.Namespace) -> bool:
+    return args.receipts is None and args.config is None and not Path("inferrail.yaml").exists()
+
+
+def _implicit_receipts_paths() -> list[Path]:
+    """The zero-config receipts files that exist, in lookup order: the
+    cwd quickstart file first (unchanged behaviour when it exists), then
+    the app-data `receipts.db`."""
+    candidates = [Path(QUICKSTART_RECEIPTS_PATH), app_data_dir() / "receipts.db"]
+    return [path for path in candidates if path.exists()]
+
+
+def _implicit_receipts_path_for_work(work_id: str) -> Path | None:
+    """The first zero-config receipts file that has receipts for
+    `work_id`, so a run recorded by `inferrail.start()` is found even if
+    an older quickstart file sits in the cwd."""
+    for path in _implicit_receipts_paths():
+        receipts, _ = load_receipts(path)
+        if any(r.attributes.get("work_id") == work_id for r in receipts):
+            return path
+    return None
 
 
 @dataclass(frozen=True)
@@ -719,6 +745,8 @@ def _cmd_work(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     receipts_path = _resolve_receipts_path(args)
     if receipts_path is None:
         return 1
+    if _receipts_path_is_implicit(args):
+        receipts_path = _implicit_receipts_path_for_work(args.work_or_action) or receipts_path
     return run_work(
         receipts_path, outcomes_path, args.work_or_action, all_work=False, as_json=args.json
     )

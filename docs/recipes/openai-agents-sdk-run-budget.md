@@ -10,24 +10,19 @@ OpenAI.
 
 ```bash
 pip install inferrail
-export OPENAI_API_KEY=sk-...        # only the gateway process sees it
+export OPENAI_API_KEY=sk-...
 ```
 
-`inferrail.yaml`:
+```python
+import inferrail
 
-```yaml
-providers:
-  openai: {type: openai, api_key_env: OPENAI_API_KEY}
-routes:
-  default: {provider: openai, model: gpt-4o-mini}
-default_provider: openai
-receipts: {sink: sqlite, path: ./receipts.db}
-budgets: {enabled: true, path: ./budgets.db}
+base_url = inferrail.start()   # the gateway, on a background thread in this process
 ```
 
-```bash
-inferrail serve --config inferrail.yaml     # http://127.0.0.1:8000/v1
-```
+No config file and no second terminal: it reads the provider key from
+your environment and keeps receipts and budgets in your user data
+directory. To run Inferrail as its own process instead, see
+[the recipe](agent-run-budget.md#1-start-inferrail-with-budgets-on).
 
 ## Give the run a budget
 
@@ -39,7 +34,7 @@ from agents import Agent, ModelSettings, RunConfig, Runner, set_default_openai_a
 from openai import APIStatusError, AsyncOpenAI
 
 set_default_openai_api("chat_completions")
-set_default_openai_client(AsyncOpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused"))
+set_default_openai_client(AsyncOpenAI(base_url=base_url, api_key="unused"))
 
 agent = Agent(name="support", instructions="...", model="gpt-4o-mini",
               model_settings=ModelSettings(max_tokens=200))
@@ -60,12 +55,13 @@ except APIStatusError as e:
 
 Inferrail serves the Chat Completions API, not the Responses API, hence
 `set_default_openai_api("chat_completions")`. Tested with
-`openai-agents` 0.22.3 and `inferrail` 0.4.8, two concurrent runs.
+`openai-agents` 0.22.3 and `inferrail` 0.4.8, two concurrent runs, through
+both `inferrail serve` and `inferrail.start()`.
 
 ## Read the run's cost
 
 ```bash
-inferrail work run-7f3a --config inferrail.yaml
+inferrail work run-7f3a
 ```
 
 Refused calls show up as receipts with no cost; nothing was billed for
