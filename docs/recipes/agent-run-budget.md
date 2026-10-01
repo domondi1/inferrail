@@ -140,14 +140,15 @@ them.
 
 ## Framework snippets
 
-Every framework below talks to Inferrail through its normal OpenAI
+Every framework below talks to Inferrail through its normal OpenAI-compatible
 client. Short standalone pages: [LangGraph](langgraph-run-budget.md),
 [OpenAI Agents SDK](openai-agents-sdk-run-budget.md),
-[CrewAI](crewai-run-budget.md). What changes is only where the run id and budget go. Each
+[CrewAI](crewai-run-budget.md), [Strands Agents](strands-agents-run-budget.md),
+[Vercel AI SDK](vercel-ai-sdk-run-budget.md). What changes is only where the run id and budget go. Each
 snippet uses the `base_url` from step 1. Each was run with two concurrent
 runs, both through `inferrail serve` (0.4.8) and through
-`inferrail.start()`: the runs stayed separate, and the run with the small
-budget got a 402.
+`inferrail.start()` (the TypeScript one only through `inferrail serve`):
+the runs stayed separate, and the run with the small budget got a 402.
 
 ### LangChain
 
@@ -294,6 +295,163 @@ agent = Agent(client=client, instructions="...", tools=[...],
 A refused call surfaces as `ChatClientException` wrapping the 402.
 Tested with `agent-framework-core` 1.19.0 and `agent-framework-openai`
 1.14.4.
+
+### Strands Agents
+
+`OpenAIModel` passes `client_args` to the OpenAI client, so the run's
+headers go in `default_headers`. Build one model per run:
+
+```python
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+def agent_for_run(run_id: str, budget_usd: str):
+    model = OpenAIModel(
+        client_args={
+            "base_url": base_url,
+            "api_key": "unused",
+            "default_headers": {
+                "X-Inferrail-Attribute-Work-Id": run_id,
+                "X-Inferrail-Budget-Usd": budget_usd,
+            },
+        },
+        model_id="gpt-4o-mini",
+        params={"max_tokens": 200},
+    )
+    return Agent(model=model, tools=[...])
+
+agent_for_run("run-7f3a", "0.50")("...")
+```
+
+A refused call ends the agent loop with an `EventLoopException` wrapping
+the 402. Tested with `strands-agents` 1.57.1.
+
+### Google ADK
+
+Use ADK's `LiteLlm` model with `api_base` pointing at Inferrail and the
+run's headers in `extra_headers`, one per run:
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.models.lite_llm import LiteLlm
+
+def agent_for_run(run_id: str, budget_usd: str):
+    model = LiteLlm(
+        model="openai/gpt-4o-mini", api_base=base_url,
+        api_key="unused", max_tokens=200,
+        extra_headers={
+            "X-Inferrail-Attribute-Work-Id": run_id,
+            "X-Inferrail-Budget-Usd": budget_usd,
+        },
+    )
+    return LlmAgent(name="support", model=model, instruction="...", tools=[...])
+```
+
+In ADK 2.x a refused call arrives as an event with `error_code` set
+rather than an exception, so check events for errors. Tested with
+`google-adk` 2.10.0 (and 1.10.0) and `litellm` 1.103.2. Only Chat
+Completions models routed through `LiteLlm` are covered, not native
+Gemini.
+
+### smolagents
+
+`OpenAIServerModel` forwards `client_kwargs` to the OpenAI client:
+
+```python
+from smolagents import OpenAIServerModel, ToolCallingAgent
+
+model = OpenAIServerModel(
+    model_id="gpt-4o-mini", api_base=base_url,
+    api_key="unused", max_tokens=200,
+    client_kwargs={"default_headers": {
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }},
+)
+agent = ToolCallingAgent(tools=[...], model=model)
+```
+
+Create one model per run. A refused call raises `AgentGenerationError`
+wrapping the 402. Tested with `smolagents` 1.26.0.
+
+### DSPy
+
+`dspy.LM` passes `extra_headers` through to the request. Scope the LM to
+one program run with `dspy.context`:
+
+```python
+import dspy
+
+lm = dspy.LM("openai/gpt-4o-mini", api_base=base_url,
+             api_key="unused", max_tokens=200, cache=False,
+             extra_headers={
+                 "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+                 "X-Inferrail-Budget-Usd": "0.50",
+             })
+
+with dspy.context(lm=lm):
+    program(question="...")
+```
+
+A refused call raises `LMBillingError`. Turn off DSPy's cache
+(`cache=False`) if you want every call to reach the gateway and count.
+Tested with `dspy` 3.4.0.
+
+### Agno
+
+```python
+from agno.agent import Agent
+from agno.models.openai.like import OpenAILike
+
+model = OpenAILike(id="gpt-4o-mini", base_url=base_url,
+                   api_key="unused", max_tokens=200,
+                   default_headers={
+                       "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+                       "X-Inferrail-Budget-Usd": "0.50",
+                   })
+agent = Agent(model=model, tools=[...])
+run = agent.run("...")
+```
+
+Create one model per run. Agno doesn't raise on a refused call: the run
+comes back with `run.status == RunStatus.error` and the budget message as
+its content, so check the status. Tested with `agno` 3.1.0.
+
+### Vercel AI SDK (TypeScript)
+
+Inferrail is a separate process, so a TypeScript app can use it over
+HTTP. Use the OpenAI-compatible provider and pass the run's headers per
+call:
+
+```ts
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { generateText } from 'ai';
+
+const inferrail = createOpenAICompatible({
+  name: 'inferrail',
+  baseURL: 'http://127.0.0.1:8000/v1',
+  apiKey: 'unused',
+  includeUsage: true,
+});
+
+await generateText({
+  model: inferrail('gpt-4o-mini'),
+  maxOutputTokens: 200,
+  headers: {
+    'X-Inferrail-Attribute-Work-Id': 'run-7f3a',
+    'X-Inferrail-Budget-Usd': '0.50',
+  },
+  tools: { /* ... */ },
+  prompt: '...',
+});
+```
+
+Every step of a multi-step `generateText` call carries the same headers.
+A refused call throws an error with `statusCode === 402`. Tested with
+`ai` 7.0.126 and `@ai-sdk/openai-compatible` 3.0.62. A TypeScript app
+can't call `inferrail.start()`, so run the gateway next to it with
+`pip install inferrail` and `inferrail serve --quickstart --app-mode`
+(no config file; `inferrail work <run-id>` reads its receipts).
 
 ## Using an existing gateway instead of calling the provider directly
 
