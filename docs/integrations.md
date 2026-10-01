@@ -21,6 +21,11 @@ inferrail serve --quickstart
 to the matching one. Only the provider whose key is set will succeed.
 Real requests are billed by your provider as usual.
 
+The model ids in the examples below are only examples. Inferrail doesn't
+choose a model: send any model your account can use. `inferrail models`
+lists them and shows which ones have a price (needed under a dollar
+budget).
+
 Clients then point at the gateway. Unless you set
 `INFERRAIL_GATEWAY_TOKEN`, the gateway ignores the client's API key, so
 any placeholder works.

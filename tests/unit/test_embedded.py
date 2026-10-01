@@ -336,3 +336,83 @@ def test_work_lookup_prefers_the_file_that_has_the_run(
     assert "Work:                              new-run" in capsys.readouterr().out
     assert cli_main.main(["work", "old-run"]) == 0
     assert "Work:                              old-run" in capsys.readouterr().out
+
+
+class _AnyModelProvider:
+    """Answers any model id; records which model it was asked for."""
+
+    name = "openai"
+
+    def __init__(self) -> None:
+        self.models: list[str] = []
+
+    async def complete(
+        self, request: NormalizedChatRequest, *, timeout: float
+    ) -> NormalizedChatResponse:
+        self.models.append(request.model)
+        return NormalizedChatResponse(
+            content="ok", finish_reason="stop", prompt_tokens=100, completion_tokens=50
+        )
+
+
+@pytest.fixture
+def zero_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _AnyModelProvider:
+    app_data = tmp_path / "app-data"
+    app_data.mkdir()
+    provider = _AnyModelProvider()
+    monkeypatch.setattr(embedded, "ensure_app_data_dir", lambda: app_data)
+    monkeypatch.setattr(app_module, "build_providers", lambda cfg, **_kw: {"openai": provider})
+    return provider
+
+
+def test_zero_config_start_picks_no_model_and_refuses_unpriced_models_under_a_budget(
+    zero_config: _AnyModelProvider,
+) -> None:
+    url = inferrail.start()
+    run = _headers("new-model-run", "0.50")
+    unpriced = httpx.post(
+        f"{url}/chat/completions", json=_chat(model="brand-new-model"), headers=run
+    )
+    assert unpriced.status_code == 402
+    assert unpriced.json()["error"]["code"] == "INFERRAIL_E012"
+    # Without a budget the same model is simply passed through (cost unknown).
+    assert (
+        httpx.post(f"{url}/chat/completions", json=_chat(model="brand-new-model")).status_code
+        == 200
+    )
+    # No hidden alias: "default" is sent to the provider as-is, not swapped for a model.
+    httpx.post(f"{url}/chat/completions", json=_chat(model="default"))
+    assert zero_config.models == ["brand-new-model", "default"]
+
+
+def test_start_with_operator_pricing_budgets_a_new_model(zero_config: _AnyModelProvider) -> None:
+    url = inferrail.start(
+        pricing={
+            "openai": {
+                "brand-new-model": {
+                    "input_usd_per_million": "1.00",
+                    "output_usd_per_million": "4.00",
+                    "source": "vendor pricing page",
+                    "verified_date": "2026-10-01",
+                }
+            }
+        }
+    )
+    r = httpx.post(
+        f"{url}/chat/completions",
+        json=_chat(model="brand-new-model", max_tokens=200),
+        headers=_headers("priced-run", "0.50"),
+    )
+    assert r.status_code == 200
+
+
+def test_start_model_only_names_the_default_alias(zero_config: _AnyModelProvider) -> None:
+    url = inferrail.start(model="chosen-model")
+    httpx.post(f"{url}/chat/completions", json=_chat(model="default"))
+    httpx.post(f"{url}/chat/completions", json=_chat(model="other-model"))
+    assert zero_config.models == ["chosen-model", "other-model"]
+
+
+def test_model_and_pricing_are_zero_config_only(tmp_path: Path, upstream: _FakeUpstream) -> None:
+    with pytest.raises(ValueError, match="zero-config"):
+        inferrail.start(_config(tmp_path, upstream), model="x")

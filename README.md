@@ -54,7 +54,8 @@ from openai import OpenAI
 base_url = inferrail.start()   # the gateway, on a background thread in this process
 client = OpenAI(base_url=base_url, api_key="unused")
 client.chat.completions.create(
-    model="gpt-4o-mini", max_tokens=200,
+    model="gpt-4o-mini",   # example: any model your account can use (`inferrail models` lists them)
+    max_tokens=200,
     messages=[{"role": "user", "content": "Summarize this contract."}],
     extra_headers={
         "X-Inferrail-Attribute-Work-Id": "contract-review-42",   # the run
@@ -71,8 +72,13 @@ before it reaches OpenAI. Then:
 inferrail work contract-review-42
 ```
 
-shows what the run cost. Framework snippets (LangChain, LangGraph, OpenAI
-Agents SDK, CrewAI, Haystack, LlamaIndex, Microsoft Agent Framework):
+shows what the run cost.
+
+Inferrail doesn't choose a model: whatever model id you send is passed to
+the provider. A dollar budget needs a price for that model; `inferrail
+models` shows which models have one, and `inferrail.start(pricing=...)`
+adds a price for a new model. Framework snippets (LangChain, LangGraph,
+OpenAI Agents SDK, CrewAI, Haystack, LlamaIndex, Microsoft Agent Framework):
 [recipe](docs/recipes/agent-run-budget.md#framework-snippets).
 
 **Try it offline.** No API key, no network calls, no provider charges:
@@ -105,7 +111,7 @@ from openai import OpenAI
 # api_key is a placeholder: your provider key stays in the gateway
 client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused")
 client.chat.completions.create(
-    model="gpt-4o-mini",
+    model="gpt-4o-mini",   # example model id; Inferrail passes yours through
     messages=[{"role": "user", "content": "Summarize this contract."}],
     extra_headers={
         "X-Inferrail-Attribute-Customer": "acme",

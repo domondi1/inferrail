@@ -3,7 +3,6 @@ from __future__ import annotations
 from inferrail.config.models import InferrailConfig
 from inferrail.config.quickstart import (
     QUICKSTART_API_KEY_ENV,
-    QUICKSTART_MODEL,
     QUICKSTART_PROVIDER,
     QUICKSTART_RECEIPTS_PATH,
     QUICKSTART_ROUTE,
@@ -28,24 +27,24 @@ def test_quickstart_config_defaults() -> None:
     assert provider.api_key_env == QUICKSTART_API_KEY_ENV
     assert provider.base_url is None  # -> resolves to the real OpenAI API
 
-    route = config.routes[QUICKSTART_ROUTE]
-    assert route.provider == QUICKSTART_PROVIDER
-    assert route.model == QUICKSTART_MODEL
+    # No model is chosen for the user: no alias route, every request's own
+    # model id passes through (docs/adr/0024-the-user-chooses-the-model.md).
+    assert config.routes == {}
 
     assert config.receipts.sink == "jsonl"
     assert config.receipts.path == QUICKSTART_RECEIPTS_PATH
     assert config.telemetry.sink == "console"
 
-    # The whole point of the zero-config path: any model name works, not
-    # just the "default" route above — see
+    # The whole point of the zero-config path: any model name works — see
     # docs/adr/0007-model-passthrough-routing.md.
     assert config.default_provider == QUICKSTART_PROVIDER
 
 
-def test_quickstart_config_model_override() -> None:
-    config = build_quickstart_config(model="gpt-4o")
+def test_quickstart_config_model_alias_only_when_named() -> None:
+    config = build_quickstart_config(model="some-model")
 
-    assert config.routes[QUICKSTART_ROUTE].model == "gpt-4o"
+    assert config.routes[QUICKSTART_ROUTE].model == "some-model"
+    assert config.routes[QUICKSTART_ROUTE].provider == QUICKSTART_PROVIDER
 
 
 def test_quickstart_config_telemetry_sink_override() -> None:

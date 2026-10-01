@@ -25,7 +25,6 @@ from inferrail.cli.attributes import parse_cli_attributes
 from inferrail.cli.report import format_usd
 from inferrail.config.quickstart import (
     QUICKSTART_API_KEY_ENV,
-    QUICKSTART_ROUTE,
     build_quickstart_config,
 )
 from inferrail.errors import (
@@ -191,7 +190,7 @@ def run_try(
     # the intended observability surface here, not a raw request log line.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    config = build_quickstart_config(model=model, telemetry_sink="none")
+    config = build_quickstart_config(telemetry_sink="none")
 
     try:
         providers = build_providers(config)
@@ -216,7 +215,7 @@ def run_try(
         receipts=capturing_sink,
     )
     request = ChatCompletionRequest(
-        model=QUICKSTART_ROUTE, messages=[ChatMessage(role="user", content=prompt)]
+        model=model, messages=[ChatMessage(role="user", content=prompt)]
     )
 
     try:

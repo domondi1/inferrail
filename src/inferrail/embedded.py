@@ -16,19 +16,22 @@ docs/adr/0023-embedded-start.md.
 With no `config`, it uses the quickstart providers (OpenAI and Anthropic,
 keys read from this process's environment) and stores receipts and
 budgets in the same app-data files `inferrail serve --app-mode` uses, so
-`inferrail work <run-id>` finds them without extra flags.
+`inferrail work <run-id>` finds them without extra flags. It doesn't pick
+a model: each request's own model id is passed to the provider.
 """
 
 from __future__ import annotations
 
 import atexit
+import json
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from inferrail.appdata import ensure_app_data_dir
-from inferrail.config.models import BudgetsConfig, InferrailConfig, ReceiptsConfig
+from inferrail.config.models import BudgetsConfig, InferrailConfig, PriceEntry, ReceiptsConfig
 
 _START_TIMEOUT_S = 10.0
 _STOP_TIMEOUT_S = 5.0
@@ -47,22 +50,37 @@ _running: _Running | None = None
 
 
 def _build_config(
-    config: str | Path | InferrailConfig | None, model: str | None
+    config: str | Path | InferrailConfig | None,
+    model: str | None,
+    pricing: dict[str, dict[str, dict[str, Any]]] | None,
 ) -> InferrailConfig:
+    if config is not None and (model is not None or pricing is not None):
+        raise ValueError(
+            "model= and pricing= apply to the zero-config gateway; set routes and "
+            "pricing in the config you passed instead"
+        )
     if isinstance(config, InferrailConfig):
         return config
     if config is not None:
         from inferrail.config.loader import load_config
 
         return load_config(config)
-    from inferrail.config.quickstart import QUICKSTART_MODEL, build_quickstart_config
+    from inferrail.config.quickstart import build_quickstart_config
 
-    built = build_quickstart_config(model=model or QUICKSTART_MODEL, telemetry_sink="none")
+    built = build_quickstart_config(model=model, telemetry_sink="none")
     app_data = ensure_app_data_dir()
     # Same files as `inferrail serve --app-mode`, so `inferrail work`, the
     # dashboard and `inferrail budget` all see this process's runs.
     built.receipts = ReceiptsConfig(sink="sqlite", path=str(app_data / "receipts.db"))
     built.budgets = BudgetsConfig(enabled=True, path=str(app_data / "budgets.db"))
+    for provider, models in (pricing or {}).items():
+        if provider not in built.providers:
+            raise ValueError(
+                f"pricing for unknown provider '{provider}'; known: {sorted(built.providers)}"
+            )
+        built.pricing.setdefault(provider, {}).update(
+            {name: PriceEntry.model_validate(entry) for name, entry in models.items()}
+        )
     return built
 
 
@@ -72,6 +90,7 @@ def start(
     host: str = "127.0.0.1",
     port: int = 0,
     model: str | None = None,
+    pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> str:
     """Start the gateway on a background thread and return its base URL
     (ending in ``/v1``).
@@ -81,7 +100,14 @@ def start(
       app-data directory.
     - ``port``: ``0`` (default) lets the OS pick a free port. Pass a fixed
       port only if something else needs to know it in advance.
-    - ``model``: the quickstart route's model (zero-config only).
+    - ``model``: optional. Requests still choose their model by its id;
+      this only makes ``model="default"`` mean the model you name here.
+      Inferrail never picks a model for you.
+    - ``pricing``: optional prices for models Inferrail has no verified
+      price for, e.g. ``{"openai": {"<model id>": {"input_usd_per_million":
+      "...", "output_usd_per_million": "...", "source": "...",
+      "verified_date": "YYYY-MM-DD"}}}``. Recorded as operator-supplied.
+      Without a price, a model can be used but not under a dollar budget.
 
     Calling it again with the same arguments returns the same URL. Calling
     it with different arguments while a gateway is running raises
@@ -94,6 +120,7 @@ def start(
         host,
         port,
         model,
+        json.dumps(pricing, sort_keys=True, default=str),
     )
     with _lock:
         if _running is not None:
@@ -110,7 +137,7 @@ def start(
 
         from inferrail.gateway.app import create_app
 
-        app = create_app(_build_config(config, model))
+        app = create_app(_build_config(config, model, pricing))
         server = uvicorn.Server(
             uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
         )
