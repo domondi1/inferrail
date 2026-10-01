@@ -24,7 +24,7 @@ for the exact contract.
 
 ```bash
 pip install inferrail   # the MCP SDK is a core dependency
-inferrail mcp           # or `uvx inferrail mcp`; `inferrail-mcp` also works
+inferrail mcp           # needs `pip install "inferrail[mcp]"`, or `uvx --with "mcp>=2.0" inferrail mcp`; `inferrail-mcp` also works
 ```
 
 Speaks MCP over stdio — not meant to be run interactively; see the client

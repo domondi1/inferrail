@@ -38,7 +38,8 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover - guidance, not logic
     raise ModuleNotFoundError(
         "The 'mcp' package (>=2.0) is required to run the Inferrail MCP server. "
-        "Install with: pip install --upgrade inferrail"
+        'Install with: pip install "inferrail[mcp]"  (or run: uvx --with "mcp>=2.0" inferrail mcp)',
+        name="mcp",
     ) from exc
 
 _SCHEMA_VERSION = "1"

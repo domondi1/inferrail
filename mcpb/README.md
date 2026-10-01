@@ -8,7 +8,7 @@ from the user's machine, and adds no hosted endpoint.
 
 ## How it runs
 
-`manifest.json` launches `uvx inferrail@<version> mcp`. Nothing is
+`manifest.json` launches `uvx --with "mcp>=2.0" inferrail@<version> mcp`. Nothing is
 vendored into the bundle; `server.py` exists only because MCPB requires
 an entry point.
 
@@ -43,13 +43,13 @@ npx -y @anthropic-ai/mcpb@2.1.2 info dist/inferrail.mcpb
 Run the exact command the bundle launches, against your own receipts:
 
 ```bash
-INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl uvx inferrail@0.4.9 mcp
+INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl uvx --with "mcp>=2.0" inferrail@0.4.10 mcp
 ```
 
 It speaks MCP over stdio. To try it in Claude Code:
 
 ```bash
-claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx inferrail@0.4.9 mcp
+claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx --with "mcp>=2.0" inferrail@0.4.10 mcp
 ```
 
 ## Releasing a new version

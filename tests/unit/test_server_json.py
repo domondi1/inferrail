@@ -56,15 +56,20 @@ def test_package_is_this_pypi_project_and_repo() -> None:
     assert server["repository"]["url"] == project["urls"]["Repository"]
 
 
-def test_launch_command_exists_and_needs_no_extras() -> None:
+def test_launch_command_exists_and_brings_the_mcp_sdk() -> None:
     (package,) = _server_json()["packages"]
     args = [a["value"] for a in package["packageArguments"]]
     assert args == ["mcp"]
     assert package["transport"] == {"type": "stdio"}
     assert _build_parser().parse_args(args).command == "mcp"
-    # `uvx inferrail mcp` installs no extras, so the SDK must be core.
-    deps = _pyproject()["project"]["dependencies"]
-    assert any(re.match(r"mcp\s*>=\s*2", d) for d in deps)
+    # The SDK isn't a core dependency (so `pip install inferrail` resolves
+    # next to frameworks that pin mcp<2), so the launch adds it:
+    # `uvx --with "mcp>=2.0" inferrail mcp`, matching the `mcp` extra.
+    runtime = [(a["name"], a["value"]) for a in package["runtimeArguments"]]
+    assert runtime == [("--with", "mcp>=2.0")]
+    project = _pyproject()["project"]
+    assert not any(re.match(r"mcp\b", d) for d in project["dependencies"])
+    assert any(re.match(r"mcp\s*>=\s*2", d) for d in project["optional-dependencies"]["mcp"])
 
 
 def test_declared_env_var_is_the_one_the_server_reads() -> None:

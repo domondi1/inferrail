@@ -253,7 +253,7 @@ with that tag ([Attribution](#attribution)).
 Claude Code:
 
 ```bash
-claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx inferrail mcp
+claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx --with "mcp>=2.0" inferrail mcp
 ```
 
 Claude Desktop, Cursor, and other clients that use `mcpServers` (VS Code
