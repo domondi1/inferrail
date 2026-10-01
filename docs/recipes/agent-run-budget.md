@@ -143,11 +143,12 @@ them.
 Every framework below talks to Inferrail through its normal OpenAI-compatible
 client. Short standalone pages: [LangGraph](langgraph-run-budget.md),
 [OpenAI Agents SDK](openai-agents-sdk-run-budget.md),
-[CrewAI](crewai-run-budget.md). What changes is only where the run id and budget go. Each
+[CrewAI](crewai-run-budget.md), [Strands Agents](strands-agents-run-budget.md),
+[Vercel AI SDK](vercel-ai-sdk-run-budget.md). What changes is only where the run id and budget go. Each
 snippet uses the `base_url` from step 1. Each was run with two concurrent
 runs, both through `inferrail serve` (0.4.8) and through
-`inferrail.start()`: the runs stayed separate, and the run with the small
-budget got a 402.
+`inferrail.start()` (the TypeScript one only through `inferrail serve`):
+the runs stayed separate, and the run with the small budget got a 402.
 
 ### LangChain
 
@@ -307,7 +308,7 @@ from strands.models.openai import OpenAIModel
 def agent_for_run(run_id: str, budget_usd: str):
     model = OpenAIModel(
         client_args={
-            "base_url": "http://127.0.0.1:8000/v1",
+            "base_url": base_url,
             "api_key": "unused",
             "default_headers": {
                 "X-Inferrail-Attribute-Work-Id": run_id,
@@ -336,7 +337,7 @@ from google.adk.models.lite_llm import LiteLlm
 
 def agent_for_run(run_id: str, budget_usd: str):
     model = LiteLlm(
-        model="openai/gpt-4o-mini", api_base="http://127.0.0.1:8000/v1",
+        model="openai/gpt-4o-mini", api_base=base_url,
         api_key="unused", max_tokens=200,
         extra_headers={
             "X-Inferrail-Attribute-Work-Id": run_id,
@@ -360,7 +361,7 @@ Gemini.
 from smolagents import OpenAIServerModel, ToolCallingAgent
 
 model = OpenAIServerModel(
-    model_id="gpt-4o-mini", api_base="http://127.0.0.1:8000/v1",
+    model_id="gpt-4o-mini", api_base=base_url,
     api_key="unused", max_tokens=200,
     client_kwargs={"default_headers": {
         "X-Inferrail-Attribute-Work-Id": "run-7f3a",
@@ -381,7 +382,7 @@ one program run with `dspy.context`:
 ```python
 import dspy
 
-lm = dspy.LM("openai/gpt-4o-mini", api_base="http://127.0.0.1:8000/v1",
+lm = dspy.LM("openai/gpt-4o-mini", api_base=base_url,
              api_key="unused", max_tokens=200, cache=False,
              extra_headers={
                  "X-Inferrail-Attribute-Work-Id": "run-7f3a",
@@ -402,7 +403,7 @@ Tested with `dspy` 3.4.0.
 from agno.agent import Agent
 from agno.models.openai.like import OpenAILike
 
-model = OpenAILike(id="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+model = OpenAILike(id="gpt-4o-mini", base_url=base_url,
                    api_key="unused", max_tokens=200,
                    default_headers={
                        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
@@ -447,8 +448,10 @@ await generateText({
 
 Every step of a multi-step `generateText` call carries the same headers.
 A refused call throws an error with `statusCode === 402`. Tested with
-`ai` 7.0.126 and `@ai-sdk/openai-compatible` 3.0.62. The gateway itself
-still runs with Python (`pip install inferrail`).
+`ai` 7.0.126 and `@ai-sdk/openai-compatible` 3.0.62. A TypeScript app
+can't call `inferrail.start()`, so run the gateway next to it with
+`pip install inferrail` and `inferrail serve --quickstart --app-mode`
+(no config file; `inferrail work <run-id>` reads its receipts).
 
 ## Using an existing gateway instead of calling the provider directly
 
