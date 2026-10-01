@@ -20,7 +20,7 @@
     "entry_point": "server.py",
     "mcp_config": {
       "command": "uvx",
-      "args": ["inferrail@0.4.9", "mcp"],
+      "args": ["--with", "mcp>=2.0", "inferrail@0.4.9", "mcp"],
       "env": {
         "INFERRAIL_RECEIPTS_PATH": "${user_config.receipts_path}"
       }

@@ -189,7 +189,7 @@ run inference or write files.
 ```bash
 claude mcp add inferrail \
   -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl \
-  -- uvx inferrail mcp
+  -- uvx --with "mcp>=2.0" inferrail mcp
 ```
 
 Other clients, and where `--app-mode` keeps its receipts:

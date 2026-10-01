@@ -856,7 +856,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 def _cmd_mcp() -> int:
     # Imported here so the MCP SDK only loads for this command. Nothing may
     # be written to stdout before this point: stdout carries the protocol.
-    from inferrail_mcp.server import main as run_mcp_server
+    try:
+        from inferrail_mcp.server import main as run_mcp_server
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not exc.name.startswith("mcp"):
+            raise
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     run_mcp_server()
     return 0

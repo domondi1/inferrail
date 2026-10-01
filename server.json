@@ -18,6 +18,13 @@
       "transport": {
         "type": "stdio"
       },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--with",
+          "value": "mcp>=2.0"
+        }
+      ],
       "packageArguments": [
         {
           "type": "positional",

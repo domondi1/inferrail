@@ -6,6 +6,19 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Fixed
+
+- **`pip install inferrail` resolves next to CrewAI, Semantic Kernel and
+  AgentScope.** Those frameworks pin `mcp<2`, and Inferrail required
+  `mcp>=2.0` as a core dependency (only `inferrail mcp` uses it), so
+  installing both failed with `ResolutionImpossible`, which blocked
+  `inferrail.start()` in their projects. `mcp` is now only in the `mcp`
+  extra. `inferrail mcp` without it prints how to install it. The MCP
+  Registry entry and the MCPB bundle launch the server with
+  `uvx --with "mcp>=2.0" inferrail mcp`.
+
 ## v0.4.9 — 2026-10-01
 
 ### Added
