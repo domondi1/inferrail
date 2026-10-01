@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.9 — 2026-10-01
 
 ### Added
 
@@ -32,6 +32,19 @@ PyPI release (the hosted service and website ship independently of the
 - The README quickstart and the per-run budget recipe now start with
   `inferrail.start()`; `inferrail serve` + `inferrail.yaml` stays as the
   way to run a separate, shared gateway.
+
+### Verification
+
+Released on the automated suite (including `tests/unit/test_embedded.py`,
+which drives `inferrail.start()` over real HTTP against a fake provider),
+the per-framework snippets run through `inferrail.start()`, and one
+real-provider smoke test: `inferrail.start()` with no config,
+`gpt-4o-mini` through the OpenAI SDK, a run budget of $0.0001. The first
+call was answered and priced ($0.000006); a later call that didn't fit
+got 402 `INFERRAIL_E010` without a request to OpenAI; the outbound
+request carried no `X-Inferrail-*` headers; receipts held neither the
+prompt nor the response; `inferrail work <run-id>` found the run with no
+flags.
 
 ## v0.4.8 — 2026-09-30
 
