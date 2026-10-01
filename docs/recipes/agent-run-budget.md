@@ -235,7 +235,10 @@ pipeline.run({
 })
 ```
 
-Tested with `haystack-ai` 3.2.0.
+A refused call raises `openai.APIStatusError` (`status_code == 402`) from
+the generator; inside `pipeline.run(...)` Haystack wraps it in
+`PipelineRuntimeError`, with the 402 as its `__cause__`. Tested with
+`haystack-ai` 3.2.0.
 
 ### CrewAI
 
@@ -348,7 +351,8 @@ def agent_for_run(run_id: str, budget_usd: str):
 ```
 
 In ADK 2.x a refused call arrives as an event with `error_code` set
-rather than an exception, so check events for errors. Tested with
+rather than an exception. Stop reading events at that one: the runner
+raises if you keep iterating. Tested with
 `google-adk` 2.10.0 (and 1.10.0) and `litellm` 1.103.2. Only Chat
 Completions models routed through `LiteLlm` are covered, not native
 Gemini.
