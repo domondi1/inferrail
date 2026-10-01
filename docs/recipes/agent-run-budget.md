@@ -259,7 +259,11 @@ llm = LLM(model="gpt-4o-mini", base_url=base_url,
 
 CrewAI retries a failed call up to its retry limit; each retry of a
 refused call is also refused before the provider, so it costs nothing.
-Tested with `crewai` 1.15.23.
+CrewAI pins `mcp~=1.28`, which conflicts with Inferrail's `mcp>=2.0`, so
+`inferrail.start()` can't share CrewAI's environment: run the gateway
+from its own environment (`inferrail serve --quickstart --app-mode`, see
+the [CrewAI page](crewai-run-budget.md#start-inferrail)) and use
+`base_url = "http://127.0.0.1:8000/v1"`. Tested with `crewai` 1.15.23.
 
 ### LlamaIndex
 
