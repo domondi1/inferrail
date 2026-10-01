@@ -689,10 +689,41 @@ providers:
     request_stream_usage: true          # ask the gateway for stream usage
 ```
 
-This was tested locally in front of LiteLLM and otari. Other gateways
-haven't been tested. If that gateway refuses a call because of its own
-budget, you get `INFERRAIL_E014` (HTTP 402, not retried). See
-[ADR 0022](../adr/0022-per-run-budget-declaration.md).
+This was tested locally in front of LiteLLM and otari. If that gateway
+refuses a call because of its own budget, you get `INFERRAIL_E014` (HTTP
+402, not retried). See [ADR 0022](../adr/0022-per-run-budget-declaration.md).
+Use the config with `inferrail serve --config inferrail.yaml`, or in
+process with `inferrail.start("inferrail.yaml")`.
+
+### In front of OpenRouter
+
+Keep your OpenRouter key and models, and add a per-run ceiling:
+
+```yaml
+providers:
+  openrouter:
+    type: openai_compatible
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    price_as: openai              # prices openai/* models at OpenAI list prices (your assertion)
+    request_stream_usage: true
+default_provider: openrouter      # send OpenRouter model ids as-is, e.g. "openai/<model>"
+receipts: {sink: sqlite, path: ./receipts.db}
+budgets: {enabled: true, path: ./budgets.db}
+```
+
+`price_as: openai` only prices `openai/...` model ids, and only those
+whose name is in Inferrail's OpenAI price list. For any other OpenRouter
+model, add a `pricing:` entry with its price, or a budgeted run refuses it
+(`INFERRAIL_E012`) instead of guessing. `inferrail models --config
+inferrail.yaml` lists OpenRouter's models and which ones have a price.
+
+Checked against the live OpenRouter API: a run's over-budget call is
+refused before any request reaches OpenRouter, OpenRouter's own "out of
+credits" 402 comes back as `INFERRAIL_E014` (not retried), no
+`X-Inferrail-*` header is sent to OpenRouter, and receipts hold no
+prompts or responses. A priced, answered call was checked against a local
+OpenRouter-shaped stand-in, not yet against the live API.
 
 ## Exact limitations
 
