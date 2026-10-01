@@ -467,7 +467,10 @@ model = OpenAIChatModel(
 ```
 
 Create one model per run. A refused call raises `openai.APIStatusError`
-(`status_code == 402`). Tested with `agentscope` 2.0.9.
+(`status_code == 402`). AgentScope pins `mcp<2.0`, which conflicts with
+Inferrail's `mcp>=2.0`, so run the gateway from its own environment
+(`inferrail serve --quickstart --app-mode`) and use
+`base_url = "http://127.0.0.1:8000/v1"`. Tested with `agentscope` 2.0.9.
 
 ### CAMEL
 
@@ -488,8 +491,11 @@ agent = ChatAgent(model=model)
 ```
 
 Create one model per run (or per Workforce run). A refused call raises
-`openai.APIStatusError` (`status_code == 402`). Tested with `camel-ai`
-0.2.90.
+`openai.APIStatusError` (`status_code == 402`). `camel-ai` 0.2.90 fails
+to import with `mcp` 2.x, which Inferrail requires, so run the gateway
+from its own environment (`inferrail serve --quickstart --app-mode`) and
+use `base_url = "http://127.0.0.1:8000/v1"`. Tested with `camel-ai`
+0.2.90 and `mcp` 1.29.
 
 ### Semantic Kernel (Python)
 
@@ -509,8 +515,11 @@ service = OpenAIChatCompletion(
 ```
 
 Create one service per run. A refused call raises
-`ServiceResponseException` wrapping the 402. Tested with
-`semantic-kernel` 1.44.1.
+`ServiceResponseException` wrapping the 402. Semantic Kernel pins
+`mcp<2.0`, which conflicts with Inferrail's `mcp>=2.0`, so run the
+gateway from its own environment (`inferrail serve --quickstart
+--app-mode`) and use `base_url = "http://127.0.0.1:8000/v1"`. Tested
+with `semantic-kernel` 1.44.1.
 
 ### Langroid
 
