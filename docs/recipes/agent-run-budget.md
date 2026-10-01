@@ -425,6 +425,187 @@ Create one model per run. Agno doesn't raise on a refused call: the run
 comes back with `run.status == RunStatus.error` and the budget message as
 its content, so check the status. Tested with `agno` 3.1.0.
 
+### AG2
+
+AG2 1.x takes an `OpenAIConfig` with `default_headers`, one per run:
+
+```python
+from ag2 import Agent
+from ag2.config.openai.config import OpenAIConfig
+
+def agent_for_run(run_id: str, budget_usd: str) -> Agent:
+    config = OpenAIConfig(
+        model="gpt-4o-mini", base_url=base_url, api_key="unused", max_tokens=200,
+        default_headers={
+            "X-Inferrail-Attribute-Work-Id": run_id,
+            "X-Inferrail-Budget-Usd": budget_usd,
+        },
+    )
+    return Agent("support", "...", config=config)
+
+reply = await agent_for_run("run-7f3a", "0.50").ask("...")
+```
+
+A refused call raises `openai.APIStatusError` (`status_code == 402`).
+Tested with `ag2` 1.1.1.
+
+### AgentScope
+
+```python
+from agentscope.credential import OpenAICredential
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(
+    credential=OpenAICredential(api_key="unused", base_url=base_url),
+    model="gpt-4o-mini",
+    parameters=OpenAIChatModel.Parameters(max_tokens=200),
+    client_kwargs={"default_headers": {
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }},
+)
+```
+
+Create one model per run. A refused call raises `openai.APIStatusError`
+(`status_code == 402`). AgentScope pins `mcp<2.0`, which conflicts with
+Inferrail's `mcp>=2.0`, so run the gateway from its own environment
+(`inferrail serve --quickstart --app-mode`) and use
+`base_url = "http://127.0.0.1:8000/v1"`. Tested with `agentscope` 2.0.9.
+
+### CAMEL
+
+```python
+from camel.agents import ChatAgent
+from camel.models import ModelFactory
+from camel.types import ModelPlatformType
+
+model = ModelFactory.create(
+    model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
+    model_type="gpt-4o-mini", url=base_url, api_key="unused",
+    model_config_dict={"max_tokens": 200, "extra_headers": {
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }},
+)
+agent = ChatAgent(model=model)
+```
+
+Create one model per run (or per Workforce run). A refused call raises
+`openai.APIStatusError` (`status_code == 402`). `camel-ai` 0.2.90 fails
+to import with `mcp` 2.x, which Inferrail requires, so run the gateway
+from its own environment (`inferrail serve --quickstart --app-mode`) and
+use `base_url = "http://127.0.0.1:8000/v1"`. Tested with `camel-ai`
+0.2.90 and `mcp` 1.29.
+
+### Semantic Kernel (Python)
+
+Give the connector an `AsyncOpenAI` client with the run's headers:
+
+```python
+from openai import AsyncOpenAI
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
+
+service = OpenAIChatCompletion(
+    ai_model_id="gpt-4o-mini",
+    async_client=AsyncOpenAI(base_url=base_url, api_key="unused", default_headers={
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }),
+)
+```
+
+Create one service per run. A refused call raises
+`ServiceResponseException` wrapping the 402. Semantic Kernel pins
+`mcp<2.0`, which conflicts with Inferrail's `mcp>=2.0`, so run the
+gateway from its own environment (`inferrail serve --quickstart
+--app-mode`) and use `base_url = "http://127.0.0.1:8000/v1"`. Tested
+with `semantic-kernel` 1.44.1.
+
+### Langroid
+
+```python
+import langroid as lr
+import langroid.language_models as lm
+
+llm_config = lm.OpenAIGPTConfig(
+    chat_model="gpt-4o-mini", api_base=base_url, api_key="unused",
+    max_output_tokens=200,
+    headers={
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    },
+)
+agent = lr.ChatAgent(lr.ChatAgentConfig(llm=llm_config))
+```
+
+Create one config per run. Langroid retries a refused call several times
+before raising; each retry is refused before the provider, so retries
+cost nothing. Tested with `langroid` 0.68.2.
+
+### BeeAI Framework
+
+```python
+from beeai_framework.adapters.openai import OpenAIChatModel
+
+model = OpenAIChatModel(
+    "gpt-4o-mini", base_url=base_url, api_key="unused",
+    settings={"extra_headers": {
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }},
+)
+```
+
+Create one model per run. A refused call raises `ChatModelError`. Tested
+with `beeai-framework` 0.1.85.
+
+### Griptape
+
+```python
+from griptape.artifacts import ErrorArtifact
+from griptape.drivers.prompt.openai import OpenAiChatPromptDriver
+from griptape.structures import Agent
+from openai import OpenAI
+
+driver = OpenAiChatPromptDriver(
+    model="gpt-4o-mini", base_url=base_url, api_key="unused", max_tokens=200,
+    client=OpenAI(base_url=base_url, api_key="unused", default_headers={
+        "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }),
+)
+result = Agent(prompt_driver=driver).run("...")
+if isinstance(result.output, ErrorArtifact):
+    ...  # the run reached its budget
+```
+
+Create one driver per run. Griptape doesn't raise on a refused call: the
+task finishes with an `ErrorArtifact` carrying the 402, so check the
+output. Tested with `griptape` 1.13.0.
+
+### Atomic Agents
+
+Atomic Agents uses an `instructor` client, so the headers go on the
+OpenAI client underneath:
+
+```python
+import instructor
+from openai import OpenAI
+from atomic_agents import AgentConfig, AtomicAgent, BasicChatInputSchema, BasicChatOutputSchema
+
+client = instructor.from_openai(OpenAI(base_url=base_url, api_key="unused", default_headers={
+    "X-Inferrail-Attribute-Work-Id": "run-7f3a",
+    "X-Inferrail-Budget-Usd": "0.50",
+}))
+agent = AtomicAgent[BasicChatInputSchema, BasicChatOutputSchema](
+    config=AgentConfig(client=client, model="gpt-4o-mini", model_api_parameters={"max_tokens": 200}))
+```
+
+Create one client per run. `instructor` retries a failed call; each retry
+of a refused call is refused before the provider. A refused run raises
+`InstructorRetryException` with the 402 in it. Tested with
+`atomic-agents` 2.10.3.
+
 ### Vercel AI SDK (TypeScript)
 
 Inferrail is a separate process, so a TypeScript app can use it over
@@ -460,6 +641,33 @@ A refused call throws an error with `statusCode === 402`. Tested with
 can't call `inferrail.start()`, so run the gateway next to it with
 `pip install inferrail` and `inferrail serve --quickstart --app-mode`
 (no config file; `inferrail work <run-id>` reads its receipts).
+
+### Mastra (TypeScript)
+
+Mastra agents take an AI SDK model, so the OpenAI-compatible provider
+works as-is. Keep one agent and pass the run's headers on each call:
+
+```ts
+import { Agent } from '@mastra/core/agent';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
+const inferrail = createOpenAICompatible({
+  name: 'inferrail', baseURL: 'http://127.0.0.1:8000/v1', apiKey: 'unused', includeUsage: true,
+});
+const agent = new Agent({
+  id: 'support', name: 'support', instructions: '...',
+  model: inferrail.chatModel('gpt-4o-mini'), tools: { /* ... */ },
+});
+
+await agent.generate('...', { modelSettings: {
+  maxOutputTokens: 200,
+  headers: { 'X-Inferrail-Attribute-Work-Id': 'run-7f3a', 'X-Inferrail-Budget-Usd': '0.50' },
+} });
+```
+
+A refused call throws an error with `statusCode === 402`. Run the gateway
+next to the app (`inferrail serve --quickstart --app-mode`). Tested with
+`@mastra/core` 1.74.0 through `inferrail serve`.
 
 ## Using an existing gateway instead of calling the provider directly
 
