@@ -145,7 +145,7 @@ client. Short standalone pages: [LangGraph](langgraph-run-budget.md),
 [Vercel AI SDK](vercel-ai-sdk-run-budget.md). What changes is only where the run id and budget go. Each
 snippet uses the `base_url` from step 1. Each was run with two concurrent
 runs, both through `inferrail serve` (0.4.8) and through
-`inferrail.start()` (the TypeScript one only through `inferrail serve`):
+`inferrail.start()` (the TypeScript ones only through `inferrail serve`):
 the runs stayed separate, and the run with the small budget got a 402.
 
 `gpt-4o-mini` in the snippets is only an example. Inferrail doesn't choose
@@ -673,6 +673,67 @@ await agent.generate('...', { modelSettings: {
 A refused call throws an error with `statusCode === 402`. Run the gateway
 next to the app (`inferrail serve --quickstart --app-mode`). Tested with
 `@mastra/core` 1.74.0 through `inferrail serve`.
+
+### VoltAgent (TypeScript)
+
+VoltAgent agents also take an AI SDK model. Keep one agent and pass the
+run's headers on each call:
+
+```ts
+import { Agent } from '@voltagent/core';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
+const inferrail = createOpenAICompatible({
+  name: 'inferrail', baseURL: 'http://127.0.0.1:8000/v1', apiKey: 'unused', includeUsage: true,
+});
+const agent = new Agent({
+  name: 'support', instructions: '...',
+  model: inferrail.chatModel('gpt-4o-mini'), tools: [ /* ... */ ],
+});
+
+await agent.generateText('...', {
+  maxOutputTokens: 200,
+  headers: { 'X-Inferrail-Attribute-Work-Id': 'run-7f3a', 'X-Inferrail-Budget-Usd': '0.50' },
+});
+```
+
+A refused call throws an error with `statusCode === 402`, and VoltAgent
+doesn't retry it. Run the gateway next to the app
+(`inferrail serve --quickstart --app-mode`). Tested with
+`@voltagent/core` 2.11.0, `ai` 6.0.300 and `@ai-sdk/openai-compatible`
+2.0.81 through `inferrail serve`.
+
+### OpenAI Agents SDK (TypeScript)
+
+`@openai/agents` has no per-call header setting, so give each run its
+own `Runner` whose OpenAI client carries the run's headers. The agent
+itself is shared:
+
+```ts
+import { Agent, Runner, OpenAIProvider } from '@openai/agents';
+import OpenAI from 'openai';
+
+const agent = new Agent({
+  name: 'support', instructions: '...', model: 'gpt-4o-mini',
+  modelSettings: { maxTokens: 200 },
+});
+
+function runnerFor(runId: string, budgetUsd: string) {
+  const client = new OpenAI({
+    baseURL: 'http://127.0.0.1:8000/v1', apiKey: 'unused',
+    defaultHeaders: { 'X-Inferrail-Attribute-Work-Id': runId, 'X-Inferrail-Budget-Usd': budgetUsd },
+  });
+  return new Runner({ modelProvider: new OpenAIProvider({ openAIClient: client, useResponses: false }) });
+}
+
+await runnerFor('run-7f3a', '0.50').run(agent, '...');
+```
+
+`useResponses: false` matters: Inferrail serves Chat Completions, not the
+Responses API. A refused call throws an error with `status === 402`; the
+OpenAI client doesn't retry it. Run the gateway next to the app
+(`inferrail serve --quickstart --app-mode`). Tested with `@openai/agents`
+0.18.0 through `inferrail serve`.
 
 ## Using an existing gateway instead of calling the provider directly
 
