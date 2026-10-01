@@ -10,24 +10,19 @@ next model call, that call gets HTTP 402 and never reaches the provider.
 
 ```bash
 pip install inferrail
-export OPENAI_API_KEY=sk-...        # only the gateway process sees it
+export OPENAI_API_KEY=sk-...
 ```
 
-`inferrail.yaml`:
+```python
+import inferrail
 
-```yaml
-providers:
-  openai: {type: openai, api_key_env: OPENAI_API_KEY}
-routes:
-  default: {provider: openai, model: gpt-4o-mini}
-default_provider: openai
-receipts: {sink: sqlite, path: ./receipts.db}
-budgets: {enabled: true, path: ./budgets.db}
+base_url = inferrail.start()   # the gateway, on a background thread in this process
 ```
 
-```bash
-inferrail serve --config inferrail.yaml     # http://127.0.0.1:8000/v1
-```
+No config file and no second terminal: it reads the provider key from
+your environment and keeps receipts and budgets in your user data
+directory. To run Inferrail as its own process instead, see
+[the recipe](agent-run-budget.md#1-start-inferrail-with-budgets-on).
 
 ## Give the crew run a budget
 
@@ -38,7 +33,7 @@ to every agent in that run:
 from crewai import LLM, Agent, Crew, Task
 
 def llm_for_run(run_id: str, budget_usd: str) -> LLM:
-    return LLM(model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1",
+    return LLM(model="gpt-4o-mini", base_url=base_url,
                api_key="unused", max_tokens=200,
                extra_headers={
                    "X-Inferrail-Attribute-Work-Id": run_id,   # every call of this run
@@ -55,12 +50,13 @@ crew.kickoff()
 When the budget is used up, the next call fails with a 402
 (`INFERRAIL_E010`). CrewAI retries a failed call up to its retry limit;
 each retry is also refused before the provider, so it costs nothing.
-Tested with `crewai` 1.15.23 and `inferrail` 0.4.8.
+Tested with `crewai` 1.15.23 and `inferrail` 0.4.8, through both
+`inferrail serve` and `inferrail.start()`.
 
 ## Read the run's cost
 
 ```bash
-inferrail work crew-run-7f3a --config inferrail.yaml
+inferrail work crew-run-7f3a
 ```
 
 Refused calls show up as receipts with no cost; nothing was billed for

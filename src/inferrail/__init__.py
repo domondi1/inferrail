@@ -23,5 +23,17 @@ __all__ = [
     "attributed_async_http_client",
     "attributed_http_client",
     "current_task_id",
+    "start",
+    "stop",
     "track_task",
 ]
+
+
+def __getattr__(name: str) -> object:
+    # `inferrail.start()` / `inferrail.stop()` (embedded gateway) are
+    # imported on first use, so `import inferrail` stays as light as it was.
+    if name in ("start", "stop"):
+        from inferrail import embedded
+
+        return getattr(embedded, name)
+    raise AttributeError(f"module 'inferrail' has no attribute {name!r}")

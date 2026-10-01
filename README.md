@@ -39,6 +39,42 @@ CLI flags, config, and receipt fields may still change before 1.0.
 
 Requires Python 3.11+.
 
+**Protect one run, inside your Python app.** No config file and no
+second terminal:
+
+```bash
+pip install inferrail
+export OPENAI_API_KEY=sk-...
+```
+
+```python
+import inferrail
+from openai import OpenAI
+
+base_url = inferrail.start()   # the gateway, on a background thread in this process
+client = OpenAI(base_url=base_url, api_key="unused")
+client.chat.completions.create(
+    model="gpt-4o-mini", max_tokens=200,
+    messages=[{"role": "user", "content": "Summarize this contract."}],
+    extra_headers={
+        "X-Inferrail-Attribute-Work-Id": "contract-review-42",   # the run
+        "X-Inferrail-Budget-Usd": "0.50",                        # its dollar ceiling
+    },
+)
+```
+
+Every call that carries the same run id shares that budget, including
+parallel calls. A call that would push the run past it gets HTTP 402
+before it reaches OpenAI. Then:
+
+```bash
+inferrail work contract-review-42
+```
+
+shows what the run cost. Framework snippets (LangChain, LangGraph, OpenAI
+Agents SDK, CrewAI, Haystack, LlamaIndex, Microsoft Agent Framework):
+[recipe](docs/recipes/agent-run-budget.md#framework-snippets).
+
 **Try it offline.** No API key, no network calls, no provider charges:
 
 ```bash
@@ -51,8 +87,9 @@ The demo sends scripted requests through the real engine to a fake
 provider with made-up prices labeled `DEMO`, and prints what they cost by
 customer ([recording](docs/assets/inferrail-demo.gif)).
 
-**Put it in front of your provider.** Start the gateway with the local
-dashboard, with your key set in the gateway's terminal:
+**Run it as its own process, with the local dashboard.** For a gateway
+shared by several apps, or to watch calls live, set your key in the
+gateway's terminal:
 
 ```bash
 export OPENAI_API_KEY=sk-...          # and/or ANTHROPIC_API_KEY
