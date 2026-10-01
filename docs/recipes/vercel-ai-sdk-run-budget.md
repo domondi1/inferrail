@@ -15,23 +15,12 @@ with Python.
 ```bash
 pip install inferrail
 export OPENAI_API_KEY=sk-...        # only the gateway process sees it
+inferrail serve --quickstart --app-mode     # http://127.0.0.1:8000/v1
 ```
 
-`inferrail.yaml`:
-
-```yaml
-providers:
-  openai: {type: openai, api_key_env: OPENAI_API_KEY}
-routes:
-  default: {provider: openai, model: gpt-4o-mini}
-default_provider: openai
-receipts: {sink: sqlite, path: ./receipts.db}
-budgets: {enabled: true, path: ./budgets.db}
-```
-
-```bash
-inferrail serve --config inferrail.yaml     # http://127.0.0.1:8000/v1
-```
+No config file: budgets are on and receipts go to your user data
+directory. For a custom setup (other providers, a shared gateway), use an
+`inferrail.yaml` as in [the recipe](agent-run-budget.md#1-start-inferrail-with-budgets-on).
 
 ## Give the run a budget
 
@@ -77,7 +66,7 @@ small budget was refused.
 ## Read the run's cost
 
 ```bash
-inferrail work run-7f3a --config inferrail.yaml
+inferrail work run-7f3a
 ```
 
 Refused calls show up as receipts with no cost; nothing was billed for
