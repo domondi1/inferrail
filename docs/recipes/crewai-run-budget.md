@@ -8,20 +8,20 @@ next model call, that call gets HTTP 402 and never reaches the provider.
 
 ## Start Inferrail
 
-CrewAI pins an older version of the `mcp` package than Inferrail needs,
-so `pip install inferrail` into the same environment as CrewAI fails to
-resolve. Run Inferrail from its own environment instead, next to your
-app:
-
 ```bash
-python -m venv ~/.inferrail
-~/.inferrail/bin/pip install inferrail
-export OPENAI_API_KEY=sk-...                          # only the gateway process sees it
-~/.inferrail/bin/inferrail serve --quickstart --app-mode   # http://127.0.0.1:8000/v1
+pip install "inferrail>=0.4.10"     # earlier versions conflict with CrewAI's mcp pin
+export OPENAI_API_KEY=sk-...
 ```
 
-No config file: budgets are on and receipts go to your user data
-directory. For a custom setup, use an `inferrail.yaml` as in
+```python
+import inferrail
+
+base_url = inferrail.start()   # the gateway, on a background thread in this process
+```
+
+No config file and no second terminal: it reads the provider key from
+your environment and keeps receipts and budgets in your user data
+directory. To run Inferrail as its own process instead, see
 [the recipe](agent-run-budget.md#1-start-inferrail-with-budgets-on).
 
 ## Give the crew run a budget
@@ -31,8 +31,6 @@ to every agent in that run:
 
 ```python
 from crewai import LLM, Agent, Crew, Task
-
-base_url = "http://127.0.0.1:8000/v1"   # the Inferrail gateway started above
 
 def llm_for_run(run_id: str, budget_usd: str) -> LLM:
     return LLM(model="gpt-4o-mini", base_url=base_url,
@@ -52,13 +50,13 @@ crew.kickoff()
 When the budget is used up, the next call fails with a 402
 (`INFERRAIL_E010`). CrewAI retries a failed call up to its retry limit;
 each retry is also refused before the provider, so it costs nothing.
-Tested with `crewai` 1.15.23 and `inferrail` 0.4.9, with the gateway
-in its own environment as above.
+Tested with `crewai` 1.15.23 and `inferrail` 0.4.10, in the same
+environment.
 
 ## Read the run's cost
 
 ```bash
-~/.inferrail/bin/inferrail work crew-run-7f3a
+inferrail work crew-run-7f3a
 ```
 
 Refused calls show up as receipts with no cost; nothing was billed for
