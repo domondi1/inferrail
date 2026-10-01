@@ -28,37 +28,30 @@ providers:
   #   # base_url: https://api.anthropic.com/v1   # override to point at any
   #                                               # Anthropic-compatible endpoint
 
-routes:
-  # A route is what clients select via the "model" field of a
-  # /v1/chat/completions (or /v1/messages) request, e.g.
-  # {"model": "default", ...}. Multiple routes can exist side by side,
-  # pointing at the same or different providers/models/retry policies —
-  # one routes: section serves both wire formats; which one a given route
-  # is reachable from just depends on which provider it names.
-  default:
-    provider: openai
-    model: gpt-4o-mini
-    max_retries: 1
-    timeout_seconds: 30
+# Requests choose their own model: whatever model id a client sends is
+# passed through unchanged to this provider (e.g. {"model": "<model id>"}
+# reaches OpenAI as that model). Inferrail never picks a model for you;
+# `inferrail models` lists the ones your account can use and which have a
+# price (needed under a dollar budget). See
+# docs/adr/0007-model-passthrough-routing.md and
+# docs/adr/0024-the-user-chooses-the-model.md.
+default_provider: openai
 
-  fast:
-    provider: openai
-    model: gpt-4o-mini
-    max_retries: 0
-    timeout_seconds: 10
-
-  # claude:
-  #   provider: anthropic
-  #   model: claude-sonnet-5
-  #   max_retries: 1
-  #   timeout_seconds: 30
-
-# Optional: if set, a request whose "model" matches no route above is not
-# rejected — it's forwarded to this provider with "model" passed through
-# unchanged (e.g. {"model": "gpt-5.6-sol"} reaches OpenAI as gpt-5.6-sol,
-# with no routes: entry needed for it). Named routes still take priority.
-# See docs/adr/0007-model-passthrough-routing.md.
-# default_provider: openai
+# Optional named routes: aliases that pin a model and a retry policy, e.g.
+# so clients can send {"model": "fast"}. Named routes take priority over
+# pass-through. One routes: section serves both wire formats; which one a
+# route is reachable from depends on which provider it names.
+# routes:
+#   fast:
+#     provider: openai
+#     model: <model id>
+#     max_retries: 0
+#     timeout_seconds: 10
+#   claude:
+#     provider: anthropic
+#     model: <model id>
+#     max_retries: 1
+#     timeout_seconds: 30
 
 telemetry:
   sink: console   # console | jsonl | none

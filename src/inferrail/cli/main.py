@@ -54,8 +54,6 @@ from inferrail.cli.work import DEFAULT_OUTCOMES_PATH, run_work, run_work_outcome
 from inferrail.config.loader import load_config
 from inferrail.config.models import BudgetsConfig, InferrailConfig, ReceiptsConfig
 from inferrail.config.quickstart import (
-    QUICKSTART_ANTHROPIC_MODEL,
-    QUICKSTART_MODEL,
     QUICKSTART_RECEIPTS_PATH,
     build_quickstart_config,
 )
@@ -80,11 +78,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--quickstart",
         action="store_true",
         help=(
-            "Skip inferrail.yaml entirely and serve with in-memory quickstart "
-            f"defaults (OpenAI/{QUICKSTART_MODEL} on /v1/chat/completions, "
-            f"Anthropic/{QUICKSTART_ANTHROPIC_MODEL} on /v1/messages, receipts at "
-            f"{QUICKSTART_RECEIPTS_PATH}). Combinable with --app-mode and/or "
-            "--daily-budget-usd."
+            "Skip inferrail.yaml entirely: OpenAI on /v1/chat/completions and "
+            "Anthropic on /v1/messages, each request's model id passed through "
+            f"as-is, receipts at {QUICKSTART_RECEIPTS_PATH}. Combinable with "
+            "--app-mode and/or --daily-budget-usd."
         ),
     )
     serve.add_argument(
@@ -153,8 +150,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     try_parser.add_argument(
         "--model",
-        default=QUICKSTART_MODEL,
-        help="Model to use via the quickstart OpenAI route (default: %(default)s).",
+        required=True,
+        help=(
+            "The OpenAI model to call (any model your account can use; "
+            "`inferrail models` lists them)."
+        ),
     )
 
     config_parser = subparsers.add_parser("config", help="Configuration utilities.")
@@ -380,6 +380,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the budget store (default: %(default)s).",
     )
 
+    models = subparsers.add_parser(
+        "models",
+        help="List the models your configured providers offer, and whether each has a price.",
+    )
+    models.add_argument(
+        "--provider", default=None, help="Only this provider (a name from the config)."
+    )
+    models.add_argument(
+        "--config",
+        default=None,
+        help="Path to inferrail.yaml (default: ./inferrail.yaml, else zero-config).",
+    )
+    models.add_argument("--json", action="store_true", help="Print JSON.")
+
     pricing = subparsers.add_parser("pricing", help="Pricing utilities.")
     pricing_sub = pricing.add_subparsers(dest="pricing_command", required=True)
     pricing_sub.add_parser(
@@ -568,8 +582,9 @@ def _print_quickstart_banner(
     # `/v1/v1/messages` and 404.
     anthropic_base_url = f"http://{host}:{port}"
     print("No inferrail.yaml used -- running with quickstart defaults:")
-    print(f"  OpenAI SDK:    any model id passes through, e.g. {QUICKSTART_MODEL}")
-    print(f"  Anthropic SDK: any model id passes through, e.g. {QUICKSTART_ANTHROPIC_MODEL}")
+    print("  OpenAI SDK:    send any model id your account can use; it passes through")
+    print("  Anthropic SDK: send any model id your account can use; it passes through")
+    print("  (`inferrail models` lists them and whether each has a verified price)")
     print()
     print("Point your app at Inferrail -- one line, copy-pasteable:")
     print()
@@ -907,6 +922,15 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_receipts(args, parser)
     if args.command == "budget":
         return _cmd_budget(args, parser)
+    if args.command == "models":
+        from inferrail.cli.models import load_models_config, run_models
+
+        try:
+            models_config = load_models_config(args.config)
+        except ConfigurationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return run_models(models_config, provider_name=args.provider, as_json=args.json)
     if args.command == "pricing":
         return _cmd_pricing(args, parser)
     if args.command == "doctor":

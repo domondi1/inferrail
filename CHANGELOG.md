@@ -6,6 +6,28 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.11 — 2026-10-01
+
+### Added
+
+- **`inferrail models`** lists the models each configured provider says
+  your account can use (OpenAI and Anthropic list endpoints; compatible
+  upstreams when they implement one), with whether Inferrail has a price
+  for each. It never picks a model.
+- **`inferrail.start(pricing=...)`** supplies prices for models Inferrail
+  has no verified price for, without a config file. Recorded as
+  operator-supplied; source and verified date are required.
+
+### Changed
+
+- **Inferrail no longer chooses a model.** `inferrail.start()` and
+  `inferrail serve --quickstart` no longer route `model="default"` to
+  `gpt-4o-mini`; every request's model id passes through. Pass
+  `inferrail.start(model="<model id>")` if you want a `default` alias.
+  `inferrail try` now requires `--model`. A config may omit `routes`
+  when it sets a `default_provider`. See
+  [ADR 0024](docs/adr/0024-the-user-chooses-the-model.md).
+
 ## v0.4.10 — 2026-10-01
 
 ### Fixed

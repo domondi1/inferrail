@@ -24,9 +24,10 @@ from inferrail.config.models import (
 
 QUICKSTART_PROVIDER = "openai"
 QUICKSTART_ANTHROPIC_PROVIDER = "anthropic"
+# Only created when the caller names a model (``model=``): a request that
+# sends ``model="default"`` then goes to that model. Without it there is no
+# alias, and every request's own model id passes through unchanged.
 QUICKSTART_ROUTE = "default"
-QUICKSTART_MODEL = "gpt-4o-mini"
-QUICKSTART_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 QUICKSTART_API_KEY_ENV = "OPENAI_API_KEY"
 QUICKSTART_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 QUICKSTART_RECEIPTS_PATH = "./inferrail-receipts.jsonl"
@@ -34,7 +35,7 @@ QUICKSTART_RECEIPTS_PATH = "./inferrail-receipts.jsonl"
 
 def build_quickstart_config(
     *,
-    model: str = QUICKSTART_MODEL,
+    model: str | None = None,
     telemetry_sink: Literal["console", "none"] = "console",
 ) -> InferrailConfig:
     """Build the quickstart config: one OpenAI provider and one Anthropic
@@ -65,9 +66,11 @@ def build_quickstart_config(
                 type="anthropic", api_key_env=QUICKSTART_ANTHROPIC_API_KEY_ENV
             ),
         },
-        routes={
-            QUICKSTART_ROUTE: RouteConfig(provider=QUICKSTART_PROVIDER, model=model),
-        },
+        routes=(
+            {QUICKSTART_ROUTE: RouteConfig(provider=QUICKSTART_PROVIDER, model=model)}
+            if model
+            else {}
+        ),
         # Any OpenAI model id passes through to the openai provider; any
         # Anthropic model id passes through to the anthropic provider — two
         # independent passthrough defaults, one per wire format, since the

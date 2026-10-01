@@ -214,7 +214,9 @@ class InferrailConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     providers: dict[str, ProviderConfig]
-    routes: dict[str, RouteConfig]
+    # Named aliases (optional when a default provider is set: then every
+    # request's `model` is passed through to that provider as-is).
+    routes: dict[str, RouteConfig] = Field(default_factory=dict)
     # If set, a request whose `model` doesn't match any named route above is
     # not rejected — it's forwarded to this provider with `model` passed
     # through unchanged, instead of requiring every upstream model id to be
@@ -263,8 +265,14 @@ class InferrailConfig(BaseModel):
     def _routes_reference_known_providers(self) -> InferrailConfig:
         if not self.providers:
             raise ValueError("at least one provider must be configured under 'providers'")
-        if not self.routes:
-            raise ValueError("at least one route must be configured under 'routes'")
+        has_default = (
+            self.default_provider is not None or self.default_anthropic_provider is not None
+        )
+        if not self.routes and not has_default:
+            raise ValueError(
+                "configure at least one route under 'routes', or a default_provider "
+                "so requests pass their model through"
+            )
         for route_name, route in self.routes.items():
             if route.provider not in self.providers:
                 raise ValueError(

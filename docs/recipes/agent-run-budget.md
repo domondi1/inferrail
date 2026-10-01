@@ -50,9 +50,7 @@ several services:
 ```yaml
 providers:
   openai: {type: openai, api_key_env: OPENAI_API_KEY}
-routes:
-  default: {provider: openai, model: gpt-4o-mini}
-default_provider: openai
+default_provider: openai          # each request's model id is passed through
 receipts: {sink: sqlite, path: ./receipts.db}
 budgets: {enabled: true, path: ./budgets.db}
 ```
@@ -149,6 +147,22 @@ snippet uses the `base_url` from step 1. Each was run with two concurrent
 runs, both through `inferrail serve` (0.4.8) and through
 `inferrail.start()` (the TypeScript one only through `inferrail serve`):
 the runs stayed separate, and the run with the small budget got a 402.
+
+`gpt-4o-mini` in the snippets is only an example. Inferrail doesn't choose
+a model: send any model id your account can use, and it's passed to the
+provider as-is. A dollar budget needs a price for that model.
+`inferrail models` lists your provider's models and which ones have a
+price. For a model Inferrail has no price for yet, pass one yourself:
+
+```python
+base_url = inferrail.start(pricing={"openai": {"<model id>": {
+    "input_usd_per_million": "...", "output_usd_per_million": "...",
+    "source": "OpenAI pricing page", "verified_date": "2026-10-01",
+}}})
+```
+
+Without a price, that model still works, but a run with a budget refuses
+it (`INFERRAIL_E012`) rather than guess what it costs.
 
 ### LangChain
 

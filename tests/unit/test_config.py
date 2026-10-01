@@ -44,7 +44,9 @@ def test_example_yaml_loads() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     config = load_config(repo_root / "inferrail.example.yaml")
 
-    assert config.routes["default"].provider == "openai"
+    # Pass-through by default: no model is chosen for the user (ADR 0024).
+    assert config.routes == {}
+    assert config.default_provider == "openai"
     assert config.providers["openai"].type == "openai"
 
 

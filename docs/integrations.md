@@ -21,6 +21,11 @@ inferrail serve --quickstart
 to the matching one. Only the provider whose key is set will succeed.
 Real requests are billed by your provider as usual.
 
+The model ids in the examples below are only examples. Inferrail doesn't
+choose a model: send any model your account can use. `inferrail models`
+lists them and shows which ones have a price (needed under a dollar
+budget).
+
 Clients then point at the gateway. Unless you set
 `INFERRAIL_GATEWAY_TOKEN`, the gateway ignores the client's API key, so
 any placeholder works.
@@ -215,14 +220,15 @@ Give related requests the same `work_id`, then declare an outcome when
 your application knows one:
 
 ```bash
-inferrail try "Review this contract clause" -a work_id=contract_review_42
-inferrail try "Identify remaining risks"   -a work_id=contract_review_42
+inferrail try "Review this contract clause" --model <model id> -a work_id=contract_review_42
+inferrail try "Identify remaining risks"   --model <model id> -a work_id=contract_review_42
 inferrail work outcome contract_review_42 --status completed
 inferrail work contract_review_42
 inferrail work --all
 ```
 
-`inferrail try` sends one real, billed request with `OPENAI_API_KEY`. Over
+`inferrail try` sends one real, billed request with `OPENAI_API_KEY` to
+the model you name (`inferrail models` lists yours). Over
 HTTP, use `X-Inferrail-Attribute-Work-Id: contract_review_42`.
 
 Work Economics reports the **known** attributed inference cost for that

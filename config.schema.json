@@ -415,8 +415,7 @@
     }
   },
   "required": [
-    "providers",
-    "routes"
+    "providers"
   ],
   "title": "Inferrail configuration (inferrail.yaml)",
   "type": "object"
