@@ -259,11 +259,9 @@ llm = LLM(model="gpt-4o-mini", base_url=base_url,
 
 CrewAI retries a failed call up to its retry limit; each retry of a
 refused call is also refused before the provider, so it costs nothing.
-CrewAI pins `mcp~=1.28`, which conflicts with Inferrail's `mcp>=2.0`, so
-`inferrail.start()` can't share CrewAI's environment: run the gateway
-from its own environment (`inferrail serve --quickstart --app-mode`, see
-the [CrewAI page](crewai-run-budget.md#start-inferrail)) and use
-`base_url = "http://127.0.0.1:8000/v1"`. Tested with `crewai` 1.15.23.
+Use `inferrail` 0.4.10 or later in the same environment as CrewAI
+(earlier versions required an `mcp` version CrewAI can't install).
+Tested with `crewai` 1.15.23 and `inferrail` 0.4.10.
 
 ### LlamaIndex
 
@@ -467,10 +465,8 @@ model = OpenAIChatModel(
 ```
 
 Create one model per run. A refused call raises `openai.APIStatusError`
-(`status_code == 402`). AgentScope pins `mcp<2.0`, which conflicts with
-Inferrail's `mcp>=2.0`, so run the gateway from its own environment
-(`inferrail serve --quickstart --app-mode`) and use
-`base_url = "http://127.0.0.1:8000/v1"`. Tested with `agentscope` 2.0.9.
+(`status_code == 402`). Needs `inferrail` 0.4.10 or later in the same
+environment. Tested with `agentscope` 2.0.9.
 
 ### CAMEL
 
@@ -491,11 +487,9 @@ agent = ChatAgent(model=model)
 ```
 
 Create one model per run (or per Workforce run). A refused call raises
-`openai.APIStatusError` (`status_code == 402`). `camel-ai` 0.2.90 fails
-to import with `mcp` 2.x, which Inferrail requires, so run the gateway
-from its own environment (`inferrail serve --quickstart --app-mode`) and
-use `base_url = "http://127.0.0.1:8000/v1"`. Tested with `camel-ai`
-0.2.90 and `mcp` 1.29.
+`openai.APIStatusError` (`status_code == 402`). `camel-ai` 0.2.90 fails to import with `mcp` 2.x, so keep `mcp<2` in
+that environment (`inferrail` 0.4.10 or later doesn't require `mcp`).
+Tested with `camel-ai` 0.2.90, `mcp` 1.29 and `inferrail` 0.4.10.
 
 ### Semantic Kernel (Python)
 
@@ -515,11 +509,8 @@ service = OpenAIChatCompletion(
 ```
 
 Create one service per run. A refused call raises
-`ServiceResponseException` wrapping the 402. Semantic Kernel pins
-`mcp<2.0`, which conflicts with Inferrail's `mcp>=2.0`, so run the
-gateway from its own environment (`inferrail serve --quickstart
---app-mode`) and use `base_url = "http://127.0.0.1:8000/v1"`. Tested
-with `semantic-kernel` 1.44.1.
+`ServiceResponseException` wrapping the 402. Needs `inferrail` 0.4.10 or later in
+the same environment. Tested with `semantic-kernel` 1.44.1.
 
 ### Langroid
 
