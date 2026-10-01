@@ -28,7 +28,7 @@ inferrail mcp           # or `uvx inferrail mcp`; `inferrail-mcp` also works
 ```
 
 Speaks MCP over stdio — not meant to be run interactively; see the client
-config snippets in the main [README](../README.md#mcp). From a checkout,
+config snippets in the [integrations guide](../docs/integrations.md#mcp). From a checkout,
 `pip install -e ".[dev]"` at the repo root.
 
 ## Receipts path

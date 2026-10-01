@@ -3,12 +3,12 @@ INFERRAIL DEMO — canned responses, not real provider billing
 ========================================================================
 Writing receipts to inferrail-demo-receipts.jsonl
 
-  [default ] acme       ->  143 completion tokens (latency 0.03ms)
-  [default ] acme       ->   98 completion tokens (latency 0.02ms)
-  [default ] globex     ->   76 completion tokens (latency 0.01ms)
-  [large   ] globex     ->  340 completion tokens (latency 0.01ms)
-  [default ] (unattributed) ->   50 completion tokens (latency 0.01ms)
-  [preview ] acme       ->  120 completion tokens (latency 0.01ms)
+  [default ] acme       ->  143 completion tokens (latency 0.14ms)
+  [default ] acme       ->   98 completion tokens (latency 0.05ms)
+  [default ] globex     ->   76 completion tokens (latency 0.03ms)
+  [large   ] globex     ->  340 completion tokens (latency 0.03ms)
+  [default ] (unattributed) ->   50 completion tokens (latency 0.03ms)
+  [preview ] acme       ->  120 completion tokens (latency 0.05ms)
 
 Done. Every one of those requests just produced a real
 InferenceReceipt via the exact same InferenceEngine code path

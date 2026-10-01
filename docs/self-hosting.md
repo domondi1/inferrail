@@ -60,6 +60,37 @@ usage beacon): [inferrail.example.yaml](../inferrail.example.yaml) and
 | Telemetry events | stdout (console sink) | Operational metadata: status, error category, latency, tokens |
 | Work outcomes | `./inferrail-work-outcomes.jsonl` | `work_id`, your outcome label, timestamp |
 
+A receipt, from `inferrail demo` (synthetic data, abbreviated):
+
+```json
+{
+  "receipt_id": "ir_182ef30f1bb44d8db2a4",
+  "route": "default",
+  "provider": "demo",
+  "model": "demo-small",
+  "status": "success",
+  "prompt_tokens": 812,
+  "completion_tokens": 143,
+  "pricing": {
+    "input_usd_per_million": "0.20",
+    "output_usd_per_million": "0.80",
+    "source": "DEMO — a made-up round number, not a real provider price",
+    "verified_date": "2026-09-30"
+  },
+  "estimated_cost_usd": "0.000277",
+  "attributes": {"customer": "acme", "workflow": "contract-review", "work_id": "work-contract-1"}
+}
+```
+
+Omitted here: `request_id`, `timestamp`, `total_latency_ms`,
+`retry_count`, and the prompt-cache token and price fields (all `null`
+here). The full receipt is in
+[demo-capture/receipt-priced.txt](assets/demo-capture/receipt-priced.txt). When a model has no price on
+file, `pricing` and `estimated_cost_usd` are `null`, and reports count
+that request as unknown cost instead of `$0`. Full field list:
+[receipts/schema.py](../src/inferrail/receipts/schema.py), or run
+`inferrail verify-payload-free`.
+
 Set `receipts.sink: sqlite` for an indexed WAL-mode SQLite store
 ([ADR 0013](adr/0013-sqlite-receipts-store.md)), or `none` to disable
 receipts.

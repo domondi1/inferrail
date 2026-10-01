@@ -661,6 +661,13 @@ to check it, each with a different scope:
    never reach a receipt or telemetry event:
    `tests/unit/test_gateway_receipts.py`, `tests/unit/test_gateway.py`,
    `tests/unit/test_gateway_anthropic.py`.
+   The code those tests exercise: request handlers
+   (`src/inferrail/gateway/routes.py`), execution engines
+   (`gateway/execution.py`, `gateway/anthropic_execution.py`), provider
+   adapters (`providers/openai.py`, `providers/anthropic.py`), the
+   receipt builder (`receipts/builder.py`), and the sinks
+   (`receipts/sinks.py`, `receipts/sqlite_store.py`), all under
+   `src/inferrail/`.
 3. Against your own running gateway:
 
 In `inferrail.yaml`, set:
