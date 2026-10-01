@@ -1,7 +1,7 @@
 {
-  "inferrail_version": "0.4.7",
-  "label": "0.4.7+3e0c3e4",
-  "package": "this checkout",
+  "inferrail_version": "0.4.8",
+  "label": "0.4.8",
+  "package": "inferrail==0.4.8",
   "python": "3.12.1",
   "platform": "linux",
   "api_keys_in_env": false,
@@ -26,15 +26,11 @@
       "scene": "feed"
     },
     {
-      "file": "03-feed.png",
-      "scene": "feed"
-    },
-    {
-      "file": "04-work.png",
+      "file": "03-work.png",
       "scene": "work"
     },
     {
-      "file": "05-budgets.png",
+      "file": "04-budgets.png",
       "scene": "budgets"
     }
   ]
