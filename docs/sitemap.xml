@@ -3,4 +3,40 @@
   <url>
     <loc>https://tryinferrail.com/</loc>
   </url>
+  <url>
+    <loc>https://tryinferrail.com/try/</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/agent-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/langgraph-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/crewai-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/openai-agents-sdk-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/strands-agents-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/recipes/vercel-ai-sdk-run-budget.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/integrations.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/self-hosting.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/comparison.html</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/work-economics/</loc>
+  </url>
+  <url>
+    <loc>https://tryinferrail.com/labs/</loc>
+  </url>
 </urlset>

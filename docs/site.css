@@ -231,7 +231,7 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
 
 /* ---------- Footer ---------- */
 .site-footer { border-top: 1px solid var(--ink); padding-block: var(--space-4) var(--space-3); color: var(--ink-2); font-size: 15px; }
-.footer-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+.footer-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-3); }
 .footer-name { font: 700 16px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); text-decoration: none; }
 .footer-brand p { margin: 10px 0 0; max-width: 36ch; }
 .footer-brand address { margin-top: 14px; font-style: normal; font-size: 14px; }
