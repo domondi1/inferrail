@@ -77,6 +77,38 @@ _CHARS_PER_TOKEN_UPPER_BOUND = 3
 DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE = 4096
 
 
+# Reserved per image content part, in prompt tokens. Images are billed by
+# the provider as input tokens whose count depends on the model and the
+# image size; a fixed, generous assumption keeps admission an upper bound
+# for current OpenAI-compatible models without decoding images. The real
+# cost still comes from the provider's reported usage at reconciliation.
+# Known exception: gpt-4o-mini bills high-detail images at far more tokens
+# than this, so a reservation there can be exceeded by that one call (the
+# overrun is recorded and the run's later calls are refused).
+IMAGE_TOKEN_ESTIMATE = 3000
+
+
+def approx_message_chars(messages: list[dict[str, object]]) -> int:
+    """`approx_char_count` for chat messages, except that each
+    `image_url` content part counts as `IMAGE_TOKEN_ESTIMATE` tokens instead
+    of the length of its URL (a base64 `data:` URL is mostly encoding, not
+    billed tokens)."""
+    total = 0
+    for message in messages:
+        content = message.get("content")
+        rest = {k: v for k, v in message.items() if k != "content"}
+        total += approx_char_count(rest)
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, Mapping) and part.get("type") == "image_url":
+                    total += IMAGE_TOKEN_ESTIMATE * _CHARS_PER_TOKEN_UPPER_BOUND
+                else:
+                    total += approx_char_count(part)
+        else:
+            total += approx_char_count(content)
+    return total
+
+
 def approx_char_count(value: object) -> int:
     """Sums string lengths anywhere inside a JSON-like structure (dict,
     list, or str) — used to turn a request's messages/system content into

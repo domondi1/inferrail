@@ -4,7 +4,7 @@ Request fields follow an explicit three-list policy (see
 docs/adr/0021-atomic-budget-reservations.md): fields Inferrail
 interprets, provider-valid fields it forwards unchanged
 (``FORWARDED_FIELDS``), and fields it rejects with a stated reason
-(``REJECTED_FIELD_REASONS``). Still unsupported: ``n != 1``, non-text
+(``REJECTED_FIELD_REASONS``). Still unsupported: ``n != 1``, audio/file
 content parts. See docs/PRODUCT.md for the full supported-surface list.
 
 ``ChatCompletionRequest`` forbids every other top-level field

@@ -22,7 +22,7 @@ matching exactly. See docs/PRODUCT.md and the Phase 2A design notes.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -43,14 +43,50 @@ class ToolCall(BaseModel):
 
 
 class TextContentPart(BaseModel):
-    """One `{"type": "text"}` content part — the only part type accepted.
-    Image/audio/file parts are rejected, not silently dropped (see
-    docs/adr/0021-atomic-budget-reservations.md's field policy)."""
+    """One `{"type": "text"}` content part. Audio/file parts are rejected,
+    not silently dropped (see docs/adr/0021-atomic-budget-reservations.md's
+    field policy)."""
 
     model_config = {"extra": "forbid"}
 
     type: Literal["text"]
     text: str
+
+
+class ImageUrl(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # An https URL or a `data:` URL. Forwarded as-is and never persisted.
+    url: str
+    detail: Literal["auto", "low", "high"] | None = None
+
+
+class ImageUrlContentPart(BaseModel):
+    """One `{"type": "image_url"}` content part (vision input, e.g. a
+    browser agent's screenshot). Forwarded unchanged to OpenAI-compatible
+    providers; budget admission reserves a fixed per-image token estimate
+    (`budgets.enforcement.IMAGE_TOKEN_ESTIMATE`) and the actual cost comes
+    from the provider's reported usage, as for text."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["image_url"]
+    image_url: ImageUrl
+
+
+class RefusalContentPart(BaseModel):
+    """An assistant message's `{"type": "refusal"}` part, replayed in
+    conversation history by some clients. Forwarded as-is."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["refusal"]
+    refusal: str
+
+
+ContentPart = Annotated[
+    TextContentPart | ImageUrlContentPart | RefusalContentPart, Field(discriminator="type")
+]
 
 
 class ChatMessage(BaseModel):
@@ -61,8 +97,8 @@ class ChatMessage(BaseModel):
     role: Role
     # None for an assistant message that only carries tool_calls, and for
     # provider-shaped messages generally where content is nullable. A list
-    # of text parts is forwarded as-is (agent frameworks send both shapes).
-    content: str | list[TextContentPart] | None = None
+    # of text/image parts is forwarded as-is (agent frameworks send both shapes).
+    content: str | list[ContentPart] | None = None
     # An optional participant name, forwarded verbatim.
     name: str | None = None
     # An assistant message the model refused — agent frameworks replay it

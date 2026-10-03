@@ -245,7 +245,27 @@ def test_agent_framework_message_shapes_are_forwarded(
     ] + messages[3:]
 
 
-def test_non_text_content_part_is_rejected(
+def test_image_content_part_is_forwarded_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    upstream = Upstream()
+    client = _client(monkeypatch, tmp_path, upstream)
+    content = [
+        {"type": "text", "text": "what is on this page?"},
+        {"type": "image_url",
+         "image_url": {"url": "data:image/png;base64,iVBORw0KGgo=", "detail": "low"}},
+    ]
+
+    response = client.post(
+        "/v1/chat/completions", json=_body(messages=[{"role": "user", "content": content}])
+    )
+
+    assert response.status_code == 200, response.text
+    [sent] = upstream.bodies
+    assert sent["messages"] == [{"role": "user", "content": content}]
+
+
+def test_image_part_without_detail_is_forwarded_without_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     upstream = Upstream()
@@ -254,6 +274,45 @@ def test_non_text_content_part_is_rejected(
 
     response = client.post(
         "/v1/chat/completions", json=_body(messages=[{"role": "user", "content": content}])
+    )
+
+    assert response.status_code == 200, response.text
+    assert upstream.bodies[0]["messages"][0]["content"] == content
+
+
+def test_assistant_refusal_content_part_is_forwarded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    upstream = Upstream()
+    client = _client(monkeypatch, tmp_path, upstream)
+    messages = [
+        {"role": "user", "content": "do the thing"},
+        {"role": "assistant", "content": [{"type": "refusal", "refusal": "I can't."}]},
+        {"role": "user", "content": "ok, something else"},
+    ]
+
+    response = client.post("/v1/chat/completions", json=_body(messages=messages))
+
+    assert response.status_code == 200, response.text
+    assert upstream.bodies[0]["messages"] == messages
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+        {"type": "file", "file": {"file_id": "file-1"}},
+        {"type": "image_url", "image_url": {"url": "https://example.invalid/a.png", "x": 1}},
+    ],
+)
+def test_other_content_parts_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, part: dict[str, Any]
+) -> None:
+    upstream = Upstream()
+    client = _client(monkeypatch, tmp_path, upstream)
+
+    response = client.post(
+        "/v1/chat/completions", json=_body(messages=[{"role": "user", "content": [part]}])
     )
 
     assert response.status_code in (400, 422)
