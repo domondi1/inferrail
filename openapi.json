@@ -535,7 +535,25 @@
               },
               {
                 "items": {
-                  "$ref": "#/components/schemas/TextContentPart"
+                  "discriminator": {
+                    "mapping": {
+                      "image_url": "#/components/schemas/ImageUrlContentPart",
+                      "refusal": "#/components/schemas/RefusalContentPart",
+                      "text": "#/components/schemas/TextContentPart"
+                    },
+                    "propertyName": "type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentPart"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageUrlContentPart"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RefusalContentPart"
+                    }
+                  ]
                 },
                 "type": "array"
               },
@@ -639,6 +657,56 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageUrl": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "low",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ImageUrl",
+        "type": "object"
+      },
+      "ImageUrlContentPart": {
+        "additionalProperties": false,
+        "description": "One `{\"type\": \"image_url\"}` content part (vision input, e.g. a\nbrowser agent's screenshot). Forwarded unchanged to OpenAI-compatible\nproviders; budget admission reserves a fixed per-image token estimate\n(`budgets.enforcement.IMAGE_TOKEN_ESTIMATE`) and the actual cost comes\nfrom the provider's reported usage, as for text.",
+        "properties": {
+          "image_url": {
+            "$ref": "#/components/schemas/ImageUrl"
+          },
+          "type": {
+            "const": "image_url",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "image_url"
+        ],
+        "title": "ImageUrlContentPart",
         "type": "object"
       },
       "InferrailMetadata": {
@@ -964,9 +1032,30 @@
         "title": "MessagesUsage",
         "type": "object"
       },
+      "RefusalContentPart": {
+        "additionalProperties": false,
+        "description": "An assistant message's `{\"type\": \"refusal\"}` part, replayed in\nconversation history by some clients. Forwarded as-is.",
+        "properties": {
+          "refusal": {
+            "title": "Refusal",
+            "type": "string"
+          },
+          "type": {
+            "const": "refusal",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "refusal"
+        ],
+        "title": "RefusalContentPart",
+        "type": "object"
+      },
       "TextContentPart": {
         "additionalProperties": false,
-        "description": "One `{\"type\": \"text\"}` content part \u2014 the only part type accepted.\nImage/audio/file parts are rejected, not silently dropped (see\ndocs/adr/0021-atomic-budget-reservations.md's field policy).",
+        "description": "One `{\"type\": \"text\"}` content part. Audio/file parts are rejected,\nnot silently dropped (see docs/adr/0021-atomic-budget-reservations.md's\nfield policy).",
         "properties": {
           "text": {
             "title": "Text",
@@ -1052,7 +1141,7 @@
   },
   "info": {
     "title": "Inferrail",
-    "version": "0.4.11"
+    "version": "0.4.8"
   },
   "openapi": "3.1.0",
   "paths": {
