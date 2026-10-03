@@ -613,8 +613,11 @@ active-user numbers. Deploying a collector instance and configuring
 Not a hidden limitation — these are the honest edges of v0.1:
 
 - Multiple choices (`n != 1`) is rejected
-- Image / audio / file message content — only string content or
-  `{"type": "text"}` parts
+- Audio / file message content — only string content, `{"type": "text"}`, `{"type": "refusal"}`
+  parts and `{"type": "image_url"}` parts (images reserve a fixed
+  3,000-token estimate each under a budget; gpt-4o-mini can bill a
+  high-detail image above that, in which case that one call's overrun is
+  recorded and the run's later calls are refused)
 - Cost estimates for anything outside the built-in catalog or an explicit
   operator `pricing:` override — an unrecognized (provider, model) always
   produces `null`, never a guessed cost (see "Cost and receipts" above)

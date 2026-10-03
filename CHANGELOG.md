@@ -8,6 +8,15 @@ PyPI release (the hosted service and website ship independently of the
 
 ## Unreleased
 
+### Added
+- Chat messages can carry `image_url` content parts (vision input, such
+  as a browser agent's screenshots). They are forwarded unchanged to
+  OpenAI-compatible providers. Under a budget, each image reserves a
+  fixed 3,000-token estimate instead of being sized by its URL (a base64
+  screenshot no longer looks like ~100k tokens); the actual cost still
+  comes from the provider's reported usage. Audio and file parts are
+  still rejected. Assistant `refusal` content parts are now forwarded too.
+
 ### Changed
 - Package metadata now describes what Inferrail does today (per-run
   dollar budgets for agents and jobs), drops keywords left over from the

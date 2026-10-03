@@ -210,8 +210,13 @@ Other clients, and where `--app-mode` keeps its receipts:
 - **Providers:** OpenAI, Anthropic, and endpoints compatible with either.
   Built-in prices cover OpenAI and Anthropic models. Other endpoints
   need a price declared in your config, or their cost stays unknown.
-- **Not supported:** the OpenAI Responses API, embeddings, images, audio
-  and the Realtime API, batch, and native Gemini or Bedrock APIs. Request
+- **Images in chat messages** (`image_url` parts, e.g. a browser agent's
+  screenshots) are forwarded to OpenAI-compatible providers. Under a
+  budget each image reserves a fixed 3,000-token estimate; the actual
+  cost comes from the provider's reported usage.
+- **Not supported:** the OpenAI Responses API, embeddings, image
+  generation, audio and the Realtime API, batch, and native Gemini or
+  Bedrock APIs. Request
   fields the gateway can't account for are rejected with a clear error,
   never silently dropped.
 - **Scope:** only calls that go through a running gateway are counted,

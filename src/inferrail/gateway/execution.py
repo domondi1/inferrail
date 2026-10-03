@@ -67,6 +67,7 @@ from inferrail.budgets.enforcement import (
 from inferrail.budgets.enforcement import (
     BudgetEnforcer,
     approx_char_count,
+    approx_message_chars,
     augment_attributes_with_held,
 )
 from inferrail.budgets.store import Reservation
@@ -255,7 +256,7 @@ class InferenceEngine(BudgetAdmission):
         count — see
         `budgets.enforcement.DEFAULT_MAX_COMPLETION_TOKENS_ESTIMATE`."""
         prompt_chars = (
-            approx_char_count([m.model_dump() for m in request.messages])
+            approx_message_chars([m.model_dump() for m in request.messages])
             + approx_char_count(request.tools)
             + approx_char_count(request.response_format)
         )
@@ -674,3 +675,4 @@ class InferenceEngine(BudgetAdmission):
     @staticmethod
     def _elapsed_ms(started: float) -> float:
         return (time.perf_counter() - started) * 1000
+
