@@ -15,7 +15,7 @@ from inferrail.budgets.enforcement import (
     approx_char_count,
     approx_message_chars,
 )
-from tests.unit.test_field_policy import Upstream, _body, _client
+from test_field_policy import Upstream, _body, _client
 
 SCREENSHOT = "data:image/png;base64," + "A" * 300_000
 
