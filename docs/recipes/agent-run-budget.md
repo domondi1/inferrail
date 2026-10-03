@@ -12,7 +12,8 @@ What you get:
   object to create first.
 - **Parallel calls share the budget safely.** Each call reserves its
   estimated cost atomically before it's sent, so concurrent calls can't
-  all spend the same remaining dollars.
+  all spend the same remaining dollars
+  ([why check-then-record budgets leak](concurrent-llm-budget-race.md)).
 - **Refusal before the provider.** Once the run's remaining budget can't
   cover a call's reservation, that call gets HTTP 402 and never reaches
   the model provider.
