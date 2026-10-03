@@ -6,6 +6,14 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Changed
+- Package metadata now describes what Inferrail does today (per-run
+  dollar budgets for agents and jobs), drops keywords left over from the
+  paused AP product, and adds audience/topic classifiers plus homepage,
+  documentation and changelog links. No code change.
+
 ## v0.4.11 — 2026-10-01
 
 ### Added
