@@ -5,33 +5,39 @@ build-backend = "hatchling.build"
 [project]
 name = "inferrail"
 version = "0.4.11"
-description = "Self-hosted, OpenAI- and Anthropic-compatible LLM gateway that turns every request into a payload-free, attributable cost receipt -- know what your AI work costs, without keeping what it said."
+description = "Per-run dollar budgets for AI agents and jobs: an OpenAI- and Anthropic-compatible gateway, in-process or self-hosted, that refuses over-budget calls before the provider and keeps a payload-free cost record per run."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Inferrail contributors" }]
 keywords = [
     "llm",
-    "openai",
-    "llm-gateway",
-    "openai-compatible",
-    "inference-gateway",
-    "cost-attribution",
-    "llm-budget",
+    "ai-agents",
     "agent-budget",
+    "llm-budget",
+    "per-run-budget",
+    "spend-limit",
+    "cost-control",
+    "cost-attribution",
     "cost-tracking",
-    "llm-observability",
+    "llm-gateway",
+    "openai",
+    "openai-compatible",
+    "anthropic",
+    "inference-gateway",
     "self-hosted",
+    "langgraph",
+    "crewai",
     "developer-tools",
-    "mcp",
-    "accounts-payable",
-    "invoice-processing",
-    "exception-handling",
-    "ap-automation",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: Proxy Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
@@ -45,7 +51,10 @@ dependencies = [
 ]
 
 [project.urls]
+Homepage = "https://tryinferrail.com"
+Documentation = "https://tryinferrail.com/recipes/agent-run-budget.html"
 Repository = "https://github.com/domondi1/inferrail"
+Changelog = "https://github.com/domondi1/inferrail/blob/main/CHANGELOG.md"
 Issues = "https://github.com/domondi1/inferrail/issues"
 
 [project.optional-dependencies]
