@@ -588,6 +588,7 @@ class InferenceEngine(BudgetAdmission):
                         tool_calls=result.tool_calls,
                     ),
                     finish_reason=result.finish_reason,
+                    logprobs=result.logprobs,
                 )
             ],
             usage=ChatCompletionUsage(
