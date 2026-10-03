@@ -1,5 +1,17 @@
 # One job, one budget, everything it buys
 
+> **Experimental example. Local and Base Sepolia testnet only.** Not part
+> of the Inferrail gateway, not a product, no mainnet path, no real money.
+
+| | Local mode (default) | `--testnet` |
+|---|---|---|
+| x402 seller middleware, 402 challenge, payment headers | real | real |
+| EIP-3009 payment signatures, signature verification | real | real |
+| Budget ledger, reservations, delegation, refusals | real | real |
+| Chain, USDC balances, settlement | **simulated** (in-memory model of USDC's rules) | real (Base Sepolia, public x402.org facilitator) |
+| Model provider | **stub** with operator-declared prices | **stub** |
+| Seller's work (search, chat) | toy, deterministic | toy, deterministic |
+
 If you want an agent to pay for things on its own (x402 search, a
 pay-per-request LLM, another agent's API), the usual options are to give
 it a funded key and hope, or approve every payment yourself. Wallet caps
