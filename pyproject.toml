@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferrail"
-version = "0.4.11"
+version = "0.4.12"
 description = "Per-run dollar budgets for AI agents and jobs: an OpenAI- and Anthropic-compatible gateway, in-process or self-hosted, that refuses over-budget calls before the provider and keeps a payload-free cost record per run."
 readme = "README.md"
 requires-python = ">=3.11"
