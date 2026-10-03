@@ -6,6 +6,16 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Added
+- `logprobs` and `top_logprobs` are now forwarded on `/v1/chat/completions`,
+  and a non-streaming response returns the choice's `logprobs` object
+  unchanged (streams already passed it through). LLM-as-judge metrics
+  that score from token probabilities, such as DeepEval's G-Eval, failed
+  with `INFERRAIL_E006` before. Logprobs aren't billed separately, so
+  reservations and receipts are unchanged; they are never stored.
+
 ## v0.4.12 — 2026-10-03
 
 ### Added

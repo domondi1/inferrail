@@ -51,6 +51,8 @@ FORWARDED_FIELDS = frozenset(
         "prompt_cache_options",
         "safety_identifier",
         "service_tier",
+        "logprobs",
+        "top_logprobs",
     }
 )
 
@@ -64,8 +66,6 @@ REJECTED_FIELD_REASONS: dict[str, str] = {
     "audio": "audio output tokens aren't priced",
     "modalities": "audio output tokens aren't priced",
     "web_search_options": "per-call web search fees aren't priced",
-    "logprobs": "logprobs aren't returned on non-streaming responses yet",
-    "top_logprobs": "logprobs aren't returned on non-streaming responses yet",
     "functions": "deprecated by the provider; use tools",
     "function_call": "deprecated by the provider; use tool_choice",
 }
@@ -119,6 +119,8 @@ class ChatCompletionRequest(BaseModel):
     prompt_cache_options: dict[str, object] | None = None
     safety_identifier: str | None = None
     service_tier: str | None = None
+    logprobs: bool | None = None
+    top_logprobs: int | None = None
 
     def forwarded_fields(self) -> dict[str, object]:
         """The FORWARDED_FIELDS the client actually set, as sent."""
@@ -145,6 +147,9 @@ class ChatCompletionChoice(BaseModel):
     index: int = 0
     message: ChatCompletionChoiceMessage
     finish_reason: str | None = None
+    # The provider's `logprobs` object, passed back exactly as received
+    # when the client asked for it — never persisted.
+    logprobs: dict[str, object] | None = None
 
 
 class ChatCompletionUsage(BaseModel):

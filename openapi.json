@@ -52,6 +52,18 @@
             "title": "Index",
             "type": "integer"
           },
+          "logprobs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logprobs"
+          },
           "message": {
             "$ref": "#/components/schemas/ChatCompletionChoiceMessage"
           }
@@ -135,6 +147,17 @@
               }
             ],
             "title": "Logit Bias"
+          },
+          "logprobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logprobs"
           },
           "max_completion_tokens": {
             "anyOf": [
@@ -399,6 +422,17 @@
               }
             ],
             "title": "Tools"
+          },
+          "top_logprobs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Logprobs"
           },
           "top_p": {
             "anyOf": [
