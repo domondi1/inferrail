@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from test_field_policy import Upstream, _body, _client
 
 from inferrail.budgets.enforcement import (
     _CHARS_PER_TOKEN_UPPER_BOUND,
@@ -15,7 +16,6 @@ from inferrail.budgets.enforcement import (
     approx_char_count,
     approx_message_chars,
 )
-from test_field_policy import Upstream, _body, _client
 
 SCREENSHOT = "data:image/png;base64," + "A" * 300_000
 
