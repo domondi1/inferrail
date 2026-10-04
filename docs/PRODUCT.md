@@ -147,6 +147,13 @@ inspectable config file and gives you a telemetry record for every request
   like `"gpt-4o-mini-2024-07-18"`), `null` if the provider didn't return
   one or the request failed.
 - `GET /health`
+- `GET /v1/models` — OpenAI-compatible model list for clients that fill a
+  model picker from it: every configured route name, plus (when
+  `default_provider` is set) the ids that provider's own `GET /models`
+  returns, fetched live and never cached. If that list can't be fetched,
+  only the routes are listed. Same `INFERRAIL_GATEWAY_TOKEN` check as the
+  inference endpoints. Being listed says nothing about pricing; see
+  `inferrail models`.
 - One provider adapter (`OpenAIProvider`) that speaks the OpenAI
   `/chat/completions` wire format — usable against `api.openai.com` or any
   other endpoint that implements the same shape, via `base_url`

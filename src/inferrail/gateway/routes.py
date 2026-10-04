@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from inferrail.errors import GatewayAuthenticationError
+from inferrail.errors import GatewayAuthenticationError, InferrailError
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
 from inferrail.gateway.anthropic_schemas import (
     MessagesRequest,
@@ -17,6 +18,7 @@ from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 
 router = APIRouter()
+logger = logging.getLogger("inferrail.gateway")
 
 
 async def _require_gateway_token(
@@ -50,6 +52,54 @@ async def _require_gateway_token(
 )
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get(
+    "/v1/models",
+    operation_id="listModels",
+    summary="List models",
+    description="OpenAI-compatible model list, so clients that populate a model picker "
+    "from `GET /v1/models` work unchanged. Lists every route named in `inferrail.yaml` "
+    "and, when `default_provider` is set (model ids pass through), the ids that "
+    "provider's own `GET /models` returns, fetched live with the configured key and "
+    "never cached. If that upstream list can't be fetched, only the routes are listed. "
+    "Listing a model says nothing about whether Inferrail has a price for it; see "
+    "`inferrail models`.",
+    dependencies=[Depends(_require_gateway_token)],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "object": "list",
+                        "data": [
+                            {"id": "gpt-4o-mini", "object": "model", "created": 0,
+                             "owned_by": "openai"}
+                        ],
+                    }
+                }
+            }
+        }
+    },
+)
+async def list_models(request: Request) -> dict[str, object]:
+    config = request.app.state.config
+    owners: dict[str, str] = {name: route.provider for name, route in config.routes.items()}
+    default_provider = config.default_provider
+    provider = request.app.state.providers.get(default_provider) if default_provider else None
+    if provider is not None and hasattr(provider, "list_models"):
+        try:
+            for model_id in await provider.list_models():
+                owners.setdefault(model_id, default_provider)
+        except InferrailError as exc:
+            logger.warning("model list unavailable, listing routes only: %s", exc)
+    return {
+        "object": "list",
+        "data": [
+            {"id": model_id, "object": "model", "created": 0, "owned_by": owner}
+            for model_id, owner in sorted(owners.items())
+        ],
+    }
 
 
 @router.post(

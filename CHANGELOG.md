@@ -15,6 +15,14 @@ PyPI release (the hosted service and website ship independently of the
   that score from token probabilities, such as DeepEval's G-Eval, failed
   with `INFERRAIL_E006` before. Logprobs aren't billed separately, so
   reservations and receipts are unchanged; they are never stored.
+- `GET /v1/models`, so chat UIs and other clients that populate a model
+  picker from it (Open WebUI, for example) work against the gateway
+  without listing model ids by hand. It returns every configured route and,
+  when `default_provider` is set, the ids the provider's own
+  `GET /models` returns (fetched live with the configured key, never
+  cached). If the upstream list can't be fetched, only the routes are
+  listed. It uses the same `INFERRAIL_GATEWAY_TOKEN` check as the
+  inference endpoints.
 
 ## v0.4.12 — 2026-10-03
 
