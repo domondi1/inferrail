@@ -131,6 +131,7 @@ inferrail work run-7f3a                     # with inferrail serve: add --config
 Work:                              run-7f3a
 Inference receipts:                8
 Known attributed inference cost:   $0.000...
+Attributed tokens:                 1,240 (900 in + 340 out)
 Unknown-cost inference receipts:   0
 ```
 

@@ -62,7 +62,8 @@ def test_work_inspection_loads_receipts_and_persisted_outcome(
     outcomes = tmp_path / "outcomes.jsonl"
     _write_receipts(
         receipts,
-        [_receipt(attributes={"work_id": "work-a"}, estimated_cost_usd=Decimal("0.120000"))],
+        [_receipt(attributes={"work_id": "work-a"}, estimated_cost_usd=Decimal("0.120000"),
+                  prompt_tokens=900, completion_tokens=340)],
     )
     main(["work", "outcome", "work-a", "--status", "resolved", "--outcomes", str(outcomes)])
     capsys.readouterr()
@@ -71,6 +72,7 @@ def test_work_inspection_loads_receipts_and_persisted_outcome(
     output = capsys.readouterr().out
     assert "resolved" in output
     assert "Known attributed inference cost:    $0.12" in output
+    assert "Attributed tokens:                  1240 (900 in + 340 out)" in output
 
 
 def test_work_aggregate_groups_outcomes_without_interpreting_business_success(

@@ -6,6 +6,15 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Added
+- `inferrail work <id>` now reports the run's total attributed tokens
+  (input + output), summed from its receipts, next to the cost. Reads
+  "unavailable" when no receipt reported usage, so a run whose usage
+  never arrived is never shown as a misleading zero. Makes the command a
+  complete per-run economic record without exporting receipts.
+
 ## v0.4.13 — 2026-10-04
 
 ### Added

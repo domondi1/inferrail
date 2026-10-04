@@ -199,3 +199,40 @@ def test_work_outcome_schema_has_no_payload_fields() -> None:
 
     assert not (set(WorkOutcomeRecord.model_fields) & forbidden)
     assert not (set(WorkSummary.model_fields) & forbidden)
+
+
+def test_work_summary_sums_tokens_over_receipts() -> None:
+    receipts = [
+        _receipt(
+            receipt_id="ir_1",
+            attributes={"work_id": "work-tok"},
+            estimated_cost_usd=Decimal("0.001000"),
+            prompt_tokens=100,
+            completion_tokens=20,
+        ),
+        _receipt(
+            receipt_id="ir_2",
+            attributes={"work_id": "work-tok"},
+            estimated_cost_usd=Decimal("0.002000"),
+            prompt_tokens=50,
+            completion_tokens=10,
+        ),
+    ]
+
+    summary = build_work_summary("work-tok", receipts, [])
+
+    assert summary is not None
+    assert summary.prompt_tokens == 150
+    assert summary.completion_tokens == 30
+
+
+def test_work_summary_tokens_are_none_when_no_receipt_reported_usage() -> None:
+    # A receipt whose usage never arrived (e.g. a stream without usage, or a
+    # refusal) must leave token totals unknown, not a misleading zero.
+    receipts = [_receipt(attributes={"work_id": "work-none"}, status="error")]
+
+    summary = build_work_summary("work-none", receipts, [])
+
+    assert summary is not None
+    assert summary.prompt_tokens is None
+    assert summary.completion_tokens is None

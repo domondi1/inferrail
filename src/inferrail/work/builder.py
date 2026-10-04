@@ -96,6 +96,8 @@ def build_work_summary(
         known_attributed_inference_cost_usd=(economics.known_cost_usd if matching else None),
         unknown_cost_count=economics.unknown_cost_count,
         inference_status=economics.status,
+        prompt_tokens=(economics.prompt_tokens if matching else None),
+        completion_tokens=(economics.completion_tokens if matching else None),
     )
 
 
