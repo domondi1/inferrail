@@ -40,7 +40,7 @@ nothing is sent.
 ## Run it
 
 ```bash
-git clone -b strategy/agent-economy-2026-10 https://github.com/domondi1/inferrail
+git clone -b examples/agent-economy https://github.com/domondi1/inferrail
 cd inferrail
 pip install "x402[evm,fastapi,httpx]==2.22.0" uvicorn
 python examples/agent_economy/demo.py
