@@ -120,6 +120,8 @@ FORWARDED: dict[str, Any] = {
     "prompt_cache_options": {"mode": "auto"},
     "safety_identifier": "user-hash-1",
     "service_tier": "auto",
+    "logprobs": True,
+    "top_logprobs": 2,
 }
 
 
@@ -175,8 +177,6 @@ def test_unmodeled_unknown_field_is_still_rejected(
         ("audio", {"voice": "alloy", "format": "wav"}, "audio"),
         ("modalities", ["text", "audio"], "audio"),
         ("web_search_options", {}, "search"),
-        ("logprobs", True, "logprobs"),
-        ("top_logprobs", 2, "logprobs"),
         ("functions", [{"name": "f", "parameters": {}}], "tools"),
         ("function_call", "auto", "tool_choice"),
     ],
@@ -357,6 +357,52 @@ def test_refusal_is_returned_on_a_non_streaming_response(
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["refusal"] == "No."
+
+
+def test_logprobs_are_returned_on_a_non_streaming_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """LLM-as-judge metrics (e.g. G-Eval) score from top_logprobs."""
+    logprobs = {
+        "content": [
+            {"token": "7", "logprob": -0.1, "bytes": [55],
+             "top_logprobs": [{"token": "7", "logprob": -0.1, "bytes": [55]},
+                              {"token": "8", "logprob": -2.4, "bytes": [56]}]}
+        ],
+        "refusal": None,
+    }
+    upstream = Upstream(
+        {
+            "id": "chatcmpl-3",
+            "model": "gpt-4o-mini",
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "7"},
+                 "logprobs": logprobs, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+        }
+    )
+    client = _client(monkeypatch, tmp_path, upstream)
+
+    response = client.post(
+        "/v1/chat/completions", json=_body(logprobs=True, top_logprobs=2)
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["logprobs"] == logprobs
+
+
+def test_logprobs_are_null_when_not_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    upstream = Upstream()
+    client = _client(monkeypatch, tmp_path, upstream)
+
+    response = client.post("/v1/chat/completions", json=_body())
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["logprobs"] is None
+    assert "logprobs" not in upstream.bodies[0]
 
 
 def test_max_completion_tokens_bounds_the_reservation(

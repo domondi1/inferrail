@@ -102,13 +102,13 @@ inspectable config file and gives you a telemetry record for every request
     `frequency_penalty`, `presence_penalty`, `logit_bias`, `metadata`,
     `store`, `reasoning_effort`, `verbosity`, `prediction`,
     `prompt_cache_key`, `prompt_cache_retention`,
-    `prompt_cache_options`, `safety_identifier`, and `service_tier`
-    when it is `auto` or `default`.
+    `prompt_cache_options`, `safety_identifier`, `logprobs`,
+    `top_logprobs` (the response's `logprobs` object is passed back
+    unchanged), and `service_tier` when it is `auto` or `default`.
   - **Rejected with a stated reason (`INFERRAIL_E006`):** `n != 1`;
     other `service_tier` values and `audio`/`modalities`/
     `web_search_options` (billed in ways the pricing catalog doesn't
-    cover); `logprobs`/`top_logprobs` (not returned on non-streaming
-    responses yet); the deprecated `functions`/`function_call`.
+    cover); the deprecated `functions`/`function_call`.
   - **Anything else** is rejected with `INFERRAIL_E006` naming the
     field, never accepted and quietly ignored.
 

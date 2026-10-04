@@ -147,6 +147,9 @@ class NormalizedChatResponse(BaseModel):
     # back to the client — never persisted.
     refusal: str | None = None
     tool_calls: list[ToolCall] | None = None
+    # The choice's `logprobs` object, when the client requested it.
+    # Passed back to the client unchanged — never persisted.
+    logprobs: dict[str, object] | None = None
     raw_model: str | None = None
     provider_request_id: str | None = None
 

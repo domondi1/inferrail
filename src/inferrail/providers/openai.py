@@ -208,6 +208,7 @@ class OpenAIProvider:
             content=message.get("content"),
             refusal=message.get("refusal"),
             finish_reason=choice.get("finish_reason"),
+            logprobs=choice.get("logprobs"),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
             tool_calls=tool_calls,
