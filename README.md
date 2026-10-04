@@ -205,8 +205,9 @@ Other clients, and where `--app-mode` keeps its receipts:
 
 - **Endpoints:** `POST /v1/chat/completions` (OpenAI-compatible) and
   `POST /v1/messages` (Anthropic-compatible), with streaming and tool
-  calls. Any client that lets you set a base URL and sends these request
-  shapes can use them.
+  calls, plus `GET /v1/models` for clients that list models first. Any
+  client that lets you set a base URL and sends these request shapes can
+  use them.
 - **Providers:** OpenAI, Anthropic, and endpoints compatible with either.
   Built-in prices cover OpenAI and Anthropic models. Other endpoints
   need a price declared in your config, or their cost stays unknown.

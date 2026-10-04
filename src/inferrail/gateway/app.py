@@ -235,6 +235,7 @@ def create_app(
     app = FastAPI(title="Inferrail", version=__version__, lifespan=lifespan)
     app.state.config = config
     app.state.engine = engine
+    app.state.providers = providers
     app.state.anthropic_engine = anthropic_engine
     # Optional shared-secret gateway auth: unset by default (localhost dev
     # mode). If set, gateway/routes.py rejects requests to inference

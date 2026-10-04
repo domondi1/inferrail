@@ -1337,6 +1337,66 @@
         },
         "summary": "Create a message (Anthropic-compatible)"
       }
+    },
+    "/v1/models": {
+      "get": {
+        "description": "OpenAI-compatible model list, so clients that populate a model picker from `GET /v1/models` work unchanged. Lists every route named in `inferrail.yaml` and, when `default_provider` is set (model ids pass through), the ids that provider's own `GET /models` returns, fetched live with the configured key and never cached. If that upstream list can't be fetched, only the routes are listed. Listing a model says nothing about whether Inferrail has a price for it; see `inferrail models`.",
+        "operationId": "listModels",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "created": 0,
+                      "id": "gpt-4o-mini",
+                      "object": "model",
+                      "owned_by": "openai"
+                    }
+                  ],
+                  "object": "list"
+                },
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Listmodels",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List models"
+      }
     }
   }
 }

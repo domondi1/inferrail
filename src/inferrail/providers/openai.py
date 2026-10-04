@@ -66,6 +66,29 @@ class OpenAIProvider:
         self._client = client or httpx.AsyncClient()
         self._client.headers["Authorization"] = f"Bearer {api_key}"
 
+    async def list_models(self, *, timeout: float = 10.0) -> list[str]:
+        """The model ids the upstream's own ``GET /models`` lists.
+
+        Read-only discovery for ``GET /v1/models``. Raises
+        :class:`ProviderError` when the upstream has no usable list
+        endpoint (many compatible gateways don't), so the caller can
+        report that instead of guessing."""
+        self._require_api_key()
+        try:
+            response = await self._client.get(f"{self._base_url}/models", timeout=timeout)
+            response.raise_for_status()
+            data = response.json().get("data")
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ProviderError(
+                f"provider '{self.name}' has no usable model list: {exc}", provider=self.name
+            ) from exc
+        if not isinstance(data, list):
+            raise ProviderError(
+                f"provider '{self.name}' returned a model list without a 'data' array",
+                provider=self.name,
+            )
+        return sorted({str(item["id"]) for item in data if isinstance(item, dict) and "id" in item})
+
     def _require_api_key(self) -> None:
         # `registry.build_providers(require_keys=False)` lets the gateway
         # start with no key configured for this provider (so /health comes
