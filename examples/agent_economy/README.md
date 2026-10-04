@@ -40,11 +40,14 @@ nothing is sent.
 ## Run it
 
 ```bash
-pip install -e '.[hosted]'           # x402, eth-account, fastapi, uvicorn, httpx
+git clone -b strategy/agent-economy-2026-10 https://github.com/domondi1/inferrail
+cd inferrail
+pip install "x402[evm,fastapi,httpx]==2.22.0" uvicorn
 python examples/agent_economy/demo.py
 ```
 
-About two seconds. No keys, no network, no money. Output (abridged):
+About a minute from a fresh clone, including the install; the demo itself
+takes two seconds. No keys, no account, no money. Output (abridged):
 
 ```
   [parent] model call                     -> cost $0.000251
