@@ -70,6 +70,14 @@ class BaseSepoliaReader:
         result = self._rpc("eth_call", [{"to": USDC, "data": "0x" + data.hex()}, "latest"])
         return bool(decode(["bool"], bytes.fromhex(result[2:]))[0])
 
+    def balance_of(self, address: str) -> int:
+        from eth_abi import decode, encode
+        from eth_utils import keccak
+
+        data = keccak(text="balanceOf(address)")[:4] + encode(["address"], [address])
+        result = self._rpc("eth_call", [{"to": USDC, "data": "0x" + data.hex()}, "latest"])
+        return int(decode(["uint256"], bytes.fromhex(result[2:]))[0])
+
     def used_event(self, authorizer: str, nonce: str, windows: int = 12) -> Any:
         """Best effort: the transaction hash, from AuthorizationUsed logs.
 
@@ -252,6 +260,7 @@ def main() -> None:
             "LOCAL simulated chain (signatures and x402 are real; the ledger of USDC is not)"
         )
 
+    start_balance = chain.balance_of(payer.address)
     serve(create_seller_app(facilitator, pay_to, seller_url), seller_port)
     state = Path(tempfile.mkdtemp(prefix="inferrail-authority-"))
     rt = AuthorityRuntime(
@@ -274,15 +283,18 @@ def main() -> None:
     print("agent process environment:", sorted(agent_env), "(no key of any kind)\n", flush=True)
     subprocess.run([sys.executable, str(HERE / "agent.py")], env=agent_env, check=True)
 
-    rt.reconcile()
+    for _ in range(10):  # a public RPC can trail settlement by a few seconds
+        if "AUTHORIZED" not in rt.reconcile().values():
+            break
+        time.sleep(3)
     record = rt.record(WORK_ID)
     print_record(record, chain_note)
-    if not args.testnet:
-        outflow = 20_000 - local.balance_of(payer.address)
-        print(
-            f"payer USDC outflow: {usd(Decimal(outflow).scaleb(-6))} "
-            f"(= x402 settled spend; can never exceed the ${BUDGET} funded)"
-        )
+    outflow = start_balance - chain.balance_of(payer.address)
+    print(
+        f"payer USDC outflow: {usd(Decimal(outflow).scaleb(-6))} "
+        f"(read from the {'Base Sepolia USDC contract' if args.testnet else 'simulated chain'}; "
+        f"x402 settled spend only)"
+    )
     if args.json:
         args.json.write_text(json.dumps(record, indent=2, default=str))
 
