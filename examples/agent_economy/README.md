@@ -138,6 +138,43 @@ Not guaranteed, stated plainly:
 - Single runtime, one payer key, EVM `exact` payments in USDC only. No
   `upto`, refunds, discovery, or hosted mode.
 
+## Use it on your own agent
+
+The piece you'd reuse is `authority.py` (`AuthorityRuntime`). It holds the
+payer key and your provider key; your agent holds only a token. Four verbs:
+
+```python
+from authority import AuthorityRuntime, ModelProvider
+from decimal import Decimal
+
+rt = AuthorityRuntime(
+    state_dir,
+    payer=your_eth_account,          # the only place the payer key lives
+    chain=chain_reader,              # BaseSepoliaReader() for testnet; see demo.py
+    http=httpx.Client(),
+    provider=ModelProvider(...),     # your model call + its per-token prices
+)
+
+job   = rt.open_work("run-42", Decimal("5.00"))      # one job, one budget
+child = rt.delegate(job, "researcher", Decimal("2.00"))  # a sub-agent's share, token only
+
+rt.pay(child, "GET", "https://any-x402-seller/endpoint", params={...})
+# reserved against the child's $2 and signed only if it fits; refused before signing otherwise
+rt.record("run-42")                  # the economic tree: spent, reserved, remaining, per action
+```
+
+`pay()` works against any real x402 `exact` seller on Base Sepolia, so you
+can point it at a live endpoint today. Give your agent process only the
+token (as in `agent.py`), never the key. This is an experimental reference,
+not a packaged library: copy the module, or open an issue below and say what
+you're wrapping and we'll help fit it.
+
+## Questions or something broke?
+
+Open an issue at https://github.com/domondi1/inferrail/issues and say what
+you're running (framework, what your agents buy, who holds the key today).
+That is also the fastest way to tell us the demo didn't work for you.
+
 ## Files
 
 | File | What it is |
