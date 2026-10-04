@@ -37,3 +37,7 @@ class WorkSummary(BaseModel):
     known_attributed_inference_cost_usd: Decimal | None = None
     unknown_cost_count: int = 0
     inference_status: Literal["success", "error", "partial", "unknown"] = "unknown"
+    # Summed input/output tokens over receipts that reported usage; None
+    # when no receipt did (so it reads as "unknown", never a misleading 0).
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None

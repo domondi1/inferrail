@@ -28,6 +28,14 @@ def _cost_cell(summary: WorkSummary) -> str:
     return format_usd(summary.known_attributed_inference_cost_usd)
 
 
+def _tokens_cell(summary: WorkSummary) -> str:
+    if summary.prompt_tokens is None and summary.completion_tokens is None:
+        return "unavailable"
+    prompt = summary.prompt_tokens or 0
+    completion = summary.completion_tokens or 0
+    return f"{prompt + completion} ({prompt} in + {completion} out)"
+
+
 def format_work_summary(summary: WorkSummary) -> str:
     lines = [
         f"Work:                              {summary.work_id}",
@@ -35,6 +43,7 @@ def format_work_summary(summary: WorkSummary) -> str:
         f"Inference execution status:         {summary.inference_status}",
         f"Inference receipts:                 {summary.receipt_count}",
         f"Known attributed inference cost:    {_cost_cell(summary)}",
+        f"Attributed tokens:                  {_tokens_cell(summary)}",
         f"Unknown-cost inference receipts:    {summary.unknown_cost_count}",
     ]
     if summary.outcome_recorded_at is not None:
