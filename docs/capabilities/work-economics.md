@@ -79,8 +79,14 @@ case it must be `null`.
 An unpaid call returns **HTTP 402** with x402 `PaymentRequirements`
 (scheme, network, asset, amount in atomic units, `pay_to`). Retry the same
 request with the signed `X-PAYMENT` header the 402 response asked for, and
-the **same `X-Purchase-Id`** — reusing a purchase id never charges or
-executes twice; it returns the already-computed result.
+the **same `X-Purchase-Id`**. Reusing a purchase id never executes the
+work twice; it returns the already-computed result.
+
+**Known defect:** a *new* payment sent with a purchase id that already
+completed is currently settled again. You are charged a second time and
+get the original result back (the response still says
+`newly_charged: false`). Use a new `X-Purchase-Id` for every purchase, and
+don't send a fresh payment for a purchase id that already succeeded.
 
 ## Response
 
@@ -119,10 +125,12 @@ executes twice; it returns the already-computed result.
 ```
 
 `422` with `{"result": {"error": "..."}, "commercial_receipt": {..., "status": "INPUT_REJECTED"}}`
-if the request body fails validation after payment — the payment is still
-verified/settled (you were charged for an invocation, even a rejected one),
-which is why the receipt's `status` distinguishes `INPUT_REJECTED` from
-`DELIVERED`.
+if the request body fails validation. Validation only runs once a payment
+is attached (an unpaid invalid request gets 402, not 422). For a 422 the
+payment is verified but not settled, so you are not charged, even though
+the response currently reports `newly_charged: true`. That purchase id
+stays bound to the 422, so retry a corrected request with a new
+`X-Purchase-Id`.
 
 ## Price
 
@@ -137,6 +145,7 @@ testnet purchase is never mistaken for real revenue.
 `purchase_id`), and the on-chain settlement transaction (from the
 `PAYMENT-RESPONSE` header, or Base Sepolia's own public block explorer)
 together let any party — buyer, Inferrail, or a third-party auditor —
-independently confirm that one purchase id corresponds to exactly one
-payment and exactly one delivered result, without needing to trust either
-side's bookkeeping.
+check one purchase against the chain without needing to trust either
+side's bookkeeping. Because of the known defect above, one purchase id can
+currently correspond to more than one settled payment, so check every
+settlement transaction for it, not just the first.
