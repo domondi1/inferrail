@@ -418,17 +418,12 @@ def test_e1_4_settlement_transaction_is_persisted(seller: Seller):
     assert tx_hash in dump
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="E1-5: docs say a rejected (422) invocation is still settled; it is not",
-)
 def test_e1_5_docs_and_behavior_agree_about_settling_rejected_invocations(seller: Seller):
     doc = " ".join((REPO_ROOT / "docs" / "capabilities" / "work-economics.md").read_text().split())
-    docs_say_settled = "the payment is still verified/settled" in doc
-    assert docs_say_settled, "precondition: the docs sentence this test checks still exists"
+    docs_say_not_settled = "the payment is verified but not settled" in doc
+    assert docs_say_not_settled, "precondition: the docs sentence this test checks still exists"
     seller.paid("p-e1-5", INVALID_BODY)
-    behavior_settled = seller.settle_count() > 0
-    assert docs_say_settled == behavior_settled
+    assert seller.settle_count() == 0
 
 
 @pytest.mark.xfail(
