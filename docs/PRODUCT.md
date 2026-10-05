@@ -314,8 +314,9 @@ inspectable config file and gives you a telemetry record for every request
   `gpt-4.1-nano`, `gpt-5`, `gpt-5.1`, `gpt-5-mini`, `gpt-5-nano`, `o3`,
   and `o4-mini`) and `BUILTIN_ANTHROPIC_PRICING` in
   `src/inferrail/pricing/builtin_anthropic.py` (as of the last
-  verification, 2026-09-14: `claude-fable-5-1`, `claude-opus-5`,
-  `claude-sonnet-5`, `claude-haiku-4-5`).
+  verification, 2026-10-05: `claude-fable-5-1`, `claude-opus-5-5`,
+  `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`,
+  `claude-haiku-4-5`).
 - **Models with context-tiered pricing are deliberately absent**, even
   when they're current flagships (`gpt-5.6-sol`, `gpt-5.6-terra`,
   `gpt-5.6-luna`, and the `-pro` variants). Those bill at a higher rate

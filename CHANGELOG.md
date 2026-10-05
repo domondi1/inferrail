@@ -19,6 +19,13 @@ PyPI release (the hosted service and website ship independently of the
   forwarded as documented.
 
 ### Added
+- Built-in prices for `claude-opus-5-5` ($4 / $20 per million input /
+  output tokens; cache writes $5 / $8, cache reads $0.20, which is 0.05x
+  input) and `claude-sonnet-5-5` ($2 / $10), from Anthropic's pricing
+  page on 2026-10-05. The rest of the Anthropic catalog was re-checked
+  against the same page that day and is unchanged. `claude-opus-5-5` is
+  Claude Code's current default model, which previously had no price and
+  was refused under a budget.
 - `inferrail work <id>` now reports the run's total attributed tokens
   (input + output), summed from its receipts, next to the cost. Reads
   "unavailable" when no receipt reported usage, so a run whose usage

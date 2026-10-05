@@ -12,7 +12,7 @@ from inferrail.cli.pricing import STALE_AFTER_DAYS, catalog_freshness, run_prici
 
 
 def test_catalog_freshness_reports_every_built_in_catalog() -> None:
-    results = catalog_freshness(today=date(2026, 10, 1))  # after every catalog's verified_date
+    results = catalog_freshness(today=date(2026, 10, 6))  # after every catalog's verified_date
 
     names = {name for name, *_ in results}
     assert names == {"OpenAI", "Anthropic"}

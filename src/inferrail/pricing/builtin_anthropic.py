@@ -35,7 +35,7 @@ from decimal import Decimal
 from inferrail.config.models import PriceEntry
 
 _ANTHROPIC_PRICING_SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing"
-_VERIFIED_DATE = date(2026, 9, 29)
+_VERIFIED_DATE = date(2026, 10, 5)
 
 
 def _price(
@@ -71,9 +71,19 @@ BUILTIN_ANTHROPIC_PRICING: dict[str, PriceEntry] = {
         "10.00", "50.00", cache_write_5m_usd="12.50", cache_write_1h_usd="20.00",
         cache_read_usd="0.25",
     ),
+    # Cache reads on Claude Opus 5.5 are 0.05x base input (pricing page
+    # footnote), so $0.20, not the usual 0.1x.
+    "claude-opus-5-5": _price(
+        "4.00", "20.00", cache_write_5m_usd="5.00", cache_write_1h_usd="8.00",
+        cache_read_usd="0.20",
+    ),
     "claude-opus-5": _price(
         "5.00", "25.00", cache_write_5m_usd="6.25", cache_write_1h_usd="10.00",
         cache_read_usd="0.50",
+    ),
+    "claude-sonnet-5-5": _price(
+        "2.00", "10.00", cache_write_5m_usd="2.50", cache_write_1h_usd="4.00",
+        cache_read_usd="0.20",
     ),
     "claude-sonnet-5": _price(
         "2.00", "10.00", cache_write_5m_usd="2.50", cache_write_1h_usd="4.00",
