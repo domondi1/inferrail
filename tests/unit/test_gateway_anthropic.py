@@ -487,3 +487,40 @@ def test_receipts_never_persist_provider_echoed_error_text(
     assert len(receipts.receipts) == 1
     assert receipts.receipts[0].status == "error"
     assert canary not in receipts.receipts[0].model_dump_json()
+
+
+def test_messages_accepts_claude_code_fields_and_forwards_them(
+    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
+) -> None:
+    provider = AnthropicFakeProvider()
+    client = _make_anthropic_client(monkeypatch, anthropic_config, provider)
+    extra = {
+        "thinking": {"type": "adaptive", "display": "omitted"},
+        "output_config": {"effort": "medium"},
+        "context_management": {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]},
+        "metadata": {"user_id": "u-1"},
+    }
+
+    response = client.post(
+        "/v1/messages",
+        json=_messages_body(**extra),
+        headers={"anthropic-beta": "context-management-2025-06-27,effort-2025-11-24"},
+    )
+
+    assert response.status_code == 200, response.text
+    [sent] = provider.calls
+    assert sent.passthrough == extra
+    assert sent.anthropic_beta == "context-management-2025-06-27,effort-2025-11-24"
+
+
+def test_messages_beta_query_reaches_the_provider(
+    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
+) -> None:
+    provider = AnthropicFakeProvider()
+    client = _make_anthropic_client(monkeypatch, anthropic_config, provider)
+
+    response = client.post("/v1/messages?beta=true", json=_messages_body())
+
+    assert response.status_code == 200, response.text
+    [sent] = provider.calls
+    assert sent.beta_query is True

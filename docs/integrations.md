@@ -85,10 +85,37 @@ client.messages.create(
 Or `export ANTHROPIC_BASE_URL=http://127.0.0.1:8000`. See
 [examples/anthropic_messages_request.py](../examples/anthropic_messages_request.py).
 
-**Claude Code is not supported yet.** Current Claude Code versions send
-request fields the gateway does not forward (`thinking`,
-`context_management`, `output_config`), so the gateway rejects the first
-request with HTTP 400.
+### Claude Code
+
+Point Claude Code at the gateway and give a run (or a whole loop of runs)
+an id and a dollar budget with `ANTHROPIC_CUSTOM_HEADERS`:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8000
+export ANTHROPIC_CUSTOM_HEADERS=$'X-Inferrail-Attribute-Work-Id: loop-42\nX-Inferrail-Budget-Usd: 20'
+claude -p "..." --model claude-sonnet-5
+inferrail work loop-42
+```
+
+Every invocation that sends the same work id draws from the same budget,
+so an orchestrator that runs Claude Code round after round (build, review,
+fix) can cap the whole loop, not just one session. When the budget can't
+cover the next request, the gateway refuses it with HTTP 402 before the
+provider and Claude Code stops with
+`API Error: 402 budget 'work_id:loop-42:per_work' ... would be exceeded`.
+
+Things to know:
+
+- Claude Code sends `max_tokens: 128000`, and each request reserves its
+  worst-case cost from that, so size budgets well above one request's
+  ceiling. The unused part is released as soon as the response settles.
+- The model needs a price. Claude Code's default model may not be in the
+  built-in catalog yet; pick one that is with `--model` (see
+  `inferrail models`) or add a `pricing:` override.
+
+Tested with Claude Code 2.1.289 (requests accepted and forwarded,
+refusals stop the session, two invocations sharing one budget) against a
+stand-in upstream; not yet confirmed end to end against the Anthropic API.
 
 > The `inferrail serve --quickstart` banner in release 0.4.3 prints the
 > Anthropic base URL with a trailing `/v1`, which makes the SDK request

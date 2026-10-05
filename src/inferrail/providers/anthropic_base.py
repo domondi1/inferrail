@@ -27,7 +27,10 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-AnthropicRole = Literal["user", "assistant"]
+# "system" is a mid-conversation system message (Anthropic's
+# `mid-conversation-system` beta, which Claude Code sends). Its text is
+# billed as input like any other message, and the provider validates it.
+AnthropicRole = Literal["user", "assistant", "system"]
 
 
 class AnthropicMessage(BaseModel):
@@ -56,6 +59,16 @@ class AnthropicNormalizedRequest(BaseModel):
     stop_sequences: list[str] | None = None
     tools: list[dict[str, object]] | None = None
     tool_choice: dict[str, object] | None = None
+    # Provider-valid fields forwarded without interpretation
+    # (`gateway.anthropic_schemas.MESSAGES_PASSTHROUGH_FIELDS`), exactly as
+    # the client sent them. Never persisted.
+    passthrough: dict[str, object] = Field(default_factory=dict)
+    # The client's `anthropic-beta` header, forwarded so the features it
+    # enables (e.g. context editing) work upstream. Never persisted.
+    anthropic_beta: str | None = None
+    # The client called `/v1/messages?beta=true` (the Anthropic SDK's beta
+    # surface, used by Claude Code); forwarded the same way.
+    beta_query: bool = False
 
 
 class AnthropicNormalizedResponse(BaseModel):

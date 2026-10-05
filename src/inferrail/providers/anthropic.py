@@ -91,7 +91,16 @@ class AnthropicProvider:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
+        payload.update(request.passthrough)
         return payload
+
+    @staticmethod
+    def _request_params(request: AnthropicNormalizedRequest) -> dict[str, str]:
+        return {"beta": "true"} if request.beta_query else {}
+
+    @staticmethod
+    def _request_headers(request: AnthropicNormalizedRequest) -> dict[str, str]:
+        return {"anthropic-beta": request.anthropic_beta} if request.anthropic_beta else {}
 
     async def complete(
         self, request: AnthropicNormalizedRequest, *, timeout: float
@@ -103,6 +112,8 @@ class AnthropicProvider:
             response = await self._client.post(
                 f"{self._base_url}/messages",
                 json=payload,
+                headers=self._request_headers(request),
+                params=self._request_params(request),
                 timeout=timeout,
             )
         except httpx.TimeoutException as exc:
@@ -133,6 +144,8 @@ class AnthropicProvider:
                 "POST",
                 f"{self._base_url}/messages",
                 json=payload,
+                headers=self._request_headers(request),
+                params=self._request_params(request),
                 timeout=timeout,
             ) as response:
                 if response.status_code >= 400:

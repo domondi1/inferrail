@@ -46,6 +46,7 @@ from inferrail.errors import (
     UnsupportedFeatureError,
 )
 from inferrail.gateway.anthropic_schemas import (
+    MESSAGES_PASSTHROUGH_FIELDS,
     MessagesRequest,
     MessagesResponse,
     MessagesUsage,
@@ -204,13 +205,15 @@ class AnthropicInferenceEngine(BudgetAdmission):
         *,
         attributes: dict[str, str] | None = None,
         declared_budget_usd: Decimal | None = None,
+        anthropic_beta: str | None = None,
+        beta_query: bool = False,
     ) -> MessagesResponse:
         request_id = f"req_{uuid.uuid4().hex[:20]}"
         started = time.perf_counter()
         attributes = attributes or {}
 
         decision, provider, normalized_request = await self._resolve(
-            request, request_id, started, attributes
+            request, request_id, started, attributes, anthropic_beta, beta_query
         )
 
         return await self._execute_with_retries(
@@ -224,6 +227,8 @@ class AnthropicInferenceEngine(BudgetAdmission):
         *,
         attributes: dict[str, str] | None = None,
         declared_budget_usd: Decimal | None = None,
+        anthropic_beta: str | None = None,
+        beta_query: bool = False,
     ) -> AsyncIterator[bytes]:
         """See `gateway.execution.InferenceEngine.prepare_stream` — same
         two-phase design and the same reason it must complete (including
@@ -234,7 +239,7 @@ class AnthropicInferenceEngine(BudgetAdmission):
         attributes = attributes or {}
 
         decision, provider, normalized_request = await self._resolve(
-            request, request_id, started, attributes
+            request, request_id, started, attributes, anthropic_beta, beta_query
         )
         ctx = await self._open_stream_with_retries(
             request_id, decision, provider, normalized_request, started, attributes,
@@ -264,6 +269,8 @@ class AnthropicInferenceEngine(BudgetAdmission):
         request_id: str,
         started: float,
         attributes: dict[str, str],
+        anthropic_beta: str | None = None,
+        beta_query: bool = False,
     ) -> tuple[RoutingDecision, AnthropicMessagesProvider, AnthropicNormalizedRequest]:
         try:
             decision = self._router.resolve(RoutingContext(requested_route=request.model))
@@ -297,6 +304,11 @@ class AnthropicInferenceEngine(BudgetAdmission):
             stop_sequences=request.stop_sequences,
             tools=request.tools,
             tool_choice=request.tool_choice,
+            passthrough=request.model_dump(
+                include=set(MESSAGES_PASSTHROUGH_FIELDS), exclude_none=True
+            ),
+            anthropic_beta=anthropic_beta,
+            beta_query=beta_query,
         )
         return decision, provider, normalized_request
 

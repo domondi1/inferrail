@@ -48,6 +48,18 @@ class MessagesRequest(BaseModel):
     # the provider's own abuse-monitoring, forwarded verbatim, never read
     # by Inferrail itself. Same treatment as ChatCompletionRequest.user.
     metadata: dict[str, object] | None = None
+    # Extended/adaptive thinking, effort (`output_config`) and context
+    # editing (`context_management`), as Claude Code sends them. Forwarded
+    # unchanged, never interpreted: all of them are billed through the
+    # usage the provider reports, and thinking tokens count against
+    # `max_tokens`, which the budget reservation already uses.
+    thinking: dict[str, object] | None = None
+    output_config: dict[str, object] | None = None
+    context_management: dict[str, object] | None = None
+
+
+# Fields forwarded to the provider exactly as sent (see above).
+MESSAGES_PASSTHROUGH_FIELDS = ("metadata", "thinking", "output_config", "context_management")
 
 
 class MessagesUsage(BaseModel):
