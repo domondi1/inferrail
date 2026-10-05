@@ -9,6 +9,16 @@ PyPI release (the hosted service and website ship independently of the
 ## Unreleased
 
 ### Fixed
+- OpenAI prompt-cache hits are priced at the cached-input rate. Prompt
+  tokens OpenAI served from its automatic cache
+  (`usage.prompt_tokens_details.cached_tokens`) were billed at the full
+  input rate, overstating cost (up to 10x on those tokens for `gpt-5`)
+  and making budgets trip early on agent loops that resend long
+  prefixes. Receipts now record them as `cache_read_input_tokens`, and
+  budget settlement uses the corrected cost. Cached-input rates were added
+  to every built-in OpenAI price from OpenAI's pricing page (2026-10-05;
+  input and output rates re-checked, unchanged). An operator price
+  without a cached rate keeps the old behavior.
 - `/v1/chat/completions` forwards `thinking`, the reasoning toggle some
   OpenAI-compatible providers take (DeepSeek V4: `{"type": "enabled" |
   "disabled"}`). Clients that send it, such as DeepSeek Harness with

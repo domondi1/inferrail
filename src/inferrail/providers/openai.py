@@ -32,6 +32,20 @@ from inferrail.providers.base import (
 from inferrail.providers.upstream_errors import upstream_budget_refusal_type
 
 
+def openai_cached_prompt_tokens(usage: object) -> int | None:
+    """`usage.prompt_tokens_details.cached_tokens` as a non-negative int,
+    or None when absent or malformed."""
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return None
+    cached = details.get("cached_tokens")
+    if isinstance(cached, bool) or not isinstance(cached, int) or cached < 0:
+        return None
+    return cached
+
+
 class OpenAIProvider:
     """Provider adapter for OpenAI and OpenAI-compatible HTTP APIs."""
 
@@ -234,6 +248,7 @@ class OpenAIProvider:
             logprobs=choice.get("logprobs"),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
+            cached_prompt_tokens=openai_cached_prompt_tokens(usage),
             tool_calls=tool_calls,
             raw_model=data.get("model"),
             provider_request_id=data.get("id"),

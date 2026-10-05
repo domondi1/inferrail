@@ -312,7 +312,7 @@ inspectable config file and gives you a telemetry record for every request
   `verified_date`, so a price's provenance is never lost. The exact,
   authoritative lists are `BUILTIN_OPENAI_PRICING` in
   `src/inferrail/pricing/builtin.py` (as of the last verification,
-  2026-08-22: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`,
+  2026-10-05, including cached-input rates: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`,
   `gpt-4.1-nano`, `gpt-5`, `gpt-5.1`, `gpt-5-mini`, `gpt-5-nano`, `o3`,
   and `o4-mini`) and `BUILTIN_ANTHROPIC_PRICING` in
   `src/inferrail/pricing/builtin_anthropic.py` (as of the last
@@ -347,9 +347,12 @@ inspectable config file and gives you a telemetry record for every request
   `cache_read_usd_per_million`). If a cache rate is missing, or cache
   writes arrive without the 5-minute/1-hour split, the cost is `null`,
   never a cost that leaves cache tokens out.
-- OpenAI cached input (`prompt_tokens_details.cached_tokens`) is not
-  modeled yet: it is priced at the full input rate, so a cached OpenAI
-  request's cost is overstated, not understated.
+- OpenAI cached input (`prompt_tokens_details.cached_tokens`) is priced
+  at the cached-input rate and recorded as `cache_read_input_tokens` on
+  the receipt (the built-in OpenAI catalog includes the rate; an operator
+  `pricing:` entry can declare it as `cache_read_usd_per_million`). If the
+  price entry has no cached rate, cached tokens stay at the full input
+  rate, so that request's cost is overstated, not understated.
 - Unresolvable pricing (unknown model, or an
   `openai_compatible`/`anthropic_compatible` provider with no override
   configured) leaves `pricing`/`estimated_cost_usd` explicitly `null` on
