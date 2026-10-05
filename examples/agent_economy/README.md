@@ -169,6 +169,11 @@ token (as in `agent.py`), never the key. This is an experimental reference,
 not a packaged library: copy the module, or open an issue below and say what
 you're wrapping and we'll help fit it.
 
+**TypeScript agent (AgentKit, Eliza, an x402 `fetch` wrapper)?**
+[`typescript/`](typescript/) has the same budget rules as a dependency-free
+provider (`reserve` / `settle` / `release` / `delegate` / `revoke`) that you
+can call from a before-signing hook.
+
 ## Questions or something broke?
 
 Open an issue at https://github.com/domondi1/inferrail/issues and say what
@@ -184,3 +189,4 @@ That is also the fastest way to tell us the demo didn't work for you.
 | `seller.py` | A stock x402 seller, with no Inferrail code in it |
 | `local_chain.py` | Local stand-in for Base Sepolia USDC + an x402 facilitator over it |
 | `demo.py` | Wires it together; `--testnet` for Base Sepolia |
+| `typescript/` | The same budget rules as a TypeScript provider for before-signing hooks |
