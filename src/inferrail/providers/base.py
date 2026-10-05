@@ -143,6 +143,10 @@ class NormalizedChatResponse(BaseModel):
     finish_reason: str | None
     prompt_tokens: int | None
     completion_tokens: int | None
+    # Of `prompt_tokens`, how many the provider served from its prompt
+    # cache (OpenAI: `usage.prompt_tokens_details.cached_tokens`), or None
+    # if it didn't say.
+    cached_prompt_tokens: int | None = None
     # The model's refusal message (e.g. under structured outputs), passed
     # back to the client — never persisted.
     refusal: str | None = None

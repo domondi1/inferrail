@@ -95,7 +95,9 @@ from inferrail.gateway.schemas import (
 )
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse, Provider
+from inferrail.providers.openai import openai_cached_prompt_tokens
 from inferrail.receipts.builder import build_receipt, new_receipt_id
+from inferrail.receipts.calculator import CacheTokens
 from inferrail.receipts.sinks import ReceiptSink
 from inferrail.routing.router import Router, RoutingContext, RoutingDecision
 from inferrail.telemetry.events import ErrorCategory, InferenceEvent
@@ -141,6 +143,7 @@ class _SseBookkeeper:
         self._buffer = b""
         self.prompt_tokens: int | None = None
         self.completion_tokens: int | None = None
+        self.cached_prompt_tokens: int | None = None
 
     def feed(self, chunk: bytes) -> None:
         self._buffer += chunk.replace(b"\r\n", b"\n")
@@ -163,6 +166,7 @@ class _SseBookkeeper:
             if isinstance(usage, dict):
                 self.prompt_tokens = usage.get("prompt_tokens")
                 self.completion_tokens = usage.get("completion_tokens")
+                self.cached_prompt_tokens = openai_cached_prompt_tokens(usage)
 
 
 @dataclass
@@ -392,9 +396,12 @@ class InferenceEngine(BudgetAdmission):
                     retry_count=attempt,
                 )
             )
+            cache = self._priced_cache(
+                decision.provider_name, decision.model, result.cached_prompt_tokens
+            )
             receipt_attributes = self._augment_overrun(
                 attributes, decision.provider_name, decision.model,
-                result.prompt_tokens, result.completion_tokens,
+                result.prompt_tokens, result.completion_tokens, cache,
             )
             self._settle_and_emit_receipt(
                 build_receipt(
@@ -410,6 +417,7 @@ class InferenceEngine(BudgetAdmission):
                     total_latency_ms=latency_ms,
                     retry_count=attempt,
                     pricing_resolver=self._pricing_resolver,
+                    cache=cache,
                 ),
                 reservation,
                 budget,
@@ -538,9 +546,12 @@ class InferenceEngine(BudgetAdmission):
         # provider's final usage chunk can arrive right before a late
         # failure) — build_receipt only prices when both token counts are
         # actually known, so this never fabricates a cost either way.
+        cache = self._priced_cache(
+            ctx.decision.provider_name, ctx.decision.model, bookkeeper.cached_prompt_tokens
+        )
         receipt_attributes = self._augment_overrun(
             ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
-            bookkeeper.prompt_tokens, bookkeeper.completion_tokens,
+            bookkeeper.prompt_tokens, bookkeeper.completion_tokens, cache,
         )
         # The upstream connection was established and returned a success
         # status, so the provider may have billed this stream whatever
@@ -559,6 +570,7 @@ class InferenceEngine(BudgetAdmission):
                 total_latency_ms=latency_ms,
                 retry_count=ctx.attempts_used,
                 pricing_resolver=self._pricing_resolver,
+                cache=cache,
             ),
             ctx.reservation,
             ctx.budget,
@@ -659,6 +671,7 @@ class InferenceEngine(BudgetAdmission):
         model: str,
         prompt_tokens: int | None,
         completion_tokens: int | None,
+        cache: CacheTokens | None = None,
     ) -> dict[str, str]:
         """Post-flight budget reconciliation — see
         `BudgetEnforcer.augment_overrun`. A no-op (returns `attributes`
@@ -671,6 +684,23 @@ class InferenceEngine(BudgetAdmission):
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache=cache,
+        )
+
+    def _priced_cache(
+        self, provider: str, model: str, cached_prompt_tokens: int | None
+    ) -> CacheTokens | None:
+        """Cached prompt tokens as a cache read, when the price entry has a
+        cached-input rate. Without one (e.g. an operator price that doesn't
+        declare it), cached tokens stay in `prompt_tokens` at the full input
+        rate: overstated, as before, rather than turning the cost unknown."""
+        if not cached_prompt_tokens:
+            return None
+        price = self._pricing_resolver.resolve(provider, model)
+        if price is None or price.cache_read_usd_per_million is None:
+            return None
+        return CacheTokens(
+            creation=0, creation_5m=None, creation_1h=None, read=cached_prompt_tokens
         )
 
     @staticmethod
