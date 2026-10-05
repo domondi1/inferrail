@@ -43,13 +43,13 @@ npx -y @anthropic-ai/mcpb@2.1.2 info dist/inferrail.mcpb
 Run the exact command the bundle launches, against your own receipts:
 
 ```bash
-INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl uvx --with "mcp>=2.0" inferrail@0.4.14 mcp
+INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl uvx --with "mcp>=2.0" inferrail@0.4.15 mcp
 ```
 
 It speaks MCP over stdio. To try it in Claude Code:
 
 ```bash
-claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx --with "mcp>=2.0" inferrail@0.4.14 mcp
+claude mcp add inferrail -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl -- uvx --with "mcp>=2.0" inferrail@0.4.15 mcp
 ```
 
 ## Releasing a new version

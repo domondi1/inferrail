@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.15 — 2026-10-05
 
 ### Fixed
 - OpenAI prompt-cache hits are priced at the cached-input rate. Prompt
