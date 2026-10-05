@@ -21,7 +21,8 @@
           "role": {
             "enum": [
               "user",
-              "assistant"
+              "assistant",
+              "system"
             ],
             "title": "Role",
             "type": "string"
@@ -802,6 +803,18 @@
       "MessagesRequest": {
         "additionalProperties": false,
         "properties": {
+          "context_management": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Management"
+          },
           "max_tokens": {
             "title": "Max Tokens",
             "type": "integer"
@@ -828,6 +841,18 @@
           "model": {
             "title": "Model",
             "type": "string"
+          },
+          "output_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Config"
           },
           "stop_sequences": {
             "anyOf": [
@@ -876,6 +901,18 @@
               }
             ],
             "title": "Temperature"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
           },
           "tool_choice": {
             "anyOf": [

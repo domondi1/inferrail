@@ -267,3 +267,83 @@ async def test_stream_error_before_first_chunk_raises() -> None:
     with pytest.raises(RateLimitError):
         async for _ in provider.stream(_request(), timeout=5):
             pass
+
+
+async def test_complete_forwards_passthrough_fields_and_beta_header() -> None:
+    """Claude Code's thinking / effort / context-editing fields and its
+    `anthropic-beta` header reach the provider unchanged."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        captured["beta"] = request.headers.get("anthropic-beta")
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_1", "content": [{"type": "text", "text": "ok"}],
+                "model": "claude-sonnet-5", "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    passthrough = {
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "medium"},
+        "context_management": {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]},
+        "metadata": {"user_id": "u-1"},
+    }
+    provider = _provider(handler)
+    await provider.complete(
+        _request(passthrough=passthrough, anthropic_beta="context-management-2025-06-27"),
+        timeout=5,
+    )
+
+    body = captured["body"]
+    assert isinstance(body, dict)
+    for key, value in passthrough.items():
+        assert body[key] == value, key
+    assert captured["beta"] == "context-management-2025-06-27"
+
+
+async def test_complete_sends_no_beta_header_when_client_sent_none() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["beta"] = request.headers.get("anthropic-beta")
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_1", "content": [{"type": "text", "text": "ok"}],
+                "model": "claude-sonnet-5", "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    await _provider(handler).complete(_request(), timeout=5)
+
+    assert captured["beta"] is None
+
+
+async def test_complete_forwards_beta_query_and_system_role_message() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["query"] = request.url.params.get("beta")
+        captured["roles"] = [m["role"] for m in json.loads(request.content)["messages"]]
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_1", "content": [{"type": "text", "text": "ok"}],
+                "model": "claude-sonnet-5", "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    messages = [
+        AnthropicMessage(role="user", content="hello"),
+        AnthropicMessage(role="system", content="mid-conversation note"),
+    ]
+    await _provider(handler).complete(_request(messages=messages, beta_query=True), timeout=5)
+
+    assert captured["query"] == "true"
+    assert captured["roles"] == ["user", "system"]

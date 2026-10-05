@@ -185,13 +185,17 @@ async def messages(
     engine: AnthropicInferenceEngine = request.app.state.anthropic_engine
     attributes = extract_attributes(request.headers)
     declared = extract_declared_budget(request.headers)
+    anthropic_beta = request.headers.get("anthropic-beta")
+    beta_query = request.query_params.get("beta") == "true"
     if payload.stream:
         body = await engine.prepare_stream(
-            payload, attributes=attributes, declared_budget_usd=declared
+            payload, attributes=attributes, declared_budget_usd=declared,
+            anthropic_beta=anthropic_beta, beta_query=beta_query,
         )
         return StreamingResponse(body, media_type="text/event-stream")
     result = await engine.execute(
-        payload, attributes=attributes, declared_budget_usd=declared
+        payload, attributes=attributes, declared_budget_usd=declared,
+        anthropic_beta=anthropic_beta, beta_query=beta_query,
     )
     # Serialized here rather than by `response_model` so prompt-cache usage
     # fields the provider didn't report are left out, not sent as null: an

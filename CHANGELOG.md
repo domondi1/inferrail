@@ -8,6 +8,17 @@ PyPI release (the hosted service and website ship independently of the
 
 ## Unreleased
 
+### Fixed
+- Claude Code works through `/v1/messages`. The route rejected its first
+  request with HTTP 400 because it sends `thinking`, `output_config`, and
+  `context_management`, and with 422 because of mid-conversation `system`
+  messages. Those are now accepted and forwarded unchanged, along with the
+  client's `anthropic-beta` header and `?beta=true`; all of them are
+  billed through reported usage, so reservations and receipts are
+  unchanged. `metadata` was accepted but silently dropped and is now
+  forwarded as documented. A `context-1m` beta is rejected with
+  `INFERRAIL_E006`, since long-context pricing isn't modeled.
+
 ### Added
 - `inferrail work <id>` now reports the run's total attributed tokens
   (input + output), summed from its receipts, next to the cost. Reads
