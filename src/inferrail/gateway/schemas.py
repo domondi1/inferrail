@@ -53,6 +53,7 @@ FORWARDED_FIELDS = frozenset(
         "service_tier",
         "logprobs",
         "top_logprobs",
+        "thinking",
     }
 )
 
@@ -121,6 +122,10 @@ class ChatCompletionRequest(BaseModel):
     service_tier: str | None = None
     logprobs: bool | None = None
     top_logprobs: int | None = None
+    # The `thinking` toggle some OpenAI-compatible providers take (e.g.
+    # DeepSeek V4: {"type": "enabled" | "disabled"}). Billed through the
+    # usage the provider reports (reasoning counts as completion tokens).
+    thinking: dict[str, object] | None = None
 
     def forwarded_fields(self) -> dict[str, object]:
         """The FORWARDED_FIELDS the client actually set, as sent."""

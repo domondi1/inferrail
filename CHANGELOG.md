@@ -6,6 +6,16 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Fixed
+- `/v1/chat/completions` forwards `thinking`, the reasoning toggle some
+  OpenAI-compatible providers take (DeepSeek V4: `{"type": "enabled" |
+  "disabled"}`). Clients that send it, such as DeepSeek Harness with
+  `compat.thinkingFormat: deepseek`, were rejected with `INFERRAIL_E006`.
+  It's billed through reported usage, so reservations and receipts are
+  unchanged.
+
 ## v0.4.14 — 2026-10-05
 
 ### Fixed

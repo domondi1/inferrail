@@ -122,6 +122,7 @@ FORWARDED: dict[str, Any] = {
     "service_tier": "auto",
     "logprobs": True,
     "top_logprobs": 2,
+    "thinking": {"type": "enabled"},
 }
 
 
