@@ -171,6 +171,13 @@ def test_builtin_catalog_carries_verified_cache_rates() -> None:
     assert BUILTIN_ANTHROPIC_PRICING["claude-fable-5-1"].cache_read_usd_per_million == (
         Decimal("0.25")
     )
+    # Opus 5.5 cache reads are 0.05x base input.
+    opus_55 = BUILTIN_ANTHROPIC_PRICING["claude-opus-5-5"]
+    assert opus_55.input_usd_per_million == Decimal("4.00")
+    assert opus_55.output_usd_per_million == Decimal("20.00")
+    assert opus_55.cache_write_5m_usd_per_million == Decimal("5.00")
+    assert opus_55.cache_write_1h_usd_per_million == Decimal("8.00")
+    assert opus_55.cache_read_usd_per_million == Decimal("0.20")
 
 
 # --- gateway ----------------------------------------------------------------
