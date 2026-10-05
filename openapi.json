@@ -394,6 +394,18 @@
             ],
             "title": "Temperature"
           },
+          "thinking": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
+          },
           "tool_choice": {
             "anyOf": [
               {

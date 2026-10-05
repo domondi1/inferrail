@@ -41,3 +41,6 @@ CLAUDE.local.md
 
 # Local-only scratch outputs (never commit — may contain private/strategy content)
 local/
+
+# Local gateway state written to the repo root by ad-hoc runs (receipts.db, budgets.db, ...)
+/*.db
