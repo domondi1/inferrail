@@ -16,8 +16,7 @@ PyPI release (the hosted service and website ship independently of the
   client's `anthropic-beta` header and `?beta=true`; all of them are
   billed through reported usage, so reservations and receipts are
   unchanged. `metadata` was accepted but silently dropped and is now
-  forwarded as documented. A `context-1m` beta is rejected with
-  `INFERRAIL_E006`, since long-context pricing isn't modeled.
+  forwarded as documented.
 
 ### Added
 - `inferrail work <id>` now reports the run's total attributed tokens

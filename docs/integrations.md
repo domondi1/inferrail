@@ -112,9 +112,6 @@ Things to know:
 - The model needs a price. Claude Code's default model may not be in the
   built-in catalog yet; pick one that is with `--model` (see
   `inferrail models`) or add a `pricing:` override.
-- A `context-1m` beta (the 1M-token context window) is refused, because
-  requests above 200K input tokens are billed at a premium the catalog
-  doesn't model.
 
 Tested with Claude Code 2.1.289 (requests accepted and forwarded,
 refusals stop the session, two invocations sharing one budget) against a

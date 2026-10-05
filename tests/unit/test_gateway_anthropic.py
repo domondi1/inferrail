@@ -513,25 +513,6 @@ def test_messages_accepts_claude_code_fields_and_forwards_them(
     assert sent.anthropic_beta == "context-management-2025-06-27,effort-2025-11-24"
 
 
-def test_messages_rejects_long_context_beta_before_the_provider(
-    monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
-) -> None:
-    provider = AnthropicFakeProvider()
-    client = _make_anthropic_client(monkeypatch, anthropic_config, provider)
-
-    response = client.post(
-        "/v1/messages",
-        json=_messages_body(),
-        headers={"anthropic-beta": "interleaved-thinking-2025-05-14,context-1m-2025-08-07"},
-    )
-
-    assert response.status_code == 400
-    error = response.json()["error"]
-    assert error["type"] == "UnsupportedFeatureError"
-    assert "context-1m" in error["message"]
-    assert provider.calls == []
-
-
 def test_messages_beta_query_reaches_the_provider(
     monkeypatch: pytest.MonkeyPatch, anthropic_config: InferrailConfig
 ) -> None:

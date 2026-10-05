@@ -68,9 +68,6 @@ from inferrail.telemetry.sinks import TelemetrySink
 
 _RETRY_BACKOFF_BASE_SECONDS = 0.5
 _UNKNOWN = "unknown"
-# An `anthropic-beta` value enabling the 1M-token context window: above
-# 200K input tokens it is billed at a premium the catalog doesn't model.
-_UNPRICED_BETA_MARKER = "context-1m"
 
 _StreamStatus = Literal["success", "error", "partial"]
 
@@ -275,17 +272,6 @@ class AnthropicInferenceEngine(BudgetAdmission):
         anthropic_beta: str | None = None,
         beta_query: bool = False,
     ) -> tuple[RoutingDecision, AnthropicMessagesProvider, AnthropicNormalizedRequest]:
-        if anthropic_beta and _UNPRICED_BETA_MARKER in anthropic_beta:
-            beta_error = UnsupportedFeatureError(
-                "anthropic-beta 'context-1m' is not supported by Inferrail: requests "
-                "above 200K input tokens are billed at a long-context premium the "
-                "pricing catalog doesn't model, so cost and budgets would be wrong"
-            )
-            self._emit_failure(
-                request_id, request.model, _UNKNOWN, _UNKNOWN, 0, started,
-                beta_error, attributes,
-            )
-            raise beta_error
         try:
             decision = self._router.resolve(RoutingContext(requested_route=request.model))
         except RoutingError as exc:

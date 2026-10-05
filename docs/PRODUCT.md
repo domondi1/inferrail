@@ -166,10 +166,7 @@ inspectable config file and gives you a telemetry record for every request
   Anthropic-SDK client point at Inferrail, including Claude Code: the
   route forwards `thinking`, `output_config`, `context_management`,
   `metadata`, mid-conversation `system` messages, the client's
-  `anthropic-beta` header, and `?beta=true`. A `context-1m` beta is
-  rejected (`INFERRAIL_E006`): above 200K input tokens it is billed at a
-  long-context premium the catalog doesn't model. See
-  docs/integrations.md.
+  `anthropic-beta` header, and `?beta=true`. See docs/integrations.md.
 - Static routing: the request's `model` field selects a named route in
   `inferrail.yaml`, which maps to a provider + underlying model
   deterministically. No cost/latency/capability-aware selection.
