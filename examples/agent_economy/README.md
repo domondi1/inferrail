@@ -174,8 +174,9 @@ you're wrapping and we'll help fit it.
 
 **TypeScript agent (AgentKit, Eliza, an x402 `fetch` wrapper)?**
 [`typescript/`](typescript/) has the same budget rules as a dependency-free
-provider (`reserve` / `settle` / `release` / `delegate` / `revoke`) that you
-can call from a before-signing hook.
+provider (`reserve` / `settle` / `release` / `delegate` / `revoke`), plus
+`withJobBudgets`, which puts an existing `@x402/core` client (and so
+`@x402/fetch`) under a job budget and per-child shares.
 
 ## Questions or something broke?
 
@@ -192,4 +193,4 @@ That is also the fastest way to tell us the demo didn't work for you.
 | `seller.py` | A stock x402 seller, with no Inferrail code in it |
 | `local_chain.py` | Local stand-in for Base Sepolia USDC + an x402 facilitator over it |
 | `demo.py` | Wires it together; `--testnet` for Base Sepolia |
-| `typescript/` | The same budget rules as a TypeScript provider for before-signing hooks |
+| `typescript/` | The same budget rules in TypeScript, plus an adapter that puts an `@x402/core` client (and `@x402/fetch`) under job budgets |
