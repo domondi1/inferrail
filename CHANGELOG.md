@@ -6,6 +6,19 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## Unreleased
+
+### Fixed
+- Dollar budgets work with OpenAI's current flagships. `gpt-5.6-sol`,
+  `gpt-5.6-terra` and `gpt-5.6-luna` are billed at higher rates for the
+  whole request above 272K input tokens, which a single price couldn't
+  express, so they had no built-in price and every budgeted request to
+  them was refused with `INFERRAIL_E012`. A price entry can now carry a
+  `long_context` tier (threshold plus its own input, output and cached
+  rates); the three models are in the built-in catalog with both tiers
+  (from OpenAI's pricing page, 2026-10-06). Operators can use
+  `long_context` in `pricing:` for any other tiered model.
+
 ## v0.4.15 — 2026-10-05
 
 ### Fixed

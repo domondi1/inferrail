@@ -64,6 +64,8 @@ def build_receipt(
             )
             if cost is None:
                 pricing = None
+            else:
+                pricing = pricing.for_input_tokens(prompt_tokens)
 
     return InferenceReceipt(
         receipt_id=receipt_id,

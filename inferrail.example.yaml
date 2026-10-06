@@ -84,6 +84,17 @@ receipts:
 #       output_usd_per_million: "0.60"
 #       source: "https://developers.openai.com/api/docs/pricing"
 #       verified_date: "2026-08-16"
+#     # A model billed at higher rates for the whole request once its input
+#     # passes a threshold (context-tiered pricing):
+#     my-tiered-model:
+#       input_usd_per_million: "2.00"
+#       output_usd_per_million: "12.00"
+#       long_context:
+#         above_input_tokens: 272000
+#         input_usd_per_million: "4.00"
+#         output_usd_per_million: "18.00"
+#       source: "https://example.com/pricing"
+#       verified_date: "2026-10-06"
 
 # Optional: real, pre-flight-enforced spend caps. Off by default. See
 # docs/adr/0015-budget-enforcement.md. Manage the actual budgets (scope,

@@ -185,6 +185,19 @@ class UsagePingConfig(BaseModel):
     endpoint: str | None = None
 
 
+class LongContextPrice(BaseModel):
+    """Rates for a request whose input tokens exceed `above_input_tokens`.
+    They replace the base rates for the whole request, not only for the
+    tokens past the threshold."""
+
+    model_config = {"extra": "forbid"}
+
+    above_input_tokens: int = Field(gt=0)
+    input_usd_per_million: Decimal = Field(gt=0)
+    output_usd_per_million: Decimal = Field(gt=0)
+    cache_read_usd_per_million: Decimal | None = Field(default=None, gt=0)
+
+
 class PriceEntry(BaseModel):
     """A verified per-model price, with the provenance to audit it later.
 
@@ -208,6 +221,46 @@ class PriceEntry(BaseModel):
     cache_write_5m_usd_per_million: Decimal | None = Field(default=None, gt=0)
     cache_write_1h_usd_per_million: Decimal | None = Field(default=None, gt=0)
     cache_read_usd_per_million: Decimal | None = Field(default=None, gt=0)
+    # Context-tiered pricing (OpenAI gpt-5.6-*: a request whose input is
+    # above the threshold is billed at the higher rates for the *full*
+    # request). `None` means one flat rate.
+    long_context: LongContextPrice | None = None
+
+    @model_validator(mode="after")
+    def _long_context_rates_are_complete(self) -> PriceEntry:
+        tier = self.long_context
+        if tier is None:
+            return self
+        if self.cache_write_5m_usd_per_million or self.cache_write_1h_usd_per_million:
+            raise ValueError(
+                "long_context can't be combined with cache write rates: the long "
+                "tier would have no matching write rate"
+            )
+        if (self.cache_read_usd_per_million is None) != (tier.cache_read_usd_per_million is None):
+            raise ValueError(
+                "cache_read_usd_per_million must be set on both the base price and "
+                "long_context, or on neither"
+            )
+        return self
+
+    def for_input_tokens(self, input_tokens: int) -> PriceEntry:
+        """The rates that apply to a request with this many input tokens:
+        the long-context tier when the input is above its threshold, else
+        this entry. The result is flat (no `long_context`), so it can be
+        embedded in a receipt as the price actually used."""
+        tier = self.long_context
+        if tier is None:
+            return self
+        if input_tokens <= tier.above_input_tokens:
+            return self.model_copy(update={"long_context": None})
+        return self.model_copy(
+            update={
+                "input_usd_per_million": tier.input_usd_per_million,
+                "output_usd_per_million": tier.output_usd_per_million,
+                "cache_read_usd_per_million": tier.cache_read_usd_per_million,
+                "long_context": None,
+            }
+        )
 
 
 class InferrailConfig(BaseModel):

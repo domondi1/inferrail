@@ -181,6 +181,7 @@ class OpenAIRetryAdapter:
         if price is None:
             return None
         projected_input_tokens = max(1, len(invoice_text) // 4)
+        price = price.for_input_tokens(projected_input_tokens)
         amount = (
             Decimal(projected_input_tokens) * price.input_usd_per_million / Decimal(1_000_000)
             + Decimal(_MAX_COMPLETION_TOKENS)
@@ -265,6 +266,7 @@ def _estimate_cost_usd(model: str, usage: object) -> Decimal | None:
     price = BUILTIN_OPENAI_PRICING.get(model)
     if price is None:
         return None
+    price = price.for_input_tokens(prompt_tokens)
     return (
         Decimal(prompt_tokens) * price.input_usd_per_million / Decimal(1_000_000)
         + Decimal(completion_tokens) * price.output_usd_per_million / Decimal(1_000_000)

@@ -24,6 +24,7 @@ _QUANTUM = Decimal("0.000001")
 
 
 def calculate_cost_usd(prompt_tokens: int, completion_tokens: int, price: PriceEntry) -> Decimal:
+    price = price.for_input_tokens(prompt_tokens)
     input_cost = Decimal(prompt_tokens) * price.input_usd_per_million / _MILLION
     output_cost = Decimal(completion_tokens) * price.output_usd_per_million / _MILLION
     return (input_cost + output_cost).quantize(_QUANTUM, rounding=ROUND_HALF_UP)
@@ -110,6 +111,7 @@ def calculate_cost_with_cache_usd(
     """
     if cache is None or cache.total == 0:
         return calculate_cost_usd(prompt_tokens, completion_tokens, price)
+    price = price.for_input_tokens(prompt_tokens)
     uncached = prompt_tokens - cache.total
     if uncached < 0:
         return None

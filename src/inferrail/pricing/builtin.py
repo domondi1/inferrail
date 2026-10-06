@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from inferrail.config.models import PriceEntry
+from inferrail.config.models import LongContextPrice, PriceEntry
 
 _OPENAI_PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 _VERIFIED_DATE = date(2026, 10, 5)
@@ -44,17 +44,34 @@ def _price(input_usd: str, output_usd: str, cached_input_usd: str) -> PriceEntry
     )
 
 
-# Every entry is a model whose standard-tier price is a single
-# input/output pair. Deliberately excluded, even though they're current
-# flagships: `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are priced
-# per *context length* (a higher rate above 270K tokens), which a single
-# `PriceEntry` cannot represent — storing only the short-context rate
-# would silently under-report a long-context request's real cost, which is
-# precisely the fabricated-precision failure this catalog exists to avoid.
-# They resolve to `null` (an honest "unknown") until either the schema
-# models context-tiered pricing or an operator supplies a `pricing:`
-# override they've chosen themselves. Same reasoning excludes the `-pro`,
-# batch, flex, and fast tiers.
+def _tiered_price(
+    input_usd: str,
+    output_usd: str,
+    cached_input_usd: str,
+    long_input_usd: str,
+    long_output_usd: str,
+    long_cached_input_usd: str,
+) -> PriceEntry:
+    # OpenAI: "Short context: <=272K input tokens. Long context: >272K input
+    # tokens", and the long rates apply "for the full request" (model pages).
+    # 272_000, not 272 * 1024: if anything this switches tiers slightly
+    # early, which overstates a cost rather than understating it.
+    return _price(input_usd, output_usd, cached_input_usd).model_copy(
+        update={
+            "verified_date": date(2026, 10, 6),
+            "long_context": LongContextPrice(
+                above_input_tokens=272_000,
+                input_usd_per_million=Decimal(long_input_usd),
+                output_usd_per_million=Decimal(long_output_usd),
+                cache_read_usd_per_million=Decimal(long_cached_input_usd),
+            )
+        }
+    )
+
+
+# Standard tier only: the `-pro`, batch, flex, and fast tiers are excluded.
+# The gpt-5.6 flagships are context-tiered (a higher rate for the whole
+# request above 272K input tokens), expressed with `long_context`.
 BUILTIN_OPENAI_PRICING: dict[str, PriceEntry] = {
     "gpt-4o": _price("2.50", "10.00", "1.25"),
     "gpt-4o-mini": _price("0.15", "0.60", "0.075"),
@@ -67,4 +84,7 @@ BUILTIN_OPENAI_PRICING: dict[str, PriceEntry] = {
     "gpt-5-nano": _price("0.05", "0.40", "0.005"),
     "o3": _price("2.00", "8.00", "0.50"),
     "o4-mini": _price("1.10", "4.40", "0.275"),
+    "gpt-5.6-sol": _tiered_price("4.00", "20.00", "0.40", "8.00", "30.00", "0.80"),
+    "gpt-5.6-terra": _tiered_price("2.00", "12.00", "0.20", "4.00", "18.00", "0.40"),
+    "gpt-5.6-luna": _tiered_price("0.20", "1.20", "0.02", "0.40", "1.80", "0.04"),
 }
