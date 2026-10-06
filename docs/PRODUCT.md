@@ -353,6 +353,13 @@ inspectable config file and gives you a telemetry record for every request
   `pricing:` entry can declare it as `cache_read_usd_per_million`). If the
   price entry has no cached rate, cached tokens stay at the full input
   rate, so that request's cost is overstated, not understated.
+- Context-tiered prices (the built-in `gpt-5.6-sol`, `gpt-5.6-terra`,
+  `gpt-5.6-luna`, or an operator `pricing:` entry with `long_context`):
+  a request whose input tokens are above `long_context.above_input_tokens`
+  is priced at the long-context rates for the whole request, as OpenAI
+  bills it. Budget reservations pick the tier from the same upper-bound
+  input estimate they already use, and the receipt embeds the rates that
+  were applied.
 - Unresolvable pricing (unknown model, or an
   `openai_compatible`/`anthropic_compatible` provider with no override
   configured) leaves `pricing`/`estimated_cost_usd` explicitly `null` on

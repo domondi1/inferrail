@@ -140,6 +140,7 @@ def estimate_upper_bound_usd(
     # Ceiling division: rounding the token estimate down would make this
     # not actually an upper bound.
     prompt_tokens_estimate = -(-prompt_chars // _CHARS_PER_TOKEN_UPPER_BOUND)
+    price = price.for_input_tokens(prompt_tokens_estimate)
     input_cost = Decimal(prompt_tokens_estimate) * price.input_usd_per_million / _MILLION
     output_cost = Decimal(max_completion_tokens) * price.output_usd_per_million / _MILLION
     return (input_cost + output_cost).quantize(_QUANTUM, rounding=ROUND_HALF_UP)

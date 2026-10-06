@@ -57,6 +57,67 @@
       "title": "BudgetsConfig",
       "type": "object"
     },
+    "LongContextPrice": {
+      "additionalProperties": false,
+      "description": "Rates for a request whose input tokens exceed `above_input_tokens`.\nThey replace the base rates for the whole request, not only for the\ntokens past the threshold.",
+      "properties": {
+        "above_input_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Above Input Tokens",
+          "type": "integer"
+        },
+        "cache_read_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Read Usd Per Million"
+        },
+        "input_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Input Usd Per Million"
+        },
+        "output_usd_per_million": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Output Usd Per Million"
+        }
+      },
+      "required": [
+        "above_input_tokens",
+        "input_usd_per_million",
+        "output_usd_per_million"
+      ],
+      "title": "LongContextPrice",
+      "type": "object"
+    },
     "PriceEntry": {
       "additionalProperties": false,
       "description": "A verified per-model price, with the provenance to audit it later.\n\nUsed both for the built-in catalog (`inferrail.pricing.builtin`) and\nfor operator overrides (`InferrailConfig.pricing`). `source` and\n`verified_date` are mandatory in both cases \u2014 Inferrail never persists\na price it can't explain the origin of. Values are `Decimal`, not\n`float`: money is never computed with binary floating point here.",
@@ -124,6 +185,17 @@
             }
           ],
           "title": "Input Usd Per Million"
+        },
+        "long_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LongContextPrice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "output_usd_per_million": {
           "anyOf": [
