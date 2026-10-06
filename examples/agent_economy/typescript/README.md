@@ -1,8 +1,8 @@
 # Hierarchical budget provider (TypeScript reference)
 
-A small, dependency-free reference for spend-policy hooks that need **sub-agent
+A small reference for spend-policy hooks that need **sub-agent
 budgets**: for example, a pre-execution `policyProvider` in front of x402 or
-wallet actions.
+wallet actions. The provider itself has no dependencies.
 
 Delegation is just a reservation against the parent. For every budget:
 
@@ -22,11 +22,61 @@ Each balance-changing call is synchronous, so within one JS process two
 concurrent callers can't both take the last unit of a budget, and siblings
 can't both delegate the parent's last unit.
 
-```bash
-bun test examples/agent_economy/typescript
+## Put an x402 client under job budgets
+
+`x402-job-budget.ts` connects the provider to any `x402Client` from
+`@x402/core`, and so to `@x402/fetch` and `@x402/axios`. Every payment the
+client signs is drawn from the budget that's active for the calling task, and
+is refused **before signing** when that budget can't cover it. With no budget
+active, nothing is signed.
+
+```ts
+import { x402Client } from "@x402/core/client";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import { HierarchicalBudgetProvider } from "./hierarchical-budget-provider.ts";
+import { withJobBudgets } from "./x402-job-budget.ts";
+
+const client = new x402Client();
+registerExactEvmScheme(client, { signer });            // your existing signer
+const provider = new HierarchicalBudgetProvider();
+const budgets = withJobBudgets(client, provider);
+const paidFetch = wrapFetchWithPayment(fetch, client);
+
+provider.open("job-42", 5_000_000n);                    // $5.00 USDC for the job
+const research = provider.delegate("job-42", "research", 1_000_000n);
+const browser = provider.delegate("job-42", "browser", 500_000n);
+if (!research.ok || !browser.ok) throw new Error("not enough budget");
+
+// Concurrent sub-agents, each bounded by its own share
+await Promise.all([
+  budgets.run(research.childRef, () => researchAgent(paidFetch)),
+  budgets.run(browser.childRef, () => browserAgent(paidFetch)),
+]);
+
+provider.status("job-42");                              // consumed, reserved, delegated, remaining
+provider.revoke(browser.childRef);                      // stop one child; its unspent share returns
 ```
 
-Scope, plainly: it's in-memory and single-process. For durability across
+Each payment gets its own reservation, held from the before-hook until the
+call returns a signed payload (counted as spent) or fails (released). This is
+done around the whole `createPaymentPayload()` call, not in the after and
+failure hooks, because `@x402/core` gives each hook phase a new context object
+and skips the failure hooks when a later before-hook aborts
+([x402-foundation/x402#3703](https://github.com/x402-foundation/x402/issues/3703)).
+
+## Run the tests
+
+```bash
+cd examples/agent_economy/typescript
+bun install    # @x402/core, @x402/evm and viem, for the adapter tests only
+bun test       # 17 tests; the adapter tests sign real EIP-3009 payloads locally
+```
+
+Scope, plainly: it's in-memory and single-process. A signed payload is
+counted when it's created, even if the seller never settles it. For the payer
+key to stay out of your agents, run the client in the process that holds the
+signer and hand agents budget refs, not the client. For durability across
 restarts and processes, run the same operations inside a database transaction,
 as the Python ledger in `hosted/a2a_economic_authority/core.py` does with
 SQLite (used by the runnable example one directory up).
