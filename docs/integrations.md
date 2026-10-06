@@ -178,6 +178,176 @@ llm = LLM(
 )
 ```
 
+## Agents and apps
+
+Config-only setups for tools that make many model calls per task. Each
+gives one run (or session) an id and a dollar ceiling; `inferrail work
+<id>` and `inferrail report --by work_id` show what it cost. All were
+run against a stand-in OpenAI upstream with the versions noted (no
+provider spend); "on refusal" is what the tool does when the gateway
+returns 402.
+
+### goose (per session)
+
+A custom provider can send goose's session id under any header name:
+
+```json
+{
+  "name": "inferrail",
+  "engine": "openai",
+  "display_name": "OpenAI via Inferrail",
+  "api_key_env": "",
+  "requires_auth": false,
+  "base_url": "http://127.0.0.1:8000/v1",
+  "models": [{"name": "gpt-4o-mini", "context_limit": 128000}],
+  "headers": {"X-Inferrail-Budget-Usd": "2.00"},
+  "session_id_header_override": "X-Inferrail-Attribute-Work-Id"
+}
+```
+
+Save as `~/.config/goose/custom_providers/inferrail.json` and select the
+`inferrail` provider. goose v1.53.0. On refusal: stops with its generic
+"add more credits" message, no retry loop.
+
+### Qwen Code (per session)
+
+```json
+{
+  "modelProviders": {
+    "openai": [{
+      "id": "gpt-4o-mini",
+      "envKey": "INFERRAIL_PLACEHOLDER_KEY",
+      "baseUrl": "http://127.0.0.1:8000/v1",
+      "generationConfig": {
+        "customHeaders": {
+          "X-Inferrail-Attribute-Work-Id": "qwen-${session_id}",
+          "X-Inferrail-Budget-Usd": "2.00"
+        },
+        "samplingParams": {"max_tokens": 4000}
+      }
+    }]
+  },
+  "outboundCorrelation": {"allowDynamicHeaderValues": true}
+}
+```
+
+In `~/.qwen/settings.json`, with `INFERRAIL_PLACEHOLDER_KEY=unused`
+exported. Qwen Code 0.25.0. On refusal: `[API Error: 402 budget ...]`,
+exit 1, one request.
+
+### Crush (per run)
+
+`extra_headers` expands environment variables and drops a header that
+expands to empty, so a run is capped only when you name it:
+
+```json
+{
+  "providers": {
+    "capped": {
+      "type": "openai-compat",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "api_key": "unused",
+      "extra_headers": {
+        "X-Inferrail-Attribute-Work-Id": "${INFERRAIL_WORK_ID}",
+        "X-Inferrail-Budget-Usd": "${INFERRAIL_WORK_ID:+${INFERRAIL_BUDGET_USD:-2.00}}"
+      },
+      "models": [{"id": "gpt-4o-mini", "name": "gpt-4o-mini",
+                  "context_window": 128000, "default_max_tokens": 4000}]
+    }
+  }
+}
+```
+
+`INFERRAIL_WORK_ID=ticket-4411 crush run "..."`. crush v0.97.1. On
+refusal: `payment required: budget ...`, exit 1, no retries.
+
+### OpenCode (per day)
+
+Provider headers are static, so cap a project per day:
+
+```json
+{
+  "provider": {
+    "capped": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:8000/v1",
+        "apiKey": "unused",
+        "headers": {"X-Inferrail-Attribute-Project": "opencode"}
+      },
+      "models": {"gpt-4o-mini": {"name": "gpt-4o-mini"}}
+    }
+  },
+  "model": "capped/gpt-4o-mini"
+}
+```
+
+```bash
+inferrail budget set --scope project --scope-value opencode --window daily --mode block --limit-usd 5
+```
+
+opencode 1.18.34. On refusal: prints the budget error and exits, two
+requests, no retry loop.
+
+### PR-Agent (per review run, GitHub Actions)
+
+Run the gateway and PR-Agent's CLI in the same job:
+
+```yaml
+- run: pip install pr-agent inferrail
+- env: {OPENAI_API_KEY: "${{ secrets.OPENAI_KEY }}"}
+  run: |
+    nohup inferrail serve --quickstart --app-mode --no-telemetry > gateway.log 2>&1 &
+    curl -s --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health
+- env:
+    GITHUB__USER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    OPENAI__KEY: unused
+    OPENAI__API_BASE: http://127.0.0.1:8000/v1
+    CONFIG__MODEL: gpt-5
+    LITELLM__EXTRA_HEADERS: '{"X-Inferrail-Attribute-Work-Id": "pr-${{ github.event.pull_request.number }}", "X-Inferrail-Budget-Usd": "0.50"}'
+  run: python -m pr_agent.cli --pr_url "${{ github.event.pull_request.html_url }}" review
+```
+
+pr-agent 0.47.0. On refusal: two attempts, then `Failed to review PR`.
+
+### crawl4ai, ScrapeGraphAI, Prefect, Atomic Agents (per job)
+
+```python
+# crawl4ai: one id per crawl job
+LLMExtractionStrategy(
+    llm_config=LLMConfig(provider="openai/gpt-4o-mini", api_token="unused",
+                         base_url="http://127.0.0.1:8000/v1"),
+    extra_args={"max_tokens": 800, "extra_headers": {
+        "X-Inferrail-Attribute-Work-Id": job_id, "X-Inferrail-Budget-Usd": "2.00"}},
+    instruction="...",
+)
+
+# ScrapeGraphAI: pass a ChatOpenAI as model_instance
+config = {"llm": {"model_instance": ChatOpenAI(
+    model="gpt-4o-mini", base_url="http://127.0.0.1:8000/v1", api_key="unused",
+    max_tokens=800, default_headers={"X-Inferrail-Attribute-Work-Id": job_id,
+                                     "X-Inferrail-Budget-Usd": "1.50"}),
+    "model_tokens": 128000}}
+
+# Prefect: the flow run id is the work id
+OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused", default_headers={
+    "X-Inferrail-Attribute-Work-Id": f"prefect-{prefect.runtime.flow_run.id}",
+    "X-Inferrail-Budget-Usd": "5.00"})
+
+# Atomic Agents: one instructor client per request, shared by every agent
+instructor.from_openai(OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused",
+    default_headers={"X-Inferrail-Attribute-Work-Id": request_id,
+                     "X-Inferrail-Budget-Usd": "0.25"}))
+```
+
+crawl4ai 0.9.4, scrapegraphai 2.3.0, prefect 3.8.7, atomic-agents 2.10.3.
+**Retries:** a refused call can't pass on retry, but some retry layers
+resend it anyway (free, since refusals never reach the provider, but
+wasted). Prefect `@task(retries=...)` and instructor's default
+`max_retries` both do; skip 402 with a Prefect `retry_condition_fn`, and
+pass instructor `max_retries=Retrying(stop=stop_after_attempt(3),
+retry=retry_if_exception_type(ValidationError))`.
+
 ## Voice agents
 
 Inferrail has no native voice support. It does not handle audio,
