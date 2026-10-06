@@ -104,6 +104,23 @@ cover the next request, the gateway refuses it with HTTP 402 before the
 provider and Claude Code stops with
 `API Error: 402 budget 'work_id:loop-42:per_work' ... would be exceeded`.
 
+To give **every session its own budget** instead, without choosing ids
+yourself, start the gateway with `--work-id-header X-Claude-Code-Session-Id`
+(Claude Code sends its session id on every request) and declare only the
+amount:
+
+```bash
+inferrail serve --quickstart --app-mode --work-id-header X-Claude-Code-Session-Id
+export ANTHROPIC_CUSTOM_HEADERS='X-Inferrail-Budget-Usd: 5'
+claude -p "..."
+inferrail report --by work_id      # one row per session
+```
+
+An explicit `X-Inferrail-Attribute-Work-Id` still wins over the session
+header. The same flag works for other agents that identify their session,
+e.g. OpenCode's `x-opencode-session-id`; repeat it to list several, first
+present wins (`work_id_headers:` in `inferrail.yaml` does the same).
+
 Things to know:
 
 - Claude Code sends `max_tokens: 128000`, and each request reserves its

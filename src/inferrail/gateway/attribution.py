@@ -16,7 +16,7 @@ them. See docs/integrations.md's "Attribution" section.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 
 from inferrail.errors import BudgetDeclarationError
@@ -28,7 +28,9 @@ BUDGET_HEADER = "x-inferrail-budget-usd"
 _MAX_DECLARABLE_USD = Decimal("1000000")
 
 
-def extract_attributes(headers: Mapping[str, str]) -> dict[str, str]:
+def extract_attributes(
+    headers: Mapping[str, str], work_id_headers: Sequence[str] = ()
+) -> dict[str, str]:
     """Collect `X-Inferrail-Attribute-<Name>` headers into `{name: value}`.
 
     Header names are case-insensitive (per HTTP) and matched
@@ -37,6 +39,11 @@ def extract_attributes(headers: Mapping[str, str]) -> dict[str, str]:
     `X-Inferrail-Attribute-Workflow-Type` -> `workflow_type`. A header with
     an empty name suffix or an empty value is dropped rather than stored,
     since neither carries any attributable meaning.
+
+    `work_id_headers` (config `work_id_headers`) names other headers to take
+    the `work_id` from when no `X-Inferrail-Attribute-Work-Id` was sent,
+    first non-empty match wins. An explicit work id header always takes
+    precedence.
     """
     attributes: dict[str, str] = {}
     for raw_name, raw_value in headers.items():
@@ -47,6 +54,13 @@ def extract_attributes(headers: Mapping[str, str]) -> dict[str, str]:
         if not key or not raw_value:
             continue
         attributes[key] = raw_value
+    if "work_id" not in attributes and work_id_headers:
+        lowered_headers = {name.lower(): value for name, value in headers.items()}
+        for name in work_id_headers:
+            value = lowered_headers.get(name.lower())
+            if value:
+                attributes["work_id"] = value
+                break
     return attributes
 
 

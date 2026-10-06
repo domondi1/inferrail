@@ -98,6 +98,19 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     serve.add_argument(
+        "--work-id-header",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Take a request's work id from this header when it sends no "
+            "X-Inferrail-Attribute-Work-Id (repeatable; first present wins). "
+            "E.g. X-Claude-Code-Session-Id or x-opencode-session-id, so every "
+            "agent session gets its own work id and budget. Adds to "
+            "work_id_headers from inferrail.yaml."
+        ),
+    )
+    serve.add_argument(
         "--daily-budget-usd",
         default=None,
         metavar="AMOUNT",
@@ -647,6 +660,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             config = load_config(args.config)
         if args.app_mode:
             config, app_mode_paths = _apply_app_mode(config)
+        if args.work_id_header:
+            config = config.model_copy(
+                update={"work_id_headers": [*config.work_id_headers, *args.work_id_header]}
+            )
         if args.daily_budget_usd is not None:
             config = _apply_quickstart_daily_budget(
                 config, args.daily_budget_usd, app_mode_paths=app_mode_paths

@@ -484,6 +484,13 @@
     },
     "usage_ping": {
       "$ref": "#/$defs/UsagePingConfig"
+    },
+    "work_id_headers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Work Id Headers",
+      "type": "array"
     }
   },
   "required": [
