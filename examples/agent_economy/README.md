@@ -106,7 +106,7 @@ example.
 
 ## What is and isn't guaranteed
 
-Proven by `tests/unit/test_agent_economy_example.py` (12 tests):
+Proven by `tests/unit/test_agent_economy_example.py` (14 tests):
 
 - An action that doesn't fit the caller's remaining authority is refused
   before any payment is signed or sent.
@@ -116,7 +116,10 @@ Proven by `tests/unit/test_agent_economy_example.py` (12 tests):
 - Crash after reserving, crash after signing, or crash after settlement:
   on restart every action ends in exactly one state, a reservation is
   never released while its payment could still settle, and a settled
-  payment is never left unrecorded.
+  payment is never left unrecorded. A model call found in flight on restart
+  counts its full reserved ceiling, since the provider may have billed it.
+- A reconcile running in another process can't release a reservation that
+  is being signed: the purchase is refused before its signature leaves.
 - A tampered authorization is rejected (x402's own signature check).
 - The payer key never appears in any status or record output.
 

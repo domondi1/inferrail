@@ -66,7 +66,11 @@ CREATE TABLE IF NOT EXISTS actions (
 """
 
 # x402 action states: RESERVING -> REFUSED | AUTHORIZED -> SETTLED | EXPIRED
-# model calls: RESERVING -> SETTLED; RESERVING found on restart -> ABANDONED
+# model calls: RESERVING -> CALLING -> SETTLED
+# reconcile: RESERVING -> ABANDONING -> ABANDONED (nothing was signed or called);
+#            CALLING -> SETTLED at the reserved ceiling (the provider may have billed)
+# Leaving RESERVING is a compare-and-set, so a reconcile in another process can't
+# release a reservation that this process is about to sign or spend against.
 TERMINAL = {"REFUSED", "SETTLED", "EXPIRED", "ABANDONED"}
 
 
@@ -153,6 +157,18 @@ class AuthorityRuntime:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(sql, args)
             conn.execute("COMMIT")
+
+    def _transition(self, action_id: str, expected: str, **fields: Any) -> bool:
+        """Update the action only if it is still in `expected`; True if it was."""
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                f"UPDATE actions SET {cols}, updated_at = ? WHERE action_id = ? AND state = ?",
+                (*fields.values(), self._clock(), action_id, expected),
+            )
+            conn.execute("COMMIT")
+            return cur.rowcount == 1
 
     def _set(self, action_id: str, **fields: Any) -> None:
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -288,6 +304,8 @@ class AuthorityRuntime:
             + max_tokens * p.output_usd_per_token
         )
         action_id = self._admit(caller, "model", p.name, ceiling, None)
+        if not self._transition(action_id, "RESERVING", state="CALLING"):
+            raise Refused("reservation_released", {"action_id": action_id})
         text, prompt_tokens, completion_tokens = p.complete(messages, max_tokens)
         actual = min(
             prompt_tokens * p.input_usd_per_token + completion_tokens * p.output_usd_per_token,
@@ -330,13 +348,17 @@ class AuthorityRuntime:
         if auth["to"].lower() != option.pay_to.lower() or int(auth["value"]) != int(option.amount):
             raise AssertionError("signed authorization does not match the admitted purchase")
         header = encode_payment_signature_header(payload)
-        self._set(
+        if not self._transition(
             action_id,
+            "RESERVING",
             state="AUTHORIZED",
             nonce=auth["nonce"].lower(),
             valid_before=int(auth["validBefore"]),
             payload_sha256=hashlib.sha256(header.encode()).hexdigest(),
-        )
+        ):
+            # A reconcile released this reservation first. The signature never
+            # leaves this process, so nothing can settle against it.
+            raise Refused("reservation_released", {"action_id": action_id, "resource": url})
 
         delivered, body, status = False, None, None
         try:
@@ -368,12 +390,23 @@ class AuthorityRuntime:
         if action["state"] in TERMINAL:
             return str(action["state"])
         if action["state"] == "RESERVING":
-            # Reserved but never signed, or signed but never recorded as such. A
-            # signature only ever leaves this process after AUTHORIZED is durable,
-            # so nothing can settle against this reservation: release it.
+            # Reserved but never signed or called. Claim it first, so a process
+            # still working on it can no longer move it to AUTHORIZED or CALLING.
+            if not self._transition(action_id, "RESERVING", state="ABANDONING"):
+                return self._reconcile_action(action_id)
+            action = dict(action, state="ABANDONING")
+        if action["state"] == "ABANDONING":
+            # A signature only ever leaves this process after AUTHORIZED is
+            # durable, so nothing can settle against this reservation: release it.
             self._close_leaf(action, None, "abandoned")
             self._set(action_id, state="ABANDONED")
             return "ABANDONED"
+        if action["state"] == "CALLING":
+            # The model call may have completed and been billed before the crash,
+            # and its real cost is unknown: count the reserved ceiling.
+            self._close_leaf(action, Decimal(action["amount_usd"]), "completed")
+            self._set(action_id, state="SETTLED", actual_usd=action["amount_usd"])
+            return "SETTLED"
         payer = self._payer.address
         if self._chain.authorization_state(payer, action["nonce"]):
             event = self._chain.used_event(payer, action["nonce"])
