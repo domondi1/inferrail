@@ -346,3 +346,51 @@ def test_the_payer_key_never_appears_in_any_output(world: dict[str, Any]) -> Non
     key_hex = world["payer"].key.hex().removeprefix("0x")
     dumped = json.dumps([rt.record("w"), rt.status(token)])
     assert key_hex not in dumped
+
+
+def test_a_concurrent_reconcile_cannot_release_a_purchase_that_is_being_signed(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import authority
+
+    rt = world["runtime"]()
+    other = world["runtime"]()  # a second process on the same state, e.g. a reconcile job
+    token = rt.open_work("w", Decimal("0.002"))  # room for exactly one $0.002 search
+
+    real_client = authority.x402ClientSync
+
+    class ReconcileWhileSigning(real_client):  # type: ignore[misc, valid-type]
+        def create_payment_payload(self, *args: Any, **kwargs: Any) -> Any:
+            other.reconcile()  # runs between admission and AUTHORIZED
+            return super().create_payment_payload(*args, **kwargs)
+
+    monkeypatch.setattr(authority, "x402ClientSync", ReconcileWhileSigning)
+    with pytest.raises(Refused) as refused:
+        rt.pay(token, "GET", SEARCH, params={"q": "x402"})
+    monkeypatch.setattr(authority, "x402ClientSync", real_client)
+
+    # The reconcile won: the signature never left, nothing moved, the budget is whole
+    assert refused.value.reason == "reservation_released"
+    assert world["http"].paid_requests == 0
+    assert _outflow(world) == 0
+    assert Decimal(rt.status(token)["remaining_usd"]) == Decimal("0.002")
+
+    # ...and the budget still allows exactly one purchase
+    assert rt.pay(token, "GET", SEARCH, params={"q": "again"})["paid"] is True
+    with pytest.raises(Refused):
+        rt.pay(token, "GET", SEARCH, params={"q": "third"})
+    assert _outflow(world) == 2_000
+
+
+def test_a_model_call_found_in_flight_on_restart_counts_its_ceiling(
+    world: dict[str, Any],
+) -> None:
+    rt = world["runtime"]()
+    token = rt.open_work("w", Decimal("0.010"))
+    caller = rt._caller(token)
+    action_id = rt._admit(caller, "model", "provider:stub", Decimal("0.003"), None)
+    assert rt._transition(action_id, "RESERVING", state="CALLING")  # then the process dies
+
+    restarted = world["runtime"]()
+    assert restarted.reconcile() == {action_id: "SETTLED"}
+    assert Decimal(restarted.status(token)["remaining_usd"]) == Decimal("0.007")
