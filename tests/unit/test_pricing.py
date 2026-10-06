@@ -10,6 +10,8 @@ from inferrail.config.models import PriceEntry, ProviderConfig
 from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
 from inferrail.pricing.builtin_anthropic import BUILTIN_ANTHROPIC_PRICING
 from inferrail.pricing.resolver import PricingResolver
+from inferrail.receipts.builder import build_receipt
+from inferrail.receipts.calculator import CacheTokens, calculate_cost_usd
 
 
 def _fixture_price(input_price: str = "1.00", output_price: str = "2.00") -> PriceEntry:
@@ -36,17 +38,71 @@ def test_builtin_pricing_applies_to_real_openai_provider() -> None:
     assert price.verified_date is not None
 
 
-def test_context_tiered_models_are_deliberately_unpriced() -> None:
-    # A `PriceEntry` holds exactly one input/output rate, but these models
-    # are billed at a higher rate above a context threshold. Listing one
-    # would silently under-report long-context requests — an explicit
-    # `null` is the honest answer until the schema can express the tier.
+def test_context_tiered_models_price_the_full_request_at_the_long_rate() -> None:
+    # OpenAI bills a gpt-5.6 request above 272K input tokens at the long
+    # rates for the *full* request, not only for the tokens past 272K.
     providers = {"openai": ProviderConfig(type="openai", api_key_env="KEY")}
     resolver = PricingResolver(providers, overrides={})
 
+    terra = resolver.resolve("openai", "gpt-5.6-terra")
+    assert terra is not None and terra.long_context is not None
+    assert terra.long_context.above_input_tokens == 272_000
+
+    short = calculate_cost_usd(272_000, 1_000, terra)
+    assert short == Decimal("0.556000")  # 272k * $2 + 1k * $12, per 1M
+    long = calculate_cost_usd(272_001, 1_000, terra)
+    assert long == Decimal("1.106004")  # 272,001 * $4 + 1k * $18, per 1M
+
     for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
-        assert model not in BUILTIN_OPENAI_PRICING
-        assert resolver.resolve("openai", model) is None
+        price = BUILTIN_OPENAI_PRICING[model]
+        assert price.long_context is not None, model
+        assert price.long_context.input_usd_per_million == 2 * price.input_usd_per_million
+        assert price.long_context.output_usd_per_million == (
+            price.output_usd_per_million * Decimal("1.5")
+        )
+
+
+def test_long_context_tier_prices_cached_input_and_the_receipt_records_the_tier() -> None:
+    providers = {"openai": ProviderConfig(type="openai", api_key_env="KEY")}
+    resolver = PricingResolver(providers, overrides={})
+    cache = CacheTokens(creation=0, creation_5m=None, creation_1h=None, read=200_000)
+
+    receipt = build_receipt(
+        receipt_id="r",
+        request_id="q",
+        route="passthrough",
+        provider="openai",
+        model="gpt-5.6-luna",
+        status="success",
+        prompt_tokens=300_000,
+        completion_tokens=10_000,
+        pricing_resolver=resolver,
+        attributes={},
+        total_latency_ms=1.0,
+        retry_count=0,
+        cache=cache,
+    )
+
+    # 100k uncached * $0.40 + 200k cached * $0.04 + 10k out * $1.80, per 1M
+    assert receipt.estimated_cost_usd == Decimal("0.066000")
+    assert receipt.pricing is not None
+    assert receipt.pricing.input_usd_per_million == Decimal("0.40")
+    assert receipt.pricing.long_context is None
+
+
+def test_long_context_price_entry_rejects_incomplete_rates() -> None:
+    tier = {"above_input_tokens": 1000, "input_usd_per_million": "2", "output_usd_per_million": "4"}
+    base = {
+        "input_usd_per_million": "1",
+        "output_usd_per_million": "2",
+        "source": "https://example.com",
+        "verified_date": "2026-10-06",
+    }
+    with pytest.raises(ValidationError, match="on both the base price"):
+        PriceEntry(**base, cache_read_usd_per_million="0.1", long_context=tier)
+    with pytest.raises(ValidationError, match="cache write rates"):
+        PriceEntry(**base, cache_write_5m_usd_per_million="1.25", long_context=tier)
+    assert PriceEntry(**base, long_context=tier).for_input_tokens(1001).input_usd_per_million == 2
 
 
 def test_every_builtin_price_carries_verifiable_provenance() -> None:
