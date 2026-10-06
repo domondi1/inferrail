@@ -8,6 +8,17 @@ PyPI release (the hosted service and website ship independently of the
 
 ## Unreleased
 
+### Added
+- Per-session budgets for agents that already identify their session.
+  `inferrail serve --work-id-header NAME` (repeatable; or
+  `work_id_headers:` in `inferrail.yaml`) takes a request's work id from
+  that header when it sends no `X-Inferrail-Attribute-Work-Id`, e.g.
+  Claude Code's `X-Claude-Code-Session-Id` or OpenCode's
+  `x-opencode-session-id`. With a static `X-Inferrail-Budget-Usd`, every
+  session gets its own dollar ceiling and its own row in
+  `inferrail report --by work_id`, with no wrapper script. Off by default;
+  an explicit work id header always wins.
+
 ### Fixed
 - Dollar budgets work with OpenAI's current flagships. `gpt-5.6-sol`,
   `gpt-5.6-terra` and `gpt-5.6-luna` are billed at higher rates for the

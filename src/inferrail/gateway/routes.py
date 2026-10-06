@@ -138,7 +138,9 @@ async def chat_completions(
     payload: ChatCompletionRequest, request: Request
 ) -> ChatCompletionResponse | StreamingResponse:
     engine: InferenceEngine = request.app.state.engine
-    attributes = extract_attributes(request.headers)
+    attributes = extract_attributes(
+        request.headers, request.app.state.config.work_id_headers
+    )
     declared = extract_declared_budget(request.headers)
     if payload.stream:
         body = await engine.prepare_stream(
@@ -183,7 +185,9 @@ async def messages(
     payload: MessagesRequest, request: Request
 ) -> MessagesResponse | StreamingResponse | JSONResponse:
     engine: AnthropicInferenceEngine = request.app.state.anthropic_engine
-    attributes = extract_attributes(request.headers)
+    attributes = extract_attributes(
+        request.headers, request.app.state.config.work_id_headers
+    )
     declared = extract_declared_budget(request.headers)
     anthropic_beta = request.headers.get("anthropic-beta")
     beta_query = request.query_params.get("beta") == "true"

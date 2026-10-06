@@ -287,6 +287,13 @@ class InferrailConfig(BaseModel):
     # correctly passthrough for both wire formats at once. See
     # docs/adr/0020-quickstart-both-sdks-and-payload-free-verification.md.
     default_anthropic_provider: str | None = None
+    # Request headers to read a work id from when the caller sends no
+    # `X-Inferrail-Attribute-Work-Id`, checked in order (first non-empty
+    # wins). For agents that already identify their session on every
+    # request, e.g. Claude Code's `X-Claude-Code-Session-Id` or OpenCode's
+    # `x-opencode-session-id`, so each session gets its own work id (and
+    # budget) without a wrapper. Empty by default: nothing is inferred.
+    work_id_headers: list[str] = Field(default_factory=list)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     receipts: ReceiptsConfig = Field(default_factory=ReceiptsConfig)
