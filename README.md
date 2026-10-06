@@ -148,6 +148,12 @@ installed into a different Python. More in
   calls share it safely, and calls that would exceed it get HTTP 402
   before they reach the provider. Global, project, daily, and monthly
   budgets too. [Recipe](docs/recipes/agent-run-budget.md).
+- **Experimental: the same budget for agents that pay.** If a job also buys
+  things over x402 (paid APIs, data, other agents), one job budget can cover
+  model calls and purchases. Sub-agents get bounded shares, and a purchase that
+  doesn't fit is refused before it's signed. The payer key stays out of the
+  agent. Python runtime, plus a TypeScript adapter for `@x402/fetch`.
+  [Example](examples/agent_economy/) (local proof; no mainnet).
 - **Numbers you can trust.** A cost is recorded only when the provider
   reports usage and a price is on file. Otherwise it's `unknown`, never a
   guessed `$0`.
