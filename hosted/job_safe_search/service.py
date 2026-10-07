@@ -194,7 +194,8 @@ class SearchService:
         job = self.store.job(row["job"])
         assert job is not None
         complete = row["state"] == "DELIVERED"
-        financial = financial_state(row)
+        extra_liability = self.store.extra_liability(row["id"])
+        financial = financial_state({**row, "extra_payment_liability": extra_liability})
         paid = financial["settled_revenue"] not in (None, "0")
         if row["state"] == "PAYMENT_REJECTED":
             response = self.challenge(
@@ -221,6 +222,7 @@ class SearchService:
                 "economic_state": "SETTLED" if complete else row["state"],
                 "transaction": row["tx"],
                 "financial_state": "RESOLVED" if financial["resolved"] else "UNRESOLVED",
+                "additional_payment_liability_usd": usd(extra_liability),
             },
         }
         if complete:
@@ -243,6 +245,32 @@ class SearchService:
         status = 402 if row["state"] == "PAYMENT_REJECTED" else 200 if complete else 202
         return JSONResponse(status_code=status, content=content, headers=headers)
 
+    async def observe_extra_payment(self, row: dict[str, Any], signature: str | None) -> None:
+        if not signature or not self.config.recovery_from_block:
+            return
+        try:
+            payload = decode(signature)
+            payer, nonce = identity(payload, self.requirements)
+            if payer != row["payer"] or nonce == row["nonce"]:
+                return
+            tx = await self.chain.find_transaction(payload, self.config.recovery_from_block)
+            if tx:
+                self.store.record_extra_payment(
+                    row["id"],
+                    payer,
+                    nonce,
+                    tx,
+                    int(payload.accepted.amount),
+                    pending_payload=payload.model_dump_json(by_alias=True),
+                )
+                if await self.chain.confirmed(payload, tx):
+                    self.store.record_extra_payment(
+                        row["id"], payer, nonce, tx, int(payload.accepted.amount)
+                    )
+        except Exception:
+            # Never settle a new signature during a replay; unreadable chain state stays unknown.
+            return
+
     def token_context(self, request: SearchRequest) -> dict[str, Any] | None:
         if not request.job_token:
             return None
@@ -261,6 +289,7 @@ class SearchService:
                 if row["fingerprint"] != request.fingerprint():
                     raise Refused("request_id_conflict")
                 # A fresh signed payment is never settled for an existing request.
+                await self.observe_extra_payment(row, signature)
                 await self.advance(row["id"])
                 return self.response(self.store.get(row["id"]), free=True)
             cached = self.store.cached(
@@ -271,6 +300,7 @@ class SearchService:
                 self.config.cache_ttl,
             )
             if cached:
+                await self.observe_extra_payment(cached, signature)
                 return self.response(cached, free=True, cache=True)
             if job["budget"] is not None and job["budget"] - job["committed"] < self.config.price:
                 raise Refused("job_budget_exhausted")
@@ -324,6 +354,8 @@ class SearchService:
             expires=time.time() + self.config.job_ttl,
             provider=self.supplier.name,
         )
+        if not new:
+            await self.observe_extra_payment(row, signature)
         await self.advance(row["id"])
         return self.response(self.store.get(row["id"]), free=not new or existing is not None)
 
@@ -331,12 +363,14 @@ class SearchService:
         row = self.store.get(purchase)
         payload = PaymentPayload.model_validate_json(row["payload"])
         if row["state"] == "RESERVED" and self.store.transition(purchase, "RESERVED", "VERIFYING"):
+            verified = None
             try:
                 verified = await self.facilitator.verify(payload, self.requirements)
             except Exception:
-                self.store.transition(purchase, "VERIFYING", "RESERVED")
-                return
-            if not verified.is_valid and self.config.recovery_from_block:
+                if not self.config.recovery_from_block:
+                    self.store.transition(purchase, "VERIFYING", "RESERVED")
+                    return
+            if (verified is None or not verified.is_valid) and self.config.recovery_from_block:
                 # Some proxies settle before forwarding the signed authorization.
                 # A spent nonce alone is insufficient: require its exact finalized USDC transfer.
                 try:
@@ -364,6 +398,9 @@ class SearchService:
                     )
                     await self.advance(purchase)
                     return
+            if verified is None:
+                self.store.transition(purchase, "VERIFYING", "RESERVED")
+                return
             if not verified.is_valid or (verified.payer or "").lower() != row["payer"]:
                 self.store.transition(
                     purchase, "VERIFYING", "PAYMENT_REJECTED", supplier_cogs=0, variable_fees=0
@@ -457,6 +494,12 @@ class SearchService:
         )
 
     async def recover(self, from_block: str, *, startup: bool = True) -> None:
+        for purchase, extra in self.store.pending_extra_payments():
+            payload = PaymentPayload.model_validate_json(extra["pending_payload"])
+            if await self.chain.confirmed(payload, extra["transaction"]):
+                self.store.record_extra_payment(
+                    purchase, extra["payer"], extra["nonce"], extra["transaction"], extra["amount"]
+                )
         for row in self.store.outstanding():
             purchase = row["id"]
             if row["state"] == "VERIFYING" and startup:

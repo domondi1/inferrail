@@ -61,7 +61,22 @@ def report(
     known_fees = [row["variable_fees"] for row in paid if row["variable_fees"] is not None]
     known_refunds = [row["refunds"] for row in paid]
     known_credits = [row["credits"] for row in paid]
-    settled_revenue = sum(row["price"] for row in paid)
+    extra = [
+        json.loads(event["details"])
+        for event in events
+        if event["kind"] == "EXTRA_SETTLED_PAYMENT"
+        and json.loads(event["details"])["payer"].lower() not in excluded
+    ]
+    settled_extra = {(item["payer"], item["nonce"]) for item in extra}
+    pending_extra = [
+        json.loads(event["details"])
+        for event in events
+        if event["kind"] == "EXTRA_PAYMENT_PENDING"
+        and json.loads(event["details"])["payer"].lower() not in excluded
+        and (json.loads(event["details"])["payer"], json.loads(event["details"])["nonce"])
+        not in settled_extra
+    ]
+    settled_revenue = sum(row["price"] for row in paid) + sum(item["amount"] for item in extra)
     margin_rows = [
         row
         for row in resolved_paid
@@ -112,12 +127,14 @@ def report(
         "credits_usd": usd(sum(known_credits)),
         "variable_payment_fees_usd": usd(sum(known_fees)) if len(known_fees) == len(paid) else None,
         "known_variable_payment_fees_usd": usd(sum(known_fees)),
-        "realized_external_contribution_margin_usd": None if unresolved else usd(sum(margins)),
+        "realized_external_contribution_margin_usd": None
+        if unresolved or extra or pending_extra
+        else usd(sum(margins)),
         "known_realized_external_contribution_margin_usd": usd(sum(margins)),
         "hosting_infrastructure_cost_usd": hosting_cost_usd,
         "strict_experiment_pnl_usd": (
             usd(sum(margins) - atomic(hosting_cost_usd))
-            if hosting_cost_usd is not None and not unresolved
+            if hosting_cost_usd is not None and not unresolved and not extra and not pending_extra
             else None
         ),
         "average_realized_margin_per_resolved_call_usd": (
@@ -134,7 +151,12 @@ def report(
         "safe_fallbacks": 0,
         "blocked_unsafe_fallbacks": blocked_fallbacks,
         "failed_no_charge_requests": sum(row["state"] == "PAYMENT_REJECTED" for row in external),
-        "unresolved_transactions": len(unresolved),
+        "unresolved_transactions": len(unresolved) + len(extra) + len(pending_extra),
+        "additional_settled_payments": len(extra),
+        "additional_pending_payments": len(pending_extra),
+        "additional_payment_liability_usd": usd(
+            sum(item["amount"] for item in extra + pending_extra)
+        ),
         "unknown_supplier_cogs_calls": sum(row["supplier_cogs"] is None for row in paid),
         "unknown_variable_fee_calls": sum(row["variable_fees"] is None for row in paid),
         "excluded_wallet_count": len(excluded),

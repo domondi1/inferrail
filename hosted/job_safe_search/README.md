@@ -143,3 +143,10 @@ settlement. If one controlled indexing payment is necessary, obtain explicit
 approval for exactly one transaction, label INDEXING_BOOTSTRAP, persist its
 signature before dispatch, and exclude the payer forever. Never repeat it to
 increase usage counters.
+
+If a proxy independently settles a second payment before forwarding a completed
+request, the service records that extra transfer as an append-only liability,
+reports it in the receipt/metrics, and does not buy the supplier again. It
+never silently recognizes that money as margin. Such externally settled
+duplicates require explicit reconciliation; the server never issues refunds
+or signs a second payment automatically.

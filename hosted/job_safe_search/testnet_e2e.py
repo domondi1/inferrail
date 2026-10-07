@@ -27,7 +27,7 @@ from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
 from .contract import SearchRequest
 from .economics import financial_state
 from .metrics import report
-from .payments import ChainEvidence, encode
+from .payments import ChainEvidence, decode, encode
 from .service import Config, SearchService, create_app
 from .store import Store
 from .supplier import FixtureSearch, SupplierResult
@@ -110,6 +110,7 @@ def serve(wallet_file: str, state: str, role: str, mode: str, from_block: str) -
         resource_url=f"https://testnet.example.invalid/{role}/search",
         token_secret=(root / "token-secret").read_bytes(),
         network=NETWORK,
+        recovery_from_block=from_block,
         price=7000 if role == "supplier" else 15000,
         fee_bound=0,
         minimum_margin=0,
@@ -146,7 +147,7 @@ async def wait_health(client: httpx.AsyncClient, port: int) -> None:
     raise RuntimeError("testnet_process_did_not_start")
 
 
-async def exercise(wallet_file: Path, state: Path) -> None:
+async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None = None) -> None:
     if state.exists():
         raise ValueError("new_state_directory_required; inspect existing evidence before any retry")
     state.mkdir(mode=0o700)
@@ -162,7 +163,7 @@ async def exercise(wallet_file: Path, state: Path) -> None:
             RPC, json={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
         )
         from_block = response.json()["result"]
-        for mode in ("success", "settlement_crash", "supplier_crash"):
+        for mode in scenarios or ["success", "settlement_crash", "supplier_crash", "pre_settled"]:
             root = state / mode
             root.mkdir()
             (root / "token-secret").write_bytes(os.urandom(48))
@@ -188,15 +189,25 @@ async def exercise(wallet_file: Path, state: Path) -> None:
                     "job_budget_usd": "0.015",
                 }
                 headers = {"PAYMENT-SIGNATURE": signature}
+                if mode == "pre_settled":
+                    facilitator = HTTPFacilitatorClient(create_facilitator_config())
+                    payload = decode(signature)
+                    settled = await facilitator.settle(payload, payload.accepted)
+                    (root / "proxy-settlement.json").write_text(settled.model_dump_json())
+                    await facilitator.aclose()
+                    if not settled.success:
+                        raise RuntimeError(
+                            "proxy_payment_uncertain; inspect evidence, never sign again"
+                        )
                 try:
                     response = await client.post(
                         "http://127.0.0.1:18422/search", json=body, headers=headers
                     )
                     data = response.json()
                 except httpx.HTTPError:
-                    if mode == "success":
+                    if mode in ("success", "pre_settled"):
                         raise
-                if mode != "success":
+                if mode in ("settlement_crash", "supplier_crash"):
                     merchant.join(timeout=5)
                     assert merchant.exitcode == (81 if mode == "settlement_crash" else 82)
                     merchant = start("merchant", "success")
@@ -287,10 +298,15 @@ def main() -> None:
     parser.add_argument("--wallet-file", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--run-actual-testnet", action="store_true", required=True)
+    parser.add_argument(
+        "--scenarios",
+        nargs="+",
+        choices=["success", "settlement_crash", "supplier_crash", "pre_settled"],
+    )
     args = parser.parse_args()
     if args.wallet_file.stat().st_mode & 0o077:
         raise ValueError("wallet_file_must_be_private_mode_0600")
-    asyncio.run(exercise(args.wallet_file.resolve(), args.state_dir.resolve()))
+    asyncio.run(exercise(args.wallet_file.resolve(), args.state_dir.resolve(), args.scenarios))
 
 
 if __name__ == "__main__":

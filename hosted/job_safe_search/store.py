@@ -93,7 +93,74 @@ class Store:
 
     def get(self, purchase: int) -> dict[str, Any]:
         with self.connect() as conn:
-            return dict(conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone())
+            row = dict(conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone())
+            row["extra_payment_liability"] = self.extra_liability(purchase)
+            return row
+
+    def extra_liability(self, purchase: int | None = None) -> int:
+        with self.connect() as conn:
+            events = conn.execute(
+                "SELECT purchase,details FROM events "
+                "WHERE kind IN ('EXTRA_SETTLED_PAYMENT','EXTRA_PAYMENT_PENDING')"
+            )
+            payments = {}
+            for row in events:
+                if purchase is not None and row[0] != purchase:
+                    continue
+                details = json.loads(row[1])
+                payments[(details["payer"], details["nonce"])] = details["amount"]
+            return sum(payments.values())
+
+    def pending_extra_payments(self) -> list[tuple[int, dict[str, Any]]]:
+        with self.connect() as conn:
+            settled = {
+                (json.loads(row[0])["payer"], json.loads(row[0])["nonce"])
+                for row in conn.execute(
+                    "SELECT details FROM events WHERE kind='EXTRA_SETTLED_PAYMENT'"
+                )
+            }
+            return [
+                (row[0], json.loads(row[1]))
+                for row in conn.execute(
+                    "SELECT purchase,details FROM events WHERE kind='EXTRA_PAYMENT_PENDING'"
+                )
+                if (json.loads(row[1])["payer"], json.loads(row[1])["nonce"]) not in settled
+            ]
+
+    def record_extra_payment(
+        self,
+        purchase: int,
+        payer: str,
+        nonce: str,
+        tx: str,
+        amount: int,
+        *,
+        pending_payload: str | None = None,
+    ) -> None:
+        with self.transaction() as conn:
+            # A nonce already belongs to another ordinary purchase, or was already observed.
+            if conn.execute(
+                "SELECT 1 FROM purchases WHERE payer=? AND nonce=?", (payer, nonce)
+            ).fetchone():
+                return
+            kind = "EXTRA_PAYMENT_PENDING" if pending_payload else "EXTRA_SETTLED_PAYMENT"
+            previous = conn.execute("SELECT details FROM events WHERE kind=?", (kind,))
+            if any(
+                json.loads(row[0])["nonce"] == nonce and json.loads(row[0])["payer"] == payer
+                for row in previous
+            ):
+                return
+            self.event(
+                conn,
+                purchase,
+                kind,
+                pending_payload=pending_payload,
+                payer=payer,
+                nonce=nonce,
+                transaction=tx,
+                amount=amount,
+                unresolved_liability=amount,
+            )
 
     def lookup(self, payer: str, job: str, request: str) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -223,6 +290,7 @@ class Store:
                    OR supplier_cogs IS NULL OR variable_fees IS NULL
                    OR liability > 0 OR credits > 0"""
             risk = conn.execute(risk_sql).fetchone()[0]
+            risk += self.extra_liability()
             if risk + price + supplier_bound + fee_bound > risk_ceiling:
                 raise Refused("unresolved_risk_ceiling")
             if conn.execute(

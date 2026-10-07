@@ -633,3 +633,64 @@ async def test_pre_settled_proxy_waits_for_finality_without_recharging(system: A
     await service.recover("0x0")
     assert row(service)["state"] == "DELIVERED"
     assert chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.mark.asyncio
+async def test_proxy_pre_settled_payment_recovers_if_verify_raises(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    service.facilitator.failure = "verify"
+    await service.handle(body(), signed)
+    assert row(service)["state"] == "DELIVERED"
+    assert service.supplier.calls == 1 and service.facilitator.settles == 0
+    assert chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.mark.asyncio
+async def test_extra_proxy_settlement_is_not_a_silent_duplicate(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    await service.handle(body(), payment(service, account))
+    fresh = payment(service, account)
+    await service.facilitator.inner.settle(decode(fresh), service.requirements)
+    for _ in range(2):
+        response = result(await service.handle(body(), fresh))
+        assert response["receipt"]["additional_payment_liability_usd"] == "0.015"
+        assert response["receipt"]["financial_state"] == "UNRESOLVED"
+    assert chain.balance_of(service.config.pay_to) == 30000
+    assert service.supplier.calls == service.facilitator.settles == 1
+    metrics = report(service.store.path, set())
+    assert metrics["gross_external_settled_revenue_usd"] == "0.03"
+    assert metrics["additional_settled_payments"] == 1
+    assert metrics["realized_external_contribution_margin_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_unfinalized_duplicate_payment_survives_restart_as_liability(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    await service.handle(body(), payment(service, account))
+    fresh = payment(service, account)
+    await service.facilitator.inner.settle(decode(fresh), service.requirements)
+    service.chain.final = False
+    await service.handle(body(), fresh)
+    assert financial_state(row(service))["realized_margin"] is None
+    metrics = report(service.store.path, set())
+    assert metrics["additional_pending_payments"] == 1
+    assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    service.chain.final = True
+    await service.recover("0x0")
+    metrics = report(service.store.path, set())
+    assert metrics["additional_pending_payments"] == 0
+    assert metrics["additional_settled_payments"] == 1
+    assert metrics["gross_external_settled_revenue_usd"] == "0.03"
+    assert service.supplier.calls == service.facilitator.settles == 1
