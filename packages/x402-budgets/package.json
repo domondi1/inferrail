@@ -1,0 +1,35 @@
+{
+  "name": "@inferrail/x402-budgets",
+  "version": "0.1.0",
+  "description": "Job budgets with bounded sub-agent shares for agents that pay: reserve before signing, refuse what doesn't fit. Adapters for @x402/core (and @x402/fetch, @x402/axios) and ElizaOS plugin-wallet. Experimental.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "engines": { "node": ">=18" },
+  "keywords": ["x402", "agent", "budget", "ai-agents", "agent-payments", "sub-agents", "spending-limits", "elizaos"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/domondi1/inferrail.git",
+    "directory": "packages/x402-budgets"
+  },
+  "homepage": "https://github.com/domondi1/inferrail/tree/main/examples/agent_economy/typescript",
+  "bugs": "https://github.com/domondi1/inferrail/issues",
+  "peerDependencies": { "@x402/core": ">=2.5.0" },
+  "peerDependenciesMeta": { "@x402/core": { "optional": true } },
+  "devDependencies": {
+    "@types/node": "22",
+    "@x402/core": "2.28.0",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "build": "node scripts/copy-src.mjs && tsc -p tsconfig.json && cp ../../LICENSE LICENSE",
+    "prepublishOnly": "npm run build && node scripts/smoke.mjs"
+  }
+}
