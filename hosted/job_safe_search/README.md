@@ -136,8 +136,7 @@ block first. Database loss requires closing payment acceptance until recovery;
 a fresh database must not be used to bypass replay protection.
 
 Validate the deployed endpoint without payment using CDP POST
-`https://api.cdp.coinbase.com/platform/v2/x402/validate` with its documented
-resource/method payload. Confirm health, 402 amount/network/payTo, declared
+`https://api.cdp.coinbase.com/platform/v2/x402/validate` with JSON `{ "resource": "https://YOUR_HOST/search", "method": "POST" }`. Confirm health, 402 amount/network/payTo, declared
 schemas and discovery examples before activation. Validation does not index
 an endpoint. Check the live discovery catalogue and merchant resources after
 settlement. If one controlled indexing payment is necessary, obtain explicit

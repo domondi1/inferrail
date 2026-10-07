@@ -123,7 +123,7 @@ jobs:
       - name: Lint search and lifecycle tests
         run: ruff check hosted/job_safe_search tests/unit/hosted/test_job_safe_search.py
       - name: Test search lifecycle with hosted dependencies
-        run: pytest tests/unit/hosted/test_job_safe_search.py -v
+        run: python -m pytest tests/unit/hosted/test_job_safe_search.py -v
 
   ap-exceptions:
     # Dedicated job for AP invoice-exception recovery: the main `test` job
