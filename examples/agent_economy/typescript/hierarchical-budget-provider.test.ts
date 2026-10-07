@@ -170,14 +170,16 @@ describe("event log", () => {
     p.reserve(c.childRef, 5_000n, 1_000);
     t = 2_000; // the c hold expires
     p.revoke(c.childRef);
-    p.remaining("job"); // triggers expiry bookkeeping
+    p.delegate("job", "late", 1_000n); // reserve/delegate release expired holds first
+
+    expect(events.some((e) => e.op === "release" && e.expired)).toBe(true);
 
     // Sequence numbers are gapless and every refusal is on the record
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
     expect(events.filter((e) => e.op === "refuse")).toHaveLength(2);
 
     const rebuilt = replay(events);
-    for (const ref of ["job", a.childRef, c.childRef]) {
+    for (const ref of ["job", a.childRef, c.childRef, "job/late"]) {
       const s = p.status(ref)!;
       const r = rebuilt.get(ref)!;
       expect([r.limit, r.consumed, r.reserved, r.delegated]).toEqual([s.limit, s.consumed, s.reserved, s.delegated]);
