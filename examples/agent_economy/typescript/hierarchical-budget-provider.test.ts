@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HierarchicalBudgetProvider } from "./hierarchical-budget-provider.ts";
+import { type BudgetEvent, HierarchicalBudgetProvider } from "./hierarchical-budget-provider.ts";
 
 /** consumed + reserved + delegated <= limit, and nothing negative, for every budget. */
 function expectInvariant(p: HierarchicalBudgetProvider, refs: string[]) {
@@ -122,5 +122,74 @@ describe("HierarchicalBudgetProvider", () => {
     expect(p.reserve("job", 5_000n).ok).toBe(true); // stale hold was released
     if (r.ok) p.settle(r.reservation, 5_000n); // late settle of an expired hold is a no-op
     expect(p.status("job")?.consumed).toBe(0n);
+  });
+});
+
+describe("event log", () => {
+  /** Rebuild every budget's balances from the log alone, as an outside verifier would. */
+  function replay(events: BudgetEvent[]) {
+    const b = new Map<string, { parent?: string; limit: bigint; consumed: bigint; reserved: bigint; delegated: bigint }>();
+    const holds = new Map<string, { parent: string; amount: bigint }>();
+    for (const e of events) {
+      if (e.op === "open") b.set(e.ref, { limit: e.amount, consumed: 0n, reserved: 0n, delegated: 0n });
+      if (e.op === "delegate") {
+        b.get(e.parent)!.delegated += e.amount;
+        b.set(e.ref, { parent: e.parent, limit: e.amount, consumed: 0n, reserved: 0n, delegated: 0n });
+      }
+      if (e.op === "reserve") {
+        b.get(e.parent)!.reserved += e.amount;
+        holds.set(e.ref, { parent: e.parent, amount: e.amount });
+      }
+      if (e.op === "settle" || e.op === "release") {
+        const h = holds.get(e.ref)!;
+        holds.delete(e.ref);
+        b.get(h.parent)!.reserved -= h.amount;
+        if (e.op === "settle") b.get(h.parent)!.consumed += e.amount;
+      }
+      if (e.op === "return") {
+        b.get(e.parent)!.delegated -= e.amount;
+        b.get(e.ref)!.limit -= e.amount;
+      }
+    }
+    return b;
+  }
+
+  test("an outside replay of the log matches the provider and keeps the invariant", async () => {
+    const events: BudgetEvent[] = [];
+    let t = 0;
+    const p = new HierarchicalBudgetProvider(() => t, (e) => events.push(e));
+    p.open("job", 100_000n);
+    const a = p.delegate("job", "a", 40_000n);
+    const c = p.delegate("job", "c", 30_000n);
+    if (!a.ok || !c.ok) throw new Error("delegation failed");
+    const held = await Promise.all(Array.from({ length: 6 }, () => p.reserve(a.childRef, 10_000n, 1_000)));
+    held.forEach((r, i) => {
+      if (r.ok && i % 2 === 0) p.settle(r.reservation, 7_000n);
+      else if (r.ok) p.release(r.reservation);
+    });
+    p.reserve(c.childRef, 5_000n, 1_000);
+    t = 2_000; // the c hold expires
+    p.revoke(c.childRef);
+    p.delegate("job", "late", 1_000n); // reserve/delegate release expired holds first
+
+    expect(events.some((e) => e.op === "release" && e.expired)).toBe(true);
+
+    // Sequence numbers are gapless and every refusal is on the record
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    expect(events.filter((e) => e.op === "refuse")).toHaveLength(2);
+
+    const rebuilt = replay(events);
+    for (const ref of ["job", a.childRef, c.childRef, "job/late"]) {
+      const s = p.status(ref)!;
+      const r = rebuilt.get(ref)!;
+      expect([r.limit, r.consumed, r.reserved, r.delegated]).toEqual([s.limit, s.consumed, s.reserved, s.delegated]);
+      expect(r.consumed + r.reserved + r.delegated <= r.limit).toBe(true);
+    }
+  });
+
+  test("the log is optional", () => {
+    const p = new HierarchicalBudgetProvider();
+    p.open("job", 1n);
+    expect(p.reserve("job", 1n).ok).toBe(true);
   });
 });

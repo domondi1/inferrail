@@ -22,6 +22,22 @@ Each balance-changing call is synchronous, so within one JS process two
 concurrent callers can't both take the last unit of a budget, and siblings
 can't both delegate the parent's last unit.
 
+## Audit log
+
+Pass a second argument to keep an append-only log of every balance change and
+refusal, each with its parent ref:
+
+```ts
+const provider = new HierarchicalBudgetProvider(Date.now, (e) => log.write(JSON.stringify(e, (_k, v) => (typeof v === "bigint" ? v.toString() : v)) + "\n"));
+// {"op":"delegate","ref":"job-42/research","parent":"job-42","amount":"1000000","seq":2,"at":...}
+```
+
+Ops: `open`, `delegate`, `reserve`, `settle`, `release` (with `expired`),
+`refuse`, `revoke`, `return` (a revoked child's unspent share going back to its
+parent). Sequence numbers are gapless, so a third party can rebuild every
+budget from the log alone and check the invariant without trusting the
+provider; the tests do exactly that.
+
 ## Put an x402 client under job budgets
 
 `x402-job-budget.ts` connects the provider to any `x402Client` from
@@ -65,12 +81,39 @@ failure hooks, because `@x402/core` gives each hook phase a new context object
 and skips the failure hooks when a later before-hook aborts
 ([x402-foundation/x402#3703](https://github.com/x402-foundation/x402/issues/3703)).
 
+## ElizaOS agents (plugin-wallet)
+
+`eliza-x402-budgets.ts` does the same for ElizaOS agents that pay with
+plugin-wallet's x402 client. It uses the client's payment callbacks
+(`onBeforePayment`, `onPaymentComplete` and `onPaymentFailed`, with one
+`paymentId` per attempt). Those landed on Eliza's `develop` in
+elizaOS/eliza#34131 and aren't in the npm beta yet.
+
+```ts
+import { createX402Client } from "@elizaos/plugin-wallet/sdk/index";   // develop
+import { HierarchicalBudgetProvider } from "./hierarchical-budget-provider.ts";
+import { elizaX402Budgets } from "./eliza-x402-budgets.ts";
+
+const provider = new HierarchicalBudgetProvider();
+const budgets = elizaX402Budgets(provider);
+const client = createX402Client(wallet, { ...budgets.callbacks });
+
+provider.open("agent:eliza", 5_000_000n);                     // $5.00 USDC for this agent
+const task = provider.delegate("agent:eliza", "task-17", 1_000_000n);
+if (task.ok) await budgets.run(task.childRef, () => client.fetch(url));
+```
+
+A payment that doesn't fit the active budget is declined in `onBeforePayment`,
+so plugin-wallet returns the original 402 and nothing is transferred
+(`budgets.lastRefusal(ref)` says why). A failed payment whose transfer was
+already submitted is counted as spent, since it may still land.
+
 ## Run the tests
 
 ```bash
 cd examples/agent_economy/typescript
 bun install    # @x402/core, @x402/evm and viem, for the adapter tests only
-bun test       # 17 tests; the adapter tests sign real EIP-3009 payloads locally
+bun test       # 24 tests; the x402 adapter tests sign real EIP-3009 payloads locally
 ```
 
 Scope, plainly: it's in-memory and single-process. A signed payload is
