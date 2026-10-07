@@ -453,7 +453,7 @@ def test_external_metrics_exclude_controlled_wallets(tmp_path: Path) -> None:
             supplier_bound=7_000,
             fee_bound=1_000,
             nonce=f"nonce-{index}",
-            payload="{}",
+            payload='{"accepted":{"network":"eip155:8453"}}',
             body="{}",
             risk_ceiling=20_000_000,
             expires=9999999999,
@@ -494,7 +494,12 @@ async def test_credit_liability_and_refund_reconciliation(system: Any) -> None:
     )
     assert financial_state(row(service))["realized_margin"] is None
     assert result(service.response(row(service)))["receipt"]["financial_state"] == "UNRESOLVED"
-    assert report(service.store.path, set())["realized_external_contribution_margin_usd"] is None
+    assert (
+        report(service.store.path, set(), network="eip155:84532")[
+            "realized_external_contribution_margin_usd"
+        ]
+        is None
+    )
     with pytest.raises(ValueError, match="confirmed transaction"):
         service.store.resolve_financials(
             1, supplier_cogs=7000, variable_fees=0, refunds=15000, evidence="refund pending"
@@ -665,9 +670,10 @@ async def test_extra_proxy_settlement_is_not_a_silent_duplicate(system: Any) -> 
         assert response["receipt"]["financial_state"] == "UNRESOLVED"
     assert chain.balance_of(service.config.pay_to) == 30000
     assert service.supplier.calls == service.facilitator.settles == 1
-    metrics = report(service.store.path, set())
+    metrics = report(service.store.path, set(), network="eip155:84532")
     assert metrics["gross_external_settled_revenue_usd"] == "0.03"
     assert metrics["additional_settled_payments"] == 1
+    assert metrics["known_realized_external_contribution_margin_usd"] == "0"
     assert metrics["realized_external_contribution_margin_usd"] is None
 
 
@@ -683,14 +689,67 @@ async def test_unfinalized_duplicate_payment_survives_restart_as_liability(syste
     service.chain.final = False
     await service.handle(body(), fresh)
     assert financial_state(row(service))["realized_margin"] is None
-    metrics = report(service.store.path, set())
+    metrics = report(service.store.path, set(), network="eip155:84532")
     assert metrics["additional_pending_payments"] == 1
     assert metrics["gross_external_settled_revenue_usd"] == "0.015"
     assert metrics["realized_external_contribution_margin_usd"] is None
     service.chain.final = True
     await service.recover("0x0")
-    metrics = report(service.store.path, set())
+    metrics = report(service.store.path, set(), network="eip155:84532")
     assert metrics["additional_pending_payments"] == 0
     assert metrics["additional_settled_payments"] == 1
     assert metrics["gross_external_settled_revenue_usd"] == "0.03"
     assert service.supplier.calls == service.facilitator.settles == 1
+
+
+@pytest.mark.asyncio
+async def test_metrics_default_excludes_testnet_even_for_unknown_wallet(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    metrics = report(service.store.path, set())
+    assert metrics["network"] == "eip155:8453"
+    assert metrics["financial_unit"] == "USDC"
+    assert metrics["external_paid_calls"] == 0
+    assert metrics["gross_external_settled_revenue_usd"] == "0"
+    assert metrics["realized_external_contribution_margin_usd"] == "0"
+    modeled = report(service.store.path, set(), network="eip155:84532")
+    assert modeled["financial_unit"] == "TEST_USDC"
+    assert modeled["external_paid_calls"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refund_fee, expected_margin", [(100, "0.0079"), (9000, "-0.001")])
+async def test_extra_payment_refund_needs_evidence_and_preserves_actual_margin(
+    system: Any, refund_fee: int, expected_margin: str
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    await service.handle(body(), payment(service, account))
+    fresh = payment(service, account)
+    await service.facilitator.inner.settle(decode(fresh), service.requirements)
+    await service.handle(body(), fresh)
+    nonce = decode(fresh).payload["authorization"]["nonce"].lower()
+    with pytest.raises(ValueError):
+        service.store.reconcile_extra_refund(
+            1, nonce, refund_transaction="", variable_fees=0, evidence=""
+        )
+    service.store.reconcile_extra_refund(
+        1,
+        nonce,
+        refund_transaction="confirmed-test-refund",
+        variable_fees=refund_fee,
+        evidence="test full refund evidence",
+    )
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["gross_external_settled_revenue_usd"] == "0.03"
+    assert metrics["refunds_usd"] == "0.015"
+    assert metrics["realized_external_contribution_margin_usd"] == expected_margin
+    assert metrics["additional_payment_liability_usd"] == "0"
+    assert metrics["negative_margin_requests"] == (1 if refund_fee == 9000 else 0)
+    assert financial_state(row(service))["realized_margin"] == expected_margin
+    with pytest.raises(ValueError, match="already"):
+        service.store.reconcile_extra_refund(
+            1, nonce, refund_transaction="another", variable_fees=refund_fee, evidence="duplicate"
+        )

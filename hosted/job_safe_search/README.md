@@ -83,7 +83,7 @@ exclusion file. Run:
 
 python -m hosted.job_safe_search.metrics /persistent/search.sqlite3 --exclude-wallets /secure/private/excluded-wallets.txt --hosting-cost-usd 0.00
 
-The report counts non-excluded wallets and separates settled revenue from
+The CLI report counts only Base mainnet payments from non-excluded wallets and separates settled revenue from
 realized contribution margin. Hosting cost is separate and must be supplied
 from an actual hosting bill; omit it and strict experiment P&L stays unknown.
 Unresolved supplier costs or payment fees remain unresolved.
@@ -150,3 +150,9 @@ reports it in the receipt/metrics, and does not buy the supplier again. It
 never silently recognizes that money as margin. Such externally settled
 duplicates require explicit reconciliation; the server never issues refunds
 or signs a second payment automatically.
+
+After an approved full duplicate-payment refund actually settles, an operator
+may record its confirmed transaction, exact refund fees and durable evidence
+with `Store.reconcile_extra_refund`. This performs no payment. Pending incoming
+transfers cannot be reconciled as refunded until finalized, and duplicate
+refund records are rejected. Reconciled refund costs are deducted from margin.

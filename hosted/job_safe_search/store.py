@@ -95,6 +95,23 @@ class Store:
         with self.connect() as conn:
             row = dict(conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone())
             row["extra_payment_liability"] = self.extra_liability(purchase)
+            extra = [
+                json.loads(event[0])
+                for event in conn.execute(
+                    "SELECT details FROM events WHERE purchase=? AND kind='EXTRA_SETTLED_PAYMENT'",
+                    (purchase,),
+                )
+            ]
+            refunds = [
+                json.loads(event[0])
+                for event in conn.execute(
+                    "SELECT details FROM events WHERE purchase=? AND kind='EXTRA_PAYMENT_REFUNDED'",
+                    (purchase,),
+                )
+            ]
+            row["extra_settled_revenue"] = sum(item["amount"] for item in extra)
+            row["extra_refunds"] = sum(item["amount"] for item in refunds)
+            row["extra_variable_fees"] = sum(item["variable_fees"] for item in refunds)
             return row
 
     def extra_liability(self, purchase: int | None = None) -> int:
@@ -109,6 +126,13 @@ class Store:
                     continue
                 details = json.loads(row[1])
                 payments[(details["payer"], details["nonce"])] = details["amount"]
+            for row in conn.execute(
+                "SELECT purchase,details FROM events WHERE kind='EXTRA_PAYMENT_REFUNDED'"
+            ):
+                if purchase is not None and row[0] != purchase:
+                    continue
+                details = json.loads(row[1])
+                payments.pop((details["payer"], details["nonce"]), None)
             return sum(payments.values())
 
     def pending_extra_payments(self) -> list[tuple[int, dict[str, Any]]]:
@@ -160,6 +184,58 @@ class Store:
                 transaction=tx,
                 amount=amount,
                 unresolved_liability=amount,
+            )
+
+    def reconcile_extra_refund(
+        self,
+        purchase: int,
+        nonce: str,
+        *,
+        refund_transaction: str,
+        variable_fees: int,
+        evidence: str,
+    ) -> None:
+        """Record a full duplicate-payment refund AFTER independent operator confirmation.
+
+        This only records evidence. It cannot transfer funds or authorize a refund.
+        """
+        if (
+            not refund_transaction.strip()
+            or not evidence.strip()
+            or type(variable_fees) is not int
+            or variable_fees < 0
+        ):
+            raise ValueError("confirmed full refund and resolved fees/evidence required")
+        with self.transaction() as conn:
+            refunded = [
+                json.loads(row[0])
+                for row in conn.execute(
+                    "SELECT details FROM events WHERE purchase=? AND kind='EXTRA_PAYMENT_REFUNDED'",
+                    (purchase,),
+                )
+            ]
+            if any(item["nonce"] == nonce for item in refunded):
+                raise ValueError("duplicate refund evidence already recorded")
+            extras = [
+                json.loads(row[0])
+                for row in conn.execute(
+                    "SELECT details FROM events WHERE purchase=? AND kind='EXTRA_SETTLED_PAYMENT'",
+                    (purchase,),
+                )
+            ]
+            extra = next((item for item in extras if item["nonce"] == nonce), None)
+            if extra is None:
+                raise ValueError("extra incoming payment must be finalized before reconciliation")
+            self.event(
+                conn,
+                purchase,
+                "EXTRA_PAYMENT_REFUNDED",
+                payer=extra["payer"],
+                nonce=nonce,
+                amount=extra["amount"],
+                refund_transaction=refund_transaction,
+                variable_fees=variable_fees,
+                evidence=evidence,
             )
 
     def lookup(self, payer: str, job: str, request: str) -> dict[str, Any] | None:
