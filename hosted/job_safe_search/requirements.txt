@@ -1,0 +1,6 @@
+# Exact versions already used by Inferrail's hosted x402 services.
+fastapi==0.141.1
+uvicorn==0.52.4
+cdp-sdk==1.48.1
+x402[evm,fastapi,httpx,extensions]==2.22.0
+httpx==0.28.1

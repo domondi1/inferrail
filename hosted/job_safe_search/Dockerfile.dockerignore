@@ -1,0 +1,6 @@
+**
+!hosted/
+!hosted/job_safe_search/
+!hosted/job_safe_search/*.py
+!hosted/job_safe_search/requirements.txt
+!hosted/job_safe_search/Dockerfile

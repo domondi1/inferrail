@@ -1,0 +1,17 @@
+services:
+  search:
+    build:
+      context: ../..
+      dockerfile: hosted/job_safe_search/Dockerfile
+    env_file: .env
+    environment:
+      SEARCH_DB_PATH: /data/search.sqlite3
+      SEARCH_EXCLUDED_WALLETS_PATH: /run/private/excluded-wallets.txt
+      PORT: "8422"
+    ports:
+      - "127.0.0.1:8422:8422"
+    volumes:
+      - ./data:/data
+      - ./private:/run/private:ro
+    restart: unless-stopped
+    stop_grace_period: 45s
