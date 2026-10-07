@@ -22,6 +22,22 @@ Each balance-changing call is synchronous, so within one JS process two
 concurrent callers can't both take the last unit of a budget, and siblings
 can't both delegate the parent's last unit.
 
+## Audit log
+
+Pass a second argument to keep an append-only log of every balance change and
+refusal, each with its parent ref:
+
+```ts
+const provider = new HierarchicalBudgetProvider(Date.now, (e) => log.write(JSON.stringify(e, (_k, v) => (typeof v === "bigint" ? v.toString() : v)) + "\n"));
+// {"op":"delegate","ref":"job-42/research","parent":"job-42","amount":"1000000","seq":2,"at":...}
+```
+
+Ops: `open`, `delegate`, `reserve`, `settle`, `release` (with `expired`),
+`refuse`, `revoke`, `return` (a revoked child's unspent share going back to its
+parent). Sequence numbers are gapless, so a third party can rebuild every
+budget from the log alone and check the invariant without trusting the
+provider; the tests do exactly that.
+
 ## Put an x402 client under job budgets
 
 `x402-job-budget.ts` connects the provider to any `x402Client` from

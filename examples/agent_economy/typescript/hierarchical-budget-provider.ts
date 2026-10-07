@@ -34,6 +34,27 @@ export type DelegateResult =
   | { ok: true; childRef: BudgetRef }
   | { ok: false; reason: "insufficient_budget" | "revoked" | "unknown_budget"; remainingAtomic: bigint };
 
+/**
+ * One line of the optional append-only log: every balance change and refusal,
+ * with the parent ref, so a third party can rebuild the whole delegation tree
+ * and check the invariant without trusting the provider.
+ */
+export type BudgetEvent = {
+  seq: number;
+  at: number;
+} & (
+  | { op: "open"; ref: BudgetRef; amount: bigint }
+  | { op: "delegate"; ref: BudgetRef; parent: BudgetRef; amount: bigint }
+  | { op: "reserve"; ref: string; parent: BudgetRef; amount: bigint }
+  | { op: "settle"; ref: string; parent: BudgetRef; amount: bigint }
+  | { op: "release"; ref: string; parent: BudgetRef; amount: bigint; expired: boolean }
+  | { op: "refuse"; parent: BudgetRef; amount: bigint; reason: string; kind: "reserve" | "delegate" }
+  | { op: "revoke"; ref: BudgetRef }
+  | { op: "return"; ref: BudgetRef; parent: BudgetRef; amount: bigint }
+);
+
+type BudgetEventInput = BudgetEvent extends infer E ? (E extends BudgetEvent ? Omit<E, "seq" | "at"> : never) : never;
+
 interface Budget {
   ref: BudgetRef;
   parentRef?: BudgetRef;
@@ -49,12 +70,26 @@ export class HierarchicalBudgetProvider {
   private reservations = new Map<string, BudgetReservation>();
   private nextId = 0;
 
-  constructor(private readonly now: () => number = () => Date.now()) {}
+  private seq = 0;
+
+  /**
+   * @param now clock in milliseconds (for tests)
+   * @param onEvent optional sink for the append-only event log (see BudgetEvent)
+   */
+  constructor(
+    private readonly now: () => number = () => Date.now(),
+    private readonly onEvent?: (event: BudgetEvent) => void,
+  ) {}
+
+  private emit(event: BudgetEventInput): void {
+    this.onEvent?.({ ...event, seq: ++this.seq, at: this.now() } as BudgetEvent);
+  }
 
   /** Open a root budget (for example one job or one user). */
   open(ref: BudgetRef, limitAtomic: bigint): BudgetRef {
     if (this.budgets.has(ref)) throw new Error(`budget ${ref} already exists`);
     this.budgets.set(ref, { ref, limit: limitAtomic, consumed: 0n, reserved: 0n, delegated: 0n, revoked: false });
+    this.emit({ op: "open", ref, amount: limitAtomic });
     return ref;
   }
 
@@ -73,6 +108,7 @@ export class HierarchicalBudgetProvider {
     if (this.isRevoked(parentRef)) return { ok: false, reason: "revoked", remainingAtomic: 0n };
     const remaining = this.remaining(parentRef);
     if (maxAtomic <= 0n || maxAtomic > remaining) {
+      this.emit({ op: "refuse", parent: parentRef, amount: maxAtomic, reason: "insufficient_budget", kind: "delegate" });
       return { ok: false, reason: "insufficient_budget", remainingAtomic: remaining };
     }
     const childRef = `${parentRef}/${childId}`;
@@ -87,6 +123,7 @@ export class HierarchicalBudgetProvider {
       delegated: 0n,
       revoked: false,
     });
+    this.emit({ op: "delegate", ref: childRef, parent: parentRef, amount: maxAtomic });
     return { ok: true, childRef };
   }
 
@@ -98,6 +135,7 @@ export class HierarchicalBudgetProvider {
     if (this.isRevoked(budgetRef)) return { ok: false, reason: "revoked", remainingAtomic: 0n };
     const remaining = this.remaining(budgetRef);
     if (amountAtomic < 0n || amountAtomic > remaining) {
+      this.emit({ op: "refuse", parent: budgetRef, amount: amountAtomic, reason: "insufficient_budget", kind: "reserve" });
       return { ok: false, reason: "insufficient_budget", remainingAtomic: remaining };
     }
     b.reserved += amountAtomic;
@@ -108,6 +146,7 @@ export class HierarchicalBudgetProvider {
       expiresAt: this.now() + ttlMs,
     };
     this.reservations.set(reservation.ref, reservation);
+    this.emit({ op: "reserve", ref: reservation.ref, parent: budgetRef, amount: amountAtomic });
     return { ok: true, reservation };
   }
 
@@ -121,17 +160,23 @@ export class HierarchicalBudgetProvider {
     b.reserved -= held.amountAtomic;
     const spent = actualAtomic < held.amountAtomic ? actualAtomic : held.amountAtomic;
     b.consumed += spent > 0n ? spent : 0n;
+    this.emit({ op: "settle", ref: held.ref, parent: held.budgetRef, amount: spent > 0n ? spent : 0n });
     this.returnUnspentToParent(b);
   }
 
   /** Failure / release hook: free the reservation without spending. */
   release(reservation: BudgetReservation): void {
+    this.releaseHeld(reservation, false);
+  }
+
+  private releaseHeld(reservation: BudgetReservation, expired: boolean): void {
     const held = this.reservations.get(reservation.ref);
     if (!held) return;
     this.reservations.delete(held.ref);
     const b = this.budgets.get(held.budgetRef);
     if (!b) return;
     b.reserved -= held.amountAtomic;
+    this.emit({ op: "release", ref: held.ref, parent: held.budgetRef, amount: held.amountAtomic, expired });
     this.returnUnspentToParent(b);
   }
 
@@ -147,6 +192,7 @@ export class HierarchicalBudgetProvider {
     const b = this.budgets.get(ref);
     if (!b) return;
     for (const child of this.children(ref)) this.revoke(child.ref);
+    if (!b.revoked) this.emit({ op: "revoke", ref });
     b.revoked = true;
     this.returnUnspentToParent(b);
   }
@@ -182,6 +228,7 @@ export class HierarchicalBudgetProvider {
     if (unspent <= 0n) return;
     parent.delegated -= unspent;
     child.limit = child.consumed;
+    this.emit({ op: "return", ref: child.ref, parent: parent.ref, amount: unspent });
     this.returnUnspentToParent(parent); // the parent may itself be revoked and now idle
   }
 
@@ -189,7 +236,7 @@ export class HierarchicalBudgetProvider {
   private expireStale(): void {
     const t = this.now();
     for (const r of [...this.reservations.values()]) {
-      if (r.expiresAt <= t) this.release(r);
+      if (r.expiresAt <= t) this.releaseHeld(r, true);
     }
   }
 }
