@@ -226,6 +226,27 @@ Save as `~/.config/goose/custom_providers/inferrail.json` and select the
 `inferrail` provider. goose v1.53.0. On refusal: stops with its generic
 "add more credits" message, no retry loop.
 
+### Hermes Agent (per conversation)
+
+A custom provider can send Hermes' conversation id under any header name
+(`session_affinity_header`):
+
+```yaml
+model:
+  default: gpt-4o-mini
+  provider: capped
+providers:
+  capped:
+    base_url: http://127.0.0.1:8000/v1
+    key_env: INFERRAIL_PLACEHOLDER_KEY
+    extra_headers:
+      X-Inferrail-Budget-Usd: "2.00"
+    session_affinity_header: X-Inferrail-Attribute-Work-Id
+```
+
+Hermes v0.21.5 (2026.9.24, Docker image). On refusal: `Billing or credits
+exhausted: HTTP 402: budget ...`, one request, no retry loop.
+
 ### Qwen Code (per session)
 
 ```json
@@ -278,6 +299,9 @@ expands to empty, so a run is capped only when you name it:
 `INFERRAIL_WORK_ID=ticket-4411 crush run "..."`. crush v0.97.1. On
 refusal: `payment required: budget ...`, exit 1, no retries.
 
+Per interactive session: `--work-id-header x-session-id` on the gateway
+(crush sends a hashed session id) with a static `X-Inferrail-Budget-Usd`.
+
 ### OpenCode (per day)
 
 Provider headers are static, so cap a project per day:
@@ -305,6 +329,10 @@ inferrail budget set --scope project --scope-value opencode --window daily --mod
 
 opencode 1.18.34. On refusal: prints the budget error and exits, two
 requests, no retry loop.
+
+Per session instead: start the gateway with `--work-id-header
+x-opencode-session-id` (opencode sends it on every request) and put only
+`"X-Inferrail-Budget-Usd": "3"` in `options.headers`.
 
 ### PR-Agent (per review run, GitHub Actions)
 
