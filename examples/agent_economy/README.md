@@ -178,6 +178,8 @@ provider (`reserve` / `settle` / `release` / `delegate` / `revoke`), plus
 `withJobBudgets`, which puts an existing `@x402/core` client (and so
 `@x402/fetch`) under a job budget and per-child shares.
 
+Why flat spend caps break under concurrent agents, and the fix, in one page: [Recipe: budgets for agents that pay](../../docs/recipes/agent-payment-budgets.md).
+
 ## Questions or something broke?
 
 Open an issue at https://github.com/domondi1/inferrail/issues and say what
