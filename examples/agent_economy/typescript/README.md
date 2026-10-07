@@ -113,7 +113,7 @@ already submitted is counted as spent, since it may still land.
 ```bash
 cd examples/agent_economy/typescript
 bun install    # @x402/core, @x402/evm and viem, for the adapter tests only
-bun test       # 17 tests; the adapter tests sign real EIP-3009 payloads locally
+bun test       # 24 tests; the x402 adapter tests sign real EIP-3009 payloads locally
 ```
 
 Scope, plainly: it's in-memory and single-process. A signed payload is
