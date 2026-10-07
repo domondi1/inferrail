@@ -194,3 +194,4 @@ That is also the fastest way to tell us the demo didn't work for you.
 | `local_chain.py` | Local stand-in for Base Sepolia USDC + an x402 facilitator over it |
 | `demo.py` | Wires it together; `--testnet` for Base Sepolia |
 | `typescript/` | The same budget rules in TypeScript, plus an adapter that puts an `@x402/core` client (and `@x402/fetch`) under job budgets |
+| `SKILL.md` | Instructions an agent can follow to put its x402 payments under a job budget |
