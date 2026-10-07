@@ -51,6 +51,7 @@ class Config:
     realized_payment_fee: int | None = None
     risk_ceiling: int = 15_000_000
     supplier_prepaid_capital: int = 0
+    recovery_from_block: str | None = None
     cache_ttl: int = 300
     job_ttl: int = 86400
     mainnet_approved: bool = False
@@ -335,6 +336,34 @@ class SearchService:
             except Exception:
                 self.store.transition(purchase, "VERIFYING", "RESERVED")
                 return
+            if not verified.is_valid and self.config.recovery_from_block:
+                # Some proxies settle before forwarding the signed authorization.
+                # A spent nonce alone is insufficient: require its exact finalized USDC transfer.
+                try:
+                    tx = await self.chain.find_transaction(payload, self.config.recovery_from_block)
+                except Exception:
+                    self.store.transition(purchase, "VERIFYING", "RESERVED")
+                    return
+                if tx:
+                    self.store.transition(
+                        purchase,
+                        "VERIFYING",
+                        "FINALITY_PENDING",
+                        tx=tx,
+                        settlement=json.dumps(
+                            {
+                                "success": True,
+                                "transaction": tx,
+                                "network": self.config.network,
+                                "payer": row["payer"],
+                                "amount": str(row["price"]),
+                            }
+                        ),
+                        liability=row["price"],
+                        variable_fees=0,
+                    )
+                    await self.advance(purchase)
+                    return
             if not verified.is_valid or (verified.payer or "").lower() != row["payer"]:
                 self.store.transition(
                     purchase, "VERIFYING", "PAYMENT_REJECTED", supplier_cogs=0, variable_fees=0
@@ -560,6 +589,7 @@ def production_app() -> FastAPI:
     if not path.is_file() and os.environ.get("SEARCH_ALLOW_NEW_DB") != "1":
         raise ValueError("refusing_new_database_without_initialization_approval")
     config = Config(
+        recovery_from_block=os.environ.get("SEARCH_RECOVERY_FROM_BLOCK"),
         price=atomic(os.environ.get("SEARCH_PRICE_USD", "0.01")),
         fee_bound=atomic(os.environ.get("SEARCH_PAYMENT_FEE_BOUND_USD", "0.001")),
         minimum_margin=atomic(os.environ.get("SEARCH_MINIMUM_MARGIN_USD", "0.005")),
@@ -597,6 +627,8 @@ def production_app() -> FastAPI:
         from .metrics import excluded_wallets
 
         excluded_wallets(Path(os.environ["SEARCH_EXCLUDED_WALLETS_PATH"]))
+        if not config.recovery_from_block:
+            raise ValueError("mainnet_requires_SEARCH_RECOVERY_FROM_BLOCK_before_first_acceptance")
     chain = ChainEvidence(os.environ["SEARCH_RPC_URL"], config.requirements(), finalized=True)
     facilitator = HTTPFacilitatorClient(create_facilitator_config())
     return create_app(SearchService(config, Store(path), facilitator, chain, supplier))

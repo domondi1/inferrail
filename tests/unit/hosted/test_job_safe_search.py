@@ -583,3 +583,53 @@ async def test_background_recovery_does_not_freeze_active_supplier(system: Any) 
     await service.recover("0x0")
     assert row(service)["state"] == "SUPPLIER_UNKNOWN"
     assert service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_proxy_pre_settled_payment_requires_chain_evidence(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    first = result(await service.handle(body(), signed))
+    assert first["receipt"]["economic_state"] == "SETTLED"
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert service.facilitator.settles == 0 and service.supplier.calls == 1
+    assert financial_state(row(service))["realized_margin"] == "0.008"
+
+
+@pytest.mark.asyncio
+async def test_expired_authorization_and_facilitator_outage_preserve_capital(system: Any) -> None:
+    service, account, chain = system
+    service.facilitator.failure = "verify"
+    signed = payment(service, account)
+    await service.handle(body(), signed)
+    assert row(service)["state"] == "RESERVED"
+    assert service.facilitator.settles == service.supplier.calls == 0
+    service.facilitator.failure = None
+    chain.clock = lambda: 9999999999
+    await service.handle(body(), signed)
+    assert row(service)["state"] == "PAYMENT_REJECTED"
+    assert financial_state(row(service))["realized_margin"] == "0"
+    assert service.facilitator.settles == service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_settled_proxy_waits_for_finality_without_recharging(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    service.chain.final = False
+    response = result(await service.handle(body(), signed))
+    assert response["receipt"]["original_charge_usd"] is None
+    assert row(service)["state"] == "FINALITY_PENDING"
+    assert service.supplier.calls == service.facilitator.settles == 0
+    service.chain.final = True
+    await service.recover("0x0")
+    assert row(service)["state"] == "DELIVERED"
+    assert chain.balance_of(service.config.pay_to) == 15000
