@@ -69,6 +69,7 @@
 - [AP invoice-exception recovery examples](https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery): fixture-based demo, real-provider (OpenAI) demo, a custom-integration example (your own extraction pipeline + review queue, threading decision → retry → recovered data or review → outcome → report end to end), and a hosted-API client example (local authorization/execution against the hosted decision API, keeping invoice content and credentials out of every hosted call)
 - [Basic chat request](https://github.com/domondi1/inferrail/blob/main/examples/basic_chat_request.py)
 - [Work Economics purchase](https://github.com/domondi1/inferrail/blob/main/examples/work_economics_purchase.py): a complete, standalone x402 buyer — no Inferrail account required
+- [Agent economy: one job, one budget](https://github.com/domondi1/inferrail/tree/main/examples/agent_economy): experimental, self-hosted. One job budget covers model calls and x402 purchases; sub-agents get bounded shares; a purchase that doesn't fit is refused before it's signed; the payer key stays out of the agent. Runs locally with a simulated chain (`python examples/agent_economy/demo.py`); no mainnet. TypeScript: [`withJobBudgets`](https://github.com/domondi1/inferrail/tree/main/examples/agent_economy/typescript) puts an existing `@x402/core` / `@x402/fetch` client under per-job and per-sub-agent budgets. Agent instructions: [SKILL.md](https://github.com/domondi1/inferrail/blob/main/examples/agent_economy/SKILL.md)
 
 ## Hosted services
 
