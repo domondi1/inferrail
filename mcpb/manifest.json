@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "inferrail",
   "display_name": "Inferrail",
-  "version": "0.4.15",
+  "version": "0.4.16",
   "description": "Know what your AI work costs, without keeping what it said.",
   "long_description": "Local, payload-free AI cost visibility for agents. Query spend by model, route, or tags such as customer or work_id from local Inferrail receipts without storing prompt or response bodies. Runs the published `inferrail` package with `uvx`, so uv must be installed.",
   "author": {
@@ -20,7 +20,7 @@
     "entry_point": "server.py",
     "mcp_config": {
       "command": "uvx",
-      "args": ["--with", "mcp>=2.0", "inferrail@0.4.15", "mcp"],
+      "args": ["--with", "mcp>=2.0", "inferrail@0.4.16", "mcp"],
       "env": {
         "INFERRAIL_RECEIPTS_PATH": "${user_config.receipts_path}"
       }

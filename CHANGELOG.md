@@ -6,7 +6,7 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
-## Unreleased
+## v0.4.16 — 2026-10-07
 
 ### Added
 - Per-session budgets for agents that already identify their session.
