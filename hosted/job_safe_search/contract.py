@@ -80,14 +80,11 @@ INPUT_EXAMPLE: dict[str, Any] = {
     "job_budget_usd": "0.045",
 }
 DESCRIPTION = (
-    "Inferrail Job-Safe Web Search: ranked title, URL and snippet results for agents. "
-    "One upfront USDC payment buys one bounded search attempt. Reuse request_id for retries; "
-    "retain returned job_token for authenticated recovery, a fixed job budget, and free "
-    "same-query cache reuse for 5 minutes. Settlement/finality may return 202; poll the "
-    "same POST with the original payment signature or job_token, never sign a fresh payment. "
-    "A rejected authorization requires a fresh request_id and signature. "
-    "Supplier failures after payment may require reconciliation; no automatic refund is promised. "
-    "No account or customer API key. EOA EIP-3009 only in this version."
+    "Job-safe web search for agents: up to 5 ranked titles, URLs and snippets. "
+    "Upfront USDC buys one bounded attempt. Stable request_id prevents duplicate payment; "
+    "job_token enables a fixed job budget and free 5-minute same-job cache. "
+    "Poll HTTP 202 using the original signature/token; never pay again for that request. "
+    "Failed attempts may remain charged; no automatic refunds. EOA EIP-3009 only."
 )
 
 OUTPUT_EXAMPLE: dict[str, Any] = {

@@ -110,6 +110,21 @@ jobs:
         shell: bash
         run: bash scripts/run_hosted_work_economics_tests.sh
 
+  hosted-job-safe-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install hosted search dependencies
+        run: pip install -e ".[dev,hosted]"
+      - name: Lint search and lifecycle tests
+        run: ruff check hosted/job_safe_search tests/unit/hosted/test_job_safe_search.py
+      - name: Test search lifecycle with hosted dependencies
+        run: pytest tests/unit/hosted/test_job_safe_search.py -v
+
   ap-exceptions:
     # Dedicated job for AP invoice-exception recovery: the main `test` job
     # only installs `[dev,mcp]`, so OpenAIRetryAdapter's `openai` import is

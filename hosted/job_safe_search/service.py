@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -29,9 +30,10 @@ from .contract import (
     atomic,
     usd,
 )
+from .economics import financial_state
 from .payments import ChainEvidence, decode, encode, identity
 from .store import Refused, Store
-from .supplier import ExaSearch, FixtureSearch
+from .supplier import ExaSearch, FixtureSearch, SerpexSearch
 
 SERVICE_NAME = "Inferrail Job-Safe Web Search"
 SERVICE_TAGS = ["search", "web", "job-budget", "idempotency", "agent-payments"]
@@ -43,11 +45,12 @@ class Config:
     resource_url: str
     token_secret: bytes
     network: str = "eip155:84532"
-    price: int = 15000
+    price: int = 10000
     fee_bound: int = 1000
     minimum_margin: int = 5000
-    realized_payment_fee: int | None = 0
-    risk_ceiling: int = 20_000_000
+    realized_payment_fee: int | None = None
+    risk_ceiling: int = 15_000_000
+    supplier_prepaid_capital: int = 0
     cache_ttl: int = 300
     job_ttl: int = 86400
     mainnet_approved: bool = False
@@ -68,7 +71,11 @@ class Config:
             or self.realized_payment_fee > self.fee_bound
         ):
             raise ValueError("mainnet_requires_a_resolved_payment_fee_within_fee_bound")
-        if not 0 < self.risk_ceiling <= 20_000_000:
+        if (
+            self.supplier_prepaid_capital < 0
+            or not 0 < self.risk_ceiling
+            or self.risk_ceiling + self.supplier_prepaid_capital > 20_000_000
+        ):
             raise ValueError("risk_ceiling_out_of_range")
         if self.network == "eip155:8453":
             if not self.mainnet_approved or not self.supplier_rights_confirmed:
@@ -89,7 +96,11 @@ class Config:
             amount=str(self.price),
             pay_to=self.pay_to,
             max_timeout_seconds=3600,
-            extra={"name": "USD Coin" if self.network == "eip155:8453" else "USDC", "version": "2"},
+            extra={
+                "name": "USD Coin" if self.network == "eip155:8453" else "USDC",
+                "version": "2",
+                "paymentFlow": "upfront",
+            },
         )
 
 
@@ -182,6 +193,8 @@ class SearchService:
         job = self.store.job(row["job"])
         assert job is not None
         complete = row["state"] == "DELIVERED"
+        financial = financial_state(row)
+        paid = financial["settled_revenue"] not in (None, "0")
         if row["state"] == "PAYMENT_REJECTED":
             response = self.challenge(
                 "Payment was rejected; retry with a new request_id and fresh signature."
@@ -195,9 +208,9 @@ class SearchService:
                 "receipt_id": f"search-{row['id']}",
                 "job_id": job["id"],
                 "request_id": row["request_id"],
-                "charged_usd": "0" if free else usd(row["price"]) if row["tx"] else None,
-                "original_charge_usd": usd(row["price"]) if row["tx"] else None,
-                "provider": self.supplier.name,
+                "charged_usd": "0" if free else usd(row["price"]) if paid else None,
+                "original_charge_usd": usd(row["price"]) if paid else None,
+                "provider": row["provider"],
                 "cache_hit": cache,
                 "replayed": free,
                 "failover": False,
@@ -206,11 +219,7 @@ class SearchService:
                 else None,
                 "economic_state": "SETTLED" if complete else row["state"],
                 "transaction": row["tx"],
-                "financial_state": "RESOLVED"
-                if complete
-                and row["supplier_cogs"] is not None
-                and row["variable_fees"] is not None
-                else "UNRESOLVED",
+                "financial_state": "RESOLVED" if financial["resolved"] else "UNRESOLVED",
             },
         }
         if complete:
@@ -219,7 +228,8 @@ class SearchService:
         else:
             content["error"] = (
                 "reconciliation_required"
-                if row["state"] in ("SUPPLIER_UNKNOWN", "SERVICE_FAILED", "PAYMENT_UNKNOWN")
+                if row["state"]
+                in ("SUPPLIER_UNKNOWN", "SERVICE_FAILED", "PAYMENT_UNKNOWN", "RESOLVED")
                 else "in_progress"
             )
             content["retry"] = "Reuse request_id and original signature or job_token."
@@ -293,8 +303,6 @@ class SearchService:
                     url=self.config.resource_url,
                     description=DESCRIPTION,
                     mime_type="application/json",
-                    service_name=SERVICE_NAME,
-                    tags=SERVICE_TAGS,
                 ),
             }
         )
@@ -313,6 +321,7 @@ class SearchService:
             body=request.model_dump_json(exclude={"job_token"}),
             risk_ceiling=self.config.risk_ceiling,
             expires=time.time() + self.config.job_ttl,
+            provider=self.supplier.name,
         )
         await self.advance(row["id"])
         return self.response(self.store.get(row["id"]), free=not new or existing is not None)
@@ -374,6 +383,14 @@ class SearchService:
             return
         if not confirmed:
             return
+        # Recheck the stored economic envelope against the current deployment before dispatch.
+        if (
+            row["provider"] != self.supplier.name
+            or self.supplier.max_cost > row["supplier_bound"]
+            or row["price"] < self.supplier.max_cost + row["fee_bound"] + self.config.minimum_margin
+            or int(self.requirements.amount) != row["price"]
+        ):
+            return
         # Commit intent BEFORE external supplier call, so crashes cannot buy twice.
         if not self.store.transition(purchase, "FINALITY_PENDING", "SUPPLIER_INFLIGHT"):
             return
@@ -381,13 +398,23 @@ class SearchService:
             result = await self.supplier.search(SearchRequest.model_validate_json(row["request"]))
             if result.cogs is not None and (result.cogs < 0 or result.cogs > row["supplier_bound"]):
                 raise ValueError("cost_outside_envelope")
+            # Preserve known supplier billing even if the delivered output is unusable.
+            self.store.transition(
+                purchase,
+                "SUPPLIER_INFLIGHT",
+                "SUPPLIER_INFLIGHT",
+                supplier_cogs=result.cogs,
+                supplier_reference=result.provider_request_id,
+            )
             if not result.hits:
                 raise ValueError("empty_supplier_result")
             from .contract import SearchHit
 
             hits = [SearchHit.model_validate(hit).model_dump() for hit in result.hits]
         except Exception:
-            self.store.transition(purchase, "SUPPLIER_INFLIGHT", "SUPPLIER_UNKNOWN")
+            current = self.store.get(purchase)
+            state = "SERVICE_FAILED" if current["supplier_cogs"] is not None else "SUPPLIER_UNKNOWN"
+            self.store.transition(purchase, "SUPPLIER_INFLIGHT", state)
             return
         self.store.transition(
             purchase,
@@ -395,17 +422,18 @@ class SearchService:
             "DELIVERED",
             result=json.dumps(hits),
             supplier_cogs=result.cogs,
+            supplier_reference=result.provider_request_id,
             liability=0,
             delivered=time.time(),
         )
 
-    async def recover(self, from_block: str) -> None:
+    async def recover(self, from_block: str, *, startup: bool = True) -> None:
         for row in self.store.outstanding():
             purchase = row["id"]
-            if row["state"] == "VERIFYING":
+            if row["state"] == "VERIFYING" and startup:
                 # Only use at startup with a single worker; verify has no monetary effect.
                 self.store.transition(purchase, "VERIFYING", "RESERVED")
-            elif row["state"] == "SUPPLIER_INFLIGHT":
+            elif row["state"] == "SUPPLIER_INFLIGHT" and startup:
                 self.store.transition(purchase, "SUPPLIER_INFLIGHT", "SUPPLIER_UNKNOWN")
             elif row["state"] in ("SETTLING", "PAYMENT_UNKNOWN"):
                 payload = PaymentPayload.model_validate_json(row["payload"])
@@ -440,9 +468,26 @@ def create_app(service: SearchService) -> FastAPI:
             )
         if from_block:
             await service.recover(from_block)
+
+        async def reconcile() -> None:
+            while True:
+                await asyncio.sleep(10)
+                if from_block:
+                    try:
+                        await service.recover(from_block, startup=False)
+                    except Exception:
+                        # Unknown chain state stays frozen; the next read-only pass may resolve it.
+                        pass
+
+        task = asyncio.create_task(reconcile())
         try:
             yield
         finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
             facilitator_close = getattr(service.facilitator, "aclose", None)
             if callable(facilitator_close):
                 await facilitator_close()
@@ -515,6 +560,11 @@ def production_app() -> FastAPI:
     if not path.is_file() and os.environ.get("SEARCH_ALLOW_NEW_DB") != "1":
         raise ValueError("refusing_new_database_without_initialization_approval")
     config = Config(
+        price=atomic(os.environ.get("SEARCH_PRICE_USD", "0.01")),
+        fee_bound=atomic(os.environ.get("SEARCH_PAYMENT_FEE_BOUND_USD", "0.001")),
+        minimum_margin=atomic(os.environ.get("SEARCH_MINIMUM_MARGIN_USD", "0.005")),
+        risk_ceiling=atomic(os.environ.get("SEARCH_RISK_CEILING_USD", "15")),
+        supplier_prepaid_capital=atomic(os.environ.get("SEARCH_SUPPLIER_PREPAID_CAPITAL_USD", "0")),
         pay_to=os.environ["SEARCH_PAY_TO"],
         resource_url=os.environ["SEARCH_RESOURCE_URL"],
         token_secret=os.environ["SEARCH_TOKEN_SECRET"].encode(),
@@ -530,9 +580,23 @@ def production_app() -> FastAPI:
             else None
         ),
     )
-    supplier = (
-        ExaSearch(os.environ["EXA_API_KEY"]) if config.network == "eip155:8453" else FixtureSearch()
-    )
+    provider = os.environ.get("SEARCH_SUPPLIER", "fixture")
+    if config.network == "eip155:84532":
+        if provider != "fixture":
+            raise ValueError("testnet_production_factory_requires_fixture_supplier")
+        supplier = FixtureSearch()
+    elif provider == "serpex":
+        supplier = SerpexSearch(
+            os.environ["SERPEX_API_KEY"], atomic(os.environ["SEARCH_SUPPLIER_CREDIT_USD"])
+        )
+    elif provider == "exa":
+        supplier = ExaSearch(os.environ["EXA_API_KEY"])
+    else:
+        raise ValueError("mainnet_requires_explicit_supplier_selection")
+    if config.network == "eip155:8453":
+        from .metrics import excluded_wallets
+
+        excluded_wallets(Path(os.environ["SEARCH_EXCLUDED_WALLETS_PATH"]))
     chain = ChainEvidence(os.environ["SEARCH_RPC_URL"], config.requirements(), finalized=True)
     facilitator = HTTPFacilitatorClient(create_facilitator_config())
     return create_app(SearchService(config, Store(path), facilitator, chain, supplier))

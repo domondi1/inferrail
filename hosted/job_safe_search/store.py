@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS purchases (
  price INTEGER NOT NULL, supplier_bound INTEGER NOT NULL, fee_bound INTEGER NOT NULL,
  nonce TEXT NOT NULL, payload TEXT NOT NULL, request TEXT NOT NULL,
  tx TEXT, settlement TEXT, result TEXT, supplier_cogs INTEGER, variable_fees INTEGER,
+ provider TEXT NOT NULL DEFAULT 'unspecified', supplier_reference TEXT,
  refunds INTEGER NOT NULL DEFAULT 0, credits INTEGER NOT NULL DEFAULT 0,
  liability INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, delivered REAL,
  UNIQUE(payer, job, request_id), UNIQUE(payer, nonce)
@@ -50,6 +51,13 @@ class Store:
         self.path = path
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(purchases)")}
+            if "provider" not in columns:
+                conn.execute(
+                    "ALTER TABLE purchases ADD COLUMN provider TEXT NOT NULL DEFAULT 'unspecified'"
+                )
+            if "supplier_reference" not in columns:
+                conn.execute("ALTER TABLE purchases ADD COLUMN supplier_reference TEXT")
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -141,6 +149,7 @@ class Store:
         body: str,
         risk_ceiling: int,
         expires: float,
+        provider: str = "unspecified",
     ) -> tuple[dict[str, Any], bool]:
         with self.transaction() as conn:
             row = conn.execute(
@@ -210,8 +219,9 @@ class Store:
             # Reserve this conservative exposure even before the customer settles.
             risk_sql = """SELECT COALESCE(SUM(price+supplier_bound+fee_bound),0)
                 FROM purchases
-                WHERE state NOT IN ('PAYMENT_REJECTED','RESOLVED')
-                   OR (state='RESOLVED' AND liability > 0)"""
+                WHERE state NOT IN ('DELIVERED','PAYMENT_REJECTED','RESOLVED')
+                   OR supplier_cogs IS NULL OR variable_fees IS NULL
+                   OR liability > 0 OR credits > 0"""
             risk = conn.execute(risk_sql).fetchone()[0]
             if risk + price + supplier_bound + fee_bound > risk_ceiling:
                 raise Refused("unresolved_risk_ceiling")
@@ -222,8 +232,8 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO purchases(
                     payer,job,request_id,fingerprint,state,price,supplier_bound,fee_bound,
-                    nonce,payload,request,created
-                ) VALUES(?,?,?,?,'RESERVED',?,?,?,?,?,?,?)""",
+                    nonce,payload,request,created,provider
+                ) VALUES(?,?,?,?,'RESERVED',?,?,?,?,?,?,?,?)""",
                 (
                     payer,
                     job,
@@ -236,6 +246,7 @@ class Store:
                     payload,
                     body,
                     time.time(),
+                    provider,
                 ),
             )
             purchase = int(cur.lastrowid or 0)
@@ -249,6 +260,7 @@ class Store:
             "settlement",
             "result",
             "supplier_cogs",
+            "supplier_reference",
             "variable_fees",
             "refunds",
             "credits",
@@ -284,25 +296,42 @@ class Store:
         refunds: int = 0,
         credits: int = 0,
         refund_transaction: str | None = None,
+        evidence: str,
     ) -> bool:
         """Close an unresolved paid purchase after operator evidence is reconciled."""
+        if not evidence.strip():
+            raise ValueError("reconciliation requires durable financial evidence")
         amounts = (supplier_cogs, variable_fees, refunds, credits)
         if any(not isinstance(value, int) or value < 0 for value in amounts):
             raise ValueError("financial amounts must be nonnegative atomic USDC integers")
         if refunds and not refund_transaction:
             raise ValueError("a refund requires its confirmed transaction hash")
         with self.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM purchases WHERE id=?", (purchase,)
-            ).fetchone()
-            if row is None or row["state"] in ("DELIVERED", "PAYMENT_REJECTED", "RESOLVED"):
+            row = conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone()
+            if row is None:
                 return False
+            if row["state"] not in (
+                "SUPPLIER_INFLIGHT",
+                "SUPPLIER_UNKNOWN",
+                "SERVICE_FAILED",
+                "DELIVERED",
+                "RESOLVED",
+            ):
+                raise ValueError("payment finality must be confirmed before reconciliation")
             if row["tx"] is None:
                 raise ValueError("cannot resolve financials before payment settlement is confirmed")
             conn.execute(
-                """UPDATE purchases SET state='RESOLVED',supplier_cogs=?,variable_fees=?,
-                refunds=?,credits=?,liability=0 WHERE id=?""",
-                (supplier_cogs, variable_fees, refunds, credits, purchase),
+                """UPDATE purchases SET state=?,supplier_cogs=?,variable_fees=?,
+                refunds=?,credits=?,liability=? WHERE id=?""",
+                (
+                    "DELIVERED" if row["result"] is not None else "RESOLVED",
+                    supplier_cogs,
+                    variable_fees,
+                    refunds,
+                    credits,
+                    credits,
+                    purchase,
+                ),
             )
             self.event(
                 conn,
@@ -313,6 +342,7 @@ class Store:
                 refunds=refunds,
                 credits=credits,
                 refund_transaction=refund_transaction,
+                evidence=evidence,
             )
             return True
 

@@ -62,3 +62,38 @@ class FixtureSearch:
             0,
             "fixture",
         )
+
+
+class SerpexSearch:
+    """One plain search at the verified paid-credit unit cost; no content add-ons."""
+
+    name = "serpex"
+
+    def __init__(self, key: str, credit_cost: int):
+        if not 0 < credit_cost <= 800:
+            raise ValueError("verified_paid_credit_cost_must_be_within_800_atomic_USD")
+        self.max_cost = credit_cost
+        self.client = httpx.AsyncClient(timeout=40)
+        self.key = key
+
+    async def search(self, request: SearchRequest) -> SupplierResult:
+        response = await self.client.post(
+            "https://api.serpex.dev/api/search",
+            headers={"Authorization": "Bearer " + self.key},
+            json={"q": request.query, "include_content": False},
+        )
+        response.raise_for_status()
+        body = response.json()
+        metadata = body.get("metadata", {})
+        credits = metadata.get("credits_used")
+        # Missing billing evidence stays unknown, even on successful output.
+        if credits is not None and (type(credits) is not int or credits not in (0, 1)):
+            raise ValueError("supplier_billing_outside_plain_search_contract")
+        cogs = credits * self.max_cost if credits is not None else None
+        hits = [
+            SearchHit(
+                title=item["title"], url=item["url"], snippet=item.get("snippet") or ""
+            ).model_dump()
+            for item in body["results"][: request.num_results]
+        ]
+        return SupplierResult(hits, cogs, body.get("id"))

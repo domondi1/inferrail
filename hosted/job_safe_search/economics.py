@@ -20,14 +20,11 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         and row["supplier_cogs"] is not None
         and row["variable_fees"] is not None
         and row["liability"] == 0
+        and row["credits"] == 0
     )
     no_charge = row["state"] == "PAYMENT_REJECTED"
     margin = (
-        row["price"]
-        - row["supplier_cogs"]
-        - row["refunds"]
-        - row["credits"]
-        - row["variable_fees"]
+        row["price"] - row["supplier_cogs"] - row["refunds"] - row["credits"] - row["variable_fees"]
         if resolved
         else 0
         if no_charge

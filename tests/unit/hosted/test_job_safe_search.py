@@ -10,17 +10,21 @@ from typing import Any
 
 import httpx
 import pytest
-from eth_account import Account
-from x402.mechanisms.evm.exact.client import ExactEvmScheme
-from x402.schemas import PaymentPayload, ResourceInfo
 
-from hosted.job_safe_search.contract import SearchRequest, atomic
-from hosted.job_safe_search.economics import financial_state
-from hosted.job_safe_search.metrics import report
-from hosted.job_safe_search.payments import encode
-from hosted.job_safe_search.service import Config, SearchService, create_app
-from hosted.job_safe_search.store import Refused, Store
-from hosted.job_safe_search.supplier import SupplierResult
+pytest.importorskip("eth_account")
+pytest.importorskip("x402")
+
+from eth_account import Account  # noqa: E402
+from x402.mechanisms.evm.exact.client import ExactEvmScheme  # noqa: E402
+from x402.schemas import PaymentPayload, ResourceInfo  # noqa: E402
+
+from hosted.job_safe_search.contract import SearchRequest, atomic  # noqa: E402
+from hosted.job_safe_search.economics import financial_state  # noqa: E402
+from hosted.job_safe_search.metrics import report  # noqa: E402
+from hosted.job_safe_search.payments import encode  # noqa: E402
+from hosted.job_safe_search.service import Config, SearchService, create_app  # noqa: E402
+from hosted.job_safe_search.store import Refused, Store  # noqa: E402
+from hosted.job_safe_search.supplier import SupplierResult  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location(
@@ -121,7 +125,11 @@ def system(tmp_path: Path) -> tuple[SearchService, Any, Any]:
     account = Account.create()
     pay_to = Account.create().address
     config = Config(
-        pay_to=pay_to, resource_url="https://search.example.com/search", token_secret=b"s" * 32
+        price=15000,
+        pay_to=pay_to,
+        resource_url="https://search.example.com/search",
+        token_secret=b"s" * 32,
+        realized_payment_fee=0,
     )
     chain = local.LocalUsdcChain()
     chain.mint(account.address, 1_000_000)
@@ -277,11 +285,14 @@ async def test_supplier_failure_never_retries_or_recognizes_margin(
     await service.handle(body(), signed)
     await service.recover("0x0")
     f = financial_state(row(service))
-    assert row(service)["state"] == "SUPPLIER_UNKNOWN"
+    assert row(service)["state"] == (
+        "SERVICE_FAILED" if failure in ("empty", "bad_url") else "SUPPLIER_UNKNOWN"
+    )
     assert service.supplier.calls == 1
     assert chain.balance_of(service.config.pay_to) == 15000
     assert f["settled_revenue"] == "0.015" and f["realized_margin"] is None
-    assert f["supplier_cogs"] is None and f["unresolved_liability"] == "0.015"
+    assert f["supplier_cogs"] == ("0.007" if failure in ("empty", "bad_url") else None)
+    assert f["unresolved_liability"] == "0.015"
 
 
 @pytest.mark.asyncio
@@ -472,3 +483,103 @@ def test_external_metrics_exclude_controlled_wallets(tmp_path: Path) -> None:
     assert metrics["wallets_returning_after_24h"] == 1
     assert metrics["gross_external_settled_revenue_usd"] == "0.045"
     assert metrics["realized_external_contribution_margin_usd"] == "0.0225"
+
+
+@pytest.mark.asyncio
+async def test_credit_liability_and_refund_reconciliation(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    service.store.resolve_financials(
+        1, supplier_cogs=7000, variable_fees=0, credits=1000, evidence="test credit ledger"
+    )
+    assert financial_state(row(service))["realized_margin"] is None
+    assert result(service.response(row(service)))["receipt"]["financial_state"] == "UNRESOLVED"
+    assert report(service.store.path, set())["realized_external_contribution_margin_usd"] is None
+    with pytest.raises(ValueError, match="confirmed transaction"):
+        service.store.resolve_financials(
+            1, supplier_cogs=7000, variable_fees=0, refunds=15000, evidence="refund pending"
+        )
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=0,
+        refunds=15000,
+        refund_transaction="confirmed-test-refund",
+        evidence="test refund and supplier reconciled",
+    )
+    assert financial_state(row(service))["realized_margin"] == "-0.007"
+    assert row(service)["state"] == "DELIVERED"
+
+
+@pytest.mark.asyncio
+async def test_unknown_payment_cannot_be_resolved_or_claimed_collected(system: Any) -> None:
+    service, account, _ = system
+    service.chain.final = False
+    response = result(await service.handle(body(), payment(service, account)))
+    assert response["receipt"]["charged_usd"] is None
+    with pytest.raises(ValueError, match="finality"):
+        service.store.resolve_financials(
+            1, supplier_cogs=0, variable_fees=0, evidence="not chain confirmed"
+        )
+    assert service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_changed_supplier_envelope_blocks_recovery_spend(system: Any) -> None:
+    service, account, _ = system
+    service.chain.final = False
+    await service.handle(body(), payment(service, account))
+    service.chain.final = True
+    service.supplier.max_cost = 8000
+    await service.recover("0x0")
+    assert service.supplier.calls == 0
+    assert row(service)["state"] == "FINALITY_PENDING"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credits", [0, 1, None])
+async def test_serpex_bounded_plain_search_billing(credits: int | None) -> None:
+    from hosted.job_safe_search.supplier import SerpexSearch
+
+    supplier = SerpexSearch("fixture-key", 800)
+    await supplier.client.aclose()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content) == {"q": "machine budgets", "include_content": False}
+        return httpx.Response(
+            200,
+            json={
+                "id": "billing-reference",
+                "results": [{"title": "Result", "url": "https://example.com", "snippet": "useful"}],
+                "metadata": {"credits_used": credits},
+            },
+        )
+
+    supplier.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    actual = await supplier.search(body())
+    assert actual.cogs == (None if credits is None else credits * 800)
+    assert actual.provider_request_id == "billing-reference"
+    await supplier.client.aclose()
+
+
+def test_exclusion_file_labels_and_fail_closed(tmp_path: Path) -> None:
+    from hosted.job_safe_search.metrics import excluded_wallets
+
+    path = tmp_path / "excluded.txt"
+    with pytest.raises(ValueError):
+        excluded_wallets(path)
+    path.write_text("0x" + "a" * 40 + " TESTNET_CONTROLLED\n# comment\n")
+    assert excluded_wallets(path) == {"0x" + "a" * 40}
+
+
+@pytest.mark.asyncio
+async def test_background_recovery_does_not_freeze_active_supplier(system: Any) -> None:
+    service, account, _ = system
+    service.supplier.failure = "crash"
+    with pytest.raises(KeyboardInterrupt):
+        await service.handle(body(), payment(service, account))
+    await service.recover("0x0", startup=False)
+    assert row(service)["state"] == "SUPPLIER_INFLIGHT"
+    await service.recover("0x0")
+    assert row(service)["state"] == "SUPPLIER_UNKNOWN"
+    assert service.supplier.calls == 1

@@ -22,13 +22,19 @@ RESOLVED_STATES = {"DELIVERED", "RESOLVED"}
 
 
 def excluded_wallets(path: Path | None) -> set[str]:
-    if path is None or not path.exists():
-        return set()
-    return {
-        line.split("#", 1)[0].strip().lower()
-        for line in path.read_text().splitlines()
-        if line.split("#", 1)[0].strip()
-    }
+    if path is None or not path.is_file():
+        raise ValueError("a durable exclusion file is required")
+    result = set()
+    for line in path.read_text().splitlines():
+        clean = line.split("#", 1)[0].strip()
+        if not clean:
+            continue
+        address = clean.split()[0].lower()
+        if len(address) != 42 or not address.startswith("0x"):
+            raise ValueError("invalid exclusion wallet")
+        int(address, 16)
+        result.add(address)
+    return result
 
 
 def report(
@@ -41,7 +47,8 @@ def report(
 
     external = [row for row in rows if row["payer"].lower() not in excluded]
     paid = [row for row in external if row["state"] in SETTLED_STATES and row["tx"] is not None]
-    delivered = [row for row in paid if row["state"] in RESOLVED_STATES]
+    delivered = [row for row in paid if row["state"] == "DELIVERED"]
+    resolved_paid = [row for row in paid if row["state"] in RESOLVED_STATES]
     wallets: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in delivered:
         wallets[row["payer"].lower()].append(row)
@@ -57,17 +64,14 @@ def report(
     settled_revenue = sum(row["price"] for row in paid)
     margin_rows = [
         row
-        for row in delivered
+        for row in resolved_paid
         if row["supplier_cogs"] is not None
         and row["variable_fees"] is not None
         and row["liability"] == 0
+        and row["credits"] == 0
     ]
     margins = [
-        row["price"]
-        - row["supplier_cogs"]
-        - row["refunds"]
-        - row["credits"]
-        - row["variable_fees"]
+        row["price"] - row["supplier_cogs"] - row["refunds"] - row["credits"] - row["variable_fees"]
         for row in margin_rows
     ]
     returned_later = [
@@ -82,7 +86,12 @@ def report(
         if row["state"] not in RESOLVED_STATES | {"PAYMENT_REJECTED"}
         or (
             row["state"] in RESOLVED_STATES
-            and (row["supplier_cogs"] is None or row["variable_fees"] is None)
+            and (
+                row["supplier_cogs"] is None
+                or row["variable_fees"] is None
+                or row["liability"] > 0
+                or row["credits"] > 0
+            )
         )
     ]
     blocked_fallbacks = sum(event["kind"] == "BLOCKED_UNSAFE_FALLBACK" for event in events)
@@ -97,15 +106,18 @@ def report(
         ),
         "wallets_returning_after_24h": len(returned_later),
         "gross_external_settled_revenue_usd": usd(settled_revenue),
-        "supplier_cogs_usd": usd(sum(known_cogs)),
+        "supplier_cogs_usd": usd(sum(known_cogs)) if len(known_cogs) == len(paid) else None,
+        "known_supplier_cogs_usd": usd(sum(known_cogs)),
         "refunds_usd": usd(sum(known_refunds)),
         "credits_usd": usd(sum(known_credits)),
-        "variable_payment_fees_usd": usd(sum(known_fees)),
-        "realized_external_contribution_margin_usd": usd(sum(margins)),
+        "variable_payment_fees_usd": usd(sum(known_fees)) if len(known_fees) == len(paid) else None,
+        "known_variable_payment_fees_usd": usd(sum(known_fees)),
+        "realized_external_contribution_margin_usd": None if unresolved else usd(sum(margins)),
+        "known_realized_external_contribution_margin_usd": usd(sum(margins)),
         "hosting_infrastructure_cost_usd": hosting_cost_usd,
         "strict_experiment_pnl_usd": (
             usd(sum(margins) - atomic(hosting_cost_usd))
-            if hosting_cost_usd is not None
+            if hosting_cost_usd is not None and not unresolved
             else None
         ),
         "average_realized_margin_per_resolved_call_usd": (
@@ -115,6 +127,9 @@ def report(
         "cache_hits": len(cache_events),
         "supplier_cogs_avoided_on_cache_usd": usd(
             sum(json.loads(event["details"]).get("cogs_avoided", 0) for event in cache_events)
+        ),
+        "customer_spend_avoided_on_cache_usd": usd(
+            sum(json.loads(event["details"]).get("spend_avoided", 0) for event in cache_events)
         ),
         "safe_fallbacks": 0,
         "blocked_unsafe_fallbacks": blocked_fallbacks,

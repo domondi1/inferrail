@@ -2,9 +2,9 @@
 
 Standalone hosted x402 search capability. One bounded POST /search call
 returns ranked title, URL, and snippet results with a machine-readable receipt.
-Price: $0.015 USDC on Base.
+Configured default price: $0.010 USDC on Base; this experimental capability is not yet live on mainnet.
 
-The search query is sent to Exa for processing. The service keeps purchase
+The search query is sent to the configured supplier (Serpex or Exa) for processing. The service keeps purchase
 records and successful output to protect retries and provide five-minute cache
 reuse. Mainnet stays disabled until supplier terms explicitly permit this
 integration, output delivery, and storage.
@@ -46,11 +46,15 @@ The production factory refuses Base mainnet unless all gates are satisfied:
 - SEARCH_REALIZED_PAYMENT_FEE_USD contains a known per-call payment fee.
 - SEARCH_RESOURCE_URL is public HTTPS and SEARCH_PAY_TO is the approved
   merchant wallet.
-- An Exa API key is present; the fixture supplier is testnet-only.
+- SEARCH_SUPPLIER explicitly selects serpex or exa, with its credential.
+- A private SEARCH_EXCLUDED_WALLETS_PATH exists and validates.
+- The fixture supplier is testnet-only.
 
-The price/cost envelope is $0.015 revenue, at most $0.007 supplier cost, at
-most $0.001 payment costs, and at least $0.005 minimum contribution margin.
-The unresolved exposure ceiling is $20. Each uncertain purchase reserves its
+The configured price must cover the supplier bound, payment-fee bound, and
+minimum contribution floor. The default minimum floor is $0.005. An Exa
+configuration needs a higher price than the $0.010 Serpex default.
+Unresolved exposure plus prepaid supplier capital must not exceed $20.
+The mainnet template reserves $5 prepaid capital and $15 unresolved exposure. Each uncertain purchase reserves its
 full price plus maximum supplier cost and payment fee. Unknown costs keep
 margin unrecognized.
 
@@ -83,3 +87,60 @@ The report counts non-excluded wallets and separates settled revenue from
 realized contribution margin. Hosting cost is separate and must be supplied
 from an actual hosting bill; omit it and strict experiment P&L stays unknown.
 Unresolved supplier costs or payment fees remain unresolved.
+
+
+## Real Sepolia HTTP/process exercise
+
+`python -m hosted.job_safe_search.testnet_e2e --wallet-file /secure/testnet-wallets.json --state-dir /secure/new-run --run-actual-testnet`
+
+This opt-in runner starts two local HTTP servers and uses CDP to settle actual
+Sepolia USDC for inbound and outbound payments. It exercises cache reuse,
+immutable/exhausted budgets, fresh-payment replay, and process death after
+settlement and after supplier payment. It refuses an existing state directory
+and never targets mainnet. Use three dedicated testnet EOA wallets; exclude
+all of them permanently. Confirmation in this fast test runner checks canonical
+mined receipts; the production factory requires finalized blocks.
+
+## Container deployment and recovery
+
+Copy `mainnet.env.example` to the ignored `.env`, populate operator-approved
+values, and place the private exclusions in `private/excluded-wallets.txt`.
+Create `data/` owned by UID 10001. From the repository root, build with:
+
+`docker compose -f hosted/job_safe_search/compose.yaml build`
+
+Starting the prepared container requires approval for live payment acceptance:
+
+`docker compose -f hosted/job_safe_search/compose.yaml up -d`
+
+Use a TLS reverse proxy to port 8422. Run one worker and one database writer.
+The merchant and treasury private keys are never required by this server.
+For prepaid API suppliers, no on-chain operational purchaser key is required;
+limit the supplier credential to the approved prepaid balance and disable
+automatic top-ups. The recovery block must be captured before first acceptance.
+Remove SEARCH_ALLOW_NEW_DB after the deliberate first initialization.
+
+After a crash, preserve the database and restart the same image/configuration.
+Startup reconciles on-chain payments without resending authorizations. A
+background read-only reconciliation pass also advances finalized payments.
+An interrupted supplier purchase stays frozen until its billing record is
+reconciled. Never retry an ambiguous supplier purchase. Record invoice/request
+references and confirmed refund evidence using Store.resolve_financials;
+outstanding credits remain liabilities. Keep a SQLite online backup and
+append-only event export before each release.
+
+To roll back, stop accepting requests, preserve the current database, and pin
+the previous compatible image. Never restore a stale database while payments
+may have settled: reconcile every authorization since the recorded recovery
+block first. Database loss requires closing payment acceptance until recovery;
+a fresh database must not be used to bypass replay protection.
+
+Validate the deployed endpoint without payment using CDP POST
+`https://api.cdp.coinbase.com/platform/v2/x402/validate` with its documented
+resource/method payload. Confirm health, 402 amount/network/payTo, declared
+schemas and discovery examples before activation. Validation does not index
+an endpoint. Check the live discovery catalogue and merchant resources after
+settlement. If one controlled indexing payment is necessary, obtain explicit
+approval for exactly one transaction, label INDEXING_BOOTSTRAP, persist its
+signature before dispatch, and exclude the payer forever. Never repeat it to
+increase usage counters.
