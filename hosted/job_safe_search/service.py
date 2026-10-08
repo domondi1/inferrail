@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -60,6 +61,13 @@ class Config:
     def validate(self, supplier: Any) -> None:
         if self.network not in ("eip155:84532", "eip155:8453"):
             raise ValueError("unsupported_network")
+        if (
+            type(self.cache_ttl) is not int
+            or self.cache_ttl < 0
+            or type(self.job_ttl) is not int
+            or self.job_ttl <= 0
+        ):
+            raise ValueError("invalid_cache_or_job_lifetime")
         if len(self.token_secret) < 32:
             raise ValueError("token_secret_must_be_at_least_32_bytes")
         if len(self.pay_to) != 42 or not self.pay_to.startswith("0x") or int(self.pay_to, 16) == 0:
@@ -161,11 +169,24 @@ class SearchService:
         self.tokens = Tokens(config.token_secret)
         self.requirements = config.requirements()
         store.bind_deployment(self.requirements, config.token_secret)
+        self.description = DESCRIPTION.replace(
+            "free 5-minute same-job cache", f"free {config.cache_ttl}-second same-job cache"
+        )
+        self.input_example = copy.deepcopy(INPUT_EXAMPLE)
+        self.input_example["job_budget_usd"] = usd(config.price * 3)
+        self.output_example = copy.deepcopy(OUTPUT_EXAMPLE)
+        self.output_example["receipt"].update(
+            {
+                "charged_usd": usd(config.price),
+                "provider": supplier.name,
+                "remaining_job_budget_usd": usd(config.price * 2),
+            }
+        )
         self.extensions = declare_discovery_extension(
-            input=INPUT_EXAMPLE,
+            input=self.input_example,
             input_schema=SearchRequest.model_json_schema(),
             body_type="json",
-            output=OutputConfig(example=OUTPUT_EXAMPLE, schema=OUTPUT_SCHEMA),
+            output=OutputConfig(example=self.output_example, schema=OUTPUT_SCHEMA),
         )
         self.extensions["bazaar"]["info"]["input"]["method"] = "POST"
 
@@ -174,7 +195,7 @@ class SearchService:
             x402_version=2,
             resource=ResourceInfo(
                 url=self.config.resource_url,
-                description=DESCRIPTION,
+                description=self.description,
                 mime_type="application/json",
                 service_name=SERVICE_NAME,
                 tags=SERVICE_TAGS,
@@ -333,7 +354,7 @@ class SearchService:
                 "extensions": self.extensions,
                 "resource": ResourceInfo(
                     url=self.config.resource_url,
-                    description=DESCRIPTION,
+                    description=self.description,
                     mime_type="application/json",
                 ),
             }
@@ -356,6 +377,7 @@ class SearchService:
             risk_ceiling=self.config.risk_ceiling,
             expires=time.time() + self.config.job_ttl,
             provider=self.supplier.name,
+            cache_ttl=self.config.cache_ttl,
         )
         if not new:
             await self.observe_extra_payment(row, signature)
@@ -624,13 +646,13 @@ def create_app(service: SearchService) -> FastAPI:
     async def manifest() -> dict[str, Any]:
         return {
             "name": SERVICE_NAME,
-            "description": DESCRIPTION,
+            "description": service.description,
             "resource": service.config.resource_url,
             "price_usd": usd(service.config.price),
             "network": service.config.network,
             "tags": SERVICE_TAGS,
             "input_schema": SearchRequest.model_json_schema(),
-            "output_example": OUTPUT_EXAMPLE,
+            "output_example": service.output_example,
             "output_schema": OUTPUT_SCHEMA,
             "payment_required": service.requirements.model_dump(by_alias=True),
             "extensions": service.extensions,

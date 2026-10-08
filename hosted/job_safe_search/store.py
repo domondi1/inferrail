@@ -353,6 +353,7 @@ class Store:
         risk_ceiling: int,
         expires: float,
         provider: str = "unspecified",
+        cache_ttl: int = 300,
     ) -> tuple[dict[str, Any], bool]:
         with self.transaction() as conn:
             row = conn.execute(
@@ -400,7 +401,7 @@ class Store:
             if canonical:
                 if canonical["state"] != "DELIVERED":
                     raise Refused("same_query_in_progress")
-                if authenticated and canonical["delivered"] > time.time() - 300:
+                if authenticated and canonical["delivered"] > time.time() - cache_ttl:
                     conn.execute(
                         "INSERT INTO aliases VALUES(?,?,?,?)",
                         (payer, job, request, canonical["id"]),
