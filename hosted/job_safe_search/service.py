@@ -662,7 +662,8 @@ class SearchService:
                                 row["state"],
                                 "PAYMENT_REJECTED",
                                 supplier_cogs=0,
-                                variable_fees=0,
+                                # Nonpayment proof does not prove a failed onchain attempt was free.
+                                variable_fees=self.config.realized_payment_fee,
                                 liability=0,
                             )
                 await self.advance(purchase)

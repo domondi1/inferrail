@@ -194,3 +194,9 @@ Known payment fees above the current ceiling block new payment
 acceptance and supplier dispatch across restarts. A fee-ceiling increase also
 freezes purchases reserved under a lower ceiling. Reconcile those purchases
 and the current cost envelope before resuming; completed results still replay.
+
+Finalized nonpayment proof establishes zero customer revenue and zero supplier
+spend. It does not establish that an attempted onchain settlement had zero fees.
+Those fees remain unknown until billing is reconciled with
+`Store.resolve_financials` on the rejected purchase. Actual failed-payment fees
+are recorded as negative contribution, never as paid calls.

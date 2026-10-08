@@ -85,6 +85,9 @@ def report(
         if observed_network == network:
             external.append(row)
     paid = [row for row in external if row["state"] in SETTLED_STATES and row["tx"] is not None]
+    rejected = [row for row in external if row["state"] == "PAYMENT_REJECTED"]
+    rejected_fees = [row["variable_fees"] for row in rejected if row["variable_fees"] is not None]
+    rejected_margin = -sum(rejected_fees)
     delivered = [row for row in paid if row["state"] == "DELIVERED"]
     resolved_paid = [row for row in paid if row["state"] in RESOLVED_STATES]
     wallets: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -202,7 +205,7 @@ def report(
         for row in external
         if row["state"] not in RESOLVED_STATES | {"PAYMENT_REJECTED"}
         or (
-            row["state"] in RESOLVED_STATES
+            row["state"] in RESOLVED_STATES | {"PAYMENT_REJECTED"}
             and (
                 row["supplier_cogs"] is None
                 or row["variable_fees"] is None
@@ -239,10 +242,12 @@ def report(
         "credits_usd": usd(sum(known_credits)),
         "variable_payment_fees_usd": usd(
             sum(known_fees)
+            + sum(rejected_fees)
             + refund_fee
             + sum(row["variable_fees"] for row in orphan_paid if row["variable_fees"] is not None)
         )
         if len(known_fees) == len(paid)
+        and len(rejected_fees) == len(rejected)
         and not open_extra
         and not pending_extra
         and not pending_observed
@@ -250,16 +255,19 @@ def report(
         else None,
         "known_variable_payment_fees_usd": usd(
             sum(known_fees)
+            + sum(rejected_fees)
             + refund_fee
             + sum(row["variable_fees"] for row in orphan_paid if row["variable_fees"] is not None)
         ),
         "realized_external_contribution_margin_usd": None
         if unresolved or open_extra or pending_extra or pending_observed or orphan_open
-        else usd(sum(margins) + orphan_margin),
-        "known_realized_external_contribution_margin_usd": usd(sum(margins) + orphan_margin),
+        else usd(sum(margins) + orphan_margin + rejected_margin),
+        "known_realized_external_contribution_margin_usd": usd(
+            sum(margins) + orphan_margin + rejected_margin
+        ),
         "hosting_infrastructure_cost_usd": hosting_cost_usd,
         "strict_experiment_pnl_usd": (
-            usd((sum(margins) + orphan_margin) - atomic(hosting_cost_usd))
+            usd((sum(margins) + orphan_margin + rejected_margin) - atomic(hosting_cost_usd))
             if hosting_cost_usd is not None
             and not unresolved
             and not open_extra
@@ -269,9 +277,12 @@ def report(
             else None
         ),
         "average_realized_margin_per_resolved_call_usd": (
-            usd((sum(margins) + orphan_margin) // len(margins)) if margins else None
+            usd((sum(margins) + orphan_margin + rejected_margin) // len(margins))
+            if margins
+            else None
         ),
         "negative_margin_requests": sum(value < 0 for value in margins)
+        + sum(value > 0 for value in rejected_fees)
         + sum(row["variable_fees"] > 0 for row in orphan_refunded),
         "cache_hits": len(cache_events),
         "supplier_cogs_avoided_on_cache_usd": usd(

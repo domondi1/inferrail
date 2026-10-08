@@ -1621,3 +1621,44 @@ async def test_lower_fee_ceiling_cannot_hide_known_actual_cost(system: Any) -> N
             payment(lowered, account),
         )
     assert lowered.facilitator.settles == lowered.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_proven_nonpayment_does_not_erase_uncertain_settlement_fees(system: Any) -> None:
+    service, account, _ = system
+    service.config = replace(service.config, realized_payment_fee=None, recovery_from_block="0x0")
+    service.facilitator.failure = "settle_before"
+    await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "PAYMENT_UNKNOWN"
+
+    async def impossible(_payload: Any) -> bool:
+        return True
+
+    service.chain.settlement_impossible = impossible
+    await service.recover("0x0")
+    assert row(service)["state"] == "PAYMENT_REJECTED"
+    state = financial_state(row(service))
+    assert state["settled_revenue"] == "0" and state["supplier_cogs"] == "0"
+    assert state["variable_fees"] is None and state["realized_margin"] is None
+    assert not state["resolved"] and service.supplier.calls == 0
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["gross_external_settled_revenue_usd"] == "0"
+    assert metrics["variable_payment_fees_usd"] is None
+    assert metrics["unresolved_transactions"] == 1
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    with pytest.raises(ValueError, match="only actual payment fees"):
+        service.store.resolve_financials(1, supplier_cogs=1, variable_fees=1000, evidence="invalid")
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=0,
+        variable_fees=1000,
+        evidence="actual failed onchain attempt invoice",
+    )
+    assert row(service)["state"] == "PAYMENT_REJECTED"
+    assert financial_state(row(service))["realized_margin"] == "-0.001"
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["external_paid_calls"] == 0 and metrics["unresolved_transactions"] == 0
+    assert metrics["variable_payment_fees_usd"] == "0.001"
+    assert metrics["negative_margin_requests"] == 1
+    assert metrics["realized_external_contribution_margin_usd"] == "-0.001"
+    assert service.supplier.calls == 0 and service.facilitator.settles == 1

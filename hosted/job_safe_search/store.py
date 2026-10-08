@@ -661,7 +661,10 @@ class Store:
             row = conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone()
             if row is None:
                 return False
-            if row["state"] not in (
+            rejected = row["state"] == "PAYMENT_REJECTED"
+            if rejected and (supplier_cogs or refunds or credits):
+                raise ValueError("rejected payment can reconcile only actual payment fees")
+            if not rejected and row["state"] not in (
                 "SUPPLIER_INFLIGHT",
                 "SUPPLIER_UNKNOWN",
                 "SERVICE_FAILED",
@@ -669,13 +672,17 @@ class Store:
                 "RESOLVED",
             ):
                 raise ValueError("payment finality must be confirmed before reconciliation")
-            if row["tx"] is None:
+            if not rejected and row["tx"] is None:
                 raise ValueError("cannot resolve financials before payment settlement is confirmed")
             conn.execute(
                 """UPDATE purchases SET state=?,supplier_cogs=?,variable_fees=?,
                 refunds=?,credits=?,liability=? WHERE id=?""",
                 (
-                    "DELIVERED" if row["result"] is not None else "RESOLVED",
+                    "PAYMENT_REJECTED"
+                    if rejected
+                    else "DELIVERED"
+                    if row["result"] is not None
+                    else "RESOLVED",
                     supplier_cogs,
                     variable_fees,
                     refunds,
