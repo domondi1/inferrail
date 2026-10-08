@@ -1178,3 +1178,58 @@ async def test_metrics_proves_distinct_repeat_positive_payer(system: Any) -> Non
     assert unresolved["wallets_with_3_plus_positive_margin_distinct_queries"] == 0
     assert unresolved["wallet_evidence"][0]["unresolved_successful_calls"] == 1
     assert unresolved["realized_external_contribution_margin_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_cache_expiry_uses_configured_lifetime_in_atomic_reservation(system: Any) -> None:
+    import time
+
+    service, account, _ = system
+    service.config = replace(service.config, cache_ttl=10)
+    first = result(await service.handle(body(), payment(service, account)))
+    with service.store.transaction() as conn:
+        conn.execute("UPDATE purchases SET delivered=? WHERE id=1", (time.time() - 20,))
+    request = SearchRequest(query="machine budgets", request_id="two", job_token=first["job_token"])
+    response = result(await service.handle(request, payment(service, account)))
+    assert response["receipt"]["charged_usd"] == "0.015"
+    assert not response["receipt"]["cache_hit"]
+    assert service.supplier.calls == service.facilitator.settles == 2
+
+
+@pytest.mark.asyncio
+async def test_discovery_examples_match_price_provider_budget_and_cache(system: Any) -> None:
+    service, _, _ = system
+    configured = SearchService(
+        replace(service.config, price=20000, cache_ttl=60),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    challenge = result(configured.challenge())
+    example = challenge["extensions"]["bazaar"]["info"]["output"]["example"]
+    request_example = challenge["extensions"]["bazaar"]["info"]["input"]["body"]
+    assert example["receipt"]["charged_usd"] == "0.02"
+    assert example["receipt"]["provider"] == "test"
+    assert example["receipt"]["remaining_job_budget_usd"] == "0.04"
+    assert request_example["job_budget_usd"] == "0.06"
+    assert "60-second" in challenge["resource"]["description"]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(configured)),
+        base_url="https://search.example.com",
+    ) as client:
+        manifest = (await client.get("/.well-known/x402.json")).json()
+    assert manifest["output_example"] == example and manifest["cache_ttl_seconds"] == 60
+
+
+@pytest.mark.parametrize("changes", [{"cache_ttl": -1}, {"job_ttl": 0}])
+def test_invalid_cache_and_job_lifetimes_fail_closed(system: Any, changes: dict[str, int]) -> None:
+    service, _, _ = system
+    with pytest.raises(ValueError, match="invalid_cache_or_job_lifetime"):
+        SearchService(
+            replace(service.config, **changes),
+            service.store,
+            service.facilitator,
+            service.chain,
+            service.supplier,
+        )
