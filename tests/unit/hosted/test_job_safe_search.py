@@ -1086,3 +1086,95 @@ async def test_serpex_contract_violation_keeps_actual_billing(
     assert service.store.supplier_blocked("serpex") is (expected is not None)
     assert financial_state(row(service))["realized_margin"] is None
     await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_metrics_reconciliation_cannot_split_snapshot(system: Any, monkeypatch: Any) -> None:
+    import sqlite3
+
+    from hosted.job_safe_search import metrics
+
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    original_connect = sqlite3.connect
+    changed = False
+
+    def connect(*args: Any, **kwargs: Any) -> Any:
+        conn = original_connect(*args, **kwargs)
+
+        def mutate(statement: str) -> None:
+            nonlocal changed
+            if statement == "SELECT * FROM events" and not changed:
+                changed = True
+                with original_connect(service.store.path) as writer:
+                    writer.execute("UPDATE purchases SET refunds=15000 WHERE id=1")
+                    writer.execute(
+                        "INSERT INTO events(purchase,kind,details,created) VALUES(1,?,?,0)",
+                        (
+                            "EXTRA_SETTLED_PAYMENT",
+                            json.dumps(
+                                {
+                                    "payer": account.address.lower(),
+                                    "nonce": "extra",
+                                    "amount": 15000,
+                                }
+                            ),
+                        ),
+                    )
+
+        conn.set_trace_callback(mutate)
+        return conn
+
+    monkeypatch.setattr(metrics.sqlite3, "connect", connect)
+    snapshot = report(service.store.path, set(), network="eip155:84532")
+    assert changed and snapshot["refunds_usd"] == "0"
+    assert snapshot["additional_settled_payments"] == 0
+    assert snapshot["gross_external_settled_revenue_usd"] == "0.015"
+    assert snapshot["realized_external_contribution_margin_usd"] == "0.008"
+    assert row(service)["refunds"] == 15000
+
+
+def test_metrics_missing_ledger_does_not_create_file(tmp_path: Path) -> None:
+    import sqlite3
+
+    missing = tmp_path / "missing.sqlite"
+    with pytest.raises(sqlite3.OperationalError):
+        report(missing, set())
+    assert not missing.exists()
+
+
+@pytest.mark.asyncio
+async def test_metrics_proves_distinct_repeat_positive_payer(system: Any) -> None:
+    service, account, _ = system
+    token = None
+    for index in range(3):
+        request = SearchRequest(
+            query=f"distinct query {index}",
+            request_id=str(index),
+            job_token=token,
+            job_budget_usd="0.045",
+        )
+        response = await service.handle(request, payment(service, account))
+        token = json.loads(response.body)["job_token"]
+    with service.store.transaction() as conn:
+        conn.execute("UPDATE purchases SET delivered=delivered-90000 WHERE id=1")
+    result = report(service.store.path, set(), network="eip155:84532")
+    evidence = result["wallet_evidence"][0]
+    assert evidence["payer"] == account.address.lower()
+    assert evidence["successful_paid_calls"] == evidence["positive_margin_distinct_queries"] == 3
+    assert evidence["known_realized_margin_usd"] == "0.024"
+    assert evidence["returned_after_24h"] and len(set(evidence["settlement_transactions"])) == 3
+    assert result["wallets_with_3_plus_positive_margin_distinct_queries"] == 1
+    assert (
+        report(service.store.path, {account.address.lower()}, network="eip155:84532")[
+            "wallet_evidence"
+        ]
+        == []
+    )
+
+    with service.store.transaction() as conn:
+        conn.execute("UPDATE purchases SET supplier_cogs=NULL WHERE id=1")
+    unresolved = report(service.store.path, set(), network="eip155:84532")
+    assert unresolved["wallets_with_3_plus_positive_margin_distinct_queries"] == 0
+    assert unresolved["wallet_evidence"][0]["unresolved_successful_calls"] == 1
+    assert unresolved["realized_external_contribution_margin_usd"] is None

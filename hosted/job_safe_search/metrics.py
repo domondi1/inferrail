@@ -6,6 +6,7 @@ import argparse
 import json
 import sqlite3
 from collections import defaultdict
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +45,10 @@ def report(
     *,
     network: str = "eip155:8453",
 ) -> dict[str, Any]:
-    with sqlite3.connect(db_path) as conn:
+    # A single read-only snapshot prevents reconciliation from splitting row/event accounting.
+    with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
         rows = [dict(row) for row in conn.execute("SELECT * FROM purchases")]
         events = [dict(row) for row in conn.execute("SELECT * FROM events")]
 
@@ -130,11 +133,35 @@ def report(
         - refund_fees_by_purchase[row["id"]]
         for row in margin_rows
     ]
+    margin_by_purchase = {row["id"]: value for row, value in zip(margin_rows, margins, strict=True)}
+    wallet_evidence = []
+    for payer, items in sorted(wallets.items()):
+        positive = [row for row in items if margin_by_purchase.get(row["id"], 0) > 0]
+        timestamps = [row["delivered"] for row in items]
+        wallet_evidence.append(
+            {
+                "payer": payer,
+                "successful_paid_calls": len(items),
+                "distinct_query_fingerprints": len({row["fingerprint"] for row in items}),
+                "positive_margin_calls": len(positive),
+                "positive_margin_distinct_queries": len({row["fingerprint"] for row in positive}),
+                "first_delivery_at": min(timestamps),
+                "last_delivery_at": max(timestamps),
+                "returned_after_24h": max(timestamps) - min(timestamps) >= 86400,
+                "known_realized_margin_usd": usd(
+                    sum(margin_by_purchase.get(row["id"], 0) for row in items)
+                ),
+                "unresolved_successful_calls": sum(
+                    row["id"] not in margin_by_purchase for row in items
+                ),
+                "settlement_transactions": [row["tx"] for row in items],
+            }
+        )
     returned_later = [
         items
         for items in wallets.values()
         if len(items) >= 2
-        and max(row["created"] for row in items) - min(row["created"] for row in items) >= 86400
+        and max(row["delivered"] for row in items) - min(row["delivered"] for row in items) >= 86400
     ]
     unresolved = [
         row
@@ -163,6 +190,10 @@ def report(
             len({row["fingerprint"] for row in items}) >= 3 for items in wallets.values()
         ),
         "wallets_returning_after_24h": len(returned_later),
+        "wallets_with_3_plus_positive_margin_distinct_queries": sum(
+            item["positive_margin_distinct_queries"] >= 3 for item in wallet_evidence
+        ),
+        "wallet_evidence": wallet_evidence,
         "gross_external_settled_revenue_usd": usd(settled_revenue),
         "supplier_cogs_usd": usd(sum(known_cogs)) if len(known_cogs) == len(paid) else None,
         "known_supplier_cogs_usd": usd(sum(known_cogs)),
