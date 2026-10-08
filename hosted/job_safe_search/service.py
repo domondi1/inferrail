@@ -587,6 +587,11 @@ class SearchService:
                     supplier_cogs=exc.cogs,
                     supplier_reference=exc.provider_request_id,
                 )
+            with self.store.transaction() as conn:
+                # Class only: upstream exception text may contain credentials or response data.
+                self.store.event(
+                    conn, purchase, "SUPPLIER_FAILURE", failure_type=type(exc).__name__
+                )
             current = self.store.get(purchase)
             state = "SERVICE_FAILED" if current["supplier_cogs"] is not None else "SUPPLIER_UNKNOWN"
             self.store.transition(purchase, "SUPPLIER_INFLIGHT", state)

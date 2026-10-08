@@ -69,19 +69,27 @@ class PaidFixture:
         with (self.root / "outbound-signature.json").open("x") as saved:
             os.chmod(saved.name, 0o600)
             json.dump({"signature": signature, "request_id": request.request_id}, saved)
-        response = await self.client.post(
-            "http://127.0.0.1:18423/search",
-            json={"query": request.query, "request_id": request.request_id},
-            headers={"PAYMENT-SIGNATURE": signature},
-        )
-        deadline = time.monotonic() + 3600
-        while self.finalized and response.status_code == 202 and time.monotonic() < deadline:
+        deadline = time.monotonic() + (3600 if self.finalized else 120)
+        while True:
+            try:
+                response = await self.client.post(
+                    "http://127.0.0.1:18423/search",
+                    json={"query": request.query, "request_id": request.request_id},
+                    headers={"PAYMENT-SIGNATURE": signature},
+                )
+            except httpx.HTTPError as exc:
+                # The controlled seller durably binds this exact authorization/request.
+                # Retry delivery polling only, using the saved signature; never sign again.
+                (self.root / "supplier-poll-error.json").write_text(
+                    json.dumps({"failure_type": type(exc).__name__})
+                )
+                if not self.finalized or time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(5)
+                continue
+            if not self.finalized or response.status_code != 202 or time.monotonic() >= deadline:
+                break
             await asyncio.sleep(5)
-            response = await self.client.post(
-                "http://127.0.0.1:18423/search",
-                json={"query": request.query, "request_id": request.request_id},
-                headers={"PAYMENT-SIGNATURE": signature},
-            )
         if response.status_code != 200:
             raise RuntimeError("supplier_settlement_or_delivery_uncertain")
         data = response.json()

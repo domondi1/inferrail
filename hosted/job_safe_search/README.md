@@ -200,3 +200,12 @@ spend. It does not establish that an attempted onchain settlement had zero fees.
 Those fees remain unknown until billing is reconciled with
 `Store.resolve_financials` on the rejected purchase. Actual failed-payment fees
 are recorded as negative contribution, never as paid calls.
+
+If the original supplier provides a read-only retrieval of an already-paid
+result, independently verify its original request identity, billing and output.
+An operator may record that output with `Store.reconcile_result`, supplying the
+original fingerprint/provider/reference and durable evidence. This makes no
+network call or payment, refuses identity/cost conflicts and refunds/credits,
+and preserves unknown payment fees. A supplier that cannot retrieve an existing
+result must stay unresolved; running a new search is not recovery. Supplier
+failure events retain only exception classes, never exception text or credentials.
