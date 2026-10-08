@@ -638,6 +638,65 @@ class Store:
             self.event(conn, purchase, target, **updates)
             return True
 
+    def reconcile_result(
+        self,
+        purchase: int,
+        *,
+        hits: list[dict[str, Any]],
+        supplier_cogs: int,
+        provider: str,
+        supplier_reference: str,
+        fingerprint: str,
+        evidence: str,
+    ) -> bool:
+        """Record an independently recovered result; never call or pay a supplier."""
+        from .contract import SearchHit, SearchRequest
+
+        if not evidence.strip() or not supplier_reference.strip():
+            raise ValueError("recovered result requires supplier reference and durable evidence")
+        if type(supplier_cogs) is not int or supplier_cogs < 0:
+            raise ValueError("invalid_recovered_supplier_cost")
+        normalized = [SearchHit.model_validate(hit).model_dump() for hit in hits]
+        with self.transaction() as conn:
+            row = conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone()
+            if row is None:
+                return False
+            if row["state"] == "DELIVERED":
+                return False
+            if row["state"] not in ("SUPPLIER_UNKNOWN", "SERVICE_FAILED") or not row["tx"]:
+                raise ValueError(
+                    "recovered result requires finalized payment and interrupted supplier"
+                )
+            if row["provider"] != provider or row["fingerprint"] != fingerprint:
+                raise ValueError("recovered_result_identity_mismatch")
+            if row["supplier_reference"] not in (None, supplier_reference):
+                raise ValueError("recovered_supplier_reference_mismatch")
+            if row["supplier_cogs"] not in (None, supplier_cogs):
+                raise ValueError("recovery_cannot_overwrite_known_supplier_cost")
+            request = SearchRequest.model_validate_json(row["request"])
+            if not 0 < len(normalized) <= request.num_results:
+                raise ValueError("invalid_recovered_result_count")
+            if row["refunds"] or row["credits"]:
+                raise ValueError("recovered_result_requires_refund_credit_reconciliation")
+            result = json.dumps(normalized)
+            conn.execute(
+                "UPDATE purchases SET state='DELIVERED',result=?,supplier_cogs=?,"
+                "supplier_reference=?,liability=0,delivered=? WHERE id=?",
+                (result, supplier_cogs, supplier_reference, time.time(), purchase),
+            )
+            self.event(
+                conn,
+                purchase,
+                "RESULT_RECONCILED",
+                provider=provider,
+                supplier_reference=supplier_reference,
+                supplier_cogs=supplier_cogs,
+                fingerprint=fingerprint,
+                result_sha256=hashlib.sha256(result.encode()).hexdigest(),
+                evidence=evidence,
+            )
+            return True
+
     def resolve_financials(
         self,
         purchase: int,
