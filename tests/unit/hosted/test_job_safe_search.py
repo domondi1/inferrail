@@ -1514,6 +1514,11 @@ async def test_fee_tier_changes_require_actual_billing_evidence(
     assert state["supplier_cogs"] == "0.007"
     assert state["variable_fees"] is None and state["realized_margin"] is None
     assert not state["resolved"]
+    assert service.output_example["receipt"]["financial_state"] == "UNRESOLVED"
+    assert (
+        service.extensions["bazaar"]["info"]["output"]["example"]["receipt"]["financial_state"]
+        == "UNRESOLVED"
+    )
     # Unknown billing stays reserved, even after useful output is delivered.
     with pytest.raises(Refused, match="risk_ceiling"):
         service.store.reserve(

@@ -190,6 +190,9 @@ class SearchService:
             {
                 "charged_usd": usd(config.price),
                 "provider": supplier.name,
+                "financial_state": "RESOLVED"
+                if config.realized_payment_fee is not None
+                else "UNRESOLVED",
                 "remaining_job_budget_usd": usd(config.price * 2),
             }
         )
