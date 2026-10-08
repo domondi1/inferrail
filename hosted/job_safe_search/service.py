@@ -267,31 +267,77 @@ class SearchService:
         status = 402 if row["state"] == "PAYMENT_REJECTED" else 200 if complete else 202
         return JSONResponse(status_code=status, content=content, headers=headers)
 
-    async def observe_extra_payment(self, row: dict[str, Any], signature: str | None) -> None:
-        if not signature or not self.config.recovery_from_block:
+    async def reconcile_observation(self, observed: dict[str, Any]) -> None:
+        if not self.config.recovery_from_block:
             return
+        payload = PaymentPayload.model_validate_json(observed["payload"])
+        tx = await self.chain.find_transaction(payload, self.config.recovery_from_block)
+        if tx and observed["purchase"] is not None:
+            self.store.record_extra_payment(
+                observed["purchase"],
+                observed["payer"],
+                observed["nonce"],
+                tx,
+                observed["amount"],
+                pending_payload=observed["payload"],
+            )
+        if tx and await self.chain.confirmed(payload, tx):
+            if observed["purchase"] is not None:
+                self.store.record_extra_payment(
+                    observed["purchase"],
+                    observed["payer"],
+                    observed["nonce"],
+                    tx,
+                    observed["amount"],
+                )
+            self.store.resolve_observation(
+                observed["payer"],
+                observed["nonce"],
+                "SETTLED",
+                tx,
+                self.config.realized_payment_fee,
+            )
+        elif not tx:
+            proof = getattr(self.chain, "settlement_impossible", None)
+            if callable(proof) and await proof(payload):
+                self.store.resolve_observation(observed["payer"], observed["nonce"], "NOT_SETTLED")
+
+    async def observe_payment(
+        self, signature: str | None, purchase: int | None = None
+    ) -> dict[str, Any] | None:
+        if not signature:
+            return None
         try:
             payload = decode(signature)
             payer, nonce = identity(payload, self.requirements)
-            if payer != row["payer"] or nonce == row["nonce"]:
-                return
-            tx = await self.chain.find_transaction(payload, self.config.recovery_from_block)
-            if tx:
-                self.store.record_extra_payment(
-                    row["id"],
-                    payer,
-                    nonce,
-                    tx,
-                    int(payload.accepted.amount),
-                    pending_payload=payload.model_dump_json(by_alias=True),
-                )
-                if await self.chain.confirmed(payload, tx):
-                    self.store.record_extra_payment(
-                        row["id"], payer, nonce, tx, int(payload.accepted.amount)
-                    )
         except Exception:
-            # Never settle a new signature during a replay; unreadable chain state stays unknown.
+            return None
+        observed = self.store.observe_payment(
+            payload.model_dump_json(by_alias=True), payer, nonce, purchase
+        )
+        if observed is None:
+            return None
+        try:
+            if observed["state"] == "OBSERVED":
+                await self.reconcile_observation(observed)
+        except Exception:
+            # Persisted before RPC: restart reconciliation cannot lose a proxy-settled payment.
+            pass
+        return next(
+            item
+            for item in self.store.observed_payments(pending=False)
+            if item["payer"] == payer and item["nonce"] == nonce
+        )
+
+    async def observe_extra_payment(self, row: dict[str, Any], signature: str | None) -> None:
+        if not signature:
             return
+        try:
+            payer, nonce = identity(decode(signature), self.requirements)
+        except Exception:
+            return
+        if payer == row["payer"] and nonce != row["nonce"]:
+            await self.observe_payment(signature, row["id"])
 
     def token_context(self, request: SearchRequest) -> dict[str, Any] | None:
         if not request.job_token:
@@ -425,6 +471,11 @@ class SearchService:
                     )
                     await self.advance(purchase)
                     return
+            if verified is not None and not verified.is_valid and self.config.recovery_from_block:
+                self.store.transition(
+                    purchase, "VERIFYING", "PAYMENT_UNKNOWN", liability=row["price"]
+                )
+                return
             if verified is None:
                 self.store.transition(purchase, "VERIFYING", "RESERVED")
                 return
@@ -542,6 +593,11 @@ class SearchService:
     async def recover(self, from_block: str, *, startup: bool = True) -> None:
         if startup:
             self.prepare_recovery()
+        for observed in self.store.observed_payments():
+            try:
+                await self.reconcile_observation(observed)
+            except Exception:
+                pass
         for purchase, extra in self.store.pending_extra_payments():
             try:
                 payload = PaymentPayload.model_validate_json(extra["pending_payload"])
@@ -578,6 +634,17 @@ class SearchService:
                             liability=row["price"],
                             variable_fees=self.config.realized_payment_fee,
                         )
+                    elif not tx:
+                        proof = getattr(self.chain, "settlement_impossible", None)
+                        if callable(proof) and await proof(payload):
+                            self.store.transition(
+                                purchase,
+                                row["state"],
+                                "PAYMENT_REJECTED",
+                                supplier_cogs=0,
+                                variable_fees=0,
+                                liability=0,
+                            )
                 await self.advance(purchase)
             except Exception:
                 self.store.recovery_deferred(purchase, "purchase")
@@ -588,7 +655,9 @@ def create_app(service: SearchService) -> FastAPI:
     async def service_lifespan(_app: FastAPI):
         from_block = service.config.recovery_from_block
         if (
-            service.store.outstanding() or service.store.pending_extra_payments()
+            service.store.outstanding()
+            or service.store.pending_extra_payments()
+            or service.store.observed_payments()
         ) and not from_block:
             raise RuntimeError(
                 "SEARCH_RECOVERY_FROM_BLOCK is required while purchases are unresolved"
@@ -664,8 +733,33 @@ def create_app(service: SearchService) -> FastAPI:
     async def search(request: Request) -> JSONResponse:
         signature = request.headers.get("payment-signature")
         raw = await request.body()
+
+        async def refused(status: int, error: str) -> JSONResponse:
+            observed = await service.observe_payment(signature)
+            details: dict[str, Any] = {"error": error, "charged_usd": "0"}
+            if observed is not None and observed["state"] == "REFUNDED":
+                details.update(
+                    {"refunded_usd": usd(observed["amount"]), "financial_state": "RESOLVED"}
+                )
+            elif observed is not None and observed["state"] != "NOT_SETTLED":
+                details.update(
+                    {
+                        "charged_usd": usd(observed["amount"])
+                        if observed["state"] == "SETTLED"
+                        else None,
+                        "financial_state": "UNRESOLVED",
+                        "payment_instruction": (
+                            "Reuse the original signature; "
+                            "never sign another payment for this request."
+                        ),
+                        "payment_nonce": observed["nonce"],
+                        "transaction": observed["tx"],
+                    }
+                )
+            return JSONResponse(status_code=status, content=details)
+
         if len(raw) > 16_384:
-            return JSONResponse(status_code=413, content={"error": "body_too_large"})
+            return await refused(413, "body_too_large")
         # Discovery probes with an empty body must receive the complete 402 contract.
         if not raw or raw.strip() == b"{}":
             if not signature:
@@ -674,9 +768,9 @@ def create_app(service: SearchService) -> FastAPI:
             body = SearchRequest.model_validate_json(raw)
             return await service.handle(body, signature)
         except ValidationError:
-            return JSONResponse(status_code=422, content={"error": "invalid_search_request"})
+            return await refused(422, "invalid_search_request")
         except Refused as exc:
-            return JSONResponse(status_code=409, content={"error": str(exc), "charged_usd": "0"})
+            return await refused(409, str(exc))
 
     return app
 

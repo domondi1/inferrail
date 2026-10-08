@@ -1233,3 +1233,244 @@ def test_invalid_cache_and_job_lifetimes_fail_closed(system: Any, changes: dict[
             service.chain,
             service.supplier,
         )
+
+
+@pytest.mark.asyncio
+async def test_proxy_settled_rejected_input_is_recorded_as_liability(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(service)),
+        base_url="https://search.example.com",
+    ) as client:
+        for _ in range(2):
+            response = await client.post(
+                "/search",
+                json={"query": "missing request id"},
+                headers={"payment-signature": signed},
+            )
+            assert response.status_code == 422
+            assert response.json()["charged_usd"] == "0.015"
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+    assert metrics["unfulfilled_settled_payments"] == 1
+    assert metrics["additional_payment_liability_usd"] == "0.015"
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    assert service.supplier.calls == service.facilitator.settles == 0
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert (
+        report(service.store.path, {account.address.lower()}, network="eip155:84532")[
+            "gross_external_settled_revenue_usd"
+        ]
+        == "0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_rpc_failure_persists_signed_observation(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    await service.handle(body(), payment(service, account))
+    fresh = payment(service, account)
+    await service.facilitator.inner.settle(decode(fresh), service.requirements)
+    original = service.chain.find_transaction
+
+    async def unavailable(*args: Any) -> Any:
+        raise RuntimeError("RPC unavailable")
+
+    service.chain.find_transaction = unavailable
+    response = result(await service.handle(body(), fresh))
+    assert response["receipt"]["financial_state"] == "UNRESOLVED"
+    assert len(service.store.observed_payments()) == 1
+    assert financial_state(row(service))["realized_margin"] is None
+    service.chain.find_transaction = original
+    restarted = SearchService(
+        service.config,
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    await restarted.recover("0x0")
+    assert restarted.store.observed_payments() == []
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["additional_settled_payments"] == 1
+    assert metrics["gross_external_settled_revenue_usd"] == "0.03"
+    assert metrics["additional_payment_liability_usd"] == "0.015"
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    assert service.supplier.calls == service.facilitator.settles == 1
+    assert chain.balance_of(service.config.pay_to) == 30000
+
+
+@pytest.mark.asyncio
+async def test_rejected_signed_payment_stays_unknown_until_absence_proven(system: Any) -> None:
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(service)),
+        base_url="https://search.example.com",
+    ) as client:
+        response = await client.post("/search", json={}, headers={"payment-signature": signed})
+        assert response.json()["charged_usd"] is None
+    assert (
+        report(service.store.path, set(), network="eip155:84532")[
+            "realized_external_contribution_margin_usd"
+        ]
+        is None
+    )
+
+    async def proven(payload: Any) -> bool:
+        return True
+
+    service.chain.settlement_impossible = proven
+    await service.recover("0x0")
+    assert (
+        report(service.store.path, set(), network="eip155:84532")[
+            "realized_external_contribution_margin_usd"
+        ]
+        == "0"
+    )
+    assert service.facilitator.settles == service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expired,spent,finalized,expected",
+    [
+        (False, False, True, False),
+        (True, True, True, False),
+        (True, False, False, False),
+        (True, False, True, True),
+    ],
+)
+async def test_absence_proof_requires_finalized_expiry_and_unspent_nonce(
+    system: Any, expired: bool, spent: bool, finalized: bool, expected: bool
+) -> None:
+    from hosted.job_safe_search.payments import ChainEvidence, decode
+
+    service, account, _ = system
+    payload = decode(payment(service, account))
+    evidence = ChainEvidence("https://rpc.example.com", service.requirements, finalized=finalized)
+
+    async def rpc(method: str, params: Any) -> Any:
+        if method == "eth_chainId":
+            return hex(84532)
+        if method == "eth_getBlockByNumber":
+            return {
+                "number": "0x10",
+                "timestamp": hex(
+                    int(payload.payload["authorization"]["validBefore"]) + (1 if expired else -1)
+                ),
+            }
+        assert method == "eth_call" and params[1] == "0x10"
+        assert params[0]["to"] == service.requirements.asset
+        return "0x" + ("1" if spent else "0").zfill(64)
+
+    evidence.rpc = rpc
+    assert await evidence.settlement_impossible(payload) is expected
+    await evidence.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_observed_proxy_payment_cannot_be_reused_as_new_purchase(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    original = payment(service, account)
+    first = result(await service.handle(body(), original))
+    extra = payment(service, account)
+    await service.facilitator.inner.settle(decode(extra), service.requirements)
+    await service.handle(body(), extra)
+    request = SearchRequest(query="new query", request_id="two", job_token=first["job_token"])
+    with pytest.raises(Refused, match="payment_observed_requires_reconciliation"):
+        await service.handle(request, extra)
+    assert service.supplier.calls == service.facilitator.settles == 1
+    assert (
+        report(service.store.path, set(), network="eip155:84532")[
+            "gross_external_settled_revenue_usd"
+        ]
+        == "0.03"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unfulfilled_refund_preserves_realized_loss(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    payload = decode(signed)
+    await service.facilitator.inner.settle(payload, service.requirements)
+    await service.observe_payment(signed)
+    nonce = payload.payload["authorization"]["nonce"]
+    with pytest.raises(ValueError):
+        service.store.reconcile_unfulfilled_refund(
+            account.address,
+            nonce,
+            refund_transaction="",
+            variable_fees=100,
+            evidence="missing transaction",
+        )
+    service.store.reconcile_unfulfilled_refund(
+        account.address,
+        nonce,
+        refund_transaction="independently-confirmed-test-refund",
+        variable_fees=100,
+        evidence="controlled test ledger only; no onchain refund submitted",
+    )
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["gross_external_settled_revenue_usd"] == metrics["refunds_usd"] == "0.015"
+    assert metrics["variable_payment_fees_usd"] == "0.0001"
+    assert metrics["realized_external_contribution_margin_usd"] == "-0.0001"
+    assert metrics["negative_margin_requests"] == 1
+    assert metrics["unresolved_transactions"] == 0
+    assert service.supplier.calls == service.facilitator.settles == 0
+    assert chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.mark.asyncio
+async def test_incomplete_proxy_scan_does_not_claim_no_payment(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    original = service.chain.find_transaction
+
+    async def incomplete(*args: Any) -> Any:
+        return None
+
+    service.chain.find_transaction = incomplete
+    await service.handle(body(), signed)
+    assert row(service)["state"] == "PAYMENT_UNKNOWN"
+    assert financial_state(row(service))["settled_revenue"] is None
+    assert service.supplier.calls == service.facilitator.settles == 0
+    service.chain.find_transaction = original
+    await service.recover("0x0")
+    assert row(service)["state"] == "DELIVERED"
+    assert service.supplier.calls == 1 and service.facilitator.settles == 0
+
+
+@pytest.mark.asyncio
+async def test_risk_ceiling_uses_actual_known_overrun_on_provider_change(system: Any) -> None:
+    service, account, _ = system
+    service.supplier.failure = "empty"
+    first = result(await service.handle(body(), payment(service, account)))
+    with service.store.transaction() as conn:
+        conn.execute("UPDATE purchases SET supplier_cogs=20000000 WHERE id=1")
+    service.supplier = Supplier()
+    service.supplier.name = "replacement"
+    request = SearchRequest(query="new query", request_id="two", job_token=first["job_token"])
+    with pytest.raises(Refused, match="unresolved_risk_ceiling"):
+        await service.handle(request, payment(service, account))
+    assert service.supplier.calls == 0 and service.facilitator.settles == 1

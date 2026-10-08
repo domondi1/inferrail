@@ -132,6 +132,28 @@ class ChainEvidence:
                 used |= "0x" + topics[1][-40:] == payer and event_nonce.lower() == nonce
         return transfers and used
 
+    async def settlement_impossible(self, payload: PaymentPayload) -> bool:
+        """Only finalized expiry plus an unspent nonce can prove a signed payment absent."""
+        if not self.finalized:
+            return False
+        if int(await self.rpc("eth_chainId", []), 16) != int(
+            str(self.requirements.network).split(":")[1]
+        ):
+            raise RuntimeError("wrong_chain")
+        head = await self.rpc("eth_getBlockByNumber", ["finalized", False])
+        auth = payload.payload["authorization"]
+        if not head or int(head["timestamp"], 16) < int(auth["validBefore"]):
+            return False
+        data = "0x" + keccak(text="authorizationState(address,bytes32)")[:4].hex()
+        data += auth["from"].removeprefix("0x").lower().zfill(64)
+        data += auth["nonce"].removeprefix("0x").lower()
+        state = await self.rpc(
+            "eth_call", [{"to": self.requirements.asset, "data": data}, head["number"]]
+        )
+        if len(bytes.fromhex(state.removeprefix("0x"))) != 32:
+            raise RuntimeError("invalid_authorization_state")
+        return int(state, 16) == 0
+
     async def find_transaction(self, payload: PaymentPayload, from_block: str) -> str | None:
         """Bounded read-only scanning; checkpoints never skip unfinalized blocks.
 
