@@ -884,3 +884,102 @@ async def test_scan_rescans_unfinalized_tail_after_reorg(system: Any) -> None:
     assert await chain.find_transaction(payload, "0x0") == "0xlate"
     assert ranges == [(0, 2), (3, 5), (3, 5)]
     await chain.client.aclose()
+@pytest.mark.parametrize("change", ["network", "pay_to", "token_secret"])
+def test_ledger_rejects_changed_payment_domain_or_capability_key(system: Any, change: str) -> None:
+    service, _, _ = system
+    updates: dict[str, Any] = {
+        "network": {
+            "network": "eip155:8453",
+            "mainnet_approved": True,
+            "supplier_rights_confirmed": True,
+        },
+        "pay_to": {"pay_to": Account.create().address},
+        "token_secret": {"token_secret": b"new-key" * 8},
+    }[change]
+    with pytest.raises(ValueError, match="deployment_identity"):
+        SearchService(
+            replace(service.config, **updates),
+            Store(service.store.path),
+            service.facilitator,
+            service.chain,
+            service.supplier,
+        )
+    assert service.facilitator.settles == 0 and service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_ledger_identity_survives_restart_and_preserves_free_replay(system: Any) -> None:
+    service, account, _ = system
+    signature = payment(service, account)
+    await service.handle(body(), signature)
+    restarted = SearchService(
+        service.config,
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    response = await restarted.handle(body(), signature)
+    assert response.status_code == 200 and result(response)["receipt"]["charged_usd"] == "0"
+    assert service.facilitator.settles == service.supplier.calls == 1
+    assert financial_state(row(restarted))["realized_margin"] == "0.008"
+
+
+@pytest.mark.asyncio
+async def test_legacy_ledger_domain_checked_before_binding(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    # Simulate a schema before deployment identity was introduced.
+    with service.store.connect() as c:
+        c.execute("DROP TRIGGER deployment_identity_no_delete")
+        c.execute("DELETE FROM deployment_identity")
+    with pytest.raises(ValueError, match="legacy_database"):
+        SearchService(
+            replace(service.config, pay_to=Account.create().address),
+            Store(service.store.path),
+            service.facilitator,
+            service.chain,
+            service.supplier,
+        )
+    service.store.bind_deployment(service.requirements, service.config.token_secret)
+    assert financial_state(row(service))["realized_margin"] == "0.008"
+
+
+def test_deployment_identity_is_append_only(system: Any) -> None:
+    import sqlite3
+
+    service, _, _ = system
+    with service.store.connect() as c:
+        for sql in (
+            "DELETE FROM deployment_identity",
+            "UPDATE deployment_identity SET token_digest='x'",
+        ):
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                c.execute(sql)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX server process lock")
+def test_one_service_writer_across_processes(system: Any) -> None:
+    import subprocess
+
+    service, _, _ = system
+    child = """from pathlib import Path
+import sys
+from hosted.job_safe_search.store import Store
+try:
+    with Store(Path(sys.argv[1])).writer_lease():
+        print('unsafe')
+except RuntimeError:
+    print('blocked')
+"""
+    with service.store.writer_lease():
+        result_child = subprocess.run(
+            [sys.executable, "-c", child, str(service.store.path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result_child.returncode == 0 and result_child.stdout.strip() == "blocked"
+    with Store(service.store.path).writer_lease():
+        assert service.facilitator.settles == 0 and service.supplier.calls == 0

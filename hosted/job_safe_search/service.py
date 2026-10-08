@@ -160,6 +160,7 @@ class SearchService:
         )
         self.tokens = Tokens(config.token_secret)
         self.requirements = config.requirements()
+        store.bind_deployment(self.requirements, config.token_secret)
         self.extensions = declare_discovery_extension(
             input=INPUT_EXAMPLE,
             input_schema=SearchRequest.model_json_schema(),
@@ -547,7 +548,7 @@ class SearchService:
 
 def create_app(service: SearchService) -> FastAPI:
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def service_lifespan(_app: FastAPI):
         from_block = service.config.recovery_from_block
         if (
             service.store.outstanding() or service.store.pending_extra_payments()
@@ -586,6 +587,12 @@ def create_app(service: SearchService) -> FastAPI:
             ):
                 if client is not None and callable(getattr(client, "aclose", None)):
                     await client.aclose()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        with service.store.writer_lease():
+            async with service_lifespan(_app):
+                yield
 
     app = FastAPI(title="Inferrail Job-Safe Web Search", lifespan=lifespan)
     app.state.search = service
