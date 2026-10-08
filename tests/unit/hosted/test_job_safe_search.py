@@ -286,12 +286,18 @@ async def test_supplier_failure_never_retries_or_recognizes_margin(
     await service.recover("0x0")
     f = financial_state(row(service))
     assert row(service)["state"] == (
-        "SERVICE_FAILED" if failure in ("empty", "bad_url") else "SUPPLIER_UNKNOWN"
+        "SERVICE_FAILED" if failure in ("empty", "bad_url", "cost_overrun") else "SUPPLIER_UNKNOWN"
     )
     assert service.supplier.calls == 1
     assert chain.balance_of(service.config.pay_to) == 15000
     assert f["settled_revenue"] == "0.015" and f["realized_margin"] is None
-    assert f["supplier_cogs"] == ("0.007" if failure in ("empty", "bad_url") else None)
+    assert f["supplier_cogs"] == (
+        "0.008"
+        if failure == "cost_overrun"
+        else "0.007"
+        if failure in ("empty", "bad_url")
+        else None
+    )
     assert f["unresolved_liability"] == "0.015"
 
 
@@ -884,6 +890,8 @@ async def test_scan_rescans_unfinalized_tail_after_reorg(system: Any) -> None:
     assert await chain.find_transaction(payload, "0x0") == "0xlate"
     assert ranges == [(0, 2), (3, 5), (3, 5)]
     await chain.client.aclose()
+
+
 @pytest.mark.parametrize("change", ["network", "pay_to", "token_secret"])
 def test_ledger_rejects_changed_payment_domain_or_capability_key(system: Any, change: str) -> None:
     service, _, _ = system
@@ -983,3 +991,98 @@ except RuntimeError:
         assert result_child.returncode == 0 and result_child.stdout.strip() == "blocked"
     with Store(service.store.path).writer_lease():
         assert service.facilitator.settles == 0 and service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["exa", "serpex"])
+@pytest.mark.parametrize("failure", ["bad_url", "empty", "http_error"])
+async def test_adapter_preserves_known_billing_on_unusable_output(
+    system: Any, provider: str, failure: str
+) -> None:
+    from hosted.job_safe_search.supplier import ExaSearch, SerpexSearch
+
+    service, account, _ = system
+    supplier = ExaSearch("fixture-key") if provider == "exa" else SerpexSearch("fixture-key", 800)
+    await supplier.client.aclose()
+    hits = (
+        []
+        if failure == "empty"
+        else [
+            {
+                "title": "Result",
+                "url": "javascript:bad" if failure == "bad_url" else "https://example.com",
+            }
+        ]
+    )
+    supplier.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                503 if failure == "http_error" else 200,
+                json={
+                    "results": hits,
+                    "requestId": "bill-1",
+                    "id": "bill-1",
+                    "costDollars": {"total": 0.007},
+                    "metadata": {"credits_used": 1},
+                },
+            )
+        )
+    )
+    service.supplier = supplier
+    await service.handle(body(), payment(service, account))
+    actual = row(service)
+    assert actual["supplier_cogs"] == (7000 if provider == "exa" else 800)
+    assert actual["supplier_reference"] == "bill-1"
+    assert actual["state"] == "SERVICE_FAILED" and actual["liability"] == 15000
+    assert financial_state(actual)["realized_margin"] is None
+    await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supplier_overrun_blocks_new_payment_after_restart(system: Any) -> None:
+    service, account, chain = system
+    service.supplier.failure = "cost_overrun"
+    await service.handle(body(), payment(service, account))
+    assert row(service)["supplier_cogs"] == 8000
+    restarted = SearchService(
+        service.config, Store(service.store.path), service.facilitator, service.chain, Supplier()
+    )
+    assert restarted.store.supplier_blocked("test")
+    with pytest.raises(Refused, match="supplier_cost_contract_breached"):
+        await restarted.handle(body("two"), payment(restarted, account))
+    assert service.facilitator.settles == 1 and restarted.supplier.calls == 0
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert financial_state(row(service))["realized_margin"] is None
+
+
+@pytest.mark.parametrize("provider", ["exa", "serpex"])
+def test_supplier_missing_credential_fails_before_acceptance(provider: str) -> None:
+    from hosted.job_safe_search.supplier import ExaSearch, SerpexSearch
+
+    with pytest.raises(ValueError, match="supplier_credential_required"):
+        ExaSearch(" ") if provider == "exa" else SerpexSearch(" ", 800)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credits,expected", [(5, 4000), (True, None), (-1, None)])
+async def test_serpex_contract_violation_keeps_actual_billing(
+    system: Any, credits: Any, expected: int | None
+) -> None:
+    from hosted.job_safe_search.supplier import SerpexSearch
+
+    service, account, _ = system
+    supplier = SerpexSearch("fixture-key", 800)
+    await supplier.client.aclose()
+    supplier.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"metadata": {"credits_used": credits}, "results": [], "id": "violation"}
+            )
+        )
+    )
+    service.supplier = supplier
+    await service.handle(body(), payment(service, account))
+    assert row(service)["supplier_cogs"] == expected
+    assert service.store.supplier_blocked("serpex") is (expected is not None)
+    assert financial_state(row(service))["realized_margin"] is None
+    await supplier.client.aclose()

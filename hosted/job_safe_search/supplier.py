@@ -1,4 +1,4 @@
-"""One bounded Exa search. No retry or fallback after dispatch."""
+"""Bounded supplier adapters. Billing evidence survives unusable output."""
 
 from __future__ import annotations
 
@@ -17,12 +17,23 @@ class SupplierResult:
     provider_request_id: str | None = None
 
 
+class SupplierFailure(ValueError):
+    """An unsuccessful attempt with independently reported billing, if available."""
+
+    def __init__(self, cogs: int | None, reference: str | None = None):
+        super().__init__("supplier_attempt_failed")
+        self.cogs = cogs
+        self.provider_request_id = reference
+
+
 class ExaSearch:
     name = "exa"
     # auto/fast, <=5 results, no summaries/contents/livecrawl: bounded operator contract.
     max_cost = 7000
 
     def __init__(self, key: str):
+        if not key.strip():
+            raise ValueError("supplier_credential_required")
         self.key = key
         self.client = httpx.AsyncClient(timeout=25)
 
@@ -32,22 +43,24 @@ class ExaSearch:
             headers={"x-api-key": self.key},
             json={"query": request.query, "numResults": request.num_results, "type": "auto"},
         )
-        # Even HTTP errors or connection timeouts can have charged. Caller freezes ambiguity.
-        response.raise_for_status()
+        # Parse reported billing before HTTP/result validation; errors can still cost money.
         body = response.json()
-        hits = [
-            SearchHit(
-                title=item.get("title") or "", url=item["url"], snippet=item.get("text") or ""
-            ).model_dump()
-            for item in body["results"][: request.num_results]
-        ]
-        if not hits:
-            raise ValueError("empty_supplier_result")
         cost = body.get("costDollars", {}).get("total")
         cogs = atomic(str(cost)) if cost is not None else None
-        if cogs is not None and cogs > self.max_cost:
-            raise ValueError("supplier_cost_exceeded_bound")
-        return SupplierResult(hits, cogs, body.get("requestId"))
+        reference = body.get("requestId")
+        try:
+            response.raise_for_status()
+            hits = [
+                SearchHit(
+                    title=item.get("title") or "", url=item["url"], snippet=item.get("text") or ""
+                ).model_dump()
+                for item in body["results"][: request.num_results]
+            ]
+            if not hits:
+                raise ValueError("empty_supplier_result")
+        except Exception as exc:
+            raise SupplierFailure(cogs, reference) from exc
+        return SupplierResult(hits, cogs, reference)
 
 
 class FixtureSearch:
@@ -70,6 +83,8 @@ class SerpexSearch:
     name = "serpex"
 
     def __init__(self, key: str, credit_cost: int):
+        if not key.strip():
+            raise ValueError("supplier_credential_required")
         if not 0 < credit_cost <= 800:
             raise ValueError("verified_paid_credit_cost_must_be_within_800_atomic_USD")
         self.max_cost = credit_cost
@@ -82,18 +97,24 @@ class SerpexSearch:
             headers={"Authorization": "Bearer " + self.key},
             json={"q": request.query, "include_content": False},
         )
-        response.raise_for_status()
         body = response.json()
         metadata = body.get("metadata", {})
         credits = metadata.get("credits_used")
-        # Missing billing evidence stays unknown, even on successful output.
-        if credits is not None and (type(credits) is not int or credits not in (0, 1)):
-            raise ValueError("supplier_billing_outside_plain_search_contract")
-        cogs = credits * self.max_cost if credits is not None else None
-        hits = [
-            SearchHit(
-                title=item["title"], url=item["url"], snippet=item.get("snippet") or ""
-            ).model_dump()
-            for item in body["results"][: request.num_results]
-        ]
-        return SupplierResult(hits, cogs, body.get("id"))
+        # Any nonnegative integer is actual billing evidence, including a contract violation.
+        cogs = credits * self.max_cost if type(credits) is int and credits >= 0 else None
+        reference = body.get("id")
+        try:
+            response.raise_for_status()
+            if credits is not None and (type(credits) is not int or credits not in (0, 1)):
+                raise ValueError("supplier_billing_outside_plain_search_contract")
+            hits = [
+                SearchHit(
+                    title=item["title"], url=item["url"], snippet=item.get("snippet") or ""
+                ).model_dump()
+                for item in body["results"][: request.num_results]
+            ]
+            if not hits:
+                raise ValueError("empty_supplier_result")
+        except Exception as exc:
+            raise SupplierFailure(cogs, reference) from exc
+        return SupplierResult(hits, cogs, reference)

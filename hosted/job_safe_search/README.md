@@ -167,3 +167,5 @@ may record its confirmed transaction, exact refund fees and durable evidence
 with `Store.reconcile_extra_refund`. This performs no payment. Pending incoming
 transfers cannot be reconciled as refunded until finalized, and duplicate
 refund records are rejected. Reconciled refund costs are deducted from margin.
+
+Supplier billing is recorded before output validation. A billed malformed or empty response retains its known cost and full unresolved customer liability; it is never retried. An observed supplier cost above the reserved bound blocks new payments and dispatches for that provider across restarts. Resolve the supplier contract before changing provider configuration; reconciliation records must preserve actual incurred costs. Empty supplier credentials are rejected at startup.
