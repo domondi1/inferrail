@@ -1662,3 +1662,143 @@ async def test_proven_nonpayment_does_not_erase_uncertain_settlement_fees(system
     assert metrics["negative_margin_requests"] == 1
     assert metrics["realized_external_contribution_margin_usd"] == "-0.001"
     assert service.supplier.calls == 0 and service.facilitator.settles == 1
+
+
+@pytest.mark.asyncio
+async def test_recovered_paid_supplier_result_delivers_without_new_charge(system: Any) -> None:
+    service, account, chain = system
+    service.supplier.failure = "timeout_after_charge"
+    signed = payment(service, account)
+    await service.handle(body(), signed)
+    assert row(service)["state"] == "SUPPLIER_UNKNOWN"
+    hits = [
+        {"title": "Recovered", "url": "https://example.com/result", "snippet": "same paid query"}
+    ]
+    kwargs = dict(
+        hits=hits,
+        supplier_cogs=7000,
+        provider="test",
+        supplier_reference="original-paid-query",
+        fingerprint=body().fingerprint(),
+        evidence="independently retrieved original paid output",
+    )
+    assert service.store.reconcile_result(1, **kwargs)
+    assert not service.store.reconcile_result(1, **kwargs)
+    response = await service.handle(body(), signed)
+    assert response.status_code == 200 and result(response)["results"] == hits
+    assert result(response)["receipt"]["charged_usd"] == "0"
+    assert financial_state(row(service))["realized_margin"] == "0.008"
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert service.supplier.calls == service.facilitator.settles == 1
+    with service.store.connect() as conn:
+        failures = conn.execute(
+            "SELECT details FROM events WHERE kind='SUPPLIER_FAILURE'"
+        ).fetchall()
+        assert len(failures) == 1 and set(json.loads(failures[0][0])) == {"failure_type"}
+        assert (
+            conn.execute("SELECT COUNT(*) FROM events WHERE kind='RESULT_RECONCILED'").fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", ["provider", "fingerprint", "hits", "supplier_cogs", "evidence", "supplier_reference"]
+)
+async def test_result_recovery_rejects_missing_or_wrong_evidence(system: Any, change: str) -> None:
+    service, account, _ = system
+    service.supplier.failure = "timeout_after_charge"
+    await service.handle(body(), payment(service, account))
+    kwargs = dict(
+        hits=[{"title": "Recovered", "url": "https://example.com", "snippet": "same query"}],
+        supplier_cogs=7000,
+        provider="test",
+        supplier_reference="original-paid-query",
+        fingerprint=body().fingerprint(),
+        evidence="verified original output",
+    )
+    kwargs[change] = {
+        "provider": "another-provider",
+        "fingerprint": "another-query",
+        "hits": [],
+        "supplier_cogs": -1,
+        "evidence": "",
+        "supplier_reference": "",
+    }[change]
+    with pytest.raises(ValueError):
+        service.store.reconcile_result(1, **kwargs)
+    assert row(service)["state"] == "SUPPLIER_UNKNOWN"
+    assert financial_state(row(service))["realized_margin"] is None
+    assert service.supplier.calls == service.facilitator.settles == 1
+
+
+@pytest.mark.asyncio
+async def test_recovered_output_keeps_unknown_fees_and_known_billing_immutable(system: Any) -> None:
+    service, account, _ = system
+    service.config = replace(service.config, realized_payment_fee=None)
+    service.supplier.failure = "bad_url"
+    await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "SERVICE_FAILED" and row(service)["supplier_cogs"] == 7000
+    kwargs = dict(
+        hits=[{"title": "Recovered", "url": "https://example.com", "snippet": "same query"}],
+        supplier_cogs=7000,
+        provider="test",
+        supplier_reference="original-query",
+        fingerprint=body().fingerprint(),
+        evidence="independently verified original result",
+    )
+    with pytest.raises(ValueError, match="known_supplier_cost"):
+        service.store.reconcile_result(1, **{**kwargs, "supplier_cogs": 0})
+    assert service.store.reconcile_result(1, **kwargs)
+    assert row(service)["supplier_cogs"] == 7000
+    assert financial_state(row(service))["realized_margin"] is None
+    assert service.supplier.calls == service.facilitator.settles == 1
+
+
+@pytest.mark.asyncio
+async def test_finalized_fixture_poll_reuses_one_authorization_after_transport_error(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from hosted.job_safe_search import testnet_e2e
+
+    signatures = []
+    attempts = []
+    hits = [{"title": "Already paid", "url": "https://example.com", "snippet": "same query"}]
+
+    def sign_once(_challenge: Any, _key: str) -> str:
+        signatures.append("original-authorization")
+        return signatures[-1]
+
+    async def no_wait(_seconds: float) -> None:
+        pass
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        signature = request.headers.get("PAYMENT-SIGNATURE")
+        if not signature:
+            return httpx.Response(402, json={"accepts": []})
+        attempts.append(signature)
+        if len(attempts) == 1:
+            raise httpx.ReadTimeout("controlled delivery polling timeout", request=request)
+        if len(attempts) == 2:
+            return httpx.Response(202, json={"receipt": {"economic_state": "FINALITY_PENDING"}})
+        return httpx.Response(
+            200, json={"results": hits, "receipt": {"transaction": "existing-transfer"}}
+        )
+
+    monkeypatch.setattr(testnet_e2e, "sign", sign_once)
+    monkeypatch.setattr(testnet_e2e.asyncio, "sleep", no_wait)
+    supplier = testnet_e2e.PaidFixture(
+        {"merchant": {"key": "controlled-fixture-key"}}, tmp_path, "success", True
+    )
+    await supplier.client.aclose()
+    supplier.client = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+    try:
+        result = await supplier.search(body())
+        assert result.hits == hits and result.cogs == 7000
+        assert signatures == ["original-authorization"]
+        assert attempts == signatures * 3
+        assert json.loads((tmp_path / "supplier-poll-error.json").read_text()) == {
+            "failure_type": "ReadTimeout"
+        }
+    finally:
+        await supplier.client.aclose()
