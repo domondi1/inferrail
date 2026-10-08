@@ -80,6 +80,23 @@ def identity(payload: PaymentPayload, requirements: PaymentRequirements) -> tupl
     return payer, raw["nonce"].lower()
 
 
+def recovery_requirements(
+    payload: PaymentPayload, current: PaymentRequirements
+) -> PaymentRequirements:
+    """Keep the deployment domain fixed while reconciling an archived price.
+
+    This authorizes read-only recovery, never a new purchase at an obsolete price.
+    """
+    accepted = payload.accepted
+    if (
+        accepted.model_copy(update={"amount": current.amount}) != current
+        or int(accepted.amount) <= 0
+    ):
+        raise ValueError("payment_requirements_mismatch")
+    identity(payload, accepted)
+    return accepted
+
+
 class ChainEvidence:
     def __init__(self, rpc_url: str, requirements: PaymentRequirements, *, finalized: bool = True):
         self.rpc_url, self.requirements, self.finalized = rpc_url, requirements, finalized
@@ -100,7 +117,7 @@ class ChainEvidence:
         return body["result"]
 
     async def confirmed(self, payload: PaymentPayload, transaction: str) -> bool:
-        req = self.requirements
+        req = recovery_requirements(payload, self.requirements)
         if int(await self.rpc("eth_chainId", []), 16) != int(str(req.network).split(":")[1]):
             raise RuntimeError("wrong_chain")
         receipt = await self.rpc("eth_getTransactionReceipt", [transaction])
@@ -134,6 +151,7 @@ class ChainEvidence:
 
     async def settlement_impossible(self, payload: PaymentPayload) -> bool:
         """Only finalized expiry plus an unspent nonce can prove a signed payment absent."""
+        recovery_requirements(payload, self.requirements)
         if not self.finalized:
             return False
         if int(await self.rpc("eth_chainId", []), 16) != int(
@@ -160,6 +178,7 @@ class ChainEvidence:
         Large ranges are rejected by many RPC providers. Each pass is bounded;
         later passes continue scanning. Restarting only rescans safe history.
         """
+        recovery_requirements(payload, self.requirements)
         auth = payload.payload["authorization"]
         if int(await self.rpc("eth_chainId", []), 16) != int(
             str(self.requirements.network).split(":")[1]

@@ -1802,3 +1802,181 @@ async def test_finalized_fixture_poll_reuses_one_authorization_after_transport_e
         }
     finally:
         await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_original_signature_recovers_result_after_price_change(system: Any) -> None:
+    service, account, _ = system
+    original = payment(service, account)
+    first = result(await service.handle(body(), original))
+    restarted = SearchService(
+        replace(service.config, price=50000),
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    replay = result(await restarted.handle(body(), original))
+    assert replay["results"] == first["results"]
+    assert replay["receipt"]["charged_usd"] == "0"
+    assert row(restarted)["price"] == 15000
+    assert financial_state(row(restarted))["realized_margin"] == "0.008"
+    assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_price_cannot_buy_new_request(system: Any) -> None:
+    service, account, _ = system
+    stale = payment(service, account)
+    changed = SearchService(
+        replace(service.config, price=20000),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="invalid_payment"):
+        await changed.handle(body(), stale)
+    assert (
+        service.facilitator.verifies == service.facilitator.settles == service.supplier.calls == 0
+    )
+    assert service.store.outstanding() == []
+    await changed.handle(body(), payment(changed, account))
+    assert row(changed)["price"] == 20000
+    assert financial_state(row(changed))["realized_margin"] == "0.013"
+
+
+@pytest.mark.asyncio
+async def test_historical_proxy_extra_records_actual_amount_after_price_change(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    extra = payment(service, account)
+    await service.facilitator.inner.settle(decode(extra), service.requirements)
+    changed = SearchService(
+        replace(service.config, price=20000, recovery_from_block="0x0"),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    await changed.handle(body(), extra)
+    assert row(changed)["extra_payment_liability"] == 15000
+    assert row(changed)["extra_settled_revenue"] == 15000
+    assert financial_state(row(changed))["realized_margin"] is None
+    assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_reserved_authority_never_initiates_new_settlement(system: Any) -> None:
+    service, account, _ = system
+    original = payment(service, account)
+    service.facilitator.failure = "verify"
+    await service.handle(body(), original)
+    assert row(service)["state"] == "RESERVED"
+    verifies = service.facilitator.verifies
+    service.facilitator.failure = None
+    changed = SearchService(
+        replace(service.config, price=20000),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    assert (await changed.handle(body(), original)).status_code == 202
+    assert service.facilitator.verifies == verifies
+    assert service.facilitator.settles == service.supplier.calls == 0
+    assert financial_state(row(changed))["realized_margin"] is None
+
+
+@pytest.mark.asyncio
+async def test_chain_confirmation_uses_archived_amount_and_fixed_domain(system: Any) -> None:
+    from hosted.job_safe_search.payments import TRANSFER, USED, ChainEvidence, decode
+
+    service, account, _ = system
+    payload = decode(payment(service, account))
+    changed = service.requirements.model_copy(update={"amount": "20000"})
+    evidence = ChainEvidence("https://rpc.example.invalid", changed)
+    transfer_amount = 15000
+
+    async def rpc(method: str, params: Any) -> Any:
+        if method == "eth_chainId":
+            return hex(84532)
+        if method == "eth_getBlockByNumber":
+            return {"number": "0x10", "hash": "0xblock"}
+        assert method == "eth_getTransactionReceipt"
+        return {
+            "status": "0x1",
+            "blockNumber": "0x10",
+            "blockHash": "0xblock",
+            "logs": [
+                {
+                    "address": changed.asset,
+                    "topics": [
+                        TRANSFER,
+                        "0x" + account.address[2:].lower().zfill(64),
+                        "0x" + changed.pay_to[2:].lower().zfill(64),
+                    ],
+                    "data": hex(transfer_amount),
+                },
+                {
+                    "address": changed.asset,
+                    "topics": [USED, "0x" + account.address[2:].lower().zfill(64)],
+                    "data": payload.payload["authorization"]["nonce"],
+                },
+            ],
+        }
+
+    evidence.rpc = rpc
+    assert await evidence.confirmed(payload, "0xpaid")
+    transfer_amount = 20000
+    assert not await evidence.confirmed(payload, "0xpaid")
+    wrong_domain = payload.model_copy(
+        update={"accepted": payload.accepted.model_copy(update={"network": "eip155:8453"})}
+    )
+    with pytest.raises(ValueError, match="payment_requirements_mismatch"):
+        await evidence.confirmed(wrong_domain, "0xpaid")
+    await evidence.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_archived_price_replay_still_rejects_changed_query(system: Any) -> None:
+    service, account, _ = system
+    original = payment(service, account)
+    await service.handle(body(), original)
+    changed = SearchService(
+        replace(service.config, price=20000),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="request_id_conflict"):
+        await changed.handle(SearchRequest(query="different", request_id="one"), original)
+    assert service.facilitator.settles == service.supplier.calls == 1
+    assert financial_state(row(changed))["realized_margin"] == "0.008"
+
+
+@pytest.mark.asyncio
+async def test_rejected_historical_payment_is_observed_without_buying(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, _ = system
+    historical = payment(service, account)
+    await service.facilitator.inner.settle(decode(historical), service.requirements)
+    changed = SearchService(
+        replace(service.config, price=20000, recovery_from_block="0x0"),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="invalid_payment"):
+        await changed.handle(body(), historical)
+    observed = await changed.observe_payment(historical)
+    assert observed["state"] == "SETTLED" and observed["amount"] == 15000
+    metrics = report(changed.store.path, set(), network="eip155:84532")
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    assert metrics["external_paid_calls"] == 0
+    assert service.facilitator.settles == service.supplier.calls == 0

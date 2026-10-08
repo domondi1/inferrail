@@ -209,3 +209,14 @@ network call or payment, refuses identity/cost conflicts and refunds/credits,
 and preserves unknown payment fees. A supplier that cannot retrieve an existing
 result must stay unresolved; running a new search is not recovery. Supplier
 failure events retain only exception classes, never exception text or credentials.
+
+Price changes preserve original-signature recovery for existing request IDs,
+including when the buyer lost the response and has no job token. The archived
+offer must match the recorded purchase; it cannot create a new purchase or
+initiate settlement for a still-reserved request. New requests require the
+current offer. Read-only chain reconciliation uses each authorization's actual
+amount while requiring the same network, asset, payTo, and token domain.
+An old-price proxy settlement remains a liability rather than extra paid usage.
+Already-paid requests awaiting supplier dispatch stay frozen after a price
+change; reconcile or restore their original economic configuration before
+fulfillment. Completed results remain recoverable without a new supplier call.
