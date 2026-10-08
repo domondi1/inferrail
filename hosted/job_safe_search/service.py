@@ -32,7 +32,7 @@ from .contract import (
     usd,
 )
 from .economics import financial_state
-from .payments import ChainEvidence, decode, encode, identity
+from .payments import ChainEvidence, decode, encode, identity, recovery_requirements
 from .store import Refused, Store
 from .supplier import ExaSearch, FixtureSearch, SerpexSearch, SupplierFailure
 
@@ -323,7 +323,7 @@ class SearchService:
             return None
         try:
             payload = decode(signature)
-            payer, nonce = identity(payload, self.requirements)
+            payer, nonce = identity(payload, recovery_requirements(payload, self.requirements))
         except Exception:
             return None
         observed = self.store.observe_payment(
@@ -347,7 +347,8 @@ class SearchService:
         if not signature:
             return
         try:
-            payer, nonce = identity(decode(signature), self.requirements)
+            payload = decode(signature)
+            payer, nonce = identity(payload, recovery_requirements(payload, self.requirements))
         except Exception:
             return
         if payer == row["payer"] and nonce != row["nonce"]:
@@ -386,16 +387,16 @@ class SearchService:
                 return self.response(cached, free=True, cache=True)
             if job["budget"] is not None and job["budget"] - job["committed"] < self.config.price:
                 raise Refused("job_budget_exhausted")
-        elif (
-            request.job_budget_usd is not None
-            and atomic(request.job_budget_usd) < self.config.price
-        ):
-            raise Refused("job_budget_exhausted")
         if not signature:
+            if (
+                request.job_budget_usd is not None
+                and atomic(request.job_budget_usd) < self.config.price
+            ):
+                raise Refused("job_budget_exhausted")
             return self.challenge()
         try:
             payload = decode(signature)
-            payer, nonce = identity(payload, self.requirements)
+            payer, nonce = identity(payload, recovery_requirements(payload, self.requirements))
         except Exception as exc:
             raise Refused("invalid_payment") from exc
         if job and job["payer"] != payer:
@@ -408,6 +409,20 @@ class SearchService:
             )
         )
         existing = self.store.lookup(payer, job_id, request.request_id)
+        if payload.accepted != self.requirements:
+            archived = (
+                PaymentPayload.model_validate_json(existing["payload"]).accepted
+                if existing is not None
+                else None
+            )
+            if payload.accepted != archived:
+                raise Refused("invalid_payment")
+        if (
+            existing is None
+            and request.job_budget_usd is not None
+            and atomic(request.job_budget_usd) < self.config.price
+        ):
+            raise Refused("job_budget_exhausted")
         # Do not trust buyer-supplied discovery/resource metadata during indexing.
         payload = payload.model_copy(
             update={
@@ -449,6 +464,10 @@ class SearchService:
     async def advance(self, purchase: int) -> None:
         row = self.store.get(purchase)
         payload = PaymentPayload.model_validate_json(row["payload"])
+        # A stale offer may recover its result or chain evidence, but cannot initiate
+        # a new settlement under the current offer.
+        if row["state"] == "RESERVED" and payload.accepted != self.requirements:
+            return
         if row["state"] == "RESERVED" and self.store.payment_fee_blocked(self.config.fee_bound):
             return
         if row["state"] == "RESERVED" and self.store.supplier_blocked(self.supplier.name):
