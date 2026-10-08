@@ -1596,3 +1596,28 @@ async def test_fee_ceiling_increase_freezes_old_authority_before_supplier(system
     assert row(updated)["state"] == "FINALITY_PENDING"
     assert updated.supplier.calls == 0
     assert financial_state(row(updated))["realized_margin"] is None
+
+
+@pytest.mark.asyncio
+async def test_lower_fee_ceiling_cannot_hide_known_actual_cost(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=1000,
+        evidence="actual paid-tier invoice",
+    )
+    lowered = SearchService(
+        replace(service.config, fee_bound=0),
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="payment_fee_bound_breached"):
+        await lowered.handle(
+            body("second").model_copy(update={"query": "different"}),
+            payment(lowered, account),
+        )
+    assert lowered.facilitator.settles == lowered.supplier.calls == 1

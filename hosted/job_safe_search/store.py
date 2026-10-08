@@ -583,11 +583,11 @@ class Store:
         return self.get(purchase), True
 
     def payment_fee_blocked(self, current_bound: int) -> bool:
-        """Known fees above both the reserved and current ceilings stop paid work."""
+        """Known fees above the current ceiling stop paid work."""
         with self.connect() as conn:
             return (
                 conn.execute(
-                    "SELECT 1 FROM purchases WHERE variable_fees>MAX(fee_bound,?) LIMIT 1",
+                    "SELECT 1 FROM purchases WHERE variable_fees>? LIMIT 1",
                     (current_bound,),
                 ).fetchone()
                 is not None

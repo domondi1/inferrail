@@ -190,7 +190,7 @@ receipt and metrics retain unknown margin and the unresolved exposure stays
 reserved. Reconcile actual fees, including taxes and any other variable costs,
 before counting that purchase toward realized contribution.
 
-Known payment fees above the recorded and current ceilings block new payment
+Known payment fees above the current ceiling block new payment
 acceptance and supplier dispatch across restarts. A fee-ceiling increase also
 freezes purchases reserved under a lower ceiling. Reconcile those purchases
 and the current cost envelope before resuming; completed results still replay.
