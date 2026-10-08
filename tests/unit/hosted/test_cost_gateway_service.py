@@ -1406,6 +1406,18 @@ def test_purge_loop_runs_and_discards_expired_trial_keys(
 
     caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
     _fast_purge_env(monkeypatch)
+    # Key submission can take longer than its 100ms TTL on a loaded runner.
+    # Hold only the background sweep until initial key storage is asserted.
+    from threading import Event
+
+    allow_purge = Event()
+    trial_cls = sys.modules["trial"].TrialRegistry
+    real_purge = trial_cls.purge_expired
+
+    def gated_purge(self):
+        return real_purge(self) if allow_purge.is_set() else []
+
+    monkeypatch.setattr(trial_cls, "purge_expired", gated_purge)
     app = service_module.create_app(tmp_path / "data")
     with TestClient(app) as client:  # context manager runs the lifespan
         trial = _issue(client)
@@ -1415,6 +1427,7 @@ def test_purge_loop_runs_and_discards_expired_trial_keys(
             headers=_auth(trial["api_key"]),
         )
         assert app.state.key_vault.status(trial["tenant_id"]).openai_configured
+        allow_purge.set()
         deadline = time.monotonic() + 3
         while not _events(service_module, caplog, "purge") and time.monotonic() < deadline:
             time.sleep(0.05)
