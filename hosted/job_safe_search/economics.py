@@ -24,6 +24,14 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         and row.get("extra_payment_liability", 0) == 0
     )
     no_charge = row["state"] == "PAYMENT_REJECTED"
+    rejected_resolved = (
+        no_charge
+        and row["supplier_cogs"] == 0
+        and row["variable_fees"] is not None
+        and row["liability"] == 0
+        and row["credits"] == 0
+        and row.get("extra_payment_liability", 0) == 0
+    )
     margin = (
         row["price"]
         + row.get("extra_settled_revenue", 0)
@@ -34,8 +42,8 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         - row["variable_fees"]
         - row.get("extra_variable_fees", 0)
         if resolved
-        else 0
-        if no_charge
+        else -row["variable_fees"]
+        if rejected_resolved
         else None
     )
     return {
@@ -57,5 +65,5 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         else None,
         "unresolved_liability": usd(row["liability"] + row.get("extra_payment_liability", 0)),
         "realized_margin": usd(margin),
-        "resolved": resolved or no_charge,
+        "resolved": resolved or rejected_resolved,
     }

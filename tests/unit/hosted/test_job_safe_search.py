@@ -428,7 +428,9 @@ def test_money_validation(value: str) -> None:
 def test_mainnet_and_loss_gates(system: Any) -> None:
     service, _, _ = system
     with pytest.raises(ValueError, match="approval"):
-        replace(service.config, network="eip155:8453").validate(service.supplier)
+        replace(service.config, network="eip155:8453", realized_payment_fee=None).validate(
+            service.supplier
+        )
     with pytest.raises(ValueError, match="envelope"):
         replace(service.config, price=10000).validate(service.supplier)
     with pytest.raises(ValueError, match="range"):
@@ -439,7 +441,7 @@ def test_mainnet_and_loss_gates(system: Any) -> None:
             network="eip155:8453",
             mainnet_approved=True,
             supplier_rights_confirmed=True,
-            realized_payment_fee=None,
+            realized_payment_fee=0,
         ).validate(Supplier())
 
 
@@ -900,6 +902,7 @@ def test_ledger_rejects_changed_payment_domain_or_capability_key(system: Any, ch
             "network": "eip155:8453",
             "mainnet_approved": True,
             "supplier_rights_confirmed": True,
+            "realized_payment_fee": None,
         },
         "pay_to": {"pay_to": Account.create().address},
         "token_secret": {"token_secret": b"new-key" * 8},
@@ -1473,4 +1476,189 @@ async def test_risk_ceiling_uses_actual_known_overrun_on_provider_change(system:
     request = SearchRequest(query="new query", request_id="two", job_token=first["job_token"])
     with pytest.raises(Refused, match="unresolved_risk_ceiling"):
         await service.handle(request, payment(service, account))
+    assert service.supplier.calls == 0 and service.facilitator.settles == 1
+
+
+def test_mainnet_accepts_bounded_unknown_fee_without_recognizing_estimate(system: Any) -> None:
+    service, _, _ = system
+    config = replace(
+        service.config,
+        network="eip155:8453",
+        mainnet_approved=True,
+        supplier_rights_confirmed=True,
+        realized_payment_fee=None,
+    )
+    config.validate(Supplier())
+    for assumed_fee in (0, 1000):
+        with pytest.raises(ValueError, match="per_purchase_reconciliation"):
+            replace(config, realized_payment_fee=assumed_fee).validate(Supplier())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actual_fee,expected_margin", [(0, "0.008"), (1000, "0.007")])
+async def test_fee_tier_changes_require_actual_billing_evidence(
+    system: Any, actual_fee: int, expected_margin: str
+) -> None:
+    service, account, _ = system
+    service = SearchService(
+        replace(service.config, realized_payment_fee=None, risk_ceiling=46000),
+        service.store,
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    response = await service.handle(body(), payment(service, account))
+    assert response.status_code == 200
+    state = financial_state(row(service))
+    assert state["settled_revenue"] == "0.015"
+    assert state["supplier_cogs"] == "0.007"
+    assert state["variable_fees"] is None and state["realized_margin"] is None
+    assert not state["resolved"]
+    assert service.output_example["receipt"]["financial_state"] == "UNRESOLVED"
+    assert (
+        service.extensions["bazaar"]["info"]["output"]["example"]["receipt"]["financial_state"]
+        == "UNRESOLVED"
+    )
+    # Unknown billing stays reserved, even after useful output is delivered.
+    with pytest.raises(Refused, match="risk_ceiling"):
+        service.store.reserve(
+            payer=account.address.lower(),
+            job="different-job",
+            request="different-request",
+            fingerprint="different-query",
+            body=body().model_dump_json(),
+            authenticated=False,
+            nonce="unused-nonce",
+            payload="{}",
+            expires=0,
+            price=15000,
+            supplier_bound=7000,
+            fee_bound=1000,
+            provider="test",
+            risk_ceiling=45000,
+            budget=None,
+        )
+    assert service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=actual_fee,
+        evidence=f"actual facilitator invoice allocated to transaction; fee={actual_fee}",
+    )
+    resolved = financial_state(row(service))
+    assert resolved["variable_fees"] == ("0" if actual_fee == 0 else "0.001")
+    assert resolved["realized_margin"] == expected_margin and resolved["resolved"]
+    assert service.supplier.calls == service.facilitator.settles == 1
+
+
+@pytest.mark.asyncio
+async def test_known_fee_overrun_blocks_new_payment_after_restart(system: Any) -> None:
+    service, account, _ = system
+    original = payment(service, account)
+    await service.handle(body(), original)
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=9000,
+        evidence="actual invoice including taxes",
+    )
+    assert financial_state(row(service))["realized_margin"] == "-0.001"
+    restarted = SearchService(
+        service.config,
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="payment_fee_bound_breached"):
+        await restarted.handle(
+            body(request_id="another").model_copy(update={"query": "different query"}),
+            payment(restarted, account),
+        )
+    assert restarted.facilitator.settles == restarted.supplier.calls == 1
+    assert (await restarted.handle(body(), original)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_fee_ceiling_increase_freezes_old_authority_before_supplier(system: Any) -> None:
+    service, account, _ = system
+    service.chain.final = False
+    await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "FINALITY_PENDING"
+    service.chain.final = True
+    updated = SearchService(
+        replace(service.config, fee_bound=2000),
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    await updated.advance(1)
+    assert row(updated)["state"] == "FINALITY_PENDING"
+    assert updated.supplier.calls == 0
+    assert financial_state(row(updated))["realized_margin"] is None
+
+
+@pytest.mark.asyncio
+async def test_lower_fee_ceiling_cannot_hide_known_actual_cost(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=1000,
+        evidence="actual paid-tier invoice",
+    )
+    lowered = SearchService(
+        replace(service.config, fee_bound=0),
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    with pytest.raises(Refused, match="payment_fee_bound_breached"):
+        await lowered.handle(
+            body("second").model_copy(update={"query": "different"}),
+            payment(lowered, account),
+        )
+    assert lowered.facilitator.settles == lowered.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_proven_nonpayment_does_not_erase_uncertain_settlement_fees(system: Any) -> None:
+    service, account, _ = system
+    service.config = replace(service.config, realized_payment_fee=None, recovery_from_block="0x0")
+    service.facilitator.failure = "settle_before"
+    await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "PAYMENT_UNKNOWN"
+
+    async def impossible(_payload: Any) -> bool:
+        return True
+
+    service.chain.settlement_impossible = impossible
+    await service.recover("0x0")
+    assert row(service)["state"] == "PAYMENT_REJECTED"
+    state = financial_state(row(service))
+    assert state["settled_revenue"] == "0" and state["supplier_cogs"] == "0"
+    assert state["variable_fees"] is None and state["realized_margin"] is None
+    assert not state["resolved"] and service.supplier.calls == 0
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["gross_external_settled_revenue_usd"] == "0"
+    assert metrics["variable_payment_fees_usd"] is None
+    assert metrics["unresolved_transactions"] == 1
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    with pytest.raises(ValueError, match="only actual payment fees"):
+        service.store.resolve_financials(1, supplier_cogs=1, variable_fees=1000, evidence="invalid")
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=0,
+        variable_fees=1000,
+        evidence="actual failed onchain attempt invoice",
+    )
+    assert row(service)["state"] == "PAYMENT_REJECTED"
+    assert financial_state(row(service))["realized_margin"] == "-0.001"
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["external_paid_calls"] == 0 and metrics["unresolved_transactions"] == 0
+    assert metrics["variable_payment_fees_usd"] == "0.001"
+    assert metrics["negative_margin_requests"] == 1
+    assert metrics["realized_external_contribution_margin_usd"] == "-0.001"
     assert service.supplier.calls == 0 and service.facilitator.settles == 1
