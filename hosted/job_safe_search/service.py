@@ -33,7 +33,7 @@ from .contract import (
 from .economics import financial_state
 from .payments import ChainEvidence, decode, encode, identity
 from .store import Refused, Store
-from .supplier import ExaSearch, FixtureSearch, SerpexSearch
+from .supplier import ExaSearch, FixtureSearch, SerpexSearch, SupplierFailure
 
 SERVICE_NAME = "Inferrail Job-Safe Web Search"
 SERVICE_TAGS = ["search", "web", "job-budget", "idempotency", "agent-payments"]
@@ -338,6 +338,8 @@ class SearchService:
                 ),
             }
         )
+        if existing is None and self.store.supplier_blocked(self.supplier.name):
+            raise Refused("supplier_cost_contract_breached")
         row, new = self.store.reserve(
             payer=payer,
             job=job_id,
@@ -363,6 +365,8 @@ class SearchService:
     async def advance(self, purchase: int) -> None:
         row = self.store.get(purchase)
         payload = PaymentPayload.model_validate_json(row["payload"])
+        if row["state"] == "RESERVED" and self.store.supplier_blocked(self.supplier.name):
+            return
         if row["state"] == "RESERVED" and self.store.transition(purchase, "RESERVED", "VERIFYING"):
             verified = None
             try:
@@ -452,7 +456,8 @@ class SearchService:
             return
         # Recheck the stored economic envelope against the current deployment before dispatch.
         if (
-            row["provider"] != self.supplier.name
+            self.store.supplier_blocked(self.supplier.name)
+            or row["provider"] != self.supplier.name
             or self.supplier.max_cost > row["supplier_bound"]
             or row["price"] < self.supplier.max_cost + row["fee_bound"] + self.config.minimum_margin
             or int(self.requirements.amount) != row["price"]
@@ -463,8 +468,8 @@ class SearchService:
             return
         try:
             result = await self.supplier.search(SearchRequest.model_validate_json(row["request"]))
-            if result.cogs is not None and (result.cogs < 0 or result.cogs > row["supplier_bound"]):
-                raise ValueError("cost_outside_envelope")
+            if result.cogs is not None and (type(result.cogs) is not int or result.cogs < 0):
+                raise ValueError("invalid_supplier_billing")
             # Preserve known supplier billing even if the delivered output is unusable.
             self.store.transition(
                 purchase,
@@ -473,12 +478,22 @@ class SearchService:
                 supplier_cogs=result.cogs,
                 supplier_reference=result.provider_request_id,
             )
+            if result.cogs is not None and result.cogs > row["supplier_bound"]:
+                raise ValueError("cost_outside_envelope")
             if not result.hits:
                 raise ValueError("empty_supplier_result")
             from .contract import SearchHit
 
             hits = [SearchHit.model_validate(hit).model_dump() for hit in result.hits]
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, SupplierFailure):
+                self.store.transition(
+                    purchase,
+                    "SUPPLIER_INFLIGHT",
+                    "SUPPLIER_INFLIGHT",
+                    supplier_cogs=exc.cogs,
+                    supplier_reference=exc.provider_request_id,
+                )
             current = self.store.get(purchase)
             state = "SERVICE_FAILED" if current["supplier_cogs"] is not None else "SUPPLIER_UNKNOWN"
             self.store.transition(purchase, "SUPPLIER_INFLIGHT", state)

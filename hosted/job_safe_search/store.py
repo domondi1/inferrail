@@ -458,6 +458,18 @@ class Store:
             self.event(conn, purchase, "RESERVED", price=price, supplier_bound=supplier_bound)
         return self.get(purchase), True
 
+    def supplier_blocked(self, provider: str) -> bool:
+        """An observed contract breach survives restarts and stops new paid dispatches."""
+        with self.connect() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM purchases WHERE provider=? "
+                    "AND supplier_cogs>supplier_bound LIMIT 1",
+                    (provider,),
+                ).fetchone()
+                is not None
+            )
+
     def transition(self, purchase: int, expected: str, target: str, **updates: Any) -> bool:
         allowed = {
             "tx",
