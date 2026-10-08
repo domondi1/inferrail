@@ -84,6 +84,10 @@ class ChainEvidence:
     def __init__(self, rpc_url: str, requirements: PaymentRequirements, *, finalized: bool = True):
         self.rpc_url, self.requirements, self.finalized = rpc_url, requirements, finalized
         self.client = httpx.AsyncClient(timeout=20)
+        # Performance checkpoints only: financial effects remain in the durable ledger.
+        self._scan_cursors: dict[tuple[str, str, str], int] = {}
+        self.log_block_span = 1000
+        self.max_scan_requests = 16
 
     async def rpc(self, method: str, params: list[Any]) -> Any:
         response = await self.client.post(
@@ -129,22 +133,49 @@ class ChainEvidence:
         return transfers and used
 
     async def find_transaction(self, payload: PaymentPayload, from_block: str) -> str | None:
-        """Read-only crash recovery; never resubmit a payment whose outcome is unknown."""
+        """Bounded read-only scanning; checkpoints never skip unfinalized blocks.
+
+        Large ranges are rejected by many RPC providers. Each pass is bounded;
+        later passes continue scanning. Restarting only rescans safe history.
+        """
         auth = payload.payload["authorization"]
-        logs = await self.rpc(
-            "eth_getLogs",
-            [
-                {
-                    "address": self.requirements.asset,
-                    "fromBlock": from_block,
-                    "toBlock": "latest",
-                    "topics": [USED, "0x" + auth["from"].removeprefix("0x").lower().zfill(64)],
-                }
-            ],
-        )
-        for log in logs:
-            topics = log["topics"]
-            event_nonce = topics[2] if len(topics) == 3 else log["data"]
-            if event_nonce.lower() == auth["nonce"].lower() and not log.get("removed", False):
-                return str(log["transactionHash"])
+        if int(await self.rpc("eth_chainId", []), 16) != int(
+            str(self.requirements.network).split(":")[1]
+        ):
+            raise RuntimeError("wrong_chain")
+        head = await self.rpc("eth_getBlockByNumber", ["finalized", False])
+        if not head:
+            raise RuntimeError("finalized_head_unavailable")
+        finalized = int(head["number"], 16)
+        latest = int(await self.rpc("eth_blockNumber", []), 16)
+        if latest < finalized:
+            raise RuntimeError("inconsistent_chain_heads")
+        key = (auth["from"].lower(), auth["nonce"].lower(), from_block)
+        start = max(int(from_block, 0), self._scan_cursors.get(key, 0))
+        for _ in range(self.max_scan_requests):
+            if start > latest:
+                break
+            end = min(start + self.log_block_span - 1, latest)
+            logs = await self.rpc(
+                "eth_getLogs",
+                [
+                    {
+                        "address": self.requirements.asset,
+                        "fromBlock": hex(start),
+                        "toBlock": hex(end),
+                        "topics": [USED, "0x" + auth["from"].removeprefix("0x").lower().zfill(64)],
+                    }
+                ],
+            )
+            for log in logs:
+                topics = log["topics"]
+                event_nonce = topics[2] if len(topics) == 3 else log["data"]
+                if event_nonce.lower() == auth["nonce"].lower() and not log.get("removed", False):
+                    return str(log["transactionHash"])
+            safe_next = min(end, finalized) + 1
+            if safe_next > start:
+                if key not in self._scan_cursors and len(self._scan_cursors) >= 4096:
+                    self._scan_cursors.pop(next(iter(self._scan_cursors)))
+                self._scan_cursors[key] = safe_next
+            start = end + 1
         return None

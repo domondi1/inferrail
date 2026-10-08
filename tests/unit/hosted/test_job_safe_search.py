@@ -753,3 +753,134 @@ async def test_extra_payment_refund_needs_evidence_and_preserves_actual_margin(
         service.store.reconcile_extra_refund(
             1, nonce, refund_transaction="another", variable_fees=refund_fee, evidence="duplicate"
         )
+
+
+@pytest.mark.asyncio
+async def test_recovery_rpc_failure_isolated_per_purchase(system: Any) -> None:
+    service, account, chain = system
+    service.facilitator.failure = "crash_after_settle"
+    for request_id in ("one", "two"):
+        with pytest.raises(KeyboardInterrupt):
+            await service.handle(body(request_id), payment(service, account))
+    first_nonce = row(service)["nonce"]
+    original = service.chain.confirmed
+
+    async def confirm(payload: Any, tx: str) -> bool:
+        if payload.payload["authorization"]["nonce"].lower() == first_nonce:
+            raise RuntimeError("one receipt unavailable")
+        return await original(payload, tx)
+
+    service.chain.confirmed = confirm
+    await service.recover("0x0")
+    await service.recover("0x0")
+    assert row(service)["state"] == "SETTLING"
+    assert financial_state(row(service))["realized_margin"] is None
+    assert financial_state(service.store.get(2))["realized_margin"] == "0.008"
+    assert service.facilitator.settles == 2 and service.supplier.calls == 1
+    assert chain.balance_of(service.config.pay_to) == 30000
+    with service.store.connect() as c:
+        assert (
+            c.execute("SELECT COUNT(*) FROM events WHERE kind='RECOVERY_DEFERRED'").fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_startup_rpc_outage_keeps_completed_replay_available(system: Any) -> None:
+    service, account, _ = system
+    signature = payment(service, account)
+    await service.handle(body(), signature)
+    service.facilitator.failure = "crash_after_settle"
+    with pytest.raises(KeyboardInterrupt):
+        await service.handle(body("two"), payment(service, account))
+    service.config = replace(service.config, recovery_from_block="0x0")
+    service.chain.unavailable = True
+    app = create_app(service)
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0)
+        replay = await service.handle(body(), signature)
+        assert replay.status_code == 200
+        assert result(replay)["receipt"]["charged_usd"] == "0"
+        assert financial_state(service.store.get(2))["realized_margin"] is None
+        assert service.facilitator.settles == 2 and service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chain_scan_is_bounded_and_continues_finalized_history(system: Any) -> None:
+    from hosted.job_safe_search.payments import USED, ChainEvidence, decode
+
+    service, account, _ = system
+    payload = decode(payment(service, account))
+    chain = ChainEvidence("https://rpc.example.invalid", service.requirements)
+    chain.log_block_span = 3
+    chain.max_scan_requests = 2
+    ranges = []
+
+    async def rpc(method: str, params: list[Any]) -> Any:
+        if method == "eth_chainId":
+            return hex(84532)
+        if method == "eth_getBlockByNumber":
+            return {"number": hex(12)}
+        if method == "eth_blockNumber":
+            return hex(12)
+        bounds = params[0]
+        lo, hi = int(bounds["fromBlock"], 16), int(bounds["toBlock"], 16)
+        assert hi - lo < 3  # Simulate an RPC provider rejecting larger ranges.
+        ranges.append((lo, hi))
+        return (
+            [
+                {
+                    "topics": [USED, "0x" + account.address[2:].lower().zfill(64)],
+                    "data": payload.payload["authorization"]["nonce"],
+                    "transactionHash": "0xpaid",
+                }
+            ]
+            if lo <= 8 <= hi
+            else []
+        )
+
+    chain.rpc = rpc
+    assert await chain.find_transaction(payload, "0x0") is None
+    assert ranges == [(0, 2), (3, 5)]
+    assert await chain.find_transaction(payload, "0x0") == "0xpaid"
+    assert ranges == [(0, 2), (3, 5), (6, 8)]
+    await chain.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_scan_rescans_unfinalized_tail_after_reorg(system: Any) -> None:
+    from hosted.job_safe_search.payments import USED, ChainEvidence, decode
+
+    service, account, _ = system
+    payload = decode(payment(service, account))
+    chain = ChainEvidence("https://rpc.example.invalid", service.requirements)
+    chain.log_block_span = 3
+    ranges = []
+    observed = False
+
+    async def rpc(method: str, params: list[Any]) -> Any:
+        if method == "eth_chainId":
+            return hex(84532)
+        if method == "eth_getBlockByNumber":
+            return {"number": hex(2)}
+        if method == "eth_blockNumber":
+            return hex(5)
+        bounds = params[0]
+        lo, hi = int(bounds["fromBlock"], 16), int(bounds["toBlock"], 16)
+        ranges.append((lo, hi))
+        if observed and lo <= 4 <= hi:
+            return [
+                {
+                    "topics": [USED, "0x" + account.address[2:].lower().zfill(64)],
+                    "data": payload.payload["authorization"]["nonce"],
+                    "transactionHash": "0xlate",
+                }
+            ]
+        return []
+
+    chain.rpc = rpc
+    assert await chain.find_transaction(payload, "0x0") is None
+    observed = True
+    assert await chain.find_transaction(payload, "0x0") == "0xlate"
+    assert ranges == [(0, 2), (3, 5), (3, 5)]
+    await chain.client.aclose()
