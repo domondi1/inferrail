@@ -74,12 +74,23 @@ class Config:
             raise ValueError("invalid_pay_to")
         if self.price < supplier.max_cost + self.fee_bound + self.minimum_margin:
             raise ValueError("price_below_cost_envelope")
-        if self.network == "eip155:8453" and (
-            self.realized_payment_fee is None
-            or self.realized_payment_fee < 0
-            or self.realized_payment_fee > self.fee_bound
+        if (
+            any(
+                type(value) is not int or value < 0
+                for value in (self.price, self.fee_bound, self.minimum_margin)
+            )
+            or self.price == 0
         ):
-            raise ValueError("mainnet_requires_a_resolved_payment_fee_within_fee_bound")
+            raise ValueError("invalid_cost_envelope")
+        if self.realized_payment_fee is not None and (
+            type(self.realized_payment_fee) is not int
+            or not 0 <= self.realized_payment_fee <= self.fee_bound
+        ):
+            raise ValueError("invalid_realized_payment_fee")
+        # A deployment-wide fee cannot establish the actual charge for a payment:
+        # account free tiers and invoice allocations can change between requests.
+        if self.network == "eip155:8453" and self.realized_payment_fee is not None:
+            raise ValueError("mainnet_payment_fee_requires_per_purchase_reconciliation")
         if (
             self.supplier_prepaid_capital < 0
             or not 0 < self.risk_ceiling
@@ -405,6 +416,8 @@ class SearchService:
                 ),
             }
         )
+        if existing is None and self.store.payment_fee_blocked(self.config.fee_bound):
+            raise Refused("payment_fee_bound_breached")
         if existing is None and self.store.supplier_blocked(self.supplier.name):
             raise Refused("supplier_cost_contract_breached")
         row, new = self.store.reserve(
@@ -433,6 +446,8 @@ class SearchService:
     async def advance(self, purchase: int) -> None:
         row = self.store.get(purchase)
         payload = PaymentPayload.model_validate_json(row["payload"])
+        if row["state"] == "RESERVED" and self.store.payment_fee_blocked(self.config.fee_bound):
+            return
         if row["state"] == "RESERVED" and self.store.supplier_blocked(self.supplier.name):
             return
         if row["state"] == "RESERVED" and self.store.transition(purchase, "RESERVED", "VERIFYING"):
@@ -530,6 +545,8 @@ class SearchService:
         # Recheck the stored economic envelope against the current deployment before dispatch.
         if (
             self.store.supplier_blocked(self.supplier.name)
+            or self.store.payment_fee_blocked(self.config.fee_bound)
+            or self.config.fee_bound > row["fee_bound"]
             or row["provider"] != self.supplier.name
             or self.supplier.max_cost > row["supplier_bound"]
             or row["price"] < self.supplier.max_cost + row["fee_bound"] + self.config.minimum_margin
@@ -800,14 +817,11 @@ def production_app() -> FastAPI:
         mainnet_approved=os.environ.get("SEARCH_MAINNET_APPROVED") == "1",
         supplier_rights_confirmed=os.environ.get("SEARCH_SUPPLIER_RIGHTS_CONFIRMED") == "1",
         realized_payment_fee=(
-            atomic(os.environ["SEARCH_REALIZED_PAYMENT_FEE_USD"])
-            if os.environ.get("SEARCH_NETWORK", "eip155:84532") == "eip155:8453"
-            and os.environ.get("SEARCH_REALIZED_PAYMENT_FEE_USD") is not None
-            else 0
-            if os.environ.get("SEARCH_NETWORK", "eip155:84532") == "eip155:84532"
-            else None
+            0 if os.environ.get("SEARCH_NETWORK", "eip155:84532") == "eip155:84532" else None
         ),
     )
+    if config.network == "eip155:8453" and os.environ.get("SEARCH_REALIZED_PAYMENT_FEE_USD"):
+        raise ValueError("remove_static_mainnet_fee_and_reconcile_actual_per_purchase_fees")
     provider = os.environ.get("SEARCH_SUPPLIER", "fixture")
     if config.network == "eip155:84532":
         if provider != "fixture":

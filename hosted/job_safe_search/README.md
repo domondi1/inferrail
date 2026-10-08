@@ -43,7 +43,8 @@ The production factory refuses Base mainnet unless all gates are satisfied:
 - SEARCH_MAINNET_APPROVED=1 records explicit approval to accept real money.
 - SEARCH_SUPPLIER_RIGHTS_CONFIRMED=1 records written search-output resale,
   integration, redistribution, and caching permission.
-- SEARCH_REALIZED_PAYMENT_FEE_USD contains a known per-call payment fee.
+- SEARCH_PAYMENT_FEE_BOUND_USD covers the actual account schedule and all
+  incremental payment costs. A static realized mainnet fee is rejected.
 - SEARCH_RESOURCE_URL is public HTTPS and SEARCH_PAY_TO is the approved
   merchant wallet.
 - SEARCH_SUPPLIER explicitly selects serpex or exa, with its credential.
@@ -180,3 +181,16 @@ An operator may call `Store.reconcile_unfulfilled_refund(payer, nonce, refund_tr
 Refund reconciliation must include actual incoming-payment and refund costs. Unresolved additional payments leave total variable fees unknown. The risk ceiling uses the larger of reserved bounds and recorded actual costs, so switching suppliers cannot conceal an earlier overrun.
 
 For a real payment-ordering proof, run the opt-in Sepolia harness with `--require-finalized` and `--scenarios success`. It waits for finalized incoming USDC before merchant supplier dispatch and finalized outgoing USDC before the fixture delivers. HTTP timeouts retry only the original request/signature. This mode may take two finality windows; the default fast fixture mode reports canonical mined receipts explicitly and is not a finalized ordering proof.
+
+Mainnet payment fees remain unknown until actual per-purchase billing evidence
+is recorded with `Store.resolve_financials`. A fee ceiling protects dispatch;
+it is not realized COGS. Account free tiers must not be assumed to apply to
+every purchase. Successful output can be delivered with unknown fees, but its
+receipt and metrics retain unknown margin and the unresolved exposure stays
+reserved. Reconcile actual fees, including taxes and any other variable costs,
+before counting that purchase toward realized contribution.
+
+Known payment fees above the recorded and current ceilings block new payment
+acceptance and supplier dispatch across restarts. A fee-ceiling increase also
+freezes purchases reserved under a lower ceiling. Reconcile those purchases
+and the current cost envelope before resuming; completed results still replay.
