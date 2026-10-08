@@ -121,8 +121,13 @@ automatic top-ups. The recovery block must be captured before first acceptance.
 Remove SEARCH_ALLOW_NEW_DB after the deliberate first initialization.
 
 After a crash, preserve the database and restart the same image/configuration.
-Startup reconciles on-chain payments without resending authorizations. A
-background read-only reconciliation pass also advances finalized payments.
+Startup first freezes interrupted supplier intents locally. Read-only background
+reconciliation advances finalized payments without resending authorizations.
+An unavailable receipt does not prevent other purchases from recovering or
+completed results from replaying. Event scans use bounded block ranges and
+continue across passes; only finalized ranges may be skipped on later passes.
+Restarting rescans history safely. Repeated outages retain unknown financial
+states and create deduplicated recovery-deferred events.
 An interrupted supplier purchase stays frozen until its billing record is
 reconciled. Never retry an ambiguous supplier purchase. Record invoice/request
 references and confirmed refund evidence using Store.resolve_financials;

@@ -493,63 +493,80 @@ class SearchService:
             delivered=time.time(),
         )
 
+    def prepare_recovery(self) -> None:
+        # Normalize all interrupted intents before any network call can fail.
+        for row in self.store.outstanding():
+            if row["state"] == "VERIFYING":
+                self.store.transition(row["id"], "VERIFYING", "RESERVED")
+            elif row["state"] == "SUPPLIER_INFLIGHT":
+                self.store.transition(row["id"], "SUPPLIER_INFLIGHT", "SUPPLIER_UNKNOWN")
+
     async def recover(self, from_block: str, *, startup: bool = True) -> None:
+        if startup:
+            self.prepare_recovery()
         for purchase, extra in self.store.pending_extra_payments():
-            payload = PaymentPayload.model_validate_json(extra["pending_payload"])
-            if await self.chain.confirmed(payload, extra["transaction"]):
-                self.store.record_extra_payment(
-                    purchase, extra["payer"], extra["nonce"], extra["transaction"], extra["amount"]
-                )
+            try:
+                payload = PaymentPayload.model_validate_json(extra["pending_payload"])
+                if await self.chain.confirmed(payload, extra["transaction"]):
+                    self.store.record_extra_payment(
+                        purchase,
+                        extra["payer"],
+                        extra["nonce"],
+                        extra["transaction"],
+                        extra["amount"],
+                    )
+            except Exception:
+                self.store.recovery_deferred(purchase, "additional_payment")
         for row in self.store.outstanding():
             purchase = row["id"]
-            if row["state"] == "VERIFYING" and startup:
-                # Only use at startup with a single worker; verify has no monetary effect.
-                self.store.transition(purchase, "VERIFYING", "RESERVED")
-            elif row["state"] == "SUPPLIER_INFLIGHT" and startup:
-                self.store.transition(purchase, "SUPPLIER_INFLIGHT", "SUPPLIER_UNKNOWN")
-            elif row["state"] in ("SETTLING", "PAYMENT_UNKNOWN"):
-                payload = PaymentPayload.model_validate_json(row["payload"])
-                tx = row["tx"] or await self.chain.find_transaction(payload, from_block)
-                if tx and await self.chain.confirmed(payload, tx):
-                    settlement = {
-                        "success": True,
-                        "transaction": tx,
-                        "network": self.config.network,
-                        "payer": row["payer"],
-                        "amount": str(row["price"]),
-                    }
-                    self.store.transition(
-                        purchase,
-                        row["state"],
-                        "FINALITY_PENDING",
-                        tx=tx,
-                        settlement=json.dumps(settlement),
-                        liability=row["price"],
-                        variable_fees=self.config.realized_payment_fee,
-                    )
-            await self.advance(purchase)
+            try:
+                if row["state"] in ("SETTLING", "PAYMENT_UNKNOWN"):
+                    payload = PaymentPayload.model_validate_json(row["payload"])
+                    tx = row["tx"] or await self.chain.find_transaction(payload, from_block)
+                    if tx and await self.chain.confirmed(payload, tx):
+                        settlement = {
+                            "success": True,
+                            "transaction": tx,
+                            "network": self.config.network,
+                            "payer": row["payer"],
+                            "amount": str(row["price"]),
+                        }
+                        self.store.transition(
+                            purchase,
+                            row["state"],
+                            "FINALITY_PENDING",
+                            tx=tx,
+                            settlement=json.dumps(settlement),
+                            liability=row["price"],
+                            variable_fees=self.config.realized_payment_fee,
+                        )
+                await self.advance(purchase)
+            except Exception:
+                self.store.recovery_deferred(purchase, "purchase")
 
 
 def create_app(service: SearchService) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        from_block = os.environ.get("SEARCH_RECOVERY_FROM_BLOCK")
-        if service.store.outstanding() and not from_block:
+        from_block = service.config.recovery_from_block
+        if (
+            service.store.outstanding() or service.store.pending_extra_payments()
+        ) and not from_block:
             raise RuntimeError(
                 "SEARCH_RECOVERY_FROM_BLOCK is required while purchases are unresolved"
             )
         if from_block:
-            await service.recover(from_block)
+            service.prepare_recovery()
 
         async def reconcile() -> None:
             while True:
-                await asyncio.sleep(10)
                 if from_block:
                     try:
                         await service.recover(from_block, startup=False)
                     except Exception:
                         # Unknown chain state stays frozen; the next read-only pass may resolve it.
                         pass
+                await asyncio.sleep(10)
 
         task = asyncio.create_task(reconcile())
         try:

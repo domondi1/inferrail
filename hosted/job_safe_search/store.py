@@ -490,6 +490,21 @@ class Store:
             )
             return True
 
+    def recovery_deferred(self, purchase: int, phase: str) -> None:
+        """Record a recovery outage once until the purchase changes state."""
+        with self.transaction() as conn:
+            last = conn.execute(
+                "SELECT kind,details FROM events WHERE purchase=? ORDER BY id DESC LIMIT 1",
+                (purchase,),
+            ).fetchone()
+            if (
+                last
+                and last[0] == "RECOVERY_DEFERRED"
+                and json.loads(last[1]).get("phase") == phase
+            ):
+                return
+            self.event(conn, purchase, "RECOVERY_DEFERRED", phase=phase)
+
     def outstanding(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
             return [
