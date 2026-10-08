@@ -64,7 +64,13 @@ exist, SEARCH_RECOVERY_FROM_BLOCK must identify the first block from which
 merchant payments may exist. Startup reconciles uncertain payment and supplier
 states without resending payment or repeating the supplier call.
 
-Run a single worker against SQLite. Reconcile all chain transactions before
+The database binds to its network, token contract/domain, merchant address and
+capability-key digest. A changed payment domain or token secret refuses startup;
+existing ledgers are checked before their first binding. Preserve the original
+secret during upgrade. Changing price does not change this domain binding.
+A POSIX process lock holds the entire service lifespan and rejects a second
+worker using the same database. Preserve the adjacent .lock file while a
+service is active. Run a single worker against SQLite. Reconcile all chain transactions before
 restoring any backup that may predate an accepted payment.
 
 ## Request

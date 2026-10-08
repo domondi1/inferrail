@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -12,6 +13,13 @@ from typing import Any
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS deployment_identity (
+ id INTEGER PRIMARY KEY CHECK(id=1), payment_domain TEXT NOT NULL, token_digest TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS deployment_identity_no_update BEFORE UPDATE ON deployment_identity
+ BEGIN SELECT RAISE(ABORT,'immutable deployment identity'); END;
+CREATE TRIGGER IF NOT EXISTS deployment_identity_no_delete BEFORE DELETE ON deployment_identity
+ BEGIN SELECT RAISE(ABORT,'immutable deployment identity'); END;
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, payer TEXT NOT NULL, budget INTEGER, committed INTEGER NOT NULL DEFAULT 0,
  expires REAL NOT NULL, first_request TEXT NOT NULL
@@ -58,6 +66,58 @@ class Store:
                 )
             if "supplier_reference" not in columns:
                 conn.execute("ALTER TABLE purchases ADD COLUMN supplier_reference TEXT")
+
+    def bind_deployment(self, requirements: Any, token_secret: bytes) -> None:
+        """Bind durable replay/budget state to its payment domain and capability key."""
+
+        def domain(accepted: dict[str, Any]) -> str:
+            return json.dumps(
+                {
+                    "network": accepted["network"],
+                    "scheme": accepted["scheme"],
+                    "asset": accepted["asset"].lower(),
+                    "pay_to": accepted["payTo"].lower(),
+                    "token_name": accepted["extra"]["name"],
+                    "token_version": accepted["extra"]["version"],
+                },
+                sort_keys=True,
+            )
+
+        expected = domain(requirements.model_dump(by_alias=True))
+        token_digest = hashlib.sha256(token_secret).hexdigest()
+        with self.transaction() as conn:
+            bound = conn.execute("SELECT * FROM deployment_identity WHERE id=1").fetchone()
+            if bound:
+                if bound["payment_domain"] != expected or bound["token_digest"] != token_digest:
+                    raise ValueError("database_deployment_identity_mismatch")
+                return
+            # Safe upgrade: all historical payments must belong to this domain.
+            for row in conn.execute("SELECT payload FROM purchases"):
+                try:
+                    matches = domain(json.loads(row[0])["accepted"]) == expected
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError("legacy_payment_domain_evidence_missing") from exc
+                if not matches:
+                    raise ValueError("legacy_database_payment_domain_mismatch")
+            conn.execute("INSERT INTO deployment_identity VALUES(1,?,?)", (expected, token_digest))
+
+    @contextmanager
+    def writer_lease(self) -> Iterator[None]:
+        """Hold one OS process lock for the complete HTTP service lifespan."""
+        try:
+            import fcntl
+        except ImportError as exc:
+            raise RuntimeError("seller_requires_POSIX_writer_lock") from exc
+        lock_path = self.path.with_name(self.path.name + ".lock")
+        with lock_path.open("a") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("database_already_has_a_service_writer") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
