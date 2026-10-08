@@ -169,3 +169,5 @@ transfers cannot be reconciled as refunded until finalized, and duplicate
 refund records are rejected. Reconciled refund costs are deducted from margin.
 
 Supplier billing is recorded before output validation. A billed malformed or empty response retains its known cost and full unresolved customer liability; it is never retried. An observed supplier cost above the reserved bound blocks new payments and dispatches for that provider across restarts. Resolve the supplier contract before changing provider configuration; reconciliation records must preserve actual incurred costs. Empty supplier credentials are rejected at startup.
+
+Metrics read purchases and events from one read-only SQLite snapshot. The operator report includes per-wallet settlement references, distinct-query counts, resolved positive-margin calls, and first/last delivery times. Excluded wallets are omitted from this evidence. A repeat payer with unknown supplier costs is not counted as repeat positive-margin usage.
