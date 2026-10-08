@@ -220,3 +220,12 @@ An old-price proxy settlement remains a liability rather than extra paid usage.
 Already-paid requests awaiting supplier dispatch stay frozen after a price
 change; reconcile or restore their original economic configuration before
 fulfillment. Completed results remain recoverable without a new supplier call.
+
+
+Financial reconciliation refuses an active supplier operation. Normalize a
+crashed supplier intent to its unknown state before recording financial closure.
+An undelivered purchase requires full coverage by confirmed refunds or retained
+customer credits; cost evidence alone cannot erase its fulfillment liability.
+Previously recorded supplier costs, payment fees, and cumulative refunds cannot
+be reduced through this operation. Releasing credits requires matching additional
+confirmed refunds. This operation records evidence only and never sends money.
