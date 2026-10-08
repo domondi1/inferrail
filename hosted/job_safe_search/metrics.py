@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .contract import atomic, usd
+from .economics import fulfillment_liability
 
 SETTLED_STATES = {
     "SUPPLIER_INFLIGHT",
@@ -83,6 +84,7 @@ def report(
         if observed_network is None:
             raise ValueError("purchase_network_evidence_missing")
         if observed_network == network:
+            row["liability"] = fulfillment_liability(row)
             external.append(row)
     paid = [row for row in external if row["state"] in SETTLED_STATES and row["tx"] is not None]
     rejected = [row for row in external if row["state"] == "PAYMENT_REJECTED"]

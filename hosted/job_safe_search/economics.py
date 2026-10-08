@@ -7,6 +7,16 @@ from typing import Any
 from .contract import usd
 
 
+def fulfillment_liability(row: dict[str, Any]) -> int:
+    """A historical closure cannot replace delivery or a confirmed refund."""
+    unfulfilled = (
+        row["state"]
+        in ("SUPPLIER_INFLIGHT", "SUPPLIER_UNKNOWN", "SERVICE_FAILED", "DELIVERED", "RESOLVED")
+        and row["result"] is None
+    )
+    return max(row["liability"], max(0, row["price"] - row["refunds"]) if unfulfilled else 0)
+
+
 def financial_state(row: dict[str, Any]) -> dict[str, Any]:
     paid = row["state"] in (
         "SUPPLIER_INFLIGHT",
@@ -15,11 +25,12 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         "DELIVERED",
         "RESOLVED",
     )
+    liability = fulfillment_liability(row)
     resolved = (
         row["state"] in ("DELIVERED", "RESOLVED")
         and row["supplier_cogs"] is not None
         and row["variable_fees"] is not None
-        and row["liability"] == 0
+        and liability == 0
         and row["credits"] == 0
         and row.get("extra_payment_liability", 0) == 0
     )
@@ -28,7 +39,7 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         no_charge
         and row["supplier_cogs"] == 0
         and row["variable_fees"] is not None
-        and row["liability"] == 0
+        and liability == 0
         and row["credits"] == 0
         and row.get("extra_payment_liability", 0) == 0
     )
@@ -63,7 +74,7 @@ def financial_state(row: dict[str, Any]) -> dict[str, Any]:
         "variable_fees": usd(row["variable_fees"] + row.get("extra_variable_fees", 0))
         if row["variable_fees"] is not None
         else None,
-        "unresolved_liability": usd(row["liability"] + row.get("extra_payment_liability", 0)),
+        "unresolved_liability": usd(liability + row.get("extra_payment_liability", 0)),
         "realized_margin": usd(margin),
         "resolved": resolved or rejected_resolved,
     }

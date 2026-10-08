@@ -1980,3 +1980,149 @@ async def test_rejected_historical_payment_is_observed_without_buying(system: An
     assert metrics["realized_external_contribution_margin_usd"] is None
     assert metrics["external_paid_calls"] == 0
     assert service.facilitator.settles == service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_undelivered_reconciliation_preserves_full_customer_claim(system: Any) -> None:
+    service, account, _ = system
+    service.supplier.failure = "empty"
+    await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "SERVICE_FAILED"
+    with pytest.raises(ValueError, match="full_refund_or_credit"):
+        service.store.resolve_financials(
+            1, supplier_cogs=7000, variable_fees=0, evidence="costs known, no delivery"
+        )
+    assert row(service)["liability"] == 15000
+    assert financial_state(row(service))["realized_margin"] is None
+    assert service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=0,
+        credits=15000,
+        evidence="full customer credit retained",
+    )
+    assert row(service)["credits"] == row(service)["liability"] == 15000
+    assert financial_state(row(service))["realized_margin"] is None
+    with pytest.raises(ValueError, match="full_refund_or_credit"):
+        service.store.resolve_financials(
+            1, supplier_cogs=7000, variable_fees=0, evidence="cannot erase credit"
+        )
+    assert service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=1000,
+        refunds=15000,
+        refund_transaction="independently-confirmed-refund",
+        evidence="full refund and total fees confirmed",
+    )
+    assert financial_state(row(service))["realized_margin"] == "-0.008"
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["realized_external_contribution_margin_usd"] == "-0.008"
+    assert metrics["negative_margin_requests"] == 1
+    assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_active_supplier_cannot_be_financially_closed(system: Any) -> None:
+    service, account, _ = system
+    service.supplier.failure = "crash"
+    with pytest.raises(KeyboardInterrupt):
+        await service.handle(body(), payment(service, account))
+    assert row(service)["state"] == "SUPPLIER_INFLIGHT"
+    with pytest.raises(ValueError, match="supplier_operation_still_inflight"):
+        service.store.resolve_financials(
+            1,
+            supplier_cogs=0,
+            variable_fees=0,
+            credits=15000,
+            evidence="cannot close active operation",
+        )
+    assert row(service)["supplier_cogs"] is None
+    assert row(service)["liability"] == 15000
+    service.prepare_recovery()
+    assert row(service)["state"] == "SUPPLIER_UNKNOWN"
+    assert service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=0,
+        credits=15000,
+        evidence="crashed operation costs and full credit confirmed",
+    )
+    assert financial_state(row(service))["realized_margin"] is None
+    assert service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["supplier_cogs", "variable_fees", "refunds"])
+async def test_reconciliation_cannot_reduce_recorded_cost_or_refund(
+    system: Any, field: str
+) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    amounts = dict(supplier_cogs=7000, variable_fees=1000, refunds=1000)
+    service.store.resolve_financials(
+        1, **amounts, refund_transaction="confirmed-partial-refund", evidence="actual costs"
+    )
+    before = financial_state(row(service))
+    with pytest.raises(ValueError, match="cannot_reduce_recorded_" + field):
+        service.store.resolve_financials(
+            1,
+            **{**amounts, field: 0},
+            refund_transaction="same-refund",
+            evidence="unsupported reduction",
+        )
+    assert financial_state(row(service)) == before
+    assert before["realized_margin"] == "0.006"
+
+
+@pytest.mark.asyncio
+async def test_delivered_customer_credit_needs_refund_before_release(system: Any) -> None:
+    service, account, _ = system
+    await service.handle(body(), payment(service, account))
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=0,
+        credits=1000,
+        evidence="customer credit",
+    )
+    with pytest.raises(ValueError, match="credit_release_requires_confirmed_refund"):
+        service.store.resolve_financials(
+            1,
+            supplier_cogs=7000,
+            variable_fees=0,
+            evidence="unsupported release",
+        )
+    assert financial_state(row(service))["realized_margin"] is None
+    service.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=0,
+        refunds=1000,
+        refund_transaction="confirmed-credit-refund",
+        evidence="credit returned",
+    )
+    assert financial_state(row(service))["realized_margin"] == "0.007"
+    assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_unfulfilled_closure_still_reserves_risk_and_suppresses_margin(
+    system: Any,
+) -> None:
+    service, account, _ = system
+    service.supplier.failure = "empty"
+    await service.handle(body(), payment(service, account))
+    # Simulate a historical operator closure permitted before this guard existed.
+    service.store.transition(1, "SERVICE_FAILED", "RESOLVED", liability=0)
+    assert row(service)["result"] is None and row(service)["liability"] == 15000
+    assert financial_state(row(service))["realized_margin"] is None
+    metrics = report(service.store.path, set(), network="eip155:84532")
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    assert metrics["unresolved_transactions"] == 1
+    service.config = replace(service.config, risk_ceiling=30000)
+    with pytest.raises(Refused, match="unresolved_risk_ceiling"):
+        await service.handle(
+            body("second").model_copy(update={"query": "another query"}), payment(service, account)
+        )
+    assert service.facilitator.settles == service.supplier.calls == 1

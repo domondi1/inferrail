@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .economics import fulfillment_liability
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS deployment_identity (
@@ -160,6 +162,7 @@ class Store:
     def get(self, purchase: int) -> dict[str, Any]:
         with self.connect() as conn:
             row = dict(conn.execute("SELECT * FROM purchases WHERE id=?", (purchase,)).fetchone())
+            row["liability"] = fulfillment_liability(row)
             row["extra_payment_liability"] = self.extra_liability(purchase)
             extra = [
                 json.loads(event[0])
@@ -544,7 +547,10 @@ class Store:
                 FROM purchases
                 WHERE state NOT IN ('DELIVERED','PAYMENT_REJECTED','RESOLVED')
                    OR supplier_cogs IS NULL OR variable_fees IS NULL
-                   OR liability > 0 OR credits > 0"""
+                   OR liability > 0 OR credits > 0
+                   OR (state IN ('SUPPLIER_INFLIGHT','SUPPLIER_UNKNOWN',
+                       'SERVICE_FAILED','DELIVERED','RESOLVED')
+                       AND result IS NULL AND refunds < price)"""
             risk = conn.execute(risk_sql).fetchone()[0]
             risk += self.extra_liability()
             if risk + price + supplier_bound + fee_bound > risk_ceiling:
@@ -712,7 +718,7 @@ class Store:
         if not evidence.strip():
             raise ValueError("reconciliation requires durable financial evidence")
         amounts = (supplier_cogs, variable_fees, refunds, credits)
-        if any(not isinstance(value, int) or value < 0 for value in amounts):
+        if any(type(value) is not int or value < 0 for value in amounts):
             raise ValueError("financial amounts must be nonnegative atomic USDC integers")
         if refunds and not refund_transaction:
             raise ValueError("a refund requires its confirmed transaction hash")
@@ -723,8 +729,9 @@ class Store:
             rejected = row["state"] == "PAYMENT_REJECTED"
             if rejected and (supplier_cogs or refunds or credits):
                 raise ValueError("rejected payment can reconcile only actual payment fees")
+            if row["state"] == "SUPPLIER_INFLIGHT":
+                raise ValueError("supplier_operation_still_inflight")
             if not rejected and row["state"] not in (
-                "SUPPLIER_INFLIGHT",
                 "SUPPLIER_UNKNOWN",
                 "SERVICE_FAILED",
                 "DELIVERED",
@@ -733,6 +740,19 @@ class Store:
                 raise ValueError("payment finality must be confirmed before reconciliation")
             if not rejected and row["tx"] is None:
                 raise ValueError("cannot resolve financials before payment settlement is confirmed")
+            # Recording costs does not prove that an undelivered customer's
+            # claim disappeared. Preserve it as a credit or confirmed refund.
+            if not rejected and row["result"] is None and refunds + credits < row["price"]:
+                raise ValueError("unfulfilled_payment_requires_full_refund_or_credit")
+            for field, amount in (
+                ("supplier_cogs", supplier_cogs),
+                ("variable_fees", variable_fees),
+                ("refunds", refunds),
+            ):
+                if row[field] is not None and amount < row[field]:
+                    raise ValueError("cannot_reduce_recorded_" + field)
+            if credits < row["credits"] and refunds - row["refunds"] < row["credits"] - credits:
+                raise ValueError("credit_release_requires_confirmed_refund")
             conn.execute(
                 """UPDATE purchases SET state=?,supplier_cogs=?,variable_fees=?,
                 refunds=?,credits=?,liability=? WHERE id=?""",
