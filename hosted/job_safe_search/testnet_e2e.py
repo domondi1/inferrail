@@ -14,6 +14,7 @@ import asyncio
 import json
 import multiprocessing
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +57,9 @@ class PaidFixture:
     name = "paid_sepolia_fixture"
     max_cost = 7000
 
-    def __init__(self, wallets: dict[str, Any], root: Path, mode: str):
+    def __init__(self, wallets: dict[str, Any], root: Path, mode: str, finalized: bool = False):
         self.wallets, self.root, self.mode = wallets, root, mode
+        self.finalized = finalized
         self.client = httpx.AsyncClient(timeout=120)
 
     async def search(self, request: SearchRequest) -> SupplierResult:
@@ -72,6 +74,14 @@ class PaidFixture:
             json={"query": request.query, "request_id": request.request_id},
             headers={"PAYMENT-SIGNATURE": signature},
         )
+        deadline = time.monotonic() + 3600
+        while self.finalized and response.status_code == 202 and time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            response = await self.client.post(
+                "http://127.0.0.1:18423/search",
+                json={"query": request.query, "request_id": request.request_id},
+                headers={"PAYMENT-SIGNATURE": signature},
+            )
         if response.status_code != 200:
             raise RuntimeError("supplier_settlement_or_delivery_uncertain")
         data = response.json()
@@ -98,13 +108,17 @@ class CrashAfterSettlement:
         await self.inner.aclose()
 
 
-def serve(wallet_file: str, state: str, role: str, mode: str, from_block: str) -> None:
+def serve(
+    wallet_file: str, state: str, role: str, mode: str, from_block: str, finalized: bool = False
+) -> None:
     import uvicorn
 
     wallets = json.loads(Path(wallet_file).read_text())
     root = Path(state)
     os.environ["SEARCH_RECOVERY_FROM_BLOCK"] = from_block
-    supplier = FixtureSearch() if role == "supplier" else PaidFixture(wallets, root, mode)
+    supplier = (
+        FixtureSearch() if role == "supplier" else PaidFixture(wallets, root, mode, finalized)
+    )
     config = Config(
         pay_to=wallets[role]["address"],
         resource_url=f"https://testnet.example.invalid/{role}/search",
@@ -121,7 +135,7 @@ def serve(wallet_file: str, state: str, role: str, mode: str, from_block: str) -
         config,
         Store(root / f"{role}.sqlite"),
         facilitator,
-        ChainEvidence(RPC, config.requirements(), finalized=False),
+        ChainEvidence(RPC, config.requirements(), finalized=finalized),
         supplier,
     )
     # Nonpublic fixtures must never seed the production discovery catalogue.
@@ -147,7 +161,13 @@ async def wait_health(client: httpx.AsyncClient, port: int) -> None:
     raise RuntimeError("testnet_process_did_not_start")
 
 
-async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None = None) -> None:
+async def exercise(
+    wallet_file: Path,
+    state: Path,
+    scenarios: list[str] | None = None,
+    *,
+    require_finalized: bool = False,
+) -> None:
     if state.exists():
         raise ValueError("new_state_directory_required; inspect existing evidence before any retry")
     state.mkdir(mode=0o700)
@@ -171,7 +191,15 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
 
             def start(role: str, behavior: str, root: Path = root) -> Any:
                 proc = context.Process(
-                    target=serve, args=(str(wallet_file), str(root), role, behavior, from_block)
+                    target=serve,
+                    args=(
+                        str(wallet_file),
+                        str(root),
+                        role,
+                        behavior,
+                        from_block,
+                        require_finalized,
+                    ),
                 )
                 proc.start()
                 return proc
@@ -188,6 +216,9 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                     "request_id": mode,
                     "job_budget_usd": "0.015",
                 }
+                with (root / "inbound-signature.json").open("x") as saved:
+                    os.chmod(saved.name, 0o600)
+                    json.dump({"signature": signature, "request": body}, saved)
                 headers = {"PAYMENT-SIGNATURE": signature}
                 if mode == "pre_settled":
                     facilitator = HTTPFacilitatorClient(create_facilitator_config())
@@ -205,21 +236,28 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                     )
                     data = response.json()
                 except httpx.HTTPError:
-                    if mode in ("success", "pre_settled"):
+                    if mode in ("success", "pre_settled") and not require_finalized:
                         raise
                 if mode in ("settlement_crash", "supplier_crash"):
                     merchant.join(timeout=5)
                     assert merchant.exitcode == (81 if mode == "settlement_crash" else 82)
                     merchant = start("merchant", "success")
                     await wait_health(client, 18422)
-                for _ in range(30):
-                    response = await client.post(
-                        "http://127.0.0.1:18422/search", json=body, headers=headers
-                    )
-                    data = response.json()
+                deadline = time.monotonic() + (7200 if require_finalized else 60)
+                while time.monotonic() < deadline:
+                    try:
+                        response = await client.post(
+                            "http://127.0.0.1:18422/search", json=body, headers=headers
+                        )
+                        data = response.json()
+                    except httpx.HTTPError:
+                        if not require_finalized:
+                            raise
+                        await asyncio.sleep(5)
+                        continue
                     if response.status_code == 200 or mode == "supplier_crash":
                         break
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5 if require_finalized else 2)
                 store = Store(root / "merchant.sqlite")
                 row = store.get(1)
                 assert row["state"] == (
@@ -228,6 +266,7 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                 assert financial_state(row)["realized_margin"] == (
                     None if mode == "supplier_crash" else "0.008"
                 )
+                financial_before_extra = financial_state(row)
                 # Same request with a fresh signature must never settle again.
                 fresh = sign(challenge, wallets["buyer"]["key"])
                 await client.post(
@@ -260,6 +299,7 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                 supplier_row = Store(root / "supplier.sqlite").get(1)
                 with Store(root / "supplier.sqlite").connect() as conn:
                     assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
+                row = store.get(1)
                 metrics = report(store.path, excluded)
                 assert metrics["external_paid_calls"] == 0
                 assert metrics["gross_external_settled_revenue_usd"] == "0"
@@ -269,6 +309,8 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                         "inbound": row["tx"],
                         "outbound": supplier_row["tx"],
                         "financial_state": financial_state(row),
+                        "financial_before_extra_observation": financial_before_extra,
+                        "pending_payment_observations": len(store.observed_payments()),
                         "supplier_state": supplier_row["state"],
                         "metrics": metrics,
                     }
@@ -277,7 +319,9 @@ async def exercise(wallet_file: Path, state: Path, scenarios: list[str] | None =
                     json.dumps(
                         {
                             "network": NETWORK,
-                            "confirmation": "canonical mined receipt; not finalized",
+                            "confirmation": "finalized USDC before both supplier dispatches"
+                            if require_finalized
+                            else "canonical mined receipt; not finalized",
                             "controlled": True,
                             "from_block": from_block,
                             "scenarios": evidence,
@@ -303,10 +347,22 @@ def main() -> None:
         nargs="+",
         choices=["success", "settlement_crash", "supplier_crash", "pre_settled"],
     )
+    parser.add_argument(
+        "--require-finalized",
+        action="store_true",
+        help="Wait for finalized incoming USDC before both supplier dispatches.",
+    )
     args = parser.parse_args()
     if args.wallet_file.stat().st_mode & 0o077:
         raise ValueError("wallet_file_must_be_private_mode_0600")
-    asyncio.run(exercise(args.wallet_file.resolve(), args.state_dir.resolve(), args.scenarios))
+    asyncio.run(
+        exercise(
+            args.wallet_file.resolve(),
+            args.state_dir.resolve(),
+            args.scenarios,
+            require_finalized=args.require_finalized,
+        )
+    )
 
 
 if __name__ == "__main__":

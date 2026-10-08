@@ -51,9 +51,30 @@ def report(
         conn.execute("BEGIN")
         rows = [dict(row) for row in conn.execute("SELECT * FROM purchases")]
         events = [dict(row) for row in conn.execute("SELECT * FROM events")]
+        observations = (
+            [dict(row) for row in conn.execute("SELECT * FROM payment_observations")]
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payment_observations'"
+            ).fetchone()
+            else []
+        )
 
     if network not in ("eip155:8453", "eip155:84532"):
         raise ValueError("unsupported_metrics_network")
+    observed = [
+        row
+        for row in observations
+        if row["payer"].lower() not in excluded and row["network"] == network
+    ]
+    orphan_paid = [
+        row
+        for row in observed
+        if row["purchase"] is None and row["state"] in ("SETTLED", "REFUNDED")
+    ]
+    orphan_refunded = [row for row in orphan_paid if row["state"] == "REFUNDED"]
+    orphan_open = [row for row in orphan_paid if row["state"] == "SETTLED"]
+    orphan_margin = -sum(row["variable_fees"] for row in orphan_refunded)
+    pending_observed = [row for row in observed if row["state"] == "OBSERVED"]
     external = []
     for row in rows:
         if row["payer"].lower() in excluded:
@@ -103,7 +124,16 @@ def report(
         and (json.loads(event["details"])["payer"], json.loads(event["details"])["nonce"])
         not in settled_extra
     ]
-    settled_revenue = sum(row["price"] for row in paid) + sum(item["amount"] for item in extra)
+    event_keys = {(item["payer"], item["nonce"]) for item in extra + pending_extra}
+    pending_observed = [
+        row for row in pending_observed if (row["payer"], row["nonce"]) not in event_keys
+    ]
+    observed_liability = sum(row["amount"] for row in orphan_open + pending_observed)
+    settled_revenue = (
+        sum(row["price"] for row in paid)
+        + sum(item["amount"] for item in extra)
+        + sum(row["amount"] for row in orphan_paid)
+    )
     unresolved_extra_ids = set()
     refund_fees_by_purchase: dict[int, int] = defaultdict(int)
     for event in events:
@@ -124,6 +154,10 @@ def report(
         and row["credits"] == 0
         and row["id"] not in unresolved_extra_ids
     ]
+    unresolved_extra_ids.update(
+        row["purchase"] for row in pending_observed if row["purchase"] is not None
+    )
+    margin_rows = [row for row in margin_rows if row["id"] not in unresolved_extra_ids]
     margins = [
         row["price"]
         - row["supplier_cogs"]
@@ -197,29 +231,48 @@ def report(
         "gross_external_settled_revenue_usd": usd(settled_revenue),
         "supplier_cogs_usd": usd(sum(known_cogs)) if len(known_cogs) == len(paid) else None,
         "known_supplier_cogs_usd": usd(sum(known_cogs)),
-        "refunds_usd": usd(sum(known_refunds) + sum(item["amount"] for item in extra_refunds)),
+        "refunds_usd": usd(
+            sum(known_refunds)
+            + sum(item["amount"] for item in extra_refunds)
+            + sum(row["amount"] for row in orphan_refunded)
+        ),
         "credits_usd": usd(sum(known_credits)),
-        "variable_payment_fees_usd": usd(sum(known_fees) + refund_fee)
+        "variable_payment_fees_usd": usd(
+            sum(known_fees)
+            + refund_fee
+            + sum(row["variable_fees"] for row in orphan_paid if row["variable_fees"] is not None)
+        )
         if len(known_fees) == len(paid)
+        and not open_extra
+        and not pending_extra
+        and not pending_observed
+        and all(row["variable_fees"] is not None for row in orphan_paid)
         else None,
-        "known_variable_payment_fees_usd": usd(sum(known_fees) + refund_fee),
+        "known_variable_payment_fees_usd": usd(
+            sum(known_fees)
+            + refund_fee
+            + sum(row["variable_fees"] for row in orphan_paid if row["variable_fees"] is not None)
+        ),
         "realized_external_contribution_margin_usd": None
-        if unresolved or open_extra or pending_extra
-        else usd(sum(margins)),
-        "known_realized_external_contribution_margin_usd": usd(sum(margins)),
+        if unresolved or open_extra or pending_extra or pending_observed or orphan_open
+        else usd(sum(margins) + orphan_margin),
+        "known_realized_external_contribution_margin_usd": usd(sum(margins) + orphan_margin),
         "hosting_infrastructure_cost_usd": hosting_cost_usd,
         "strict_experiment_pnl_usd": (
-            usd(sum(margins) - atomic(hosting_cost_usd))
+            usd((sum(margins) + orphan_margin) - atomic(hosting_cost_usd))
             if hosting_cost_usd is not None
             and not unresolved
             and not open_extra
             and not pending_extra
+            and not pending_observed
+            and not orphan_open
             else None
         ),
         "average_realized_margin_per_resolved_call_usd": (
-            usd((sum(margins)) // len(margins)) if margins else None
+            usd((sum(margins) + orphan_margin) // len(margins)) if margins else None
         ),
-        "negative_margin_requests": sum(value < 0 for value in margins),
+        "negative_margin_requests": sum(value < 0 for value in margins)
+        + sum(row["variable_fees"] > 0 for row in orphan_refunded),
         "cache_hits": len(cache_events),
         "supplier_cogs_avoided_on_cache_usd": usd(
             sum(json.loads(event["details"]).get("cogs_avoided", 0) for event in cache_events)
@@ -230,11 +283,17 @@ def report(
         "safe_fallbacks": 0,
         "blocked_unsafe_fallbacks": blocked_fallbacks,
         "failed_no_charge_requests": sum(row["state"] == "PAYMENT_REJECTED" for row in external),
-        "unresolved_transactions": len(unresolved) + len(open_extra) + len(pending_extra),
+        "unresolved_transactions": len(unresolved)
+        + len(open_extra)
+        + len(pending_extra)
+        + len(pending_observed)
+        + len(orphan_open),
+        "unfulfilled_settled_payments": len(orphan_paid),
+        "unresolved_payment_observations": len(pending_observed),
         "additional_settled_payments": len(extra),
-        "additional_pending_payments": len(pending_extra),
+        "additional_pending_payments": len(pending_extra) + len(pending_observed),
         "additional_payment_liability_usd": usd(
-            sum(item["amount"] for item in open_extra + pending_extra)
+            sum(item["amount"] for item in open_extra + pending_extra) + observed_liability
         ),
         "unknown_supplier_cogs_calls": sum(row["supplier_cogs"] is None for row in paid),
         "unknown_variable_fee_calls": sum(row["variable_fees"] is None for row in paid),

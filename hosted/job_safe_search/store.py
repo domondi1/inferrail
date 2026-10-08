@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS events (
  id INTEGER PRIMARY KEY, purchase INTEGER, kind TEXT NOT NULL, details TEXT NOT NULL,
  created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS payment_observations (
+ payer TEXT NOT NULL, nonce TEXT NOT NULL, payload TEXT NOT NULL, amount INTEGER NOT NULL,
+ network TEXT NOT NULL, purchase INTEGER REFERENCES purchases(id), state TEXT NOT NULL,
+ tx TEXT, variable_fees INTEGER, created REAL NOT NULL,
+ PRIMARY KEY(payer,nonce)
+);
 CREATE TABLE IF NOT EXISTS aliases (
  payer TEXT NOT NULL, job TEXT NOT NULL, request_id TEXT NOT NULL, purchase INTEGER NOT NULL,
  PRIMARY KEY(payer,job,request_id), FOREIGN KEY(purchase) REFERENCES purchases(id)
@@ -174,6 +180,109 @@ class Store:
             row["extra_variable_fees"] = sum(item["variable_fees"] for item in refunds)
             return row
 
+    def observe_payment(
+        self, payload: str, payer: str, nonce: str, purchase: int | None
+    ) -> dict[str, Any] | None:
+        decoded = json.loads(payload)
+        with self.transaction() as conn:
+            if conn.execute(
+                "SELECT 1 FROM purchases WHERE payer=? AND nonce=?", (payer, nonce)
+            ).fetchone():
+                return None
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO payment_observations "
+                "VALUES(?,?,?,?,?,?,'OBSERVED',NULL,NULL,?)",
+                (
+                    payer,
+                    nonce,
+                    payload,
+                    int(decoded["accepted"]["amount"]),
+                    decoded["accepted"]["network"],
+                    purchase,
+                    time.time(),
+                ),
+            )
+            if inserted.rowcount:
+                self.event(conn, purchase, "PAYMENT_OBSERVED", payer=payer, nonce=nonce)
+            row = conn.execute(
+                "SELECT * FROM payment_observations WHERE payer=? AND nonce=?", (payer, nonce)
+            ).fetchone()
+            return dict(row)
+
+    def observed_payments(self, *, pending: bool = True) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            query = "SELECT * FROM payment_observations" + (
+                " WHERE state='OBSERVED'" if pending else ""
+            )
+            return [dict(row) for row in conn.execute(query)]
+
+    def resolve_observation(
+        self,
+        payer: str,
+        nonce: str,
+        state: str,
+        tx: str | None = None,
+        variable_fees: int | None = None,
+    ) -> None:
+        if state not in ("SETTLED", "NOT_SETTLED") or (state == "SETTLED" and not tx):
+            raise ValueError("invalid_payment_observation_evidence")
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT purchase FROM payment_observations "
+                "WHERE payer=? AND nonce=? AND state='OBSERVED'",
+                (payer, nonce),
+            ).fetchone()
+            if row is None:
+                return
+            conn.execute(
+                "UPDATE payment_observations SET state=?,tx=?,variable_fees=? "
+                "WHERE payer=? AND nonce=?",
+                (state, tx, variable_fees, payer, nonce),
+            )
+            self.event(
+                conn,
+                row["purchase"],
+                "PAYMENT_OBSERVATION_" + state,
+                payer=payer,
+                nonce=nonce,
+                transaction=tx,
+            )
+
+    def reconcile_unfulfilled_refund(
+        self, payer: str, nonce: str, *, refund_transaction: str, variable_fees: int, evidence: str
+    ) -> None:
+        """Record independently confirmed full repayment; this cannot transfer money."""
+        if (
+            not refund_transaction.strip()
+            or not evidence.strip()
+            or type(variable_fees) is not int
+            or variable_fees < 0
+        ):
+            raise ValueError("confirmed_refund_and_total_fee_evidence_required")
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM payment_observations WHERE payer=? AND nonce=?",
+                (payer.lower(), nonce.lower()),
+            ).fetchone()
+            if row is None or row["state"] != "SETTLED" or row["purchase"] is not None:
+                raise ValueError("only_unfulfilled_settled_payment_can_be_refunded")
+            conn.execute(
+                "UPDATE payment_observations SET state='REFUNDED',variable_fees=? "
+                "WHERE payer=? AND nonce=?",
+                (variable_fees, payer.lower(), nonce.lower()),
+            )
+            self.event(
+                conn,
+                None,
+                "PAYMENT_OBSERVATION_REFUNDED",
+                payer=payer.lower(),
+                nonce=nonce.lower(),
+                amount=row["amount"],
+                refund_transaction=refund_transaction,
+                variable_fees=variable_fees,
+                evidence=evidence,
+            )
+
     def extra_liability(self, purchase: int | None = None) -> int:
         with self.connect() as conn:
             events = conn.execute(
@@ -193,7 +302,15 @@ class Store:
                     continue
                 details = json.loads(row[1])
                 payments.pop((details["payer"], details["nonce"]), None)
-            return sum(payments.values())
+            observed = conn.execute(
+                "SELECT amount,purchase,state,payer,nonce FROM payment_observations "
+                "WHERE state='OBSERVED' OR (state='SETTLED' AND purchase IS NULL)"
+            )
+            return sum(payments.values()) + sum(
+                row[0]
+                for row in observed
+                if (purchase is None or row[1] == purchase) and (row[3], row[4]) not in payments
+            )
 
     def pending_extra_payments(self) -> list[tuple[int, dict[str, Any]]]:
         with self.connect() as conn:
@@ -421,7 +538,9 @@ class Store:
                 raise Refused("job_budget_exhausted")
             # Unresolved paid service could require a full refund in addition to supplier cost.
             # Reserve this conservative exposure even before the customer settles.
-            risk_sql = """SELECT COALESCE(SUM(price+supplier_bound+fee_bound),0)
+            risk_sql = """SELECT COALESCE(SUM(price+
+                MAX(supplier_bound,COALESCE(supplier_cogs,0))+
+                MAX(fee_bound,COALESCE(variable_fees,0))),0)
                 FROM purchases
                 WHERE state NOT IN ('DELIVERED','PAYMENT_REJECTED','RESOLVED')
                    OR supplier_cogs IS NULL OR variable_fees IS NULL
@@ -434,6 +553,10 @@ class Store:
                 "SELECT 1 FROM purchases WHERE payer=? AND nonce=?", (payer, nonce)
             ).fetchone():
                 raise Refused("payment_already_bound")
+            if conn.execute(
+                "SELECT 1 FROM payment_observations WHERE payer=? AND nonce=?", (payer, nonce)
+            ).fetchone():
+                raise Refused("payment_observed_requires_reconciliation")
             cur = conn.execute(
                 """INSERT INTO purchases(
                     payer,job,request_id,fingerprint,state,price,supplier_bound,fee_bound,
