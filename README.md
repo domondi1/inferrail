@@ -231,6 +231,12 @@ Other clients, and where `--app-mode` keeps its receipts:
 
 Exact contract and non-goals: [docs/PRODUCT.md](docs/PRODUCT.md).
 
+**Running this in production?** If your product runs agent jobs that spend
+real money on model calls, I can set Inferrail up on your workload with you
+and keep it working.
+[Open a production setup request](https://github.com/domondi1/inferrail/issues/new?template=production-setup.yml)
+and say what your jobs look like.
+
 <details>
 <summary><b>Experimental capabilities</b></summary>
 

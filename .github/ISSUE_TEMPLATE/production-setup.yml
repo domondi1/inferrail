@@ -1,0 +1,48 @@
+name: Production setup
+description: Your product runs agent jobs that spend real money, and you want help running Inferrail on that workload.
+title: "Production setup: "
+labels: ["production-setup"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        I maintain Inferrail. If your product runs agent jobs for your own customers, I can set it up on your workload with you and keep it working.
+        Please don't paste prompts, outputs, keys or customer data here. Rough numbers are enough.
+  - type: textarea
+    id: jobs
+    attributes:
+      label: What does one job look like?
+      description: For example, "one customer request starts a lead agent and up to 5 sub-agents, about 40 model calls, sometimes a paid search API".
+    validations:
+      required: true
+  - type: input
+    id: stack
+    attributes:
+      label: Providers and frameworks
+      description: For example, OpenAI and Anthropic, LangGraph, a custom loop.
+    validations:
+      required: true
+  - type: dropdown
+    id: spend
+    attributes:
+      label: Roughly what do these jobs spend on models and paid APIs per month?
+      options:
+        - Under $1K
+        - $1K to $10K
+        - $10K to $100K
+        - Over $100K
+        - Prefer not to say
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong, or what do you need to know?
+      description: For example, a runaway job, not knowing which customer's jobs cost the most, or needing a hard ceiling per job.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Best way to reach you (optional)
+      description: Leave blank to continue here in the issue.
