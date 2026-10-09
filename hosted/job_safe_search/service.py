@@ -873,7 +873,9 @@ def production_app() -> FastAPI:
     if config.network == "eip155:8453":
         from .metrics import excluded_wallets
 
-        excluded_wallets(Path(os.environ["SEARCH_EXCLUDED_WALLETS_PATH"]))
+        excluded = excluded_wallets(Path(os.environ["SEARCH_EXCLUDED_WALLETS_PATH"]))
+        if config.pay_to.lower() not in excluded:
+            raise ValueError("mainnet_merchant_must_be_in_wallet_exclusions")
         if not config.recovery_from_block:
             raise ValueError("mainnet_requires_SEARCH_RECOVERY_FROM_BLOCK_before_first_acceptance")
     chain = ChainEvidence(os.environ["SEARCH_RPC_URL"], config.requirements(), finalized=True)

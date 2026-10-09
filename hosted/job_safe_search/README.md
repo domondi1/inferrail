@@ -54,7 +54,8 @@ The production factory refuses Base mainnet unless all gates are satisfied:
   query derived from the paid invoice, including exchange and taxes. Confirm
   one-query billing and error/timeout billing before selecting it. The default
   Serpex unit cost and $0.010 price are not Mojeek price evidence.
-- A private SEARCH_EXCLUDED_WALLETS_PATH exists and validates.
+- A private SEARCH_EXCLUDED_WALLETS_PATH exists, validates, and includes the
+  configured merchant/payTo wallet. Add every other controlled wallet too.
 - The fixture supplier is testnet-only.
 
 The configured price must cover the supplier bound, payment-fee bound, and
