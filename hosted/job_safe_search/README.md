@@ -4,7 +4,7 @@ Standalone hosted x402 search capability. One bounded POST /search call
 returns ranked title, URL, and snippet results with a machine-readable receipt.
 Configured default price: $0.010 USDC on Base; this experimental capability is not yet live on mainnet.
 
-The search query is sent to the configured supplier (Serpex or Exa) for processing. The service keeps purchase
+The search query is sent to the configured supplier (Serpex, Exa or Mojeek Business) for processing. The service keeps purchase
 records and successful output to protect retries and provide five-minute cache
 reuse. Mainnet stays disabled until supplier terms explicitly permit this
 integration, output delivery, and storage.
@@ -47,13 +47,21 @@ The production factory refuses Base mainnet unless all gates are satisfied:
   incremental payment costs. A static realized mainnet fee is rejected.
 - SEARCH_RESOURCE_URL is public HTTPS and SEARCH_PAY_TO is the approved
   merchant wallet.
-- SEARCH_SUPPLIER explicitly selects serpex or exa, with its credential.
+- SEARCH_SUPPLIER explicitly selects serpex, exa or mojeek, with its credential.
+- Mojeek requires the Business plan's accepted account terms, storage/output
+  rights and SEARCH_MOJEEK_BUSINESS_TERMS_CONFIRMED=1. Its
+  SEARCH_MOJEEK_VERIFIED_UNIT_COST_USD must be the actual all-in USD cost per
+  query derived from the paid invoice, including exchange and taxes. Confirm
+  one-query billing and error/timeout billing before selecting it. The default
+  Serpex unit cost and $0.010 price are not Mojeek price evidence.
 - A private SEARCH_EXCLUDED_WALLETS_PATH exists and validates.
 - The fixture supplier is testnet-only.
 
 The configured price must cover the supplier bound, payment-fee bound, and
 minimum contribution floor. The default minimum floor is $0.005. An Exa
 configuration needs a higher price than the $0.010 Serpex default.
+Mojeek also requires a price that covers its verified unit cost, payment-fee
+bound and margin floor; its public GBP rate alone is insufficient.
 Unresolved exposure plus prepaid supplier capital must not exceed $20.
 The mainnet template reserves $5 prepaid capital and $15 unresolved exposure. Each uncertain purchase reserves its
 full price plus maximum supplier cost and payment fee. Unknown costs keep
