@@ -838,6 +838,58 @@ async def test_other_wallet_extra_refund_fee_counts_without_original_paid_call(s
 
 
 @pytest.mark.asyncio
+async def test_extra_refunds_distinguish_wallets_with_the_same_nonce(system: Any) -> None:
+    service, original, _ = system
+    await service.handle(body(), payment(service, original))
+    payers = [Account.create().address.lower() for _ in range(2)]
+    nonce = "0x" + "ab" * 32
+    for payer in payers:
+        service.store.record_extra_payment(1, payer, nonce, "confirmed-extra", 15000)
+    before = report(service.store.path, set(), network="eip155:84532")
+    assert before["gross_external_settled_revenue_usd"] == "0.045"
+    assert before["additional_payment_liability_usd"] == "0.03"
+    assert before["realized_external_contribution_margin_usd"] is None
+    kwargs = {
+        "refund_transaction": "confirmed-refund-one",
+        "variable_fees": 100,
+        "evidence": "independently confirmed full refund to first wallet",
+    }
+    with pytest.raises(ValueError, match="ambiguous"):
+        service.store.reconcile_extra_refund(1, nonce, **kwargs)
+    with pytest.raises(ValueError, match="finalized"):
+        service.store.reconcile_extra_refund(1, nonce, payer=original.address, **kwargs)
+    assert row(service)["extra_refunds"] == 0
+    service.store.reconcile_extra_refund(1, nonce.upper(), payer=payers[0].upper(), **kwargs)
+    after_one = report(service.store.path, set(), network="eip155:84532")
+    assert after_one["refunds_usd"] == "0.015"
+    assert after_one["additional_payment_liability_usd"] == "0.015"
+    assert after_one["realized_external_contribution_margin_usd"] is None
+    assert financial_state(row(service))["realized_margin"] is None
+    with pytest.raises(ValueError, match="already"):
+        service.store.reconcile_extra_refund(1, nonce, payer=payers[0], **kwargs)
+    # A restart and the first refund must not block the other wallet's refund.
+    restarted = Store(service.store.path)
+    restarted.reconcile_extra_refund(
+        1,
+        nonce,
+        payer=payers[1],
+        refund_transaction="confirmed-refund-two",
+        variable_fees=200,
+        evidence="independently confirmed full refund to second wallet",
+    )
+    after_both = report(service.store.path, set(), network="eip155:84532")
+    assert after_both["gross_external_settled_revenue_usd"] == "0.045"
+    assert after_both["refunds_usd"] == "0.03"
+    assert after_both["additional_payment_liability_usd"] == "0"
+    assert after_both["variable_payment_fees_usd"] == "0.0003"
+    assert after_both["realized_external_contribution_margin_usd"] == "0.0077"
+    assert financial_state(restarted.get(1))["realized_margin"] == "0.0077"
+    other_only = report(service.store.path, {original.address.lower()}, network="eip155:84532")
+    assert other_only["external_paid_calls"] == 0
+    assert other_only["realized_external_contribution_margin_usd"] == "-0.0003"
+
+
+@pytest.mark.asyncio
 async def test_other_wallet_payment_observation_survives_rpc_outage_and_restart(
     system: Any,
 ) -> None:
