@@ -103,7 +103,8 @@ class ChainEvidence:
         self.client = httpx.AsyncClient(timeout=20)
         # Performance checkpoints only: financial effects remain in the durable ledger.
         self._scan_cursors: dict[tuple[str, str, str], int] = {}
-        self.log_block_span = 1000
+        # Base's public RPC limits eth_getLogs to 200 blocks per request.
+        self.log_block_span = 200
         self.max_scan_requests = 16
 
     async def rpc(self, method: str, params: list[Any]) -> Any:

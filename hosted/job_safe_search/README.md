@@ -143,6 +143,8 @@ Remove SEARCH_ALLOW_NEW_DB after the deliberate first initialization.
 After a crash, preserve the database and restart the same image/configuration.
 Startup first freezes interrupted supplier intents locally. Read-only background
 reconciliation advances finalized payments without resending authorizations.
+Event discovery uses at most 200 blocks per RPC call to fit Base's public RPC
+limit. Each pass remains bounded and resumes from finalized checkpoints.
 An unavailable receipt does not prevent other purchases from recovering or
 completed results from replaying. Event scans use bounded block ranges and
 continue across passes; only finalized ranges may be skipped on later passes.
