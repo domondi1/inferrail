@@ -115,6 +115,10 @@ settlement and after supplier payment. It refuses an existing state directory
 and never targets mainnet. Use three dedicated testnet EOA wallets; exclude
 all of them permanently. Confirmation in this fast test runner checks canonical
 mined receipts; the production factory requires finalized blocks.
+Use `--require-finalized --scenarios cross_payer_replay` to add an already
+settled authorization from another controlled wallet to a completed job. The
+runner checks that its refund liability survives restart, supplier purchases
+stay at one, and excluded wallets cannot inflate external adoption metrics.
 
 ## Container deployment and recovery
 

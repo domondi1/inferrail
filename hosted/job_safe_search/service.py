@@ -351,7 +351,10 @@ class SearchService:
             payer, nonce = identity(payload, recovery_requirements(payload, self.requirements))
         except Exception:
             return
-        if payer == row["payer"] and nonce != row["nonce"]:
+        # A forwarding buyer may settle a fresh authorization before this request
+        # reaches us. The bearer job token can be used by another wallet, so the
+        # payer must not be used to discard a possible incoming transfer.
+        if payer != row["payer"] or nonce != row["nonce"]:
             await self.observe_payment(signature, row["id"])
 
     def token_context(self, request: SearchRequest) -> dict[str, Any] | None:

@@ -176,6 +176,8 @@ async def exercise(
     *,
     require_finalized: bool = False,
 ) -> None:
+    if scenarios and "cross_payer_replay" in scenarios and not require_finalized:
+        raise ValueError("cross_payer_replay_requires_finalized_chain_evidence")
     if state.exists():
         raise ValueError("new_state_directory_required; inspect existing evidence before any retry")
     state.mkdir(mode=0o700)
@@ -276,10 +278,13 @@ async def exercise(
                 )
                 financial_before_extra = financial_state(row)
                 # Same request with a fresh signature must never settle again.
-                fresh = sign(challenge, wallets["buyer"]["key"])
-                await client.post(
-                    "http://127.0.0.1:18422/search", json=body, headers={"PAYMENT-SIGNATURE": fresh}
-                )
+                if mode != "cross_payer_replay":
+                    fresh = sign(challenge, wallets["buyer"]["key"])
+                    await client.post(
+                        "http://127.0.0.1:18422/search",
+                        json=body,
+                        headers={"PAYMENT-SIGNATURE": fresh},
+                    )
                 if mode != "supplier_crash":
                     cache = {
                         "query": body["query"],
@@ -302,6 +307,53 @@ async def exercise(
                         "http://127.0.0.1:18422/search", json={**cache, "job_budget_usd": "0.03"}
                     )
                     assert immutable.status_code == 409
+                extra_transaction = None
+                if mode == "cross_payer_replay":
+                    extra = sign(challenge, wallets["supplier"]["key"])
+                    with (root / "extra-signature.json").open("x") as saved:
+                        os.chmod(saved.name, 0o600)
+                        json.dump({"signature": extra, "request": cache}, saved)
+                    payload = decode(extra)
+                    facilitator = HTTPFacilitatorClient(create_facilitator_config())
+                    try:
+                        settled = await facilitator.settle(payload, payload.accepted)
+                        (root / "extra-settlement.json").write_text(settled.model_dump_json())
+                    finally:
+                        await facilitator.aclose()
+                    if not settled.success or not settled.transaction:
+                        raise RuntimeError(
+                            "extra_payment_uncertain; inspect saved signature, never sign again"
+                        )
+                    extra_transaction = settled.transaction
+                    extra_headers = {"PAYMENT-SIGNATURE": extra}
+                    deadline = time.monotonic() + (7200 if require_finalized else 60)
+                    while time.monotonic() < deadline:
+                        replay = await client.post(
+                            "http://127.0.0.1:18422/search", json=cache, headers=extra_headers
+                        )
+                        assert replay.status_code == 200
+                        if store.get(1)["extra_settled_revenue"] == 15000:
+                            break
+                        await asyncio.sleep(5 if require_finalized else 2)
+                    assert store.get(1)["extra_settled_revenue"] == 15000
+                    merchant.terminate()
+                    merchant.join(timeout=10)
+                    merchant = start("merchant", "success")
+                    await wait_health(client, 18422)
+                    replay = await client.post(
+                        "http://127.0.0.1:18422/search", json=cache, headers=extra_headers
+                    )
+                    assert replay.json()["receipt"]["additional_payment_liability_usd"] == "0.015"
+                    assert replay.json()["receipt"]["financial_state"] == "UNRESOLVED"
+                    isolated = report(
+                        store.path,
+                        excluded - {wallets["supplier"]["address"].lower()},
+                        network=NETWORK,
+                    )
+                    assert isolated["external_paid_calls"] == 0
+                    assert isolated["gross_external_settled_revenue_usd"] == "0.015"
+                    assert isolated["additional_payment_liability_usd"] == "0.015"
+                    assert isolated["realized_external_contribution_margin_usd"] is None
                 with store.connect() as conn:
                     assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
                 supplier_row = Store(root / "supplier.sqlite").get(1)
@@ -316,6 +368,7 @@ async def exercise(
                         "scenario": mode,
                         "inbound": row["tx"],
                         "outbound": supplier_row["tx"],
+                        "extra_transaction": extra_transaction,
                         "financial_state": financial_state(row),
                         "financial_before_extra_observation": financial_before_extra,
                         "pending_payment_observations": len(store.observed_payments()),
@@ -353,7 +406,13 @@ def main() -> None:
     parser.add_argument(
         "--scenarios",
         nargs="+",
-        choices=["success", "settlement_crash", "supplier_crash", "pre_settled"],
+        choices=[
+            "success",
+            "settlement_crash",
+            "supplier_crash",
+            "pre_settled",
+            "cross_payer_replay",
+        ],
     )
     parser.add_argument(
         "--require-finalized",
