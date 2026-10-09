@@ -77,13 +77,15 @@ def report(
     orphan_margin = -sum(row["variable_fees"] for row in orphan_refunded)
     pending_observed = [row for row in observed if row["state"] == "OBSERVED"]
     external = []
+    network_purchases = set()
     for row in rows:
-        if row["payer"].lower() in excluded:
-            continue
         observed_network = json.loads(row["payload"]).get("accepted", {}).get("network")
         if observed_network is None:
             raise ValueError("purchase_network_evidence_missing")
         if observed_network == network:
+            network_purchases.add(row["id"])
+            if row["payer"].lower() in excluded:
+                continue
             row["liability"] = fulfillment_liability(row)
             external.append(row)
     paid = [row for row in external if row["state"] in SETTLED_STATES and row["tx"] is not None]
@@ -108,14 +110,21 @@ def report(
         json.loads(event["details"])
         for event in events
         if event["kind"] == "EXTRA_SETTLED_PAYMENT"
-        and event["purchase"] in eligible
+        and event["purchase"] in network_purchases
         and json.loads(event["details"])["payer"].lower() not in excluded
     ]
     extra_refunds = [
-        json.loads(event["details"])
+        {**json.loads(event["details"]), "purchase": event["purchase"]}
         for event in events
-        if event["kind"] == "EXTRA_PAYMENT_REFUNDED" and event["purchase"] in eligible
+        if event["kind"] == "EXTRA_PAYMENT_REFUNDED"
+        and event["purchase"] in network_purchases
+        and json.loads(event["details"])["payer"].lower() not in excluded
     ]
+    # An external wallet can pay for a completed job whose original payer is
+    # excluded. Its refund fee remains an external loss without a paid call.
+    orphan_margin -= sum(
+        item["variable_fees"] for item in extra_refunds if item["purchase"] not in eligible
+    )
     refunded_keys = {(item["payer"], item["nonce"]) for item in extra_refunds}
     open_extra = [item for item in extra if (item["payer"], item["nonce"]) not in refunded_keys]
     refund_fee = sum(item["variable_fees"] for item in extra_refunds)
@@ -124,7 +133,7 @@ def report(
         json.loads(event["details"])
         for event in events
         if event["kind"] == "EXTRA_PAYMENT_PENDING"
-        and event["purchase"] in eligible
+        and event["purchase"] in network_purchases
         and json.loads(event["details"])["payer"].lower() not in excluded
         and (json.loads(event["details"])["payer"], json.loads(event["details"])["nonce"])
         not in settled_extra
@@ -142,13 +151,17 @@ def report(
     unresolved_extra_ids = set()
     refund_fees_by_purchase: dict[int, int] = defaultdict(int)
     for event in events:
-        if event["purchase"] not in eligible:
+        if event["purchase"] not in network_purchases:
             continue
         details = json.loads(event["details"])
         if event["kind"] in ("EXTRA_SETTLED_PAYMENT", "EXTRA_PAYMENT_PENDING"):
+            if details["payer"].lower() in excluded:
+                continue
             if (details["payer"], details["nonce"]) not in refunded_keys:
                 unresolved_extra_ids.add(event["purchase"])
         elif event["kind"] == "EXTRA_PAYMENT_REFUNDED":
+            if details["payer"].lower() in excluded:
+                continue
             refund_fees_by_purchase[event["purchase"]] += details["variable_fees"]
     margin_rows = [
         row
@@ -285,7 +298,10 @@ def report(
         ),
         "negative_margin_requests": sum(value < 0 for value in margins)
         + sum(value > 0 for value in rejected_fees)
-        + sum(row["variable_fees"] > 0 for row in orphan_refunded),
+        + sum(row["variable_fees"] > 0 for row in orphan_refunded)
+        + sum(
+            item["variable_fees"] > 0 for item in extra_refunds if item["purchase"] not in eligible
+        ),
         "cache_hits": len(cache_events),
         "supplier_cogs_avoided_on_cache_usd": usd(
             sum(json.loads(event["details"]).get("cogs_avoided", 0) for event in cache_events)
