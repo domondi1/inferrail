@@ -764,6 +764,123 @@ async def test_extra_payment_refund_needs_evidence_and_preserves_actual_margin(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("request_id", ["one", "two"])
+async def test_proxy_settled_other_wallet_on_completed_job_is_a_liability(
+    system: Any, request_id: str
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, original, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    first = result(await service.handle(body(), payment(service, original)))
+    other = Account.create()
+    chain.mint(other.address, 15000)
+    extra = payment(service, other)
+    await service.facilitator.inner.settle(decode(extra), service.requirements)
+    replay = result(await service.handle(body(request_id, job_token=first["job_token"]), extra))
+    assert replay["receipt"]["charged_usd"] == "0"
+    assert replay["receipt"]["financial_state"] == "UNRESOLVED"
+    assert replay["receipt"]["additional_payment_liability_usd"] == "0.015"
+    assert service.facilitator.settles == service.supplier.calls == 1
+    assert chain.balance_of(service.config.pay_to) == 30000
+
+    all_wallets = report(service.store.path, set(), network="eip155:84532")
+    assert all_wallets["external_paid_calls"] == 1
+    assert all_wallets["gross_external_settled_revenue_usd"] == "0.03"
+    assert all_wallets["additional_settled_payments"] == 1
+    assert all_wallets["additional_payment_liability_usd"] == "0.015"
+    assert all_wallets["realized_external_contribution_margin_usd"] is None
+
+    other_only = report(service.store.path, {original.address.lower()}, network="eip155:84532")
+    assert other_only["external_paid_calls"] == 0
+    assert other_only["gross_external_settled_revenue_usd"] == "0.015"
+    assert other_only["additional_settled_payments"] == 1
+    assert other_only["additional_payment_liability_usd"] == "0.015"
+    assert other_only["realized_external_contribution_margin_usd"] is None
+
+    original_only = report(service.store.path, {other.address.lower()}, network="eip155:84532")
+    assert original_only["external_paid_calls"] == 1
+    assert original_only["gross_external_settled_revenue_usd"] == "0.015"
+    assert original_only["additional_settled_payments"] == 0
+    assert original_only["realized_external_contribution_margin_usd"] == "0.008"
+
+
+@pytest.mark.asyncio
+async def test_other_wallet_extra_refund_fee_counts_without_original_paid_call(system: Any) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, original, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    first = result(await service.handle(body(), payment(service, original)))
+    other = Account.create()
+    chain.mint(other.address, 15000)
+    extra = payment(service, other)
+    await service.facilitator.inner.settle(decode(extra), service.requirements)
+    await service.handle(body(job_token=first["job_token"]), extra)
+    service.store.reconcile_extra_refund(
+        1,
+        decode(extra).payload["authorization"]["nonce"].lower(),
+        refund_transaction="independently-confirmed-refund",
+        variable_fees=200,
+        evidence="confirmed full refund and actual fee",
+    )
+    metrics = report(service.store.path, {original.address.lower()}, network="eip155:84532")
+    assert metrics["external_paid_calls"] == 0
+    assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+    assert metrics["refunds_usd"] == "0.015"
+    assert metrics["variable_payment_fees_usd"] == "0.0002"
+    assert metrics["realized_external_contribution_margin_usd"] == "-0.0002"
+    assert metrics["additional_payment_liability_usd"] == "0"
+    assert metrics["negative_margin_requests"] == 1
+    original_only = report(service.store.path, {other.address.lower()}, network="eip155:84532")
+    assert original_only["refunds_usd"] == original_only["variable_payment_fees_usd"] == "0"
+    assert original_only["realized_external_contribution_margin_usd"] == "0.008"
+
+
+@pytest.mark.asyncio
+async def test_other_wallet_payment_observation_survives_rpc_outage_and_restart(
+    system: Any,
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, original, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    first = result(await service.handle(body(), payment(service, original)))
+    other = Account.create()
+    chain.mint(other.address, 15000)
+    extra = payment(service, other)
+    await service.facilitator.inner.settle(decode(extra), service.requirements)
+    find_transaction = service.chain.find_transaction
+
+    async def unavailable(*args: Any) -> Any:
+        raise RuntimeError("RPC unavailable")
+
+    service.chain.find_transaction = unavailable
+    await service.handle(body(job_token=first["job_token"]), extra)
+    before = report(service.store.path, {original.address.lower()}, network="eip155:84532")
+    assert before["additional_payment_liability_usd"] == "0.015"
+    assert before["unresolved_payment_observations"] == 1
+    assert before["realized_external_contribution_margin_usd"] is None
+
+    service.chain.find_transaction = find_transaction
+    restarted = SearchService(
+        service.config,
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    await restarted.recover("0x0")
+    after = report(restarted.store.path, {original.address.lower()}, network="eip155:84532")
+    assert after["external_paid_calls"] == 0
+    assert after["gross_external_settled_revenue_usd"] == "0.015"
+    assert after["additional_payment_liability_usd"] == "0.015"
+    assert after["unresolved_payment_observations"] == 0
+    assert after["realized_external_contribution_margin_usd"] is None
+    assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_recovery_rpc_failure_isolated_per_purchase(system: Any) -> None:
     service, account, chain = system
     service.facilitator.failure = "crash_after_settle"
