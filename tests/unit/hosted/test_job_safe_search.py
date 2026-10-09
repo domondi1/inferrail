@@ -1358,6 +1358,51 @@ def test_mojeek_business_account_gate_precedes_factory_activation(
         production_app()
 
 
+@pytest.mark.parametrize("merchant_excluded", [False, True])
+def test_mainnet_factory_requires_merchant_wallet_exclusion(
+    tmp_path: Path, monkeypatch: Any, merchant_excluded: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from hosted.job_safe_search import service
+
+    db = tmp_path / "search.sqlite3"
+    db.touch()
+    is_relative_to = Path.is_relative_to
+
+    def deployment_path_check(path: Path, root: Path) -> bool:
+        return False if path == db else is_relative_to(path, root)
+
+    monkeypatch.setattr(Path, "is_relative_to", deployment_path_check)
+    monkeypatch.setattr(
+        service, "ExaSearch", lambda _key: SimpleNamespace(name="exa", max_cost=7000)
+    )
+    excluded = tmp_path / "excluded-wallets.txt"
+    excluded.write_text("0x" + ("a" if merchant_excluded else "b") * 40 + "\n")
+    for name, value in {
+        "SEARCH_DB_PATH": str(db),
+        "SEARCH_NETWORK": "eip155:8453",
+        "SEARCH_PAY_TO": "0x" + "A" * 40,
+        "SEARCH_RESOURCE_URL": "https://search.example.com/search",
+        "SEARCH_TOKEN_SECRET": "s" * 32,
+        "SEARCH_SUPPLIER": "exa",
+        "EXA_API_KEY": "unused-test-key",
+        "SEARCH_MAINNET_APPROVED": "0",
+        "SEARCH_SUPPLIER_RIGHTS_CONFIRMED": "0",
+        "SEARCH_EXCLUDED_WALLETS_PATH": str(excluded),
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("SEARCH_REALIZED_PAYMENT_FEE_USD", raising=False)
+    monkeypatch.delenv("SEARCH_RECOVERY_FROM_BLOCK", raising=False)
+    error = (
+        "mainnet_requires_SEARCH_RECOVERY_FROM_BLOCK_before_first_acceptance"
+        if merchant_excluded
+        else "mainnet_merchant_must_be_in_wallet_exclusions"
+    )
+    with pytest.raises(ValueError, match=error):
+        service.production_app()
+
+
 @pytest.mark.asyncio
 async def test_metrics_reconciliation_cannot_split_snapshot(system: Any, monkeypatch: Any) -> None:
     import sqlite3
