@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inferrail Hosted pricing</title>
+  <meta name="description" content="Inferrail Hosted: per-run dollar budgets for AI agents, shared by every agent and machine in a workspace. 2,000 governed runs a month free, then $0.001 per run. Bring your own provider key.">
+  <link rel="canonical" href="https://tryinferrail.com/hosted/">
+  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../favicon-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --white:#FFF; }
+    * { box-sizing:border-box; }
+    html { background:var(--paper); scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.55 "IBM Plex Mono",monospace; }
+    a { color:inherit; }
+    a:focus-visible, button:focus-visible { outline:3px solid var(--stamp); outline-offset:4px; }
+    .wrap { width:min(100%, 900px); margin:auto; padding:0 20px; }
+    .masthead { display:flex; min-height:62px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--ink); }
+    .wordmark, .eyebrow, .button, .fact-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .wordmark { font-size:19px; text-decoration:none; display:inline-flex; align-items:center; gap:.55em; }
+    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
+    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
+    .nav { display:flex; gap:18px; font-size:12px; }
+    .nav a { text-underline-offset:4px; }
+    main { padding:clamp(36px,5vw,58px) 0 clamp(48px,6vw,80px); }
+    .eyebrow { margin:0 0 12px; color:var(--stamp); font-size:12px; }
+    h1, h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0; line-height:.98; }
+    h1 { font-size:clamp(36px,8vw,60px); max-width:14ch; }
+    h1 span { display:block; color:var(--ink-2); }
+    .lede { max-width:56ch; margin:20px 0 0; color:var(--ink-2); font-size:clamp(15px,1.3vw,19px); line-height:1.5; }
+    .pill { display:inline-flex; margin-top:20px; padding:7px 10px; border:1px solid var(--rule); color:var(--ink-2); font-size:11px; }
+    section.block { margin-top:clamp(40px,5vw,64px); padding-top:clamp(28px,3.5vw,42px); border-top:1px solid var(--ink); }
+    h2 { font-size:clamp(22px,3.4vw,32px); }
+    .block p { max-width:64ch; margin:16px 0 0; color:var(--ink-2); font-size:15px; line-height:1.6; }
+    .block p code, .block li code { font-size:.94em; background:var(--bar); padding:1px 5px; }
+    .block ul { max-width:64ch; margin:16px 0 0; padding-left:20px; color:var(--ink-2); font-size:15px; line-height:1.6; }
+    .facts { display:grid; gap:0; margin-top:22px; border-top:1px solid var(--rule); }
+    .fact-row { display:grid; grid-template-columns:minmax(150px,1fr) 2fr; gap:12px; padding:13px 0; border-bottom:1px solid var(--rule); }
+    .fact-label { color:var(--ink-3); font-size:11px; align-self:start; padding-top:2px; }
+    .fact-row p { margin:0; font-size:15px; }
+    .endpoint-card { margin-top:22px; padding:18px 20px; background:var(--white); border:1px solid var(--rule); box-shadow:6px 6px 0 rgba(20,32,27,.06); }
+    .endpoint-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:10px; padding:10px 0; border-bottom:1px dashed var(--rule); font-size:14px; }
+    .endpoint-row:last-child { border-bottom:0; }
+    .endpoint-row strong { font-family:"IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; font-size:12px; letter-spacing:.08em; color:var(--ink-3); }
+    .endpoint-row code { font-size:14px; overflow-wrap:anywhere; text-align:right; }
+    .links { display:flex; flex-wrap:wrap; gap:12px; margin-top:22px; }
+    .button { min-height:48px; padding:0 20px; display:inline-flex; align-items:center; border:1px solid var(--ink); cursor:pointer; font-size:14px; text-decoration:none; }
+    .button-dark { color:var(--paper); background:var(--ink); }
+    .button-ghost { color:var(--ink); background:transparent; }
+    .testnet-note { margin-top:24px; padding-left:13px; border-left:3px solid var(--stamp); font-size:13px; color:var(--ink-2); max-width:60ch; }
+    .testnet-note strong { display:block; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:15px; text-transform:uppercase; color:var(--ink); }
+    footer { padding:24px 0; border-top:1px solid var(--ink); color:var(--ink-3); font-size:12px; }
+    @media (min-width:700px) { body { font-size:17px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <header class="masthead wrap">
+    <a class="wordmark" href="/"><img class="wordmark-mark" src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
+    <nav class="nav" aria-label="Primary navigation"><a href="/">Home</a><a href="https://github.com/domondi1/inferrail">GitHub</a></nav>
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">For agents and the people who run them</p>
+    <h1>Inferrail Hosted<span>One budget per run, across your whole fleet.</span></h1>
+    <p class="lede">Give each AI run a dollar ceiling in a request header. Every call in that run shares it, including parallel calls from different agents and machines, and a call that would push the run past it is refused before it reaches OpenAI or Anthropic. You bring your own provider key with each request; we never store it.</p>
+    <p class="pill">2,000 governed runs a month free · then $0.001 per run · no subscription</p>
+
+    <section class="block" aria-labelledby="price-title">
+      <h2 id="price-title">Price</h2>
+      <div class="facts">
+        <div class="fact-row"><span class="fact-label">Unit</span><p>A <strong>governed run</strong>: a distinct work id (<code>X-Inferrail-Attribute-Work-Id</code>) with at least one call through the gateway in a calendar month (UTC). Calls inside a run are not charged separately.</p></div>
+        <div class="fact-row"><span class="fact-label">Free</span><p>2,000 governed runs per workspace per month.</p></div>
+        <div class="fact-row"><span class="fact-label">After that</span><p>Prepaid credits at $0.001 per run. People pay by card: $10 for 10,000 runs. Agents pay in USDC over x402: $1 for 1,000 runs, with no account.</p></div>
+        <div class="fact-row"><span class="fact-label">Model spend</span><p>Billed by your provider on your own key. Inferrail doesn't resell model access or mark it up.</p></div>
+        <div class="fact-row"><span class="fact-label">Self-hosted</span><p>The open-source gateway is free and does everything on one machine: <code>pip install inferrail</code>. Hosted is for when many agents and machines must share one budget ledger and you'd rather not run it.</p></div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="start-title">
+      <h2 id="start-title">Start</h2>
+      <ul>
+        <li><code>POST /v1/workspaces</code> returns a workspace key, once. No sign-up form.</li>
+        <li>Point an OpenAI or Anthropic SDK at <code>/v1</code> with the workspace key as the API key, and send your provider key in <code>X-Provider-Api-Key</code>.</li>
+        <li>Name the run and set its ceiling: <code>X-Inferrail-Attribute-Work-Id</code>, <code>X-Inferrail-Budget-Usd</code>.</li>
+        <li><code>GET /v1/work/&lt;id&gt;</code> shows what the run cost. <code>GET /pricing</code> and <code>/llms.txt</code> publish these terms for agents.</li>
+      </ul>
+      <p>Past your allowance with no credits left, a call gets HTTP 402 <code>allowance_exhausted</code>, listing both ways to buy. Nothing reaches your provider.</p>
+    </section>
+
+    <section class="block" aria-labelledby="safe-title">
+      <h2 id="safe-title">What we guarantee</h2>
+      <ul>
+        <li>A run's budget is reserved before each provider call, so concurrent calls can't spend the same dollar. The method and raw results are public: <a href="https://github.com/domondi1/per-run-budget-benchmark">per-run budget benchmark</a>.</li>
+        <li>Your provider key is read from each request and never written to disk, logged, or returned.</li>
+        <li>Receipts hold costs and identifiers, not prompts or responses.</li>
+        <li>Each payment adds credits at most once. A card purchase counts only after Stripe confirms it, and a USDC purchase only after it settles.</li>
+      </ul>
+    </section>
+  </main>
+  <footer class="wrap">Inferrail Hosted · <a href="/">Home</a> · <a href="https://github.com/domondi1/inferrail/tree/main/hosted/budget_gateway">Source</a></footer>
+</body>
+</html>

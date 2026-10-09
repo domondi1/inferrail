@@ -110,6 +110,31 @@ jobs:
         shell: bash
         run: bash scripts/run_hosted_work_economics_tests.sh
 
+  hosted-budget-gateway:
+    # Inferrail Hosted (hosted/budget_gateway): workspaces, governed-run metering, the credit
+    # ledger, Stripe webhook verification and the x402 credit rail, against the real x402 SDK
+    # with the credential-free fake facilitator. The main job self-skips these; this one fails
+    # on any skip.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install package with dev and hosted dependencies
+        run: pip install -e ".[dev,hosted]"
+      - name: Lint -- hosted/budget_gateway and its tests
+        run: ruff check hosted/budget_gateway tests/unit/hosted/test_budget_gateway.py
+      - name: Test -- Inferrail Hosted (zero skips)
+        shell: bash
+        run: |
+          python -m pytest tests/unit/hosted/test_budget_gateway.py -v -rs | tee budget-gateway.log
+          if grep -q "SKIPPED" budget-gateway.log; then
+            echo "::error::a skipped Inferrail Hosted test must fail this job." >&2
+            exit 1
+          fi
+
   hosted-job-safe-search:
     runs-on: ubuntu-latest
     timeout-minutes: 10

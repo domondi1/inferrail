@@ -1,0 +1,8 @@
+# Runtime dependencies for Inferrail Hosted. Also install the repo itself (`pip install -e .`):
+# this service imports the inferrail gateway engines, budgets, receipts and pricing.
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+# Only needed when the x402 credit rail is enabled (BG_X402_PAY_TO set):
+x402[evm,fastapi,httpx]==2.22.0
+cdp-sdk==1.48.1
