@@ -371,6 +371,7 @@ class Store:
         purchase: int,
         nonce: str,
         *,
+        payer: str | None = None,
         refund_transaction: str,
         variable_fees: int,
         evidence: str,
@@ -394,8 +395,6 @@ class Store:
                     (purchase,),
                 )
             ]
-            if any(item["nonce"] == nonce for item in refunded):
-                raise ValueError("duplicate refund evidence already recorded")
             extras = [
                 json.loads(row[0])
                 for row in conn.execute(
@@ -403,15 +402,28 @@ class Store:
                     (purchase,),
                 )
             ]
-            extra = next((item for item in extras if item["nonce"] == nonce), None)
-            if extra is None:
+            matches = [
+                item
+                for item in extras
+                if item["nonce"].lower() == nonce.lower()
+                and (payer is None or item["payer"].lower() == payer.lower())
+            ]
+            if not matches:
                 raise ValueError("extra incoming payment must be finalized before reconciliation")
+            if len(matches) != 1:
+                raise ValueError("ambiguous authorization nonce; specify the refund payer")
+            extra = matches[0]
+            if any(
+                item["nonce"] == extra["nonce"] and item["payer"] == extra["payer"]
+                for item in refunded
+            ):
+                raise ValueError("duplicate refund evidence already recorded")
             self.event(
                 conn,
                 purchase,
                 "EXTRA_PAYMENT_REFUNDED",
                 payer=extra["payer"],
-                nonce=nonce,
+                nonce=extra["nonce"],
                 amount=extra["amount"],
                 refund_transaction=refund_transaction,
                 variable_fees=variable_fees,
