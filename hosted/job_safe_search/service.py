@@ -34,7 +34,7 @@ from .contract import (
 from .economics import financial_state
 from .payments import ChainEvidence, decode, encode, identity, recovery_requirements
 from .store import Refused, Store
-from .supplier import ExaSearch, FixtureSearch, SerpexSearch, SupplierFailure
+from .supplier import ExaSearch, FixtureSearch, MojeekBusinessSearch, SerpexSearch, SupplierFailure
 
 SERVICE_NAME = "Inferrail Job-Safe Web Search"
 SERVICE_TAGS = ["search", "web", "job-budget", "idempotency", "agent-payments"]
@@ -861,6 +861,13 @@ def production_app() -> FastAPI:
         )
     elif provider == "exa":
         supplier = ExaSearch(os.environ["EXA_API_KEY"])
+    elif provider == "mojeek":
+        if os.environ.get("SEARCH_MOJEEK_BUSINESS_TERMS_CONFIRMED") != "1":
+            raise ValueError("mojeek_business_account_terms_required")
+        supplier = MojeekBusinessSearch(
+            os.environ["MOJEEK_API_KEY"],
+            atomic(os.environ["SEARCH_MOJEEK_VERIFIED_UNIT_COST_USD"]),
+        )
     else:
         raise ValueError("mainnet_requires_explicit_supplier_selection")
     if config.network == "eip155:8453":

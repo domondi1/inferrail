@@ -1092,6 +1092,156 @@ async def test_serpex_contract_violation_keeps_actual_billing(
 
 
 @pytest.mark.asyncio
+async def test_mojeek_business_success_keeps_price_and_replay_bounded(system: Any) -> None:
+    from hosted.job_safe_search.supplier import MojeekBusinessSearch
+
+    service, account, chain = system
+    supplier = MojeekBusinessSearch("fixture-key", 3500)
+    await supplier.client.aclose()
+    requests: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/search"
+        assert dict(request.url.params) == {
+            "api_key": "fixture-key",
+            "q": "machine budgets",
+            "t": "5",
+            "fmt": "json",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "response": {
+                    "status": "OK",
+                    "results": [
+                        {
+                            "title": "Original title",
+                            "url": "https://example.com/result",
+                            "desc": "Original snippet",
+                        }
+                    ],
+                }
+            },
+        )
+
+    supplier.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    service.supplier = supplier
+    signed = payment(service, account)
+    delivered = result(await service.handle(body(), signed))
+    assert delivered["results"] == [
+        {
+            "title": "Original title",
+            "url": "https://example.com/result",
+            "snippet": "Original snippet",
+        }
+    ]
+    assert delivered["receipt"]["provider"] == "mojeek"
+    assert financial_state(row(service))["realized_margin"] == "0.0115"
+    assert row(service)["supplier_cogs"] == 3500
+    assert result(await service.handle(body(), signed))["receipt"]["charged_usd"] == "0"
+    assert len(requests) == service.facilitator.settles == 1
+    assert chain.balance_of(service.config.pay_to) == 15000
+    await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure,known_cogs",
+    [
+        ("empty", 3500),
+        ("bad_url", 3500),
+        ("http_error", None),
+        ("application_error", None),
+        ("malformed", None),
+        ("timeout", None),
+    ],
+)
+async def test_mojeek_business_failed_attempt_preserves_liability(
+    system: Any, failure: str, known_cogs: int | None
+) -> None:
+    from hosted.job_safe_search.supplier import MojeekBusinessSearch
+
+    service, account, chain = system
+    supplier = MojeekBusinessSearch("fixture-key", 3500)
+    await supplier.client.aclose()
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if failure == "timeout":
+            raise httpx.ReadTimeout("uncertain supplier completion", request=request)
+        if failure == "malformed":
+            return httpx.Response(200, text="not json")
+        if failure == "http_error":
+            return httpx.Response(503, json={"response": {"status": "ERROR"}})
+        if failure == "application_error":
+            return httpx.Response(200, json={"response": {"status": "ERROR"}})
+        hits = (
+            []
+            if failure == "empty"
+            else [{"title": "Result", "url": "javascript:unsafe", "desc": "unusable"}]
+        )
+        return httpx.Response(200, json={"response": {"status": "OK", "results": hits}})
+
+    supplier.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    service.supplier = supplier
+    response = await service.handle(body(), payment(service, account))
+    actual = row(service)
+    assert response.status_code == 202
+    assert actual["supplier_cogs"] == known_cogs
+    assert actual["state"] == ("SERVICE_FAILED" if known_cogs is not None else "SUPPLIER_UNKNOWN")
+    assert financial_state(actual)["unresolved_liability"] == "0.015"
+    assert financial_state(actual)["realized_margin"] is None
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert service.facilitator.settles == 1
+    await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mojeek_business_cost_and_credential_require_explicit_evidence(system: Any) -> None:
+    from hosted.job_safe_search.supplier import MojeekBusinessSearch
+
+    for key, cost in ((" ", 3500), ("fixture-key", 0), ("fixture-key", True)):
+        with pytest.raises(ValueError):
+            MojeekBusinessSearch(key, cost)
+    supplier = MojeekBusinessSearch("fixture-key", 10000)
+    service, _, _ = system
+    with pytest.raises(ValueError, match="price_below_cost_envelope"):
+        service.config.validate(supplier)
+    await supplier.client.aclose()
+
+
+def test_mojeek_business_account_gate_precedes_factory_activation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from hosted.job_safe_search.service import production_app
+
+    db = tmp_path / "search.sqlite3"
+    db.touch()
+    # Exercise the provider gate without making the test's temporary database
+    # look like approved persistent production storage.
+    is_relative_to = Path.is_relative_to
+
+    def deployment_path_check(path: Path, root: Path) -> bool:
+        return False if path == db else is_relative_to(path, root)
+
+    monkeypatch.setattr(Path, "is_relative_to", deployment_path_check)
+    for name, value in {
+        "SEARCH_DB_PATH": str(db),
+        "SEARCH_NETWORK": "eip155:8453",
+        "SEARCH_PAY_TO": "0x" + "1" * 40,
+        "SEARCH_RESOURCE_URL": "https://search.example.com/search",
+        "SEARCH_TOKEN_SECRET": "s" * 32,
+        "SEARCH_SUPPLIER": "mojeek",
+        "SEARCH_MAINNET_APPROVED": "0",
+        "SEARCH_SUPPLIER_RIGHTS_CONFIRMED": "0",
+        "SEARCH_MOJEEK_BUSINESS_TERMS_CONFIRMED": "0",
+    }.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match="mojeek_business_account_terms_required"):
+        production_app()
+
+
+@pytest.mark.asyncio
 async def test_metrics_reconciliation_cannot_split_snapshot(system: Any, monkeypatch: Any) -> None:
     import sqlite3
 

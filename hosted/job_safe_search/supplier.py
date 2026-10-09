@@ -118,3 +118,54 @@ class SerpexSearch:
         except Exception as exc:
             raise SupplierFailure(cogs, reference) from exc
         return SupplierResult(hits, cogs, reference)
+
+
+class MojeekBusinessSearch:
+    """Business-plan search with an invoice-verified all-in cost per query."""
+
+    name = "mojeek"
+
+    def __init__(self, key: str, verified_unit_cost: int):
+        if not key.strip():
+            raise ValueError("supplier_credential_required")
+        if type(verified_unit_cost) is not int or verified_unit_cost <= 0:
+            raise ValueError("mojeek_requires_verified_positive_unit_cost")
+        self.key = key
+        self.max_cost = verified_unit_cost
+        self.client = httpx.AsyncClient(timeout=25)
+
+    async def search(self, request: SearchRequest) -> SupplierResult:
+        # Mojeek documents GET /search with these query parameters. The API key
+        # is never included in our output, receipt or supplier error text.
+        response = await self.client.get(
+            "https://api.mojeek.com/search",
+            params={
+                "api_key": self.key,
+                "q": request.query,
+                "t": request.num_results,
+                "fmt": "json",
+            },
+        )
+        # An HTTP error, unreadable response or application-level ERROR does not
+        # establish whether prepaid query credit was consumed.
+        try:
+            response.raise_for_status()
+            payload = response.json()["response"]
+            if payload["status"] != "OK":
+                raise ValueError("supplier_search_not_ok")
+        except Exception as exc:
+            raise SupplierFailure(None) from exc
+        # Only a successful search establishes one charged Business-plan query.
+        # Retain that cost if the result is empty or fails normalization.
+        try:
+            hits = [
+                SearchHit(
+                    title=item["title"], url=item["url"], snippet=item.get("desc") or ""
+                ).model_dump()
+                for item in payload["results"][: request.num_results]
+            ]
+            if not hits:
+                raise ValueError("empty_supplier_result")
+        except Exception as exc:
+            raise SupplierFailure(self.max_cost) from exc
+        return SupplierResult(hits, self.max_cost)
