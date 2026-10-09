@@ -983,6 +983,72 @@ async def test_startup_rpc_outage_keeps_completed_replay_available(system: Any) 
 
 
 @pytest.mark.asyncio
+async def test_default_event_scan_fits_base_public_rpc_and_retains_extra_liability(
+    system: Any,
+) -> None:
+    from hosted.job_safe_search.payments import USED, ChainEvidence, decode
+
+    service, account, _ = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    await service.handle(body(), payment(service, account))
+    extra = decode(payment(service, account))
+    settled = await service.facilitator.inner.settle(extra, service.requirements)
+    original_chain = service.chain
+    chain = ChainEvidence("https://rpc.example.invalid", service.requirements)
+    ranges = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content)
+        method = data["method"]
+        if method == "eth_chainId":
+            value: Any = hex(84532)
+        elif method == "eth_getBlockByNumber":
+            value = {"number": hex(1400)}
+        elif method == "eth_blockNumber":
+            value = hex(1450)
+        else:
+            assert method == "eth_getLogs"
+            bounds = data["params"][0]
+            lo, hi = int(bounds["fromBlock"], 16), int(bounds["toBlock"], 16)
+            if hi - lo + 1 > 200:
+                return httpx.Response(
+                    413,
+                    json={"error": {"code": -32614, "message": "limited to a 200 range"}},
+                )
+            ranges.append((lo, hi))
+            value = (
+                [
+                    {
+                        "topics": [USED, "0x" + account.address[2:].lower().zfill(64)],
+                        "data": extra.payload["authorization"]["nonce"],
+                        "transactionHash": settled.transaction,
+                    }
+                ]
+                if lo <= 1250 <= hi
+                else []
+            )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": value})
+
+    await chain.client.aclose()
+    chain.client = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+    # Independently confirm the actual local transfer and nonce, not just a scan hit.
+    chain.confirmed = original_chain.confirmed
+    service.chain = chain
+    try:
+        replay = await service.handle(body(), encode(extra.model_dump(by_alias=True)))
+        assert result(replay)["receipt"]["charged_usd"] == "0"
+        metrics = report(service.store.path, set(), network="eip155:84532")
+        assert metrics["additional_settled_payments"] == 1
+        assert metrics["gross_external_settled_revenue_usd"] == "0.03"
+        assert metrics["additional_payment_liability_usd"] == "0.015"
+        assert metrics["realized_external_contribution_margin_usd"] is None
+        assert service.facilitator.settles == service.supplier.calls == 1
+        assert ranges == [(start, start + 199) for start in range(0, 1400, 200)]
+    finally:
+        await chain.client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_chain_scan_is_bounded_and_continues_finalized_history(system: Any) -> None:
     from hosted.job_safe_search.payments import USED, ChainEvidence, decode
 
