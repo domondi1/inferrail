@@ -614,6 +614,66 @@ async def test_proxy_pre_settled_payment_requires_chain_evidence(system: Any) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("verify_outage", [False, True])
+@pytest.mark.parametrize("delayed_finality", [False, True])
+@pytest.mark.parametrize("actual_fee,expected_margin", [(0, "0.008"), (1000, "0.007")])
+async def test_proxy_settlement_keeps_fees_unknown_until_reconciled(
+    system: Any,
+    verify_outage: bool,
+    delayed_finality: bool,
+    actual_fee: int,
+    expected_margin: str,
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0", realized_payment_fee=None)
+    signed = payment(service, account)
+    await service.facilitator.inner.settle(decode(signed), service.requirements)
+    if verify_outage:
+        service.facilitator.failure = "verify"
+    service.chain.final = not delayed_finality
+    await service.handle(body(), signed)
+    assert row(service)["variable_fees"] is None
+    if delayed_finality:
+        assert row(service)["state"] == "FINALITY_PENDING"
+        assert service.supplier.calls == 0
+    restarted = SearchService(
+        service.config,
+        Store(service.store.path),
+        service.facilitator,
+        service.chain,
+        service.supplier,
+    )
+    service.chain.final = True
+    await restarted.recover("0x0")
+    response = result(await restarted.handle(body(), signed))
+    assert response["receipt"]["charged_usd"] == "0"
+    assert response["receipt"]["financial_state"] == "UNRESOLVED"
+    state = financial_state(row(restarted))
+    assert state["settled_revenue"] == "0.015" and state["supplier_cogs"] == "0.007"
+    assert state["variable_fees"] is None and state["realized_margin"] is None
+    assert not state["resolved"]
+    metrics = report(restarted.store.path, set(), network="eip155:84532")
+    assert metrics["variable_payment_fees_usd"] is None
+    assert metrics["realized_external_contribution_margin_usd"] is None
+    assert metrics["unresolved_transactions"] == 1
+    assert restarted.store.resolve_financials(
+        1,
+        supplier_cogs=7000,
+        variable_fees=actual_fee,
+        evidence="actual proxy settlement billing reconciled to finalized transfer",
+    )
+    state = financial_state(row(restarted))
+    assert state["resolved"] and state["realized_margin"] == expected_margin
+    metrics = report(restarted.store.path, set(), network="eip155:84532")
+    assert metrics["realized_external_contribution_margin_usd"] == expected_margin
+    assert metrics["unresolved_transactions"] == 0
+    assert chain.balance_of(service.config.pay_to) == 15000
+    assert service.facilitator.settles == 0 and service.supplier.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_expired_authorization_and_facilitator_outage_preserve_capital(system: Any) -> None:
     service, account, chain = system
     service.facilitator.failure = "verify"

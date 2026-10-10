@@ -507,7 +507,8 @@ class SearchService:
                             }
                         ),
                         liability=row["price"],
-                        variable_fees=0,
+                        # Finalized transfer evidence proves revenue, not merchant fees.
+                        variable_fees=self.config.realized_payment_fee,
                     )
                     await self.advance(purchase)
                     return
