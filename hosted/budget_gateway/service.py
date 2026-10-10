@@ -150,7 +150,7 @@ def authorization_checker(settings: Settings) -> Any:
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    free_runs_per_month: int = 2000
+    free_runs_per_month: int = 250
     per_work_max_usd: Decimal = Decimal("100")
     creation_enabled: bool = True
     max_workspaces: int = 10_000
@@ -164,6 +164,9 @@ class Settings:
     reconcile_seconds: int = 60
     stripe: stripe_checkout.StripeConfig | None = None
     public_base_url: str = "http://localhost:8424"
+    mount_prefix: str = ""
+    client_ip_header: str = "true-client-ip"
+    max_daily_sales_usd: Decimal = Decimal("100")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -191,7 +194,7 @@ class Settings:
             )
         return cls(
             data_dir=Path(e.get("BG_DATA_DIR", "/tmp/inferrail_budget_gateway")),
-            free_runs_per_month=int(e.get("BG_FREE_RUNS_PER_MONTH", "2000")),
+            free_runs_per_month=int(e.get("BG_FREE_RUNS_PER_MONTH", "250")),
             per_work_max_usd=Decimal(e.get("BG_PER_WORK_MAX_USD", "100")),
             creation_enabled=e.get("BG_WORKSPACE_CREATION_ENABLED", "1") == "1",
             max_workspaces=int(e.get("BG_MAX_WORKSPACES", "10000")),
@@ -205,6 +208,9 @@ class Settings:
             reconcile_seconds=int(e.get("BG_RECONCILE_SECONDS", "60")),
             stripe=stripe,
             public_base_url=base,
+            mount_prefix=e.get("BG_MOUNT_PREFIX", "").rstrip("/"),
+            client_ip_header=e.get("BG_CLIENT_IP_HEADER", "true-client-ip").strip().lower(),
+            max_daily_sales_usd=Decimal(e.get("BG_MAX_DAILY_SALES_USD", "100")),
         )
 
 
@@ -288,6 +294,12 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
     creations: dict[str, list[float]] = {}
     checker = authorization_checker(settings) if settings.x402_pay_to else None
 
+    def _within_daily_sales_cap(cents: int) -> None:
+        """Bounded experiment: refuse new purchases past the daily cap (refund exposure)."""
+        sold = ledger.sales_cents_since(time.time() - 86_400)
+        if sold + cents > int(settings.max_daily_sales_usd * 100):
+            raise HTTPException(503, "daily credit sales limit reached; try again tomorrow")
+
     def reconcile() -> dict[str, int] | None:
         return ledger.reconcile_pending(checker) if checker else None
 
@@ -333,7 +345,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         rails: dict[str, Any] = {}
         if settings.x402_pay_to:
             rails["x402"] = {
-                "endpoint": "POST /v1/credits/x402",
+                "endpoint": f"POST {settings.mount_prefix}/v1/credits/x402",
                 "network": settings.x402_network,
                 "asset": "USDC",
                 "price_usd": settings.x402_pack_price_usd,
@@ -342,7 +354,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             }
         if settings.stripe:
             rails["card"] = {
-                "endpoint": "POST /v1/credits/checkout",
+                "endpoint": f"POST {settings.mount_prefix}/v1/credits/checkout",
                 "price_usd": f"{settings.stripe.pack_price_cents / 100:.2f}",
                 "governed_runs": settings.stripe.pack_runs,
             }
@@ -385,8 +397,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             "provider call and shared by every agent and machine using one workspace. "
             "Payload-free receipts. Bring your own OpenAI or Anthropic key.\n\n"
             f"- Create a workspace: POST {settings.public_base_url}/v1/workspaces (no account)\n"
-            "- OpenAI-compatible: POST /v1/chat/completions; Anthropic-compatible: POST "
-            "/v1/messages\n"
+            f"- OpenAI-compatible: POST {settings.public_base_url}/v1/chat/completions; "
+            f"Anthropic-compatible: POST {settings.public_base_url}/v1/messages\n"
             "- Headers: Authorization: Bearer <workspace key>; X-Provider-Api-Key: <your provider "
             "key>; X-Inferrail-Attribute-Work-Id: <run id>; X-Inferrail-Budget-Usd: <ceiling>\n"
             f"- Billing: {BILLING_RULE}\n"
@@ -401,7 +413,11 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             raise HTTPException(503, "workspace creation is paused")
         if ledger.count_workspaces() >= settings.max_workspaces:
             raise HTTPException(503, "workspace capacity reached")
-        ip = request.client.host if request.client else "unknown"
+        ip = (
+            request.headers.get(settings.client_ip_header, "").strip()
+            if settings.client_ip_header
+            else ""
+        ) or (request.client.host if request.client else "unknown")
         now = time.time()
         recent = [t for t in creations.get(ip, []) if now - t < 3600]
         if len(recent) >= settings.creations_per_ip_per_hour:
@@ -609,6 +625,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         packs_raw = request.query_params.get("packs", "1")
         if not packs_raw.isdigit() or not 1 <= int(packs_raw) <= 100:
             raise HTTPException(400, "packs must be 1-100")
+        _within_daily_sales_cap(int(packs_raw) * settings.stripe.pack_price_cents)
         async with stripe_client_factory() as client:
             url = await stripe_checkout.create_session(
                 settings.stripe, workspace_id, int(packs_raw), client
@@ -696,7 +713,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         server.on_after_settle(after_settle)
         server.on_settle_failure(settle_failed)
         routes = {
-            "POST /v1/credits/x402": RouteConfig(
+            f"POST {settings.mount_prefix}/v1/credits/x402": RouteConfig(
                 accepts=PaymentOption(
                     scheme="exact",
                     pay_to=settings.x402_pay_to,
@@ -730,6 +747,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             auth = _authorization(payload)
             if ref is None or not auth.get("validBefore"):
                 raise HTTPException(400, "missing x402 payment")
+            _within_daily_sales_cap(pack_cents)
             ledger.record_pending(
                 "x402",
                 ref,
@@ -757,7 +775,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8424")),
         proxy_headers=True,
-        # Client IPs (creation throttle) come from X-Forwarded-For only from these proxies.
-        forwarded_allow_ips=os.environ.get("BG_FORWARDED_ALLOW_IPS", "127.0.0.1"),
         workers=1,  # one process: see the deployment constraint above
     )

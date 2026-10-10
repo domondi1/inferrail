@@ -30,16 +30,16 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://<host>/v1",
-    api_key="irw_...",                                   # workspace key
-    default_headers={"X-Provider-Api-Key": "sk-..."},   # your OpenAI key: never stored
+    api_key="irw_...",  # workspace key
+    default_headers={"X-Provider-Api-Key": "sk-..."},  # your OpenAI key: never stored
 )
 client.chat.completions.create(
     model="gpt-4o-mini",
     max_tokens=200,
     messages=[{"role": "user", "content": "Summarize this contract."}],
     extra_headers={
-        "X-Inferrail-Attribute-Work-Id": "contract-review-42",   # the run
-        "X-Inferrail-Budget-Usd": "0.50",                        # its ceiling
+        "X-Inferrail-Attribute-Work-Id": "contract-review-42",  # the run
+        "X-Inferrail-Budget-Usd": "0.50",  # its ceiling
     },
 )
 ```
