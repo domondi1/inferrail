@@ -1,40 +1,56 @@
-"""Inferrail Hosted: the Inferrail gateway run for you, with per-run budgets that hold across every
-agent and machine that calls the same workspace.
+"""Inferrail Hosted: the Inferrail gateway run for you. Per-run budgets hold across every agent and
+machine that calls the same workspace.
 
 Lives outside `src/inferrail`, like the other hosted services (docs/adr/0004). The self-hosted
-gateway is unchanged and unrestricted: everything it does locally stays free. What this service
-adds is what one self-hosted SQLite file can't do: a single budget ledger shared by a whole
-fleet, run and kept up for you.
+gateway is unchanged and unrestricted. What this service adds is operation: a durable workspace,
+one central budget ledger that every client of the workspace shares, and self-service billing.
+
+**Deployment constraint: exactly one instance per data directory.**
+- Every guarantee comes from one process owning its SQLite files. Many client machines may call
+  one instance.
+- Multiple gateway replicas sharing state are **not supported**.
+- `create_app` takes an exclusive OS lock on the data directory and refuses to start if
+  another instance holds it.
 
 **How a call works**
+1. `Authorization: Bearer irw_...` identifies the workspace.
+2. The provider key travels in `X-Provider-Api-Key` on every request. It is never stored,
+   logged or returned, and it is scrubbed from any error text.
+3. `X-Inferrail-Attribute-Work-Id` names the run, and `X-Inferrail-Budget-Usd` sets its ceiling.
+   Concurrent calls in one run share it through the same atomic reservation as the self-hosted
+   gateway.
+4. The run is metered (`workspaces.py`): billed only if one of its calls is answered by the
+   provider.
+5. Past the free allowance with no credits, a call gets 402 `allowance_exhausted`. Nothing is
+   sent to the provider.
 
-1. `Authorization: Bearer irw_...` identifies the workspace. The provider key travels in
-   `X-Provider-Api-Key` on every request and is **never stored, logged or returned**.
-2. `X-Inferrail-Attribute-Work-Id` names the run, and `X-Inferrail-Budget-Usd` sets its dollar
-   ceiling. Concurrent calls in one run share it atomically, and a call that would exceed it gets
-   402 before reaching the provider. A call without a work id is its own run.
-3. The run is metered as a *governed run* (`workspaces.py`). Past the monthly free allowance with
-   no credits left, the call gets 402 `allowance_exhausted` with both ways to buy more: x402 USDC
-   for agents, Stripe Checkout for people.
+**Credits, one ledger, two rails**
+- `POST /v1/credits/x402`, agents, USDC:
+  - the handler records a pending purchase, keyed by payer and EIP-3009 nonce, before
+    settlement;
+  - the after-settle hook grants credits;
+  - a crash in between is resolved from the chain (`chain_check.py`) at startup and
+    periodically.
+- `POST /v1/credits/checkout`, people, card:
+  - Stripe Checkout;
+  - only a signature-verified webhook grants credits;
+  - refunds reverse them.
 
-**Selling credits.** One credit ledger, two rails.
-- `POST /v1/credits/x402` is paid via x402 `exact`. The handler records the purchase as pending,
-  keyed by the EIP-3009 nonce, and the after-settle hook turns it into credits. Nothing is granted
-  unless settlement succeeds.
-- `POST /v1/credits/checkout` returns a Stripe Checkout URL. Only a signature-verified webhook
-  grants credits.
-
-Both rails stay off until configured. Mainnet x402 also requires `BG_X402_MAINNET_APPROVED=1`, a
-recorded founder go-live approval.
+Both rails are off until configured. Mainnet x402 also requires `BG_X402_MAINNET_APPROVED=1`.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import fcntl
+import logging
 import os
 import sys
 import threading
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -46,6 +62,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import chain_check  # noqa: E402
 import stripe_checkout  # noqa: E402
 from workspaces import WorkspaceLedger  # noqa: E402
 
@@ -74,7 +91,6 @@ from inferrail.gateway.attribution import extract_attributes, extract_declared_b
 from inferrail.gateway.execution import InferenceEngine  # noqa: E402
 from inferrail.gateway.schemas import (  # noqa: E402
     ChatCompletionRequest,
-    ChatCompletionResponse,
     ErrorDetail,
     ErrorResponse,
 )
@@ -85,9 +101,16 @@ from inferrail.receipts.sqlite_store import ReceiptsStore  # noqa: E402
 from inferrail.routing.router import Router  # noqa: E402
 from inferrail.telemetry.sinks import NullTelemetrySink  # noqa: E402
 
+log = logging.getLogger("inferrail.hosted")
 PROVIDER_KEY_HEADER = "x-provider-api-key"
 MAINNET = "eip155:8453"
 TESTNET = "eip155:84532"
+BILLING_RULE = (
+    "A governed run is a distinct work id (X-Inferrail-Attribute-Work-Id) in a UTC month. It is "
+    "billed only if at least one of its calls is answered by the provider; runs whose calls all "
+    "fail or are refused by their own budget cost nothing. Calls without a work id are each "
+    "their own run."
+)
 
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
@@ -115,6 +138,15 @@ def stripe_client_factory() -> httpx.AsyncClient:
     return httpx.AsyncClient()
 
 
+def authorization_checker(settings: Settings) -> Any:
+    """`(authorizer, nonce) -> bool | None` against the chain, or None if no RPC is configured."""
+    if not settings.rpc_url:
+        return None
+    return lambda authorizer, nonce: chain_check.authorization_used(
+        settings.rpc_url or "", settings.x402_network, authorizer, nonce
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -123,10 +155,13 @@ class Settings:
     creation_enabled: bool = True
     max_workspaces: int = 10_000
     creations_per_ip_per_hour: int = 5
+    max_body_bytes: int = 2_000_000
     x402_network: str = TESTNET
     x402_pay_to: str | None = None
     x402_pack_price_usd: str = "1.00"
     x402_pack_runs: int = 1000
+    rpc_url: str | None = None
+    reconcile_seconds: int = 60
     stripe: stripe_checkout.StripeConfig | None = None
     public_base_url: str = "http://localhost:8424"
 
@@ -139,9 +174,13 @@ class Settings:
         pay_to = e.get("BG_X402_PAY_TO") or None
         if network == MAINNET and pay_to and e.get("BG_X402_MAINNET_APPROVED") != "1":
             raise RuntimeError("mainnet credit sales require BG_X402_MAINNET_APPROVED=1")
+        if network == MAINNET and pay_to and not e.get("BG_BASE_RPC_URL"):
+            # Without chain reconciliation, a payment that settled while the process crashed
+            # could stay uncredited. Refuse rather than risk it.
+            raise RuntimeError("mainnet credit sales require BG_BASE_RPC_URL for reconciliation")
+        base = e.get("BG_PUBLIC_BASE_URL", "http://localhost:8424")
         stripe = None
         if e.get("STRIPE_SECRET_KEY") and e.get("STRIPE_WEBHOOK_SECRET"):
-            base = e.get("BG_PUBLIC_BASE_URL", "http://localhost:8424")
             stripe = stripe_checkout.StripeConfig(
                 secret_key=e["STRIPE_SECRET_KEY"],
                 webhook_secret=e["STRIPE_WEBHOOK_SECRET"],
@@ -157,13 +196,33 @@ class Settings:
             creation_enabled=e.get("BG_WORKSPACE_CREATION_ENABLED", "1") == "1",
             max_workspaces=int(e.get("BG_MAX_WORKSPACES", "10000")),
             creations_per_ip_per_hour=int(e.get("BG_CREATIONS_PER_IP_PER_HOUR", "5")),
+            max_body_bytes=int(e.get("BG_MAX_BODY_BYTES", "2000000")),
             x402_network=network,
             x402_pay_to=pay_to,
             x402_pack_price_usd=e.get("BG_X402_PACK_PRICE_USD", "1.00"),
             x402_pack_runs=int(e.get("BG_X402_PACK_RUNS", "1000")),
+            rpc_url=e.get("BG_BASE_RPC_URL") or None,
+            reconcile_seconds=int(e.get("BG_RECONCILE_SECONDS", "60")),
             stripe=stripe,
-            public_base_url=e.get("BG_PUBLIC_BASE_URL", "http://localhost:8424"),
+            public_base_url=base,
         )
+
+
+class InstanceLockError(RuntimeError):
+    pass
+
+
+def _acquire_instance_lock(data_dir: Path) -> int:
+    fd = os.open(data_dir / "instance.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as ex:
+        os.close(fd)
+        raise InstanceLockError(
+            f"another Inferrail Hosted instance is using {data_dir}; exactly one instance per "
+            "data directory is supported"
+        ) from ex
+    return fd
 
 
 class _Stores:
@@ -199,23 +258,77 @@ def _pricing() -> PricingResolver:
     )
 
 
-def _payment_ref(payload: Any) -> str | None:
+def _authorization(payload: Any) -> dict[str, Any]:
     auth = (getattr(payload, "payload", None) or {}).get("authorization") or {}
+    return auth if isinstance(auth, dict) else {}
+
+
+def _payment_ref(payload: Any) -> str | None:
+    auth = _authorization(payload)
     nonce, payer = auth.get("nonce"), auth.get("from")
     return f"{str(payer).lower()}:{str(nonce).lower()}" if nonce and payer else None
 
 
+def _scrub(text: str, request: Request) -> str:
+    key = request.headers.get(PROVIDER_KEY_HEADER, "").strip()
+    return text.replace(key, "[redacted]") if len(key) >= 8 else text
+
+
 def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    lock_fd = _acquire_instance_lock(settings.data_dir)
     ledger = WorkspaceLedger(
         settings.data_dir / "workspaces.sqlite3", free_runs_per_month=settings.free_runs_per_month
     )
+    released = ledger.release_orphaned_holds()
+    if released:
+        log.warning("released %d run holds left by a previous process", released)
     pricing_resolver = _pricing()  # stateless; shared by every workspace
     stores = _Stores(settings.data_dir, pricing_resolver, settings.per_work_max_usd)
     creations: dict[str, list[float]] = {}
-    app = FastAPI(title="Inferrail Hosted")
+    checker = authorization_checker(settings) if settings.x402_pay_to else None
 
-    # -- pricing, published in one place --------------------------------------------------------
+    def reconcile() -> dict[str, int] | None:
+        return ledger.reconcile_pending(checker) if checker else None
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        task = None
+        if checker:
+            await asyncio.to_thread(reconcile)
+
+            async def loop() -> None:
+                while True:
+                    await asyncio.sleep(settings.reconcile_seconds)
+                    try:
+                        await asyncio.to_thread(reconcile)
+                    except Exception:  # keep reconciling; never take the API down
+                        log.exception("reconciliation pass failed")
+
+            task = asyncio.create_task(loop())
+        yield
+        if task:
+            task.cancel()
+
+    app = FastAPI(title="Inferrail Hosted", lifespan=lifespan)
+    app.state.ledger = ledger
+    app.state.reconcile = reconcile
+
+    def release_instance_lock() -> None:
+        with contextlib.suppress(OSError):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+    app.state.release_instance_lock = release_instance_lock
+
+    @app.middleware("http")
+    async def body_limit(request: Request, call_next: Any) -> Any:
+        length = request.headers.get("content-length")
+        if length and length.isdigit() and int(length) > settings.max_body_bytes:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        return await call_next(request)
+
+    # -- published terms ---------------------------------------------------------------------------
     def price_sheet() -> dict[str, Any]:
         rails: dict[str, Any] = {}
         if settings.x402_pay_to:
@@ -235,19 +348,25 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             }
         return {
             "product": "Inferrail Hosted",
-            "unit": (
-                "governed run: a distinct work id with at least one call through the gateway "
-                "in a UTC month"
-            ),
+            "status": "experimental pricing",
+            "billable_unit": BILLING_RULE,
             "free_governed_runs_per_month": settings.free_runs_per_month,
             "price_per_governed_run_usd": "0.001",
             "credits": rails,
+            "no_surprise_charges": (
+                "Credits are prepaid; there is no subscription, no auto top-up and no overage "
+                "billing. When the allowance and credits run out, calls are refused with 402 "
+                "before reaching the provider."
+            ),
             "subscription": None,
             "self_hosted": (
                 "The open-source gateway is free and unrestricted: pip install inferrail"
             ),
-            "provider_spend": "Billed by your provider on your own key. Inferrail never resells "
-            "model access and never stores your provider key.",
+            "provider_spend": (
+                "Billed by your provider on your own key. Inferrail never resells model access "
+                "and never stores your provider key."
+            ),
+            "deployment": "single instance; budgets are shared by every client of a workspace",
         }
 
     @app.get("/health")
@@ -262,19 +381,20 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
     async def llms() -> str:
         p = price_sheet()
         return (
-            "# Inferrail Hosted\n\n> Per-run dollar budgets for AI agents, enforced before the "
-            "provider is called and shared by every agent and machine using one workspace. "
+            "# Inferrail Hosted\n\n> Per-run dollar budgets for AI agents, reserved before every "
+            "provider call and shared by every agent and machine using one workspace. "
             "Payload-free receipts. Bring your own OpenAI or Anthropic key.\n\n"
             f"- Create a workspace: POST {settings.public_base_url}/v1/workspaces (no account)\n"
             "- OpenAI-compatible: POST /v1/chat/completions; Anthropic-compatible: POST "
             "/v1/messages\n"
             "- Headers: Authorization: Bearer <workspace key>; X-Provider-Api-Key: <your provider "
             "key>; X-Inferrail-Attribute-Work-Id: <run id>; X-Inferrail-Budget-Usd: <ceiling>\n"
+            f"- Billing: {BILLING_RULE}\n"
             f"- Price: {p['free_governed_runs_per_month']} governed runs/month free, then "
             f"${p['price_per_governed_run_usd']} per run via prepaid credits: GET /pricing\n"
         )
 
-    # -- workspaces -----------------------------------------------------------------------------
+    # -- workspaces -------------------------------------------------------------------------------
     @app.post("/v1/workspaces", status_code=201)
     async def create_workspace(request: Request) -> dict[str, Any]:
         if not settings.creation_enabled:
@@ -286,13 +406,15 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         recent = [t for t in creations.get(ip, []) if now - t < 3600]
         if len(recent) >= settings.creations_per_ip_per_hour:
             raise HTTPException(429, "too many workspaces created from this address")
-        creations[ip] = recent + [now]
+        creations[ip] = [*recent, now]
         workspace_id, api_key = ledger.create_workspace()
         return {
             "workspace_id": workspace_id,
             "api_key": api_key,
             "api_key_notice": "Shown once. Inferrail stores only its hash.",
             "base_url": settings.public_base_url + "/v1",
+            "next": "Send a call with Authorization: Bearer <api_key>, X-Provider-Api-Key, "
+            "X-Inferrail-Attribute-Work-Id and X-Inferrail-Budget-Usd.",
             "pricing": price_sheet(),
         }
 
@@ -313,19 +435,24 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             "workspace_id": workspace_id,
             "month": u.month,
             "governed_runs": u.month_runs,
+            "billed_runs": u.billed_runs,
             "free_runs_remaining": u.free_runs_remaining,
             "credits_remaining": u.credits_remaining,
             "pricing": price_sheet(),
         }
 
-    # -- proxy ----------------------------------------------------------------------------------
+    @app.get("/v1/workspace/ledger")
+    async def workspace_ledger(workspace_id: str = require_workspace) -> dict[str, Any]:
+        return ledger.statement(workspace_id)
+
+    # -- proxy ------------------------------------------------------------------------------------
     @app.exception_handler(InferrailError)
-    async def inferrail_error(_: Request, exc: InferrailError) -> JSONResponse:
+    async def inferrail_error(request: Request, exc: InferrailError) -> JSONResponse:
         status = next((s for t, s in _STATUS_BY_ERROR if isinstance(exc, t)), 500)
         code = code_for(exc)
         body = ErrorResponse(
             error=ErrorDetail(
-                message=str(exc),
+                message=_scrub(str(exc), request),
                 type=type(exc).__name__,
                 code=code.code,
                 remediation=code.remediation,
@@ -334,14 +461,19 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         )
         return JSONResponse(status_code=status, content=body.model_dump())
 
-    def _admit(request: Request, workspace_id: str) -> tuple[dict[str, str], Decimal | None]:
+    @app.exception_handler(Exception)
+    async def unexpected_error(_: Request, exc: Exception) -> JSONResponse:
+        log.error("unhandled %s", type(exc).__name__)  # never the message: it could hold a key
+        return JSONResponse({"detail": "internal error"}, status_code=500)
+
+    def _admit(request: Request, workspace_id: str) -> tuple[dict[str, str], Decimal | None, Any]:
         provider_key = request.headers.get(PROVIDER_KEY_HEADER, "").strip()
         if not provider_key:
             raise HTTPException(400, "send your provider key in X-Provider-Api-Key")
         attributes = extract_attributes(request.headers)
         declared = extract_declared_budget(request.headers)
         work_id = attributes.setdefault("work_id", f"call_{uuid.uuid4().hex[:16]}")
-        admission = ledger.admit_run(workspace_id, work_id)
+        admission = ledger.hold_run(workspace_id, work_id)
         if not admission.admitted:
             raise HTTPException(
                 status_code=402,
@@ -352,17 +484,55 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                     "purchase": price_sheet()["credits"],
                 },
             )
-        return attributes, declared
+        return attributes, declared, (workspace_id, admission.month, work_id)
+
+    async def _run(
+        engine: Any,
+        provider: Any,
+        payload: Any,
+        request: Request,
+        workspace_id: str,
+        serialize: Any,
+    ) -> Any:
+        attributes, declared, hold = _admit(request, workspace_id)
+        if payload.stream:
+            try:
+                body = await engine.prepare_stream(
+                    payload, attributes=attributes, declared_budget_usd=declared
+                )
+            except BaseException:
+                ledger.finish_call(*hold, answered=False)
+                await provider.aclose()
+                raise
+
+            async def stream() -> AsyncIterator[bytes]:
+                try:
+                    async for chunk in body:
+                        yield chunk
+                finally:
+                    ledger.finish_call(*hold, answered=True)
+                    await provider.aclose()
+
+            return StreamingResponse(stream(), media_type="text/event-stream")
+        answered = False
+        try:
+            result = await engine.execute(
+                payload, attributes=attributes, declared_budget_usd=declared
+            )
+            answered = True
+            return serialize(result)
+        finally:
+            ledger.finish_call(*hold, answered=answered)
+            await provider.aclose()
 
     @app.post("/v1/chat/completions", response_model=None)
     async def chat_completions(
         payload: ChatCompletionRequest, request: Request, workspace_id: str = require_workspace
-    ) -> ChatCompletionResponse | StreamingResponse:
-        attributes, declared = _admit(request, workspace_id)
+    ) -> Any:
         receipts, enforcer = stores.get(workspace_id)
         provider = OpenAIProvider(
             name="openai",
-            api_key=request.headers[PROVIDER_KEY_HEADER].strip(),
+            api_key=request.headers.get(PROVIDER_KEY_HEADER, "").strip(),
             base_url="https://api.openai.com/v1",
             is_verified_openai=True,
             client=openai_client_factory(),
@@ -375,39 +545,16 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             receipts,
             budgets=enforcer,
         )
-        if payload.stream:
-            try:
-                body = await engine.prepare_stream(
-                    payload, attributes=attributes, declared_budget_usd=declared
-                )
-            except BaseException:
-                await provider.aclose()
-                raise
-
-            async def stream() -> Any:
-                try:
-                    async for chunk in body:
-                        yield chunk
-                finally:
-                    await provider.aclose()
-
-            return StreamingResponse(stream(), media_type="text/event-stream")
-        try:
-            return await engine.execute(
-                payload, attributes=attributes, declared_budget_usd=declared
-            )
-        finally:
-            await provider.aclose()
+        return await _run(engine, provider, payload, request, workspace_id, lambda r: r)
 
     @app.post("/v1/messages", response_model=None)
     async def messages(
         payload: MessagesRequest, request: Request, workspace_id: str = require_workspace
     ) -> Any:
-        attributes, declared = _admit(request, workspace_id)
         receipts, enforcer = stores.get(workspace_id)
         provider = AnthropicProvider(
             name="anthropic",
-            api_key=request.headers[PROVIDER_KEY_HEADER].strip(),
+            api_key=request.headers.get(PROVIDER_KEY_HEADER, "").strip(),
             base_url="https://api.anthropic.com/v1",
             client=anthropic_client_factory(),
         )
@@ -419,33 +566,15 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             receipts,
             budgets=enforcer,
         )
-        if payload.stream:
-            try:
-                body = await engine.prepare_stream(
-                    payload, attributes=attributes, declared_budget_usd=declared
-                )
-            except BaseException:
-                await provider.aclose()
-                raise
-
-            async def stream() -> Any:
-                try:
-                    async for chunk in body:
-                        yield chunk
-                finally:
-                    await provider.aclose()
-
-            return StreamingResponse(stream(), media_type="text/event-stream")
-        try:
-            result = await engine.execute(
-                payload, attributes=attributes, declared_budget_usd=declared
-            )
-        finally:
-            await provider.aclose()
-        return JSONResponse(
-            result.model_dump(
-                mode="json", exclude={"usage": absent_cache_usage_fields(result.usage)}
-            )
+        return await _run(
+            engine,
+            provider,
+            payload,
+            request,
+            workspace_id,
+            lambda r: JSONResponse(
+                r.model_dump(mode="json", exclude={"usage": absent_cache_usage_fields(r.usage)})
+            ),
         )
 
     @app.get("/v1/work/{work_id}")
@@ -459,19 +588,32 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             "cost_usd": str(sum(priced, Decimal(0))),
             "unpriced_calls": len(rows) - len(priced),
             "unsuccessful_calls": sum(1 for r in rows if r.status != "success"),
+            "receipts": [
+                {
+                    "request_id": r.request_id,
+                    "model": r.model,
+                    "status": r.status,
+                    "estimated_cost_usd": None
+                    if r.estimated_cost_usd is None
+                    else str(r.estimated_cost_usd),
+                }
+                for r in rows
+            ],
         }
 
-    # -- credits: card ---------------------------------------------------------------------------
+    # -- credits: card ----------------------------------------------------------------------------
     @app.post("/v1/credits/checkout")
     async def checkout(request: Request, workspace_id: str = require_workspace) -> dict[str, str]:
         if settings.stripe is None:
             raise HTTPException(501, "card purchases are not enabled on this deployment")
-        packs = int(request.query_params.get("packs", "1"))
-        if not 1 <= packs <= 100:
+        packs_raw = request.query_params.get("packs", "1")
+        if not packs_raw.isdigit() or not 1 <= int(packs_raw) <= 100:
             raise HTTPException(400, "packs must be 1-100")
         async with stripe_client_factory() as client:
-            url = await stripe_checkout.create_session(settings.stripe, workspace_id, packs, client)
-        return {"checkout_url": url}
+            url = await stripe_checkout.create_session(
+                settings.stripe, workspace_id, int(packs_raw), client
+            )
+        return {"checkout_url": url, "note": "Credits are added when Stripe confirms payment."}
 
     @app.post("/v1/stripe/webhook")
     async def stripe_webhook(request: Request) -> dict[str, Any]:
@@ -484,22 +626,35 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             )
         except stripe_checkout.SignatureError as ex:
             raise HTTPException(400, f"invalid signature: {ex}") from ex
+        refund = stripe_checkout.refunded_charge(event)
+        if refund is not None:
+            intent, refunded = refund
+            reversed_runs = ledger.apply_refund("stripe", None, refunded, external_id=intent)
+            return {"refund_applied": reversed_runs is not None, "runs_reversed": reversed_runs}
         paid = stripe_checkout.paid_session(event)
         if paid is None:
             return {"granted": False, "reason": "not a paid checkout session"}
-        session_id, workspace_id, packs, amount = paid
+        session_id, workspace_id, packs, amount, intent = paid
         if amount != packs * settings.stripe.pack_price_cents:
+            log.error(
+                "checkout %s amount %d does not match the published price", session_id, amount
+            )
             return {"granted": False, "reason": "amount does not match the published price"}
         granted = ledger.grant(
-            "stripe", session_id, workspace_id, packs * settings.stripe.pack_runs, amount
+            "stripe",
+            session_id,
+            workspace_id,
+            packs * settings.stripe.pack_runs,
+            amount,
+            external_id=intent,
         )
         return {"granted": granted}
 
     @app.get("/v1/credits/thanks", response_class=PlainTextResponse)
     async def thanks() -> str:
-        return "Payment received. Credits appear once Stripe confirms it (usually seconds)."
+        return "Payment submitted. Credits appear once Stripe confirms it (usually seconds)."
 
-    # -- credits: x402 ---------------------------------------------------------------------------
+    # -- credits: x402 ----------------------------------------------------------------------------
     if settings.x402_pay_to:
         from x402.http import HTTPFacilitatorClient
         from x402.http.middleware.fastapi import payment_middleware
@@ -534,9 +689,9 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 ledger.fail_pending("x402", ref)
 
         async def settle_failed(context: Any) -> None:
-            ref = _payment_ref(context.payment_payload)
-            if ref is not None:
-                ledger.fail_pending("x402", ref)
+            # A failed settle call is not proof the transfer didn't happen (timeouts).
+            # Reconciliation decides from the chain; nothing is granted here.
+            log.warning("x402 settlement failed; left pending for reconciliation")
 
         server.on_after_settle(after_settle)
         server.on_settle_failure(settle_failed)
@@ -551,8 +706,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 resource=settings.public_base_url + "/v1/credits/x402",
                 description=(
                     f"{settings.x402_pack_runs:,} governed runs of Inferrail Hosted: per-run "
-                    "dollar budgets for AI agents, enforced before the provider is called. "
-                    "Send your workspace key as a Bearer token."
+                    "dollar budgets for AI agents, reserved before every provider call. Send "
+                    "your workspace key as a Bearer token."
                 ),
                 mime_type="application/json",
                 service_name="Inferrail Hosted credits",
@@ -570,10 +725,21 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             request: Request, workspace_id: str = require_workspace
         ) -> dict[str, Any]:
             header = request.headers.get("payment-signature")
-            ref = _payment_ref(decode_payment_signature_header(header)) if header else None
-            if ref is None:
+            payload = decode_payment_signature_header(header) if header else None
+            ref = _payment_ref(payload) if payload else None
+            auth = _authorization(payload)
+            if ref is None or not auth.get("validBefore"):
                 raise HTTPException(400, "missing x402 payment")
-            ledger.record_pending("x402", ref, workspace_id, settings.x402_pack_runs, pack_cents)
+            ledger.record_pending(
+                "x402",
+                ref,
+                workspace_id,
+                settings.x402_pack_runs,
+                pack_cents,
+                authorizer=str(auth["from"]),
+                nonce=str(auth["nonce"]),
+                valid_before=int(auth["validBefore"]),
+            )
             return {
                 "workspace_id": workspace_id,
                 "governed_runs": settings.x402_pack_runs,
@@ -591,4 +757,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8424")),
         proxy_headers=True,
+        # Client IPs (creation throttle) come from X-Forwarded-For only from these proxies.
+        forwarded_allow_ips=os.environ.get("BG_FORWARDED_ALLOW_IPS", "127.0.0.1"),
+        workers=1,  # one process: see the deployment constraint above
     )

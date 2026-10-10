@@ -69,14 +69,16 @@
     <p class="eyebrow">For agents and the people who run them</p>
     <h1>Inferrail Hosted<span>One budget per run, across your whole fleet.</span></h1>
     <p class="lede">Give each AI run a dollar ceiling in a request header. Every call in that run shares it, including parallel calls from different agents and machines, and a call that would push the run past it is refused before it reaches OpenAI or Anthropic. You bring your own provider key with each request; we never store it.</p>
-    <p class="pill">2,000 governed runs a month free · then $0.001 per run · no subscription</p>
+    <p class="pill">Experimental · 2,000 governed runs a month free · then $0.001 per run · no subscription</p>
 
     <section class="block" aria-labelledby="price-title">
       <h2 id="price-title">Price</h2>
       <div class="facts">
-        <div class="fact-row"><span class="fact-label">Unit</span><p>A <strong>governed run</strong>: a distinct work id (<code>X-Inferrail-Attribute-Work-Id</code>) with at least one call through the gateway in a calendar month (UTC). Calls inside a run are not charged separately.</p></div>
+        <div class="fact-row"><span class="fact-label">Unit</span><p>A <strong>governed run</strong>: a distinct work id (<code>X-Inferrail-Attribute-Work-Id</code>) in a calendar month (UTC). Calls inside a run are not charged separately.</p></div>
+        <div class="fact-row"><span class="fact-label">Billed when</span><p>At least one call in the run is answered by your provider. A run whose calls all fail, or are all refused by its own budget, costs nothing.</p></div>
         <div class="fact-row"><span class="fact-label">Free</span><p>2,000 governed runs per workspace per month.</p></div>
         <div class="fact-row"><span class="fact-label">After that</span><p>Prepaid credits at $0.001 per run. People pay by card: $10 for 10,000 runs. Agents pay in USDC over x402: $1 for 1,000 runs, with no account.</p></div>
+        <div class="fact-row"><span class="fact-label">No surprises</span><p>Credits are prepaid. No subscription, no auto top-up, no overage bill. When the allowance and credits run out, calls are refused before reaching your provider, with a link to buy more.</p></div>
         <div class="fact-row"><span class="fact-label">Model spend</span><p>Billed by your provider on your own key. Inferrail doesn't resell model access or mark it up.</p></div>
         <div class="fact-row"><span class="fact-label">Self-hosted</span><p>The open-source gateway is free and does everything on one machine: <code>pip install inferrail</code>. Hosted is for when many agents and machines must share one budget ledger and you'd rather not run it.</p></div>
       </div>
@@ -101,6 +103,7 @@
         <li>Receipts hold costs and identifiers, not prompts or responses.</li>
         <li>Each payment adds credits at most once. A card purchase counts only after Stripe confirms it, and a USDC purchase only after it settles.</li>
       </ul>
+      <p class="testnet-note"><strong>Experimental.</strong> These prices are a first offer and may change; credits you've already bought keep their terms.</p>
     </section>
   </main>
   <footer class="wrap">Inferrail Hosted · <a href="/">Home</a> · <a href="https://github.com/domondi1/inferrail/tree/main/hosted/budget_gateway">Source</a></footer>

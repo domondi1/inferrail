@@ -60,9 +60,10 @@ def verify_event(
     return json.loads(raw_body)
 
 
-def paid_session(event: dict[str, Any]) -> tuple[str, str, int, int] | None:
-    """(session_id, workspace_id, packs, amount_total_cents) for a paid Checkout session, else
-    None. `packs` comes from our own metadata, never from a client-supplied amount."""
+def paid_session(event: dict[str, Any]) -> tuple[str, str, int, int, str | None] | None:
+    """(session_id, workspace_id, packs, amount_total_cents, payment_intent) for a paid Checkout
+    session, else None. `packs` comes from our own metadata, never from a client-supplied
+    amount."""
     if event.get("type") != "checkout.session.completed":
         return None
     session = (event.get("data") or {}).get("object") or {}
@@ -72,7 +73,24 @@ def paid_session(event: dict[str, Any]) -> tuple[str, str, int, int] | None:
     workspace_id, packs = meta.get("workspace_id"), meta.get("packs")
     if not workspace_id or not str(packs).isdigit():
         return None
-    return session["id"], workspace_id, int(packs), int(session.get("amount_total") or 0)
+    return (
+        session["id"],
+        workspace_id,
+        int(packs),
+        int(session.get("amount_total") or 0),
+        session.get("payment_intent"),
+    )
+
+
+def refunded_charge(event: dict[str, Any]) -> tuple[str, int] | None:
+    """(payment_intent, cumulative amount_refunded_cents) for a `charge.refunded` event."""
+    if event.get("type") != "charge.refunded":
+        return None
+    charge = (event.get("data") or {}).get("object") or {}
+    intent = charge.get("payment_intent")
+    if not intent:
+        return None
+    return str(intent), int(charge.get("amount_refunded") or 0)
 
 
 async def create_session(
