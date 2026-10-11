@@ -169,6 +169,20 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 
 ## Deployment constraints
 
+- **Pre-deploy payment check.** Set the platform's pre-deploy command to
+  `python3 hosted/budget_gateway/preflight.py --expect-pay-to <approved receiving address>`.
+  It fails the deploy, so the running version keeps serving, when the saved environment would
+  crash the service at startup (e.g. mainnet without `BG_X402_MAINNET_APPROVED=1` or
+  `BG_BASE_RPC_URL`) or collect payments differently from what was approved:
+  - a different `payTo`;
+  - a wallet secret present;
+  - missing facilitator keys;
+  - a wrong chain;
+  - no facilitator support.
+
+  It needs no disk and prints no secret values. With a persistent disk attached, deploys stop
+  the old instance first, so a startup failure would otherwise be an outage.
+
 - **Exactly one instance per data directory**, with one uvicorn worker.
   - Many client machines may call it; that's the "shared across your fleet" guarantee.
   - **Multiple gateway replicas sharing state are not supported and not claimed.**
