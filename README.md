@@ -248,6 +248,13 @@ These are separate from the gateway above and not needed to use it.
 - **Hosted trial** (preview): a short-lived hosted gateway at
   [tryinferrail.com/try](https://tryinferrail.com/try/). If you add a real
   key there, the hosted process holds it ([key handling](hosted/cost_gateway/README.md)).
+- **Inferrail Hosted** (experimental pricing): the same per-run budgets run
+  for you, so many agents and machines share one ledger. 250 runs a month
+  free, then prepaid credits in USDC over x402. Bring your own provider key.
+  [Page](https://tryinferrail.com/hosted/) ·
+  [quickstart](hosted/budget_gateway/README.md#quickstart) ·
+  [for agents: llms.txt](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt) ·
+  [multi-agent example](examples/hosted_shared_budget/).
 - **Work Economics** and **Economic Authority** (experimental, hosted,
   Base Sepolia testnet only): [Work Economics docs](docs/capabilities/work-economics.md) ·
   [Economic Authority docs](docs/capabilities/economic-authority.md) ·

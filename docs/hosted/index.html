@@ -70,7 +70,6 @@
     <h1>Inferrail Hosted<span>One budget per run, across your whole fleet.</span></h1>
     <p class="lede">Give each AI run a dollar ceiling in a request header. Every call in that run shares it, including parallel calls from different agents and machines, and a call that would push the run past it is refused before it reaches OpenAI or Anthropic. You bring your own provider key with each request; we never store it.</p>
     <p class="pill">Experimental · 250 governed runs a month free · then $0.001 per run · no subscription</p>
-    <p class="testnet-note"><strong>Not open yet.</strong> This page describes the terms Inferrail Hosted will launch with. The hosted service isn't accepting workspaces yet; until it is, the <a href="https://github.com/domondi1/inferrail#quickstart">open-source gateway</a> does the same per-run enforcement on your own machine.</p>
 
     <section class="block" aria-labelledby="price-title">
       <h2 id="price-title">Price</h2>
@@ -78,7 +77,7 @@
         <div class="fact-row"><span class="fact-label">Unit</span><p>A <strong>governed run</strong>: a distinct work id (<code>X-Inferrail-Attribute-Work-Id</code>) in a calendar month (UTC). Calls inside a run are not charged separately.</p></div>
         <div class="fact-row"><span class="fact-label">Billed when</span><p>At least one call in the run is answered by your provider. A run whose calls all fail, or are all refused by its own budget, costs nothing.</p></div>
         <div class="fact-row"><span class="fact-label">Free</span><p>250 governed runs per workspace per month.</p></div>
-        <div class="fact-row"><span class="fact-label">After that</span><p>Prepaid credits at $0.001 per run. People pay by card: $10 for 10,000 runs. Agents pay in USDC over x402: $1 for 1,000 runs, with no account.</p></div>
+        <div class="fact-row"><span class="fact-label">After that</span><p>Prepaid credits at $0.001 per run: $1 for 1,000 runs, paid in USDC on Base over x402, with no account. Card payment isn't available yet.</p></div>
         <div class="fact-row"><span class="fact-label">No surprises</span><p>Credits are prepaid. No subscription, no auto top-up, no overage bill. When the allowance and credits run out, calls are refused before reaching your provider, with a link to buy more.</p></div>
         <div class="fact-row"><span class="fact-label">Model spend</span><p>Billed by your provider on your own key. Inferrail doesn't resell model access or mark it up.</p></div>
         <div class="fact-row"><span class="fact-label">Self-hosted</span><p>The open-source gateway is free and does everything on one machine: <code>pip install inferrail</code>. Hosted is for when many agents and machines must share one budget ledger and you'd rather not run it.</p></div>
@@ -88,12 +87,12 @@
     <section class="block" aria-labelledby="start-title">
       <h2 id="start-title">Start</h2>
       <ul>
-        <li><code>POST /v1/workspaces</code> returns a workspace key, once. No sign-up form.</li>
-        <li>Point an OpenAI or Anthropic SDK at <code>/v1</code> with the workspace key as the API key, and send your provider key in <code>X-Provider-Api-Key</code>.</li>
+        <li><code>POST https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces</code> returns a workspace key, once. No sign-up form.</li>
+        <li>Point the OpenAI SDK at <code>https://inferrail-cost-gateway.onrender.com/hosted/v1</code>, or the Anthropic SDK at <code>https://inferrail-cost-gateway.onrender.com/hosted</code> (it adds <code>/v1</code> itself). Use the workspace key as the API key, and send your own provider key in <code>X-Provider-Api-Key</code>.</li>
         <li>Name the run and set its ceiling: <code>X-Inferrail-Attribute-Work-Id</code>, <code>X-Inferrail-Budget-Usd</code>.</li>
-        <li><code>GET /v1/work/&lt;id&gt;</code> shows what the run cost. <code>GET /pricing</code> and <code>/llms.txt</code> publish these terms for agents.</li>
+        <li><code>GET /v1/work/&lt;id&gt;</code> shows what the run cost. For agents, <a href="https://inferrail-cost-gateway.onrender.com/hosted/llms.txt"><code>/llms.txt</code></a> is the whole contract (headers, errors, retries, buying credits) and <code>GET /pricing</code> is the same as JSON. A <a href="https://github.com/domondi1/inferrail/tree/main/examples/hosted_shared_budget">runnable example</a> shows several agents sharing one run budget.</li>
       </ul>
-      <p>Past your allowance with no credits left, a call gets HTTP 402 <code>allowance_exhausted</code>, listing both ways to buy. Nothing reaches your provider.</p>
+      <p>Past your allowance with no credits left, a call gets HTTP 402 <code>allowance_exhausted</code>, with how to buy credits and when the free allowance resets. Nothing reaches your provider.</p>
     </section>
 
     <section class="block" aria-labelledby="safe-title">
@@ -102,7 +101,7 @@
         <li>A run's budget is reserved before each provider call, so concurrent calls can't spend the same dollar. The method and raw results are public: <a href="https://github.com/domondi1/per-run-budget-benchmark">per-run budget benchmark</a>.</li>
         <li>Your provider key is read from each request and never written to disk, logged, or returned.</li>
         <li>Receipts hold costs and identifiers, not prompts or responses.</li>
-        <li>Each payment adds credits at most once. A card purchase counts only after Stripe confirms it, and a USDC purchase only after it settles.</li>
+        <li>Each payment adds credits at most once, and only after it settles on-chain.</li>
       </ul>
       <p class="testnet-note"><strong>Experimental.</strong> These prices are a first offer and may change; credits you've already bought keep their terms.</p>
     </section>
