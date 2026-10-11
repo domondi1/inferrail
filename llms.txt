@@ -47,6 +47,7 @@
 
 ## Docs
 
+- [Inferrail Hosted](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt): the per-run budget gateway as a hosted service, shared by every agent and machine in a workspace; workspace creation, headers, errors and retries, pricing (250 runs/month free, experimental), and buying credits in USDC over x402
 - [AP invoice-exception recovery](https://github.com/domondi1/inferrail/blob/main/docs/capabilities/ap-invoice-exception-recovery.md): supported failure types, retry method, validation contract, human-review handoff, versioned policy config, hosted API
 - [README](https://github.com/domondi1/inferrail/blob/main/README.md): quickstart, install, configuration, privacy verification
 - [Product scope](https://github.com/domondi1/inferrail/blob/main/docs/PRODUCT.md): exact current scope — what works, explicit non-goals
