@@ -116,6 +116,26 @@ BILLING_RULE = (
     "their own run."
 )
 
+# The engine's remediation text is written for the self-hosted gateway (inferrail.yaml, CLI
+# commands). A Hosted customer can't act on those, so these codes get Hosted wording. The codes
+# themselves are unchanged.
+_HOSTED_REMEDIATION = {
+    "INFERRAIL_E002": "Your provider rejected the key sent in X-Provider-Api-Key. Check that "
+    "header; Inferrail never stores provider keys.",
+    "INFERRAIL_E003": "Your provider is rate-limiting your key. Safe to retry with backoff.",
+    "INFERRAIL_E004": "The provider call timed out. Safe to retry.",
+    "INFERRAIL_E007": "Send a model id your provider accepts (e.g. gpt-4o-mini, claude-haiku-4-5).",
+    "INFERRAIL_E008": "This is a service-side problem. Retry later.",
+    "INFERRAIL_E010": "This run's ceiling (X-Inferrail-Budget-Usd) would be exceeded. A run "
+    "keeps its first ceiling. Not retryable as-is: start a new work id with a larger ceiling "
+    "only if the extra spend is intended.",
+    "INFERRAIL_E012": "A budgeted run needs a model with a known price. Use a priced model, or "
+    "send the call without X-Inferrail-Budget-Usd.",
+    "INFERRAIL_E013": "Send X-Inferrail-Budget-Usd as a positive decimal (at most the per-run "
+    "maximum in GET /pricing) together with X-Inferrail-Attribute-Work-Id, and the same value "
+    "on every call of the run.",
+}
+
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
@@ -325,6 +345,90 @@ def _payment_ref(payload: Any) -> str | None:
     return f"{str(payer).lower()}:{str(nonce).lower()}" if nonce and payer else None
 
 
+def _agent_guide(p: dict[str, Any], settings: Settings) -> str:
+    """`/llms.txt`: the whole contract in one plain-text page, generated from live settings so
+    it can't drift from what this deployment actually does."""
+    base = settings.public_base_url
+    x402 = p["credits"].get("x402")
+    card = p["credits"].get("card")
+    if x402:
+        buy = (
+            f"- USDC over x402 ({x402['network']}): POST {x402['url']} with your workspace key. "
+            "The first response is HTTP 402 with a PAYMENT-REQUIRED header (x402 v2, scheme "
+            f"exact, ${x402['price_usd']} to {x402['pay_to']}). Sign it with your wallet and "
+            "repeat the same request with the PAYMENT-SIGNATURE header. "
+            f"One pack = {x402['governed_runs']:,} governed runs. No account.\n"
+            "- Each signed payment (payer + nonce) adds credits at most once; re-sending the "
+            "same signed payment can't charge twice. If a paid request times out, do NOT sign a "
+            "new payment: check GET /v1/workspace/ledger. A pending purchase is settled or "
+            "failed from on-chain state within minutes.\n"
+            "- 503 on purchase: a sales limit is reached; nothing is charged. Retry later.\n"
+        )
+    else:
+        buy = "- Credit purchases are not open on this deployment yet.\n"
+    if card:
+        buy += f"- Card: POST {card['endpoint']} returns a Stripe Checkout URL.\n"
+    return (
+        "# Inferrail Hosted\n\n"
+        "> Per-run dollar budgets for AI agents. A call that would push a run past its ceiling "
+        "is refused before it reaches OpenAI or Anthropic. The ceiling is shared by every "
+        "agent and machine using the same workspace and work id. Bring your own provider key; "
+        "it is never stored. Receipts hold costs and ids, never prompts or responses.\n\n"
+        "## Start (no account)\n"
+        f'1. POST {base}/v1/workspaces -> {{"api_key": "irw_..."}}. Shown once; keep it.\n'
+        "2. Send every call with:\n"
+        "   - workspace key: `Authorization: Bearer <api_key>` or `x-api-key: <api_key>`\n"
+        "   - provider key: `X-Provider-Api-Key: <your OpenAI or Anthropic key>`\n"
+        "   - run id: `X-Inferrail-Attribute-Work-Id: <id>` (one id per task/run)\n"
+        "   - ceiling: `X-Inferrail-Budget-Usd: <usd>` (e.g. 0.50; max "
+        f"{p['per_run_budget_max_usd']})\n"
+        f"3. OpenAI shape: POST {base}/v1/chat/completions (OpenAI SDK base_url = {base}/v1, "
+        "api_key = workspace key).\n"
+        f"   Anthropic shape: POST {base}/v1/messages (Anthropic SDK base_url = {base}, "
+        "api_key = workspace key).\n\n"
+        "## Budgets\n"
+        "- The first ceiling declared for a work id is kept for the whole run; a different "
+        "value later is refused (400).\n"
+        "- Without X-Inferrail-Budget-Usd a call is metered and receipted but not capped.\n"
+        "- Over the ceiling: HTTP 402, error.type BudgetExceededError, code INFERRAIL_E010. "
+        "Nothing reached the provider. Not retryable as-is.\n\n"
+        "## Usage and receipts\n"
+        f"- GET {base}/v1/workspace: runs this month, free runs left, credits left.\n"
+        f"- GET {base}/v1/work/<work id>: the run's calls, cost and receipts.\n"
+        f"- GET {base}/v1/workspace/ledger: credit purchases, refunds and pending payments.\n\n"
+        "## Price\n"
+        f"- {BILLING_RULE}\n"
+        f"- {p['free_governed_runs_per_month']} governed runs per workspace per month free "
+        f"(resets 00:00 UTC on the 1st), then ${p['price_per_governed_run_usd']} per run from "
+        "prepaid credits. No subscription, no auto top-up, no overage.\n"
+        "- Allowance and credits used up: HTTP 402 with detail.error allowance_exhausted, "
+        "before the provider is called.\n"
+        "- Model spend is billed by your provider on your own key.\n"
+        f"- Machine-readable: GET {base}/pricing\n\n"
+        "## Buying credits\n"
+        f"{buy}\n"
+        "## Errors and retries\n"
+        "- 400: missing provider key, bad budget header or conflicting ceiling. Fix the request.\n"
+        "- 401: missing or invalid workspace key.\n"
+        "- 402: run ceiling (BudgetExceededError) or allowance_exhausted. Not retryable as-is.\n"
+        "- 413: request body too large.\n"
+        "- 429: workspace rate limit; wait for the Retry-After seconds.\n"
+        "- 502/504: provider error or timeout; error.remediation says whether to retry.\n\n"
+        "## Free alternative\n"
+        "The open-source gateway does the same per-run enforcement on one machine: "
+        "pip install inferrail. Hosted is for many agents or machines sharing one budget "
+        "ledger without running it yourself.\n\n"
+        f"OpenAPI: {base}/openapi.json\n"
+    )
+
+
+def _next_month_utc(now: float | None = None) -> str:
+    """When the free allowance resets: 00:00 UTC on the 1st of next month (ISO 8601)."""
+    t = time.gmtime(time.time() if now is None else now)
+    year, month = (t.tm_year + 1, 1) if t.tm_mon == 12 else (t.tm_year, t.tm_mon + 1)
+    return f"{year:04d}-{month:02d}-01T00:00:00Z"
+
+
 def _scrub(text: str, request: Request) -> str:
     key = request.headers.get(PROVIDER_KEY_HEADER, "").strip()
     return text.replace(key, "[redacted]") if len(key) >= 8 else text
@@ -397,6 +501,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         if settings.x402_pay_to:
             rails["x402"] = {
                 "endpoint": f"POST {settings.mount_prefix}/v1/credits/x402",
+                "url": settings.public_base_url + "/v1/credits/x402",
+                "pay_to": settings.x402_pay_to,
                 "network": settings.x402_network,
                 "asset": "USDC",
                 "price_usd": settings.x402_pack_price_usd,
@@ -416,6 +522,13 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             "free_governed_runs_per_month": settings.free_runs_per_month,
             "price_per_governed_run_usd": "0.001",
             "credits": rails,
+            "credit_purchases_open": bool(rails),
+            "per_run_budget_max_usd": str(settings.per_work_max_usd),
+            "api_base_url": settings.public_base_url + "/v1",
+            "docs": {
+                "llms_txt": settings.public_base_url + "/llms.txt",
+                "openapi": settings.public_base_url + "/openapi.json",
+            },
             "no_surprise_charges": (
                 "Credits are prepaid; there is no subscription, no auto top-up and no overage "
                 "billing. When the allowance and credits run out, calls are refused with 402 "
@@ -442,20 +555,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
     async def llms() -> str:
-        p = price_sheet()
-        return (
-            "# Inferrail Hosted\n\n> Per-run dollar budgets for AI agents, reserved before every "
-            "provider call and shared by every agent and machine using one workspace. "
-            "Payload-free receipts. Bring your own OpenAI or Anthropic key.\n\n"
-            f"- Create a workspace: POST {settings.public_base_url}/v1/workspaces (no account)\n"
-            f"- OpenAI-compatible: POST {settings.public_base_url}/v1/chat/completions; "
-            f"Anthropic-compatible: POST {settings.public_base_url}/v1/messages\n"
-            "- Headers: Authorization: Bearer <workspace key>; X-Provider-Api-Key: <your provider "
-            "key>; X-Inferrail-Attribute-Work-Id: <run id>; X-Inferrail-Budget-Usd: <ceiling>\n"
-            f"- Billing: {BILLING_RULE}\n"
-            f"- Price: {p['free_governed_runs_per_month']} governed runs/month free, then "
-            f"${p['price_per_governed_run_usd']} per run via prepaid credits: GET /pricing\n"
-        )
+        return _agent_guide(price_sheet(), settings)
 
     # -- workspaces -------------------------------------------------------------------------------
     @app.post("/v1/workspaces", status_code=201)
@@ -486,17 +586,30 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         }
 
     def _workspace(request: Request) -> str:
+        # `Authorization: Bearer` (OpenAI SDKs, curl) or `x-api-key` (the Anthropic SDK's
+        # default for `api_key=`). The provider key never travels in either.
         header = request.headers.get("authorization", "")
         token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        token = token or request.headers.get("x-api-key", "").strip()
         workspace_id = ledger.authenticate(token) if token else None
         if workspace_id is None:
-            raise HTTPException(401, "missing or invalid workspace key")
+            raise HTTPException(
+                401,
+                "missing or invalid workspace key: send it as 'Authorization: Bearer <key>' or "
+                "'x-api-key: <key>'. Create one with POST /v1/workspaces",
+            )
         now = time.monotonic()
         window = calls[workspace_id]
         while window and now - window[0] > 60:
             window.popleft()
         if len(window) >= settings.rate_limit_per_minute:
-            raise HTTPException(429, "workspace rate limit reached; slow down")
+            retry_after = max(1, int(60 - (now - window[0])) + 1)
+            raise HTTPException(
+                429,
+                f"workspace rate limit reached ({settings.rate_limit_per_minute}/minute); retry "
+                f"after {retry_after}s",
+                headers={"Retry-After": str(retry_after)},
+            )
         window.append(now)
         request.state.workspace_id = workspace_id
         return workspace_id
@@ -533,7 +646,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 message=_scrub(str(exc), request),
                 type=type(exc).__name__,
                 code=code.code,
-                remediation=code.remediation,
+                remediation=_HOSTED_REMEDIATION.get(code.code, code.remediation),
                 docs_url=docs_url_for(code.code),
             )
         )
@@ -554,13 +667,21 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         admission = ledger.hold_run(workspace_id, work_id)
         if not admission.admitted:
             ledger.count_event(workspace_id, "allowance_exhausted")
+            rails = price_sheet()["credits"]
+            how = (
+                "Buy credits to continue (see 'purchase')"
+                if rails
+                else "Credit purchases are not open on this deployment yet"
+            )
             raise HTTPException(
                 status_code=402,
                 detail={
                     "error": "allowance_exhausted",
                     "message": "This month's free governed runs are used and no credits remain. "
-                    "Buy credits to continue; nothing was sent to the provider.",
-                    "purchase": price_sheet()["credits"],
+                    f"{how}, or wait for the monthly reset. Nothing was sent to the provider.",
+                    "purchase": rails,
+                    "free_allowance_resets_at": _next_month_utc(),
+                    "pricing_url": settings.public_base_url + "/pricing",
                 },
             )
         return attributes, declared, (workspace_id, admission.month, work_id)
@@ -757,6 +878,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
 
     # -- credits: x402 ----------------------------------------------------------------------------
     if settings.x402_pay_to:
+        from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
         from x402.http import HTTPFacilitatorClient
         from x402.http.middleware.fastapi import payment_middleware
         from x402.http.types import PaymentOption, RouteConfig
@@ -813,6 +935,29 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 mime_type="application/json",
                 service_name="Inferrail Hosted credits",
                 tags=["agent-budgets", "llm-gateway", "spend-control"],
+                # Discovery metadata for facilitators that catalog x402 resources (Bazaar).
+                # The request body is empty; the workspace key travels in Authorization.
+                extensions=declare_discovery_extension(
+                    input={},
+                    input_schema={"type": "object", "properties": {}},
+                    body_type="json",
+                    output=OutputConfig(
+                        example={
+                            "workspace_id": "ws_0123456789abcdef0123",
+                            "governed_runs": settings.x402_pack_runs,
+                            "status": "credits are added once the payment settles",
+                        },
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": {"type": "string"},
+                                "governed_runs": {"type": "integer"},
+                                "status": {"type": "string"},
+                            },
+                            "required": ["workspace_id", "governed_runs", "status"],
+                        },
+                    ),
+                ),
             )
         }
         x402_gate = payment_middleware(routes, server)
