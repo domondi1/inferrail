@@ -433,6 +433,20 @@ class WorkspaceLedger:
                 out["unresolved"] += 1
         return out
 
+    def sales_cents_since(self, ts: float) -> int:
+        """Confirmed plus pending purchase value since `ts`: the exposure a daily cap bounds."""
+        with self._lock:
+            granted = self._db.execute(
+                "SELECT COALESCE(SUM(amount_usd_cents),0) FROM credit_grants WHERE granted_at>=?",
+                (int(ts),),
+            ).fetchone()[0]
+            pending = self._db.execute(
+                "SELECT COALESCE(SUM(amount_usd_cents),0) FROM pending_purchases "
+                "WHERE state='pending' AND created_at>=?",
+                (int(ts),),
+            ).fetchone()[0]
+            return int(granted) + int(pending)
+
     # -- reporting ----------------------------------------------------------------------------
 
     def statement(self, workspace_id: str) -> dict[str, object]:
