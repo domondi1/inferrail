@@ -2616,3 +2616,85 @@ async def test_legacy_unfulfilled_closure_still_reserves_risk_and_suppresses_mar
             body("second").model_copy(update={"query": "another query"}), payment(service, account)
         )
     assert service.facilitator.settles == service.supplier.calls == 1
+
+
+@pytest.mark.parametrize("cost", [None, 0, -1, True, 0.8, 960.0, "960"])
+def test_serpex_rejects_unverified_unit_cost_before_client_creation(
+    cost: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hosted.job_safe_search.supplier import SerpexSearch
+
+    def unexpected_client(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("invalid unit cost must not create a supplier client")
+
+    monkeypatch.setattr(httpx, "AsyncClient", unexpected_client)
+    with pytest.raises(ValueError, match="verified_positive_paid_credit_cost_required"):
+        SerpexSearch("fixture-key", cost)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credits", [1, 2])
+@pytest.mark.parametrize("fee", [0, None])
+async def test_serpex_invoice_cost_preserves_envelope_billing_and_recovery(
+    system: Any, credits: int, fee: int | None
+) -> None:
+    from hosted.job_safe_search.supplier import SerpexSearch
+
+    previous, account, chain = system
+    # Hypothetical all-in invoice cost, higher than an advertised pre-tax rate.
+    supplier = SerpexSearch("fixture-key", 960)
+    await supplier.client.aclose()
+    calls: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert json.loads(request.content) == {"q": "machine budgets", "include_content": False}
+        return httpx.Response(
+            200,
+            json={
+                "id": "invoice-backed-bill",
+                "metadata": {"credits_used": credits},
+                "results": [{"title": "Result", "url": "https://example.com"}],
+            },
+        )
+
+    supplier.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    config = replace(previous.config, price=10000, realized_payment_fee=fee)
+    try:
+        with pytest.raises(ValueError, match="price_below_cost_envelope"):
+            SearchService(
+                replace(config, price=6959),
+                previous.store,
+                previous.facilitator,
+                previous.chain,
+                supplier,
+            )
+        assert previous.facilitator.verifies == previous.facilitator.settles == len(calls) == 0
+        assert chain.balance_of(config.pay_to) == 0
+        service = SearchService(
+            config, previous.store, previous.facilitator, previous.chain, supplier
+        )
+        signed = payment(service, account)
+        delivered = await service.handle(body(), signed)
+        assert delivered.status_code == (200 if credits == 1 else 202)
+        assert row(service)["supplier_cogs"] == credits * 960
+        assert row(service)["supplier_reference"] == "invoice-backed-bill"
+        assert row(service)["supplier_bound"] == 960
+        financial = financial_state(row(service))
+        assert financial["realized_margin"] == ("0.00904" if credits == 1 and fee == 0 else None)
+        assert financial["unresolved_liability"] == ("0" if credits == 1 else "0.01")
+        restarted = SearchService(
+            config, Store(service.store.path), service.facilitator, service.chain, supplier
+        )
+        if credits == 1:
+            replay = await restarted.handle(body(), signed)
+            assert result(replay)["receipt"]["charged_usd"] == "0"
+        else:
+            assert restarted.store.supplier_blocked("serpex")
+            with pytest.raises(Refused, match="supplier_cost_contract_breached"):
+                await restarted.handle(body("two"), payment(restarted, account))
+        assert service.facilitator.settles == len(calls) == 1
+        assert chain.balance_of(config.pay_to) == 10000
+        assert financial_state(row(restarted)) == financial
+    finally:
+        await supplier.client.aclose()
