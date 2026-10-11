@@ -20,6 +20,8 @@ Later calls in a billed run cost nothing more.
 | `pending_purchases` | `settled` / `failed` | Decided by the settle hook or by the chain |
 | `credit_grants` | — | Credits from one confirmed payment. `UNIQUE(source, ref)`: never twice |
 | `credit_reversals` | — | Refunded credits for one grant. Monotonic: a replay is a no-op |
+| `refund_proofs` | — | A verified on-chain refund transfer. One tx backs one refund |
+| `usage_events` | — | Payload-free daily counters: refusals, payment challenges |
 
 Balance = grants − reversals − (held + billed runs that needed a credit). A refund can make the
 balance negative. Paid runs are then refused until it is topped up, so a customer can never
@@ -37,6 +39,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 KEY_PREFIX = "irw_"
@@ -90,6 +93,20 @@ CREATE TABLE IF NOT EXISTS pending_purchases (
   created_at INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending', 'settled', 'failed')),
   PRIMARY KEY (source, ref)
+);
+CREATE TABLE IF NOT EXISTS refund_proofs (
+  tx_hash TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  amount_usd_cents INTEGER NOT NULL CHECK (amount_usd_cents > 0),
+  verified_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usage_events (
+  workspace_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (workspace_id, day, kind)
 );
 """
 
@@ -271,6 +288,17 @@ class WorkspaceLedger:
                 self._credits_remaining(workspace_id),
             )
 
+    def count_event(self, workspace_id: str, kind: str, now: float | None = None) -> None:
+        """Count one operator-relevant event for the report. Payload-free: a workspace id, a
+        UTC day and a kind, never request content."""
+        day = time.strftime("%Y-%m-%d", time.gmtime(time.time() if now is None else now))
+        with self._tx():
+            self._db.execute(
+                "INSERT INTO usage_events VALUES (?,?,?,1) "
+                "ON CONFLICT(workspace_id, day, kind) DO UPDATE SET count=count+1",
+                (workspace_id, day, kind),
+            )
+
     # -- credits ------------------------------------------------------------------------------
 
     def grant(
@@ -433,19 +461,56 @@ class WorkspaceLedger:
                 out["unresolved"] += 1
         return out
 
-    def outstanding_liability_cents(self, cents_per_run: float = 0.1) -> int:
-        """What could be owed back: unspent prepaid credits across all workspaces at the
-        published price (default $0.001 per run = 0.1 cents), plus pending purchases."""
+    def outstanding_liability_cents(self) -> int:
+        """What could be owed back: every workspace's unspent prepaid credits, valued at the
+        highest price per run that workspace actually paid (so a pack priced above the default
+        is never under-counted), plus pending purchases. Rounded up to the cent."""
         with self._lock:
-            ids = [
-                r[0] for r in self._db.execute("SELECT DISTINCT workspace_id FROM credit_grants")
-            ]
-            unspent = sum(max(self._credits_remaining(w), 0) for w in ids)
+            prices: dict[str, Fraction] = {}
+            for ws, cents, runs in self._db.execute(
+                "SELECT workspace_id, amount_usd_cents, runs FROM credit_grants"
+            ):
+                prices[ws] = max(prices.get(ws, Fraction(0)), Fraction(int(cents), int(runs)))
+            owed = sum(
+                (max(self._credits_remaining(ws), 0) * price for ws, price in prices.items()),
+                Fraction(0),
+            )
             pending = self._db.execute(
                 "SELECT COALESCE(SUM(amount_usd_cents),0) FROM pending_purchases "
                 "WHERE state='pending'"
             ).fetchone()[0]
-            return int(-(-unspent * cents_per_run // 1)) + int(pending)
+            return -(-owed.numerator // owed.denominator) + int(pending)
+
+    def record_refund_proof(
+        self, source: str, ref: str, tx_hash: str, amount_usd_cents: int
+    ) -> int | None:
+        """Record one verified on-chain refund transfer for grant `(source, ref)` and reverse
+        credits for the total verified so far. The caller must have verified the transfer on
+        the chain; this only keeps the books. A tx hash backs at most one refund: reusing it
+        for another grant raises ValueError, and re-recording the same one is a no-op.
+        Returns the total runs reversed, or None if the grant doesn't exist."""
+        tx_hash = tx_hash.lower()
+        with self._lock:
+            if not self._read(
+                "SELECT 1 FROM credit_grants WHERE source=? AND ref=?", (source, ref)
+            ):
+                return None
+            with self._tx():
+                known = self._db.execute(
+                    "SELECT source, ref FROM refund_proofs WHERE tx_hash=?", (tx_hash,)
+                ).fetchone()
+                if known and tuple(known) != (source, ref):
+                    raise ValueError(f"{tx_hash} already backs the refund of {known[1]}")
+                if not known:
+                    self._db.execute(
+                        "INSERT INTO refund_proofs VALUES (?,?,?,?,?)",
+                        (tx_hash, source, ref, amount_usd_cents, int(time.time())),
+                    )
+                total = self._db.execute(
+                    "SELECT SUM(amount_usd_cents) FROM refund_proofs WHERE source=? AND ref=?",
+                    (source, ref),
+                ).fetchone()[0]
+            return self.apply_refund(source, ref, int(total))
 
     def sales_cents_since(self, ts: float) -> int:
         """Confirmed plus pending purchase value since `ts`: the exposure a daily cap bounds."""
