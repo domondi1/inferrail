@@ -159,3 +159,34 @@ def test_the_agent_guide_spells_out_every_outcome(mods, tmp_path):
         "HTTP 503",
     ):
         assert needle in guide, needle
+
+
+def test_production_sales_caps_refuse_before_any_money_moves(mods, tmp_path):
+    """The launch values: $1 packs, BG_MAX_DAILY_SALES_USD=25, BG_MAX_OUTSTANDING_CREDITS_USD=50.
+    A refused purchase gets 503 and is never settled, so the buyer is not charged."""
+    fac = FakeFacilitator()
+    settings = mods.Settings.from_env(
+        {
+            "BG_DATA_DIR": str(tmp_path / "data"),
+            "BG_X402_PAY_TO": PAY_TO,
+            "BG_MAX_DAILY_SALES_USD": "25",
+            "BG_MAX_OUTSTANDING_CREDITS_USD": "50",
+        }
+    )
+    app = mods.create_app(settings, facilitator=fac)
+    c = TestClient(app, raise_server_exceptions=False)
+    auth = {"Authorization": f"Bearer {c.post('/v1/workspaces').json()['api_key']}"}
+    codes = [_pay(c, auth, _sign(c, auth)).status_code for _ in range(26)]
+    assert codes == [200] * 25 + [503]
+    assert len(fac.calls_to("settle")) == 25  # the 26th was never settled
+    assert c.get("/v1/workspace", headers=auth).json()["credits_remaining"] == 25_000
+
+    # A day later the daily cap has room again, but $25 of unspent credit is still owed:
+    # 25 more sales are allowed up to $50 outstanding, then refused.
+    ledger = app.state.ledger
+    ledger._db.execute("UPDATE credit_grants SET granted_at = granted_at - 90000")
+    ledger._db.execute("UPDATE pending_purchases SET created_at = created_at - 90000")
+    codes = [_pay(c, auth, _sign(c, auth)).status_code for _ in range(26)]
+    assert codes == [200] * 25 + [503]
+    assert ledger.outstanding_liability_cents() == 5000
+    assert len(fac.calls_to("settle")) == 50
