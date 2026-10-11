@@ -847,6 +847,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
 
     # -- credits: x402 ----------------------------------------------------------------------------
     if settings.x402_pay_to:
+        from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
         from x402.http import HTTPFacilitatorClient
         from x402.http.middleware.fastapi import payment_middleware
         from x402.http.types import PaymentOption, RouteConfig
@@ -903,6 +904,29 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 mime_type="application/json",
                 service_name="Inferrail Hosted credits",
                 tags=["agent-budgets", "llm-gateway", "spend-control"],
+                # Discovery metadata for facilitators that catalog x402 resources (Bazaar).
+                # The request body is empty; the workspace key travels in Authorization.
+                extensions=declare_discovery_extension(
+                    input={},
+                    input_schema={"type": "object", "properties": {}},
+                    body_type="json",
+                    output=OutputConfig(
+                        example={
+                            "workspace_id": "ws_0123456789abcdef0123",
+                            "governed_runs": settings.x402_pack_runs,
+                            "status": "credits are added once the payment settles",
+                        },
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": {"type": "string"},
+                                "governed_runs": {"type": "integer"},
+                                "status": {"type": "string"},
+                            },
+                            "required": ["workspace_id", "governed_runs", "status"],
+                        },
+                    ),
+                ),
             )
         }
         x402_gate = payment_middleware(routes, server)

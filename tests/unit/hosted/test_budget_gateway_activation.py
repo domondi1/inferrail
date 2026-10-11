@@ -235,3 +235,19 @@ def test_published_contract_describes_the_x402_rail_when_it_is_open(mods, tmp_pa
     assert "PAYMENT-REQUIRED" in guide and "PAYMENT-SIGNATURE" in guide
     assert "do NOT sign a new payment" in guide
     assert "not open" not in guide
+
+
+def test_x402_challenge_carries_valid_discovery_metadata(mods, tmp_path):
+    pytest.importorskip("x402")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _x402_fake_facilitator import FakeFacilitator, decode_payment_required
+    from x402.extensions.bazaar import validate_and_extract
+
+    c = _client(mods, tmp_path, facilitator=FakeFacilitator(), BG_X402_PAY_TO="0x" + "9" * 40)
+    key = _key(c)
+    r = c.post("/v1/credits/x402", headers={"Authorization": f"Bearer {key}"})
+    assert r.status_code == 402
+    bazaar = (decode_payment_required(r).extensions or {})["bazaar"]
+    assert bazaar["info"]["input"]["method"] == "POST"
+    assert bazaar["info"]["output"]["example"]["governed_runs"] == 1000
+    assert validate_and_extract(bazaar).valid
