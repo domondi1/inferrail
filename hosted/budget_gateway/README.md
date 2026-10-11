@@ -138,18 +138,22 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | `BG_PUBLIC_BASE_URL` | `http://localhost:8424` | Public URL used in links |
 | `BG_CLIENT_IP_HEADER` | `true-client-ip` | Trusted header carrying the real client address |
 | `BG_MAX_DAILY_SALES_USD` | `100` | Bounded experiment: new credit purchases are refused (503) once confirmed plus pending sales in the last 24 hours would exceed this |
+| `BG_MAX_OUTSTANDING_CREDITS_USD` | `100` | Refuses new credit purchases (503) while the value of all unspent prepaid credits plus pending purchases would exceed this. Separate from the daily cap |
+| `BG_RATE_LIMIT_PER_MINUTE` | `600` | Per-workspace authenticated request limit (429) |
 | `BG_MOUNT_PREFIX` | empty (`/hosted` when cohosted) | Path prefix when mounted inside another app |
 
 ## Known limits (before real money)
 
-- **Request limits:** no per-workspace request rate limit (provider spend is on the customer's
-  own key; CPU abuse is bounded only by the proxy). Chunked request bodies without
-  `Content-Length` aren't size-checked.
-- **x402 refunds** are manual: the operator sends USDC back, then records the reversal through
-  `WorkspaceLedger.apply_refund("x402", ref, cents)`. There's no HTTP route for it.
+- **x402 refunds** are manual: the operator sends USDC back from the receiving wallet, then
+  records the reversal with `ops.py refund-x402 <payer:nonce> <cents>`.
 - **Stripe disputes** (chargebacks) are not handled automatically. Treat a dispute as a refund.
 - **No migrations:** the ledger schema is v1. A schema change needs a migration before deploy.
-- **Backups:** copy `BG_DATA_DIR` with SQLite's online backup. Restoring an old copy can
-  re-open spent credits, so reconcile against Stripe and the chain after any restore.
+- **Backups:** `python3 hosted/budget_gateway/ops.py backup /var/data/backups` takes a
+  consistent online copy. Restoring an old copy can re-open spent credits, so reconcile
+  against Stripe and the chain after any restore.
+- **Operations:**
+  - `ops.py liabilities` reports outstanding prepaid value, pending purchases and net
+    revenue;
+  - `ops.py reconcile` resolves pending x402 purchases from the chain.
 
 Tests: `python -m pytest tests/unit/hosted/test_budget_gateway.py` (needs the `hosted` extra).
