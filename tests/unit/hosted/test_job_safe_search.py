@@ -2934,3 +2934,85 @@ def test_cohosted_search_refuses_unsafe_configuration_before_other_app_creation(
     with pytest.raises(ValueError, match="cohosted_"):
         cohost.create_cohosted_app(trial_dir, settings, create_app(service), modules=modules)
     assert service.facilitator.settles == service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", ["none", "unsettled", "settled"])
+async def test_disconnected_body_preserves_payment_without_spending(
+    system: Any, authorization: str
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = None if authorization == "none" else payment(service, account)
+    if authorization == "settled":
+        await service.facilitator.inner.settle(decode(signed), service.requirements)
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        messages = iter(
+            [
+                {"type": "http.request", "body": b'{"query":', "more_body": True},
+                {"type": "http.disconnect"},
+            ]
+        )
+        sent: list[dict[str, Any]] = []
+
+        async def receive(source: Any = messages) -> dict[str, Any]:
+            return next(source)
+
+        async def send(message: dict[str, Any], target: Any = sent) -> None:
+            target.append(message)
+
+        await create_app(service)(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/search",
+                "raw_path": b"/search",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [] if signed is None else [(b"payment-signature", signed.encode())],
+                "server": ("search.example.com", 443),
+                "client": ("127.0.0.1", 1234),
+            },
+            receive,
+            send,
+        )
+        assert sent[0]["status"] == 400
+        response = json.loads(b"".join(x.get("body", b"") for x in sent[1:]))
+        assert response["error"] == "incomplete_request_body"
+        metrics = report(service.store.path, set(), network="eip155:84532")
+        assert (
+            service.supplier.calls
+            == service.facilitator.verifies
+            == service.facilitator.settles
+            == 0
+        )
+        assert metrics["external_paid_calls"] == 0
+        assert metrics["supplier_cogs_usd"] == "0"
+        assert metrics["realized_external_contribution_margin_usd"] == (
+            "0" if signed is None else None
+        )
+        if authorization == "settled":
+            assert response["charged_usd"] == "0.015"
+            assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+            assert metrics["unfulfilled_settled_payments"] == 1
+            assert metrics["additional_payment_liability_usd"] == "0.015"
+        elif authorization == "unsettled":
+            assert response["charged_usd"] is None
+            assert metrics["unresolved_payment_observations"] == 1
+        else:
+            assert response["charged_usd"] == "0"
+            assert metrics["unresolved_transactions"] == 0
+    assert chain.balance_of(service.config.pay_to) == (15000 if authorization == "settled" else 0)
