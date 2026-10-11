@@ -5,6 +5,9 @@ starts, e.g. as the platform's pre-deploy command:
 
 It exits non-zero, and so stops the deploy, when the environment would either crash the service
 at startup or collect payments differently from what was approved:
+- the application can't be built with these settings: it builds the same combined app the
+  service starts (every import and route, including ones that only exist when payments are
+  on), on a throwaway data directory;
 - the settings themselves don't load (e.g. mainnet without BG_X402_MAINNET_APPROVED=1 or
   BG_BASE_RPC_URL): the same check the service runs at startup, run before it can take the
   shared process down;
@@ -22,8 +25,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import os
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -60,12 +65,24 @@ def facilitator_kinds(env: dict[str, str]) -> set[tuple[str, str]]:
     return {(str(k.get("scheme")), str(k.get("network"))) for k in data.get("kinds", [])}
 
 
+def build_app(settings: Any) -> None:
+    """Build the combined app exactly as `cohost.py` does at startup, on a throwaway data
+    directory (the real disk isn't mounted during a pre-deploy step), then release it."""
+    import cohost
+
+    with tempfile.TemporaryDirectory() as tmp:
+        hosted = dataclasses.replace(settings, data_dir=Path(tmp) / "hosted")
+        app = cohost.create_combined_app(Path(tmp) / "trial", hosted)
+        app.state.hosted_app.state.release_instance_lock()
+
+
 def check(
     env: dict[str, str],
     expect_pay_to: str | None,
     *,
     chain_id: Callable[[str], str] = rpc_chain_id,
     kinds: Callable[[dict[str, str]], set[tuple[str, str]]] = facilitator_kinds,
+    build: Callable[[Any], None] = build_app,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -78,6 +95,11 @@ def check(
         settings = service.Settings.from_env({**env, "BG_MOUNT_PREFIX": cohost.PREFIX})
     except Exception as ex:  # exactly what would stop the service at startup
         return [f"settings don't load, so the service would not start: {ex}"]
+    try:
+        build(settings)
+        print("startup: the application builds with these settings (imports and routes)")
+    except Exception as ex:  # e.g. an optional dependency missing from the production install
+        return [f"the application would not start: {type(ex).__name__}: {str(ex)[:200]}"]
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"

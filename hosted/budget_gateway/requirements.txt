@@ -3,6 +3,8 @@
 fastapi==0.141.1
 uvicorn==0.52.4
 httpx==0.28.1
-# Only needed when the x402 credit rail is enabled (BG_X402_PAY_TO set):
-x402[evm,fastapi,httpx]==2.22.0
+# Only needed when the x402 credit rail is enabled (BG_X402_PAY_TO set). `extensions` is
+# required: the credit route declares Bazaar discovery metadata, whose validation needs jsonschema.
+# Keep in step with the `hosted` extra in pyproject.toml (CI checks this install path).
+x402[evm,fastapi,httpx,extensions]==2.22.0
 cdp-sdk==1.48.1
