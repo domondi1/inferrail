@@ -76,10 +76,13 @@ def create_combined_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
-        async with contextlib.AsyncExitStack() as stack:
-            await stack.enter_async_context(trial_app.router.lifespan_context(trial_app))
-            await stack.enter_async_context(hosted_app.router.lifespan_context(hosted_app))
-            yield
+        try:
+            async with contextlib.AsyncExitStack() as stack:
+                await stack.enter_async_context(trial_app.router.lifespan_context(trial_app))
+                await stack.enter_async_context(hosted_app.router.lifespan_context(hosted_app))
+                yield
+        finally:
+            hosted_app.state.release_instance_lock()
 
     app = Starlette(
         routes=[Mount(PREFIX, app=hosted_app), Mount("/", app=trial_app)], lifespan=lifespan

@@ -253,3 +253,38 @@ customer credits; cost evidence alone cannot erase its fulfillment liability.
 Previously recorded supplier costs, payment fees, and cumulative refunds cannot
 be reduced through this operation. Releasing credits requires matching additional
 confirmed refunds. This operation records evidence only and never sends money.
+
+
+## Optional shared host
+
+A separate entrypoint can mount this application beside the trial gateway and
+Inferrail Hosted on one existing instance. It keeps Search's payment gates,
+capability secret, ledger, and writer lease; it changes no live deployment.
+Install all three applications' dependencies from the repository root:
+
+```sh
+pip install -e . -r hosted/cost_gateway/requirements.txt -r hosted/budget_gateway/requirements.txt -r hosted/job_safe_search/requirements.txt
+python -m hosted.job_safe_search.cohost
+```
+
+The routes are `/` for the trial, `/hosted` for Hosted, and `/job-search` for
+Search. Set `SEARCH_RESOURCE_URL=https://YOUR_HOST/job-search/search` and
+`BG_PUBLIC_BASE_URL=https://YOUR_HOST/hosted`. Search's discovery manifest is
+at `/job-search/.well-known/x402.json`. The host's root health endpoint covers
+the trial; verify `/hosted/health` and `/job-search/health` separately.
+
+Use separate, non-nested directories: for example,
+`SEARCH_DB_PATH=/var/data/job-search/search.sqlite3`, `BG_DATA_DIR=/var/data/hosted`,
+and `COST_GATEWAY_DATA_DIR=/tmp/inferrail_trial`. Mount durable storage at
+`/var/data` before initializing either paid ledger. Render's filesystem is
+otherwise ephemeral; see its [persistent disk documentation](https://render.com/docs/disks).
+Run exactly one worker and preserve each application's secrets and existing
+state during upgrades. Search and Hosted require distinct merchant addresses
+when accepting payments on the same network: a proxy-settled EIP-3009 transfer
+must not satisfy two independent ledgers. No merchant private key is needed.
+
+Switching the start command requires the operator's deployment approval and
+the existing financial gates. Keep mainnet disabled during preparation.
+To roll back, stop acceptance, preserve both paid ledgers, and restore the
+previous compatible entrypoint and image. Do not replace a ledger with an
+older snapshot merely to change the start command.

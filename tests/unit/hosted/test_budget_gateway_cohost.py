@@ -249,3 +249,32 @@ def test_cohost_refuses_a_wrong_mount_prefix(parts, monkeypatch):
     monkeypatch.setenv("BG_MOUNT_PREFIX", "/other")
     with pytest.raises(RuntimeError):
         cohost.settings_from_env(hosted_mod)
+
+
+def test_shutdown_releases_hosted_writer_lock_for_a_replacement_app(parts):
+    build, _, hosted_mod, tmp_path = parts
+    with TestClient(build()):
+        with pytest.raises(hosted_mod.InstanceLockError):
+            build()
+    with TestClient(build()) as client:
+        assert client.get("/hosted/health").status_code == 200
+    assert (tmp_path / "hosted" / "workspaces.sqlite3").is_file()
+
+
+def test_failed_startup_releases_hosted_writer_lock(parts, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    build, *_ = parts
+    app = build()
+
+    @asynccontextmanager
+    async def failing_startup(_):
+        raise RuntimeError("trial startup failed")
+        yield
+
+    monkeypatch.setattr(app.state.trial_app.router, "lifespan_context", failing_startup)
+    with pytest.raises(RuntimeError, match="trial startup failed"):
+        with TestClient(app):
+            pass
+    with TestClient(build()) as client:
+        assert client.get("/hosted/health").status_code == 200
