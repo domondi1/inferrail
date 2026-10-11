@@ -27,6 +27,15 @@ from typing import Any
 from workspaces import WorkspaceLedger
 
 DAY = 86_400
+# What a contribution margin needs and the ledger can't know. Reported until costs are supplied.
+COST_INPUTS_NEEDED = [
+    "hosting: the inferrail-cost-gateway service (instance plus 1 GB disk) is shared with the "
+    "trial API; Hosted's share needs an allocation rule",
+    "x402 facilitator fees per verify/settle at the facilitator's current pricing",
+    "fees for sending refunds back on-chain (gas, if paid by the receiving wallet)",
+    "card processing fees, if a card rail is ever enabled",
+    "model spend: none; customers bring their own provider keys",
+]
 LIMITATIONS = [
     "Identity: a workspace is not a customer. One customer can create several workspaces, and "
     "one x402 wallet can serve several agents. Card buyers are counted per workspace.",
@@ -250,9 +259,14 @@ def build(
             "distinct_paying_workspaces": len(buyers),
             "repeat_paying_wallets": sum(1 for n in wallets.values() if n >= 2),
             "repeat_paying_workspaces": sum(1 for n in buyers.values() if n >= 2),
+            "repeat_payers": {
+                "wallets": {w: n for w, n in sorted(wallets.items()) if n >= 2},
+                "workspaces": {w: n for w, n in sorted(buyers.items()) if n >= 2},
+            },
         },
         "money_cents": {
             "gross_sales": gross,
+            "x402_usdc_settled": sum(int(g[4]) for g in ext_grants if g[0] == "x402"),
             "refunds_recorded": refunded,
             "x402_refunds_verified_on_chain": verified,
             "x402_refunds_recorded_without_chain_proof": max(x402_refunded - verified, 0),
@@ -261,8 +275,12 @@ def build(
             "deferred_revenue_unspent_credits": _cents(deferred),
             "pending_purchases": pending_cents,
             "outstanding_liability_all_workspaces": outstanding_all,
+            # What external customers could claim back if Hosted shut down today: their
+            # unspent prepaid credits plus purchases still pending on-chain.
+            "owed_to_external_customers_if_shut_down": _cents(deferred) + pending_cents,
         },
         "costs_cents": costs or "unknown: none supplied",
+        "cost_inputs_needed": [] if costs else COST_INPUTS_NEEDED,
         "contribution_margin_cents": (recognized_cents - sum(costs.values())) if costs else None,
         "limitations": LIMITATIONS,
     }
