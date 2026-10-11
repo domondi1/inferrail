@@ -153,6 +153,35 @@ jobs:
             exit 1
           fi
 
+  hosted-production-install:
+    # The production host (inferrail-cost-gateway) installs from requirements files, not from the
+    # `hosted` extra the job above uses. This job installs exactly like the host, then starts the
+    # production entry point with payments off and with the credit rail on, so an optional
+    # dependency that only the rail imports can't be missing in production while CI is green.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install exactly like the production host (clean venv, host build command)
+        run: |
+          python -m venv /tmp/prod
+          /tmp/prod/bin/pip install -e . -r hosted/cost_gateway/requirements.txt \
+            -r hosted/budget_gateway/requirements.txt
+          /tmp/prod/bin/pip check
+      - name: Start the production entry point (payments off, then on) and serve requests
+        run: scripts/smoke_hosted_start.sh /tmp/prod/bin/python
+      - name: Pre-deploy check builds the app in the production install
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" BG_DATA_DIR=/nonexistent \
+            /tmp/prod/bin/python hosted/budget_gateway/preflight.py
+          env -i PATH="$PATH" HOME="$HOME" BG_DATA_DIR=/nonexistent \
+            BG_X402_PAY_TO=0x000000000000000000000000000000000000dEaD \
+            /tmp/prod/bin/python hosted/budget_gateway/preflight.py \
+            --expect-pay-to 0x000000000000000000000000000000000000dEaD
+
   hosted-job-safe-search:
     runs-on: ubuntu-latest
     timeout-minutes: 10

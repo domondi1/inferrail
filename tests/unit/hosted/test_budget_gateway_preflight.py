@@ -48,6 +48,7 @@ def _run(preflight, env, expect=APPROVED, chain="0x2105", kinds=None):
         expect,
         chain_id=lambda url: chain,
         kinds=lambda e: kinds if kinds is not None else {("exact", "eip155:8453")},
+        build=lambda settings: None,
     )
 
 
@@ -100,5 +101,39 @@ def test_network_failures_stop_the_deploy_without_leaking(preflight, tmp_path):
     def boom(*_a):
         raise ConnectionError(SECRET)
 
-    problems = preflight.check(_mainnet(tmp_path), APPROVED, chain_id=boom, kinds=boom)
+    problems = preflight.check(
+        _mainnet(tmp_path), APPROVED, chain_id=boom, kinds=boom, build=lambda settings: None
+    )
     assert len(problems) == 2 and all(SECRET not in p for p in problems)
+
+
+def test_the_real_app_is_built_with_payments_off_and_on(preflight, tmp_path, capsys):
+    """No stubbed builder: the same combined app the service starts, on a throwaway directory.
+    "On" uses Base Sepolia (no facilitator key needed) and a burn address."""
+    pytest.importorskip("x402")
+    assert preflight.check(_env(tmp_path), None) == []
+    on = _env(tmp_path, BG_X402_PAY_TO="0x000000000000000000000000000000000000dEaD")
+    assert preflight.check(on, "0x000000000000000000000000000000000000dEaD") == []
+    assert capsys.readouterr().out.count("the application builds") == 2
+
+
+def test_a_startup_import_error_stops_the_deploy(preflight, tmp_path):
+    """The production failure this guards against: an import that only runs when the credit
+    rail is on, missing from the production install."""
+
+    def missing_extra(settings):
+        raise ImportError(
+            "Extensions validation requires jsonschema. Install with: pip install x402[extensions]"
+        )
+
+    problems = preflight.check(
+        _mainnet(tmp_path),
+        APPROVED,
+        chain_id=lambda u: "0x2105",
+        kinds=lambda e: set(),
+        build=missing_extra,
+    )
+    assert problems == [
+        "the application would not start: ImportError: Extensions validation requires "
+        "jsonschema. Install with: pip install x402[extensions]"
+    ]
