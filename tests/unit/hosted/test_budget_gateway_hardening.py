@@ -130,12 +130,14 @@ def test_operator_commands(mods, tmp_path, monkeypatch):
 
     report = ops.liabilities()
     assert report["outstanding_liability_cents"] == 100 + 100  # unspent 1,000 runs + pending
-    assert report["net_revenue_cents_by_source"] == {"x402": 100}
+    assert report["net_cash_cents_by_source"] == {"x402": 100}
 
-    assert ops.refund_x402("0xp:0xn", "100") == {"ref": "0xp:0xn", "runs_reversed_total": 1000}
-    assert ops.liabilities()["net_revenue_cents_by_source"] == {"x402": 0}
+    # A refund is recorded only with on-chain proof (test_budget_gateway_operator.py covers
+    # the proof itself); without the chain settings nothing is recorded.
+    monkeypatch.delenv("BG_X402_PAY_TO", raising=False)
     with pytest.raises(SystemExit):
-        ops.refund_x402("unknown", "1")
+        ops.refund_x402("0xp:0xn", "0x" + "ab" * 32)
+    assert ops.liabilities()["net_cash_cents_by_source"] == {"x402": 100}
     monkeypatch.delenv("BG_BASE_RPC_URL", raising=False)
     with pytest.raises(SystemExit):
         ops.reconcile()
