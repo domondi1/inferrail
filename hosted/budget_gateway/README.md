@@ -104,8 +104,11 @@ client.messages.create(
 | 502 / 504 | Provider error or timeout | `error.remediation` says whether to retry |
 
 To try it locally with no payments: `python hosted/budget_gateway/service.py`, then use
-`http://localhost:8424`. A runnable multi-agent example is in
-[`examples/hosted_shared_budget/`](../../examples/hosted_shared_budget/).
+`http://localhost:8424`. Runnable examples:
+- [`examples/hosted_quickstart/`](../../examples/hosted_quickstart/): the whole journey with both
+  SDKs (workspace, budgeted runs, receipts, a refused call, what to do when the allowance runs out);
+- [`examples/hosted_shared_budget/`](../../examples/hosted_shared_budget/): many agents sharing one
+  run budget.
 
 ## Billing (experimental pricing)
 
