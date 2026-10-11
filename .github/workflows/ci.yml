@@ -123,8 +123,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package with dev and hosted dependencies
-        # `ap` brings the openai SDK, which the multi-agent example uses as its client.
-        run: pip install -e ".[dev,hosted,ap]"
+        # `ap` brings the openai SDK; anthropic is the other SDK the journey example uses.
+        run: pip install -e ".[dev,hosted,ap]" "anthropic>=0.40"
       - name: Lint -- hosted/budget_gateway and its tests
         run: >-
           ruff check hosted/budget_gateway tests/unit/hosted/test_budget_gateway.py
@@ -133,6 +133,7 @@ jobs:
           tests/unit/hosted/test_budget_gateway_operator.py
           tests/unit/hosted/test_budget_gateway_purchase_outcomes.py
           tests/unit/hosted/test_hosted_shared_budget_example.py examples/hosted_shared_budget
+          tests/unit/hosted/test_hosted_quickstart_journey.py examples/hosted_quickstart
       - name: Test -- Inferrail Hosted (zero skips)
         shell: bash
         run: |
@@ -141,7 +142,8 @@ jobs:
             tests/unit/hosted/test_budget_gateway_activation.py \
             tests/unit/hosted/test_budget_gateway_operator.py \
             tests/unit/hosted/test_budget_gateway_purchase_outcomes.py \
-            tests/unit/hosted/test_hosted_shared_budget_example.py -v -rs | tee budget-gateway.log
+            tests/unit/hosted/test_hosted_shared_budget_example.py \
+            tests/unit/hosted/test_hosted_quickstart_journey.py -v -rs | tee budget-gateway.log
           if grep -q "SKIPPED" budget-gateway.log; then
             echo "::error::a skipped Inferrail Hosted test must fail this job." >&2
             exit 1
