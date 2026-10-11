@@ -359,3 +359,24 @@ def test_unpaid_payment_challenges_are_counted_as_purchase_intent(mods, tmp_path
     p = c.get("/v1/operator/report", headers={"Authorization": "Bearer op"}).json()["purchases"]
     assert p["payment_challenges_served"] == 1
     assert p["payment_challenges_without_a_workspace_key"] == 1
+
+
+def test_report_answers_who_paid_again_and_what_is_owed_on_shutdown(mods, ledger):
+    report = sys.modules["report"]
+    a, _ = ledger.create_workspace()
+    b, _ = ledger.create_workspace()
+    ledger.grant("x402", f"{PAYER}:0x1", a, 1000, 100)
+    ledger.grant("x402", f"{PAYER}:0x2", a, 1000, 100)
+    ledger.grant("stripe", "cs_1", b, 10_000, 1000)
+    ledger.record_pending(
+        "x402", f"{PAYER}:0x3", a, 1000, 100, authorizer=PAYER, nonce="0x3", valid_before=0
+    )
+    r = report.build(ledger, now=T0)
+    assert r["purchases"]["repeat_payers"] == {"wallets": {PAYER: 2}, "workspaces": {a: 2}}
+    m = r["money_cents"]
+    assert m["x402_usdc_settled"] == 200 and m["gross_sales"] == 1200
+    assert m["owed_to_external_customers_if_shut_down"] == 1200 + 100  # unspent + pending
+    assert r["contribution_margin_cents"] is None
+    assert any("hosting" in c for c in r["cost_inputs_needed"])
+    costed = report.build(ledger, costs_cents={"hosting_share": 50}, now=T0)
+    assert costed["cost_inputs_needed"] == [] and costed["contribution_margin_cents"] == -50

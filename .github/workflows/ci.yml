@@ -131,6 +131,7 @@ jobs:
           tests/unit/hosted/test_budget_gateway_cohost.py
           tests/unit/hosted/test_budget_gateway_activation.py
           tests/unit/hosted/test_budget_gateway_operator.py
+          tests/unit/hosted/test_budget_gateway_purchase_outcomes.py
           tests/unit/hosted/test_hosted_shared_budget_example.py examples/hosted_shared_budget
           tests/unit/hosted/test_hosted_quickstart_journey.py examples/hosted_quickstart
       - name: Test -- Inferrail Hosted (zero skips)
@@ -140,6 +141,7 @@ jobs:
             tests/unit/hosted/test_budget_gateway_cohost.py \
             tests/unit/hosted/test_budget_gateway_activation.py \
             tests/unit/hosted/test_budget_gateway_operator.py \
+            tests/unit/hosted/test_budget_gateway_purchase_outcomes.py \
             tests/unit/hosted/test_hosted_shared_budget_example.py \
             tests/unit/hosted/test_hosted_quickstart_journey.py -v -rs | tee budget-gateway.log
           if grep -q "SKIPPED" budget-gateway.log; then
