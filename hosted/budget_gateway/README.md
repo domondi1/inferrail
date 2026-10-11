@@ -1,6 +1,7 @@
 # Inferrail Hosted
 
-**Status: experimental. Not deployed. Pricing is an experiment, not validated demand.**
+**Status: experimental. Credit purchases are not open yet. Pricing is an experiment, not
+validated demand.**
 
 The Inferrail gateway, run for you. Give each AI run a dollar ceiling in a request header. Every
 call in that run, from any agent or machine using the same workspace, draws on one ledger. A
@@ -21,9 +22,18 @@ must share one budget. It adds:
 
 ## Quickstart
 
+Two keys, never mixed up:
+
+| Key | What it is | Where it goes |
+|---|---|---|
+| **Workspace key** (`irw_...`) | Identifies your workspace on Inferrail Hosted. Shown once at creation; only its hash is stored | `Authorization: Bearer <key>` or `x-api-key: <key>`: what an SDK sends for `api_key=` |
+| **Provider key** (`sk-...`) | Your own OpenAI or Anthropic key. Your provider bills you | `X-Provider-Api-Key` on every request. Read per request, never stored or logged |
+
 ```bash
 curl -s -X POST https://<host>/v1/workspaces    # returns {"api_key": "irw_...", ...} once
 ```
+
+OpenAI SDK (`pip install openai`):
 
 ```python
 from openai import OpenAI
@@ -44,13 +54,58 @@ client.chat.completions.create(
 )
 ```
 
+Anthropic SDK (`pip install anthropic`). Note the base URL has **no** `/v1`: the SDK adds it.
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    base_url="https://<host>",
+    api_key="irw_...",  # workspace key
+    default_headers={"X-Provider-Api-Key": "sk-ant-..."},  # your Anthropic key: never stored
+)
+client.messages.create(
+    model="claude-haiku-4-5",
+    max_tokens=200,
+    messages=[{"role": "user", "content": "Summarize this contract."}],
+    extra_headers={
+        "X-Inferrail-Attribute-Work-Id": "contract-review-42",
+        "X-Inferrail-Budget-Usd": "0.50",
+    },
+)
+```
+
+**Budgets:**
+- The first ceiling declared for a work id is kept for the whole run. A different value later
+  gets a 400, never a silent change.
+- Without `X-Inferrail-Budget-Usd`, a call is metered and receipted but **not capped**.
+- A call that would cross the ceiling gets a 402 (`BudgetExceededError`, `INFERRAIL_E010`)
+  before anything reaches the provider.
+
+**Usage and receipts:**
 - `GET /v1/work/contract-review-42` lists the run's calls, cost and receipts.
 - `GET /v1/workspace` shows usage and credits.
 - `GET /v1/workspace/ledger` lists every credit grant, refund and pending purchase.
-- Anthropic works the same way through `POST /v1/messages`.
+
+**For agents:**
+- `GET /llms.txt` is the whole contract in plain text: headers, errors and retries, pricing,
+  and how to buy credits when a rail is open. It's generated from the running configuration.
+- `GET /pricing` is the same contract as JSON; `GET /openapi.json` is the schema.
+
+**Errors you can act on:**
+
+| Status | Meaning | Do |
+|---|---|---|
+| 400 | Missing provider key, bad budget header, or a conflicting ceiling | Fix the request |
+| 401 | Missing or invalid workspace key | Check the key, or create a workspace |
+| 402 `BudgetExceededError` | The run's ceiling would be exceeded | Not retryable as-is |
+| 402 `allowance_exhausted` | Free runs used, no credits | Buy credits, or wait for `free_allowance_resets_at` |
+| 429 | Workspace rate limit | Wait `Retry-After` seconds |
+| 502 / 504 | Provider error or timeout | `error.remediation` says whether to retry |
 
 To try it locally with no payments: `python hosted/budget_gateway/service.py`, then use
-`http://localhost:8424`.
+`http://localhost:8424`. A runnable multi-agent example is in
+[`examples/hosted_shared_budget/`](../../examples/hosted_shared_budget/).
 
 ## Billing (experimental pricing)
 
@@ -140,20 +195,35 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | `BG_MAX_DAILY_SALES_USD` | `100` | Bounded experiment: new credit purchases are refused (503) once confirmed plus pending sales in the last 24 hours would exceed this |
 | `BG_MAX_OUTSTANDING_CREDITS_USD` | `100` | Refuses new credit purchases (503) while the value of all unspent prepaid credits plus pending purchases would exceed this. Separate from the daily cap |
 | `BG_RATE_LIMIT_PER_MINUTE` | `600` | Per-workspace authenticated request limit (429) |
+| `BG_OPERATOR_TOKEN` | unset (report endpoint off) | Bearer token for `GET /v1/operator/report` |
 | `BG_MOUNT_PREFIX` | empty (`/hosted` when cohosted) | Path prefix when mounted inside another app |
 
 ## Known limits (before real money)
 
-- **x402 refunds** are manual: the operator sends USDC back from the receiving wallet, then
-  records the reversal with `ops.py refund-x402 <payer:nonce> <cents>`.
+- **x402 refunds** are manual, and recorded only with proof:
+  - the operator sends USDC back from the receiving wallet;
+  - then runs `ops.py refund-x402 <payer:nonce> <tx hash>`;
+  - the amount is read from the chain: a confirmed USDC transfer from `BG_X402_PAY_TO` to the
+    original payer. One transaction backs one refund, and a ledger entry is never taken as
+    proof that money went back.
 - **Stripe disputes** (chargebacks) are not handled automatically. Treat a dispute as a refund.
 - **No migrations:** the ledger schema is v1. A schema change needs a migration before deploy.
 - **Backups:** `python3 hosted/budget_gateway/ops.py backup /var/data/backups` takes a
   consistent online copy. Restoring an old copy can re-open spent credits, so reconcile
   against Stripe and the chain after any restore.
 - **Operations:**
-  - `ops.py liabilities` reports outstanding prepaid value, pending purchases and net
-    revenue;
-  - `ops.py reconcile` resolves pending x402 purchases from the chain.
+  - `ops.py liabilities` reports outstanding prepaid value (at the price actually paid),
+    pending purchases and net cash received;
+  - `ops.py reconcile` resolves pending x402 purchases from the chain;
+  - `ops.py report [ws_a:test,...] [0xwallet:test,...]`, or `GET /v1/operator/report` with
+    `Authorization: Bearer $BG_OPERATOR_TOKEN`, is the commercial report:
+    - external workspaces, activation and time to first answered run;
+    - answered and paid runs, budget refusals, exhausted allowances;
+    - repeat usage and 7/30-day retention;
+    - payment challenges, signed attempts, settled purchases, distinct and repeat payers;
+    - gross sales, refunds (chain-verified vs not), net cash, recognized vs deferred revenue,
+      pending purchases and outstanding liability.
+  - Internal workspaces and test wallets are excluded by the caller and reported separately.
+    Request content is never read.
 
 Tests: `python -m pytest tests/unit/hosted/test_budget_gateway.py` (needs the `hosted` extra).
