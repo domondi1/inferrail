@@ -2698,3 +2698,321 @@ async def test_serpex_invoice_cost_preserves_envelope_billing_and_recovery(
         assert financial_state(row(restarted)) == financial
     finally:
         await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", ["none", "unsettled", "settled"])
+@pytest.mark.parametrize("declared_length", [None, "16"])
+async def test_streamed_oversize_stops_reading_and_preserves_payment_state(
+    system: Any, authorization: str, declared_length: str | None
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = None if authorization == "none" else payment(service, account)
+    if authorization == "settled":
+        await service.facilitator.inner.settle(decode(signed), service.requirements)
+    headers = {} if signed is None else {"payment-signature": signed}
+    if declared_length is not None:
+        headers["content-length"] = declared_length
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        consumed = 0
+
+        async def oversized() -> Any:
+            nonlocal consumed
+            for _ in range(100):
+                consumed += 1
+                yield b"x" * 8192
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(service)),
+            base_url="https://search.example.com",
+        ) as client:
+            response = await client.post("/search", content=oversized(), headers=headers)
+        assert response.status_code == 413
+        assert response.json()["error"] == "body_too_large"
+        assert consumed == 3, "the untrusted body must not be drained into memory"
+        metrics = report(service.store.path, set(), network="eip155:84532")
+        assert (
+            service.supplier.calls
+            == service.facilitator.verifies
+            == service.facilitator.settles
+            == 0
+        )
+        assert metrics["supplier_cogs_usd"] == "0"
+        assert metrics["external_paid_calls"] == 0
+        assert metrics["realized_external_contribution_margin_usd"] == (
+            "0" if signed is None else None
+        )
+        if authorization == "settled":
+            assert response.json()["charged_usd"] == "0.015"
+            assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+            assert metrics["unfulfilled_settled_payments"] == 1
+            assert metrics["additional_payment_liability_usd"] == "0.015"
+        elif authorization == "unsettled":
+            assert response.json()["charged_usd"] is None
+            assert metrics["unresolved_payment_observations"] == 1
+        else:
+            assert response.json()["charged_usd"] == "0"
+            assert metrics["unresolved_transactions"] == 0
+    assert chain.balance_of(service.config.pay_to) == (15000 if authorization == "settled" else 0)
+
+
+@pytest.mark.asyncio
+async def test_streamed_exact_body_limit_delivers_and_replays_without_new_spend(
+    system: Any,
+) -> None:
+    service, account, chain = system
+    encoded = body().model_dump_json().encode()
+    encoded += b" " * (16384 - len(encoded))
+    signed = payment(service, account)
+    for replay in [False, True]:
+        if replay:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+
+        async def chunks() -> Any:
+            for start in range(0, len(encoded), 1024):
+                yield encoded[start : start + 1024]
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(service)),
+            base_url="https://search.example.com",
+        ) as client:
+            response = await client.post(
+                "/search", content=chunks(), headers={"payment-signature": signed}
+            )
+        assert response.status_code == 200
+        assert response.json()["receipt"]["charged_usd"] == ("0" if replay else "0.015")
+        assert financial_state(row(service))["realized_margin"] == "0.008"
+        assert service.supplier.calls == service.facilitator.settles == 1
+    assert chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.fixture
+def cohost_parts(system: Any, tmp_path: Path) -> tuple[Any, Any, Any, Any]:
+    from hosted.budget_gateway import cohost as hosted_cohost
+
+    previous, account, chain = system
+    search_dir = tmp_path / "job-search"
+    search_dir.mkdir()
+    service = SearchService(
+        replace(previous.config, resource_url="https://search.example.com/job-search/search"),
+        Store(search_dir / "search.sqlite3"),
+        previous.facilitator,
+        previous.chain,
+        previous.supplier,
+    )
+    modules = hosted_cohost.load_modules()
+    settings = modules[1].Settings.from_env(
+        {
+            "BG_DATA_DIR": str(tmp_path / "hosted"),
+            "BG_MOUNT_PREFIX": "/hosted",
+            "BG_PUBLIC_BASE_URL": "https://search.example.com/hosted",
+            "BG_X402_PAY_TO": "0x" + "9" * 40,
+        }
+    )
+    return service, account, settings, modules
+
+
+@pytest.mark.asyncio
+async def test_cohosted_search_preserves_trial_credit_challenge_and_paid_replay(
+    cohost_parts: Any, tmp_path: Path
+) -> None:
+    from hosted.job_safe_search.cohost import create_cohosted_app
+
+    service, account, settings, modules = cohost_parts
+    signed = payment(service, account)
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        app = create_cohosted_app(
+            tmp_path / "trial",
+            settings,
+            create_app(service),
+            facilitator=service.facilitator.inner,
+            modules=modules,
+        )
+        async with app.router.lifespan_context(app):
+            with pytest.raises(RuntimeError, match="database_already_has_a_service_writer"):
+                with Store(service.store.path).writer_lease():
+                    pytest.fail("search writer lease must cover the combined service lifetime")
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://search.example.com"
+            ) as client:
+                assert (await client.get("/health")).json() == {"status": "ok"}
+                assert (await client.get("/hosted/health")).status_code == 200
+                assert (await client.get("/job-search/health")).json()["network"] == "eip155:84532"
+                trial = await client.post("/v1/trial")
+                assert trial.status_code == 200
+                demo = await client.post(
+                    "/v1/demo/chat/completions",
+                    headers={"Authorization": "Bearer " + trial.json()["api_key"]},
+                    json={"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+                )
+                assert demo.status_code == 200
+                workspace = await client.post("/hosted/v1/workspaces")
+                assert workspace.status_code == 201
+                key = workspace.json()["api_key"]
+                credit = await client.post(
+                    "/hosted/v1/credits/x402", headers={"Authorization": "Bearer " + key}
+                )
+                assert credit.status_code == 402
+                for credential in [key, trial.json()["api_key"]]:
+                    unpaid = await client.post(
+                        "/job-search/search",
+                        json={},
+                        headers={"Authorization": "Bearer " + credential},
+                    )
+                    assert unpaid.status_code == 402
+                    assert unpaid.json()["resource"]["url"] == service.config.resource_url
+                manifest = (await client.get("/job-search/.well-known/x402.json")).json()
+                assert manifest["resource"] == service.config.resource_url
+                response = await client.post(
+                    "/job-search/search",
+                    json=body().model_dump(),
+                    headers={"payment-signature": signed},
+                )
+                assert response.status_code == 200
+                assert response.json()["receipt"]["charged_usd"] == ("0" if restart else "0.015")
+                assert financial_state(row(service))["realized_margin"] == "0.008"
+                assert service.facilitator.settles == service.supplier.calls == 1
+        with Store(service.store.path).writer_lease():
+            pass
+    assert service.chain.chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.mark.parametrize(
+    "violation",
+    ["resource", "query", "fragment", "same_dir", "nested_dir", "trial_dir", "same_merchant"],
+)
+def test_cohosted_search_refuses_unsafe_configuration_before_other_app_creation(
+    cohost_parts: Any, monkeypatch: pytest.MonkeyPatch, violation: str
+) -> None:
+    from hosted.job_safe_search import cohost
+
+    service, _, settings, modules = cohost_parts
+    trial_dir = service.store.path.parent.parent / "trial"
+    if violation == "resource":
+        service.config = replace(service.config, resource_url="https://search.example.com/search")
+    elif violation in ("query", "fragment"):
+        suffix = "?x=1" if violation == "query" else "#x"
+        service.config = replace(service.config, resource_url=service.config.resource_url + suffix)
+    elif violation == "same_dir":
+        settings = replace(settings, data_dir=service.store.path.parent)
+    elif violation == "nested_dir":
+        settings = replace(settings, data_dir=service.store.path.parent / "nested")
+    elif violation == "trial_dir":
+        trial_dir = service.store.path.parent
+    else:
+        settings = replace(settings, x402_pay_to=service.config.pay_to.lower())
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("invalid isolation must fail before creating other applications")
+
+    monkeypatch.setattr(cohost.hosted_cohost, "create_combined_app", forbidden)
+    with pytest.raises(ValueError, match="cohosted_"):
+        cohost.create_cohosted_app(trial_dir, settings, create_app(service), modules=modules)
+    assert service.facilitator.settles == service.supplier.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", ["none", "unsettled", "settled"])
+async def test_disconnected_body_preserves_payment_without_spending(
+    system: Any, authorization: str
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = None if authorization == "none" else payment(service, account)
+    if authorization == "settled":
+        await service.facilitator.inner.settle(decode(signed), service.requirements)
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        messages = iter(
+            [
+                {"type": "http.request", "body": b'{"query":', "more_body": True},
+                {"type": "http.disconnect"},
+            ]
+        )
+        sent: list[dict[str, Any]] = []
+
+        async def receive(source: Any = messages) -> dict[str, Any]:
+            return next(source)
+
+        async def send(message: dict[str, Any], target: Any = sent) -> None:
+            target.append(message)
+
+        await create_app(service)(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/search",
+                "raw_path": b"/search",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [] if signed is None else [(b"payment-signature", signed.encode())],
+                "server": ("search.example.com", 443),
+                "client": ("127.0.0.1", 1234),
+            },
+            receive,
+            send,
+        )
+        assert sent[0]["status"] == 400
+        response = json.loads(b"".join(x.get("body", b"") for x in sent[1:]))
+        assert response["error"] == "incomplete_request_body"
+        metrics = report(service.store.path, set(), network="eip155:84532")
+        assert (
+            service.supplier.calls
+            == service.facilitator.verifies
+            == service.facilitator.settles
+            == 0
+        )
+        assert metrics["external_paid_calls"] == 0
+        assert metrics["supplier_cogs_usd"] == "0"
+        assert metrics["realized_external_contribution_margin_usd"] == (
+            "0" if signed is None else None
+        )
+        if authorization == "settled":
+            assert response["charged_usd"] == "0.015"
+            assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+            assert metrics["unfulfilled_settled_payments"] == 1
+            assert metrics["additional_payment_liability_usd"] == "0.015"
+        elif authorization == "unsettled":
+            assert response["charged_usd"] is None
+            assert metrics["unresolved_payment_observations"] == 1
+        else:
+            assert response["charged_usd"] == "0"
+            assert metrics["unresolved_transactions"] == 0
+    assert chain.balance_of(service.config.pay_to) == (15000 if authorization == "settled" else 0)

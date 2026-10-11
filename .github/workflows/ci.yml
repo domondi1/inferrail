@@ -125,11 +125,14 @@ jobs:
       - name: Install package with dev and hosted dependencies
         run: pip install -e ".[dev,hosted]"
       - name: Lint -- hosted/budget_gateway and its tests
-        run: ruff check hosted/budget_gateway tests/unit/hosted/test_budget_gateway.py
+        run: >-
+          ruff check hosted/budget_gateway tests/unit/hosted/test_budget_gateway.py
+          tests/unit/hosted/test_budget_gateway_cohost.py
       - name: Test -- Inferrail Hosted (zero skips)
         shell: bash
         run: |
-          python -m pytest tests/unit/hosted/test_budget_gateway.py -v -rs | tee budget-gateway.log
+          python -m pytest tests/unit/hosted/test_budget_gateway.py \
+            tests/unit/hosted/test_budget_gateway_cohost.py -v -rs | tee budget-gateway.log
           if grep -q "SKIPPED" budget-gateway.log; then
             echo "::error::a skipped Inferrail Hosted test must fail this job." >&2
             exit 1

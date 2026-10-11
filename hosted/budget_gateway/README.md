@@ -30,16 +30,16 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://<host>/v1",
-    api_key="irw_...",                                   # workspace key
-    default_headers={"X-Provider-Api-Key": "sk-..."},   # your OpenAI key: never stored
+    api_key="irw_...",  # workspace key
+    default_headers={"X-Provider-Api-Key": "sk-..."},  # your OpenAI key: never stored
 )
 client.chat.completions.create(
     model="gpt-4o-mini",
     max_tokens=200,
     messages=[{"role": "user", "content": "Summarize this contract."}],
     extra_headers={
-        "X-Inferrail-Attribute-Work-Id": "contract-review-42",   # the run
-        "X-Inferrail-Budget-Usd": "0.50",                        # its ceiling
+        "X-Inferrail-Attribute-Work-Id": "contract-review-42",  # the run
+        "X-Inferrail-Budget-Usd": "0.50",  # its ceiling
     },
 )
 ```
@@ -58,7 +58,7 @@ To try it locally with no payments: `python hosted/budget_gateway/service.py`, t
 |---|---|
 | **Governed run** | A distinct work id (`X-Inferrail-Attribute-Work-Id`) in a UTC month. A call without a work id is its own run |
 | **When a run is billed** | Only when at least one of its calls is **answered by the provider**. Runs whose calls all fail (provider error, timeout) or are refused by their own budget **cost nothing**. Later calls in a billed run cost nothing more |
-| **Free** | 2,000 governed runs per workspace per month |
+| **Free** | 250 governed runs per workspace per month |
 | **After that** | Prepaid credits, $0.001 per run. Agents: `POST /v1/credits/x402`, $1 in USDC for 1,000 runs, no account. People: `POST /v1/credits/checkout` (Stripe), $10 for 10,000 runs |
 | **No surprise charges** | No subscription, no auto top-up, no overage billing. Past the allowance with no credits, a call gets `402 allowance_exhausted`, listing how to buy, and nothing reaches the provider |
 | **Model spend** | Billed by your provider on your own key. Inferrail never resells model access |
@@ -86,6 +86,29 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | Provider keys never at rest or echoed | Read per request; scrubbed from error text; unhandled errors log the type only | `test_provider_key_is_forwarded_but_never_stored_or_returned`, `test_provider_errors_never_echo_the_key_and_are_not_billed` |
 | Workspace keys never at rest | SHA-256 hashes only | `test_workspace_keys_are_stored_only_as_hashes` |
 
+## Running it inside the existing trial gateway (one service, no new instance)
+
+`cohost.py` serves both apps from one process. The trial API (`/try/` page backend) stays at
+`/`, unchanged, and Inferrail Hosted is mounted at `/hosted`.
+
+- **Code:** each app keeps its own module names. Trial tokens and Hosted workspace keys are
+  unknown to each other.
+- **Data:** trial data stays in `COST_GATEWAY_DATA_DIR` (ephemeral, as before). Hosted's
+  money-critical state goes in `BG_DATA_DIR`, which must be the attached disk.
+- **Startup:** both apps' lifecycles run (the trial purge loop and Hosted reconciliation).
+- **Memory:** measured on Python 3.12 with the x402 rail enabled, about 100 MB resident after
+  about 3,200 mixed requests (trial alone: about 69 MB). The 512 MB instance has ample headroom.
+- **Commands:**
+
+  | Setting | Value |
+  |---|---|
+  | Build | `pip install -e . -r hosted/cost_gateway/requirements.txt -r hosted/budget_gateway/requirements.txt` |
+  | Start | `python3 hosted/budget_gateway/cohost.py` |
+  | Env | `BG_DATA_DIR=/var/data/hosted` on the disk, `BG_PUBLIC_BASE_URL=https://<host>/hosted` |
+
+- **Rollback:** set the start command back to `python3 hosted/cost_gateway/service.py`. The
+  trial is unaffected, and Hosted's data stays on the disk.
+
 ## Deployment constraints
 
 - **Exactly one instance per data directory**, with one uvicorn worker.
@@ -95,8 +118,9 @@ concurrent new runs can't overspend. The hold is released if no call is answered
     if another instance holds it.
 - `BG_DATA_DIR` must be a **local persistent disk**. `flock` and SQLite WAL are unreliable on
   network filesystems.
-- Run it behind TLS. Set `BG_FORWARDED_ALLOW_IPS` to your proxy so the per-IP
-  workspace-creation throttle sees real client addresses.
+- Run it behind TLS. The per-IP workspace-creation throttle reads the client address from
+  `BG_CLIENT_IP_HEADER` (default `true-client-ip`, which Render's Cloudflare edge sets and
+  clients can't spoof), falling back to the peer address.
 - **Mainnet x402 requires:** `BG_X402_MAINNET_APPROVED=1`, `BG_BASE_RPC_URL` (for
   reconciliation; startup refuses without it), and `CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` for
   the facilitator.
@@ -104,7 +128,7 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | Variable | Default | Meaning |
 |---|---|---|
 | `BG_DATA_DIR` | `/tmp/inferrail_budget_gateway` | Persistent storage |
-| `BG_FREE_RUNS_PER_MONTH` | `2000` | Free governed runs per workspace per month |
+| `BG_FREE_RUNS_PER_MONTH` | `250` | Free governed runs per workspace per month |
 | `BG_PER_WORK_MAX_USD` | `100` | Largest per-run ceiling a caller may declare |
 | `BG_WORKSPACE_CREATION_ENABLED`, `BG_MAX_WORKSPACES`, `BG_CREATIONS_PER_IP_PER_HOUR` | `1`, `10000`, `5` | Abuse guards |
 | `BG_MAX_BODY_BYTES` | `2000000` | Request size limit (by `Content-Length`) |
@@ -112,18 +136,24 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | `BG_BASE_RPC_URL`, `BG_RECONCILE_SECONDS` | unset, `60` | Chain reconciliation of pending x402 purchases |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | unset (rail off) | Card purchases; webhook events `checkout.session.completed`, `charge.refunded` |
 | `BG_PUBLIC_BASE_URL` | `http://localhost:8424` | Public URL used in links |
-| `BG_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trusted proxy addresses for client IPs |
+| `BG_CLIENT_IP_HEADER` | `true-client-ip` | Trusted header carrying the real client address |
+| `BG_MAX_DAILY_SALES_USD` | `100` | Bounded experiment: new credit purchases are refused (503) once confirmed plus pending sales in the last 24 hours would exceed this |
+| `BG_MAX_OUTSTANDING_CREDITS_USD` | `100` | Refuses new credit purchases (503) while the value of all unspent prepaid credits plus pending purchases would exceed this. Separate from the daily cap |
+| `BG_RATE_LIMIT_PER_MINUTE` | `600` | Per-workspace authenticated request limit (429) |
+| `BG_MOUNT_PREFIX` | empty (`/hosted` when cohosted) | Path prefix when mounted inside another app |
 
 ## Known limits (before real money)
 
-- **Request limits:** no per-workspace request rate limit (provider spend is on the customer's
-  own key; CPU abuse is bounded only by the proxy). Chunked request bodies without
-  `Content-Length` aren't size-checked.
-- **x402 refunds** are manual: the operator sends USDC back, then records the reversal through
-  `WorkspaceLedger.apply_refund("x402", ref, cents)`. There's no HTTP route for it.
+- **x402 refunds** are manual: the operator sends USDC back from the receiving wallet, then
+  records the reversal with `ops.py refund-x402 <payer:nonce> <cents>`.
 - **Stripe disputes** (chargebacks) are not handled automatically. Treat a dispute as a refund.
 - **No migrations:** the ledger schema is v1. A schema change needs a migration before deploy.
-- **Backups:** copy `BG_DATA_DIR` with SQLite's online backup. Restoring an old copy can
-  re-open spent credits, so reconcile against Stripe and the chain after any restore.
+- **Backups:** `python3 hosted/budget_gateway/ops.py backup /var/data/backups` takes a
+  consistent online copy. Restoring an old copy can re-open spent credits, so reconcile
+  against Stripe and the chain after any restore.
+- **Operations:**
+  - `ops.py liabilities` reports outstanding prepaid value, pending purchases and net
+    revenue;
+  - `ops.py reconcile` resolves pending x402 purchases from the chain.
 
 Tests: `python -m pytest tests/unit/hosted/test_budget_gateway.py` (needs the `hosted` extra).
