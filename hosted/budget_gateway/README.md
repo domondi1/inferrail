@@ -195,20 +195,35 @@ concurrent new runs can't overspend. The hold is released if no call is answered
 | `BG_MAX_DAILY_SALES_USD` | `100` | Bounded experiment: new credit purchases are refused (503) once confirmed plus pending sales in the last 24 hours would exceed this |
 | `BG_MAX_OUTSTANDING_CREDITS_USD` | `100` | Refuses new credit purchases (503) while the value of all unspent prepaid credits plus pending purchases would exceed this. Separate from the daily cap |
 | `BG_RATE_LIMIT_PER_MINUTE` | `600` | Per-workspace authenticated request limit (429) |
+| `BG_OPERATOR_TOKEN` | unset (report endpoint off) | Bearer token for `GET /v1/operator/report` |
 | `BG_MOUNT_PREFIX` | empty (`/hosted` when cohosted) | Path prefix when mounted inside another app |
 
 ## Known limits (before real money)
 
-- **x402 refunds** are manual: the operator sends USDC back from the receiving wallet, then
-  records the reversal with `ops.py refund-x402 <payer:nonce> <cents>`.
+- **x402 refunds** are manual, and recorded only with proof:
+  - the operator sends USDC back from the receiving wallet;
+  - then runs `ops.py refund-x402 <payer:nonce> <tx hash>`;
+  - the amount is read from the chain: a confirmed USDC transfer from `BG_X402_PAY_TO` to the
+    original payer. One transaction backs one refund, and a ledger entry is never taken as
+    proof that money went back.
 - **Stripe disputes** (chargebacks) are not handled automatically. Treat a dispute as a refund.
 - **No migrations:** the ledger schema is v1. A schema change needs a migration before deploy.
 - **Backups:** `python3 hosted/budget_gateway/ops.py backup /var/data/backups` takes a
   consistent online copy. Restoring an old copy can re-open spent credits, so reconcile
   against Stripe and the chain after any restore.
 - **Operations:**
-  - `ops.py liabilities` reports outstanding prepaid value, pending purchases and net
-    revenue;
-  - `ops.py reconcile` resolves pending x402 purchases from the chain.
+  - `ops.py liabilities` reports outstanding prepaid value (at the price actually paid),
+    pending purchases and net cash received;
+  - `ops.py reconcile` resolves pending x402 purchases from the chain;
+  - `ops.py report [ws_a:test,...] [0xwallet:test,...]`, or `GET /v1/operator/report` with
+    `Authorization: Bearer $BG_OPERATOR_TOKEN`, is the commercial report:
+    - external workspaces, activation and time to first answered run;
+    - answered and paid runs, budget refusals, exhausted allowances;
+    - repeat usage and 7/30-day retention;
+    - payment challenges, signed attempts, settled purchases, distinct and repeat payers;
+    - gross sales, refunds (chain-verified vs not), net cash, recognized vs deferred revenue,
+      pending purchases and outstanding liability.
+  - Internal workspaces and test wallets are excluded by the caller and reported separately.
+    Request content is never read.
 
 Tests: `python -m pytest tests/unit/hosted/test_budget_gateway.py` (needs the `hosted` extra).

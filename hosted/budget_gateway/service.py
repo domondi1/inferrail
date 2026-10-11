@@ -44,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import hmac
 import logging
 import os
 import sys
@@ -64,6 +65,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import chain_check  # noqa: E402
+import report  # noqa: E402
 import stripe_checkout  # noqa: E402
 from workspaces import WorkspaceLedger  # noqa: E402
 
@@ -74,6 +76,7 @@ from inferrail.errors import (  # noqa: E402
     AuthenticationError,
     BudgetDeclarationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -190,6 +193,7 @@ class Settings:
     max_daily_sales_usd: Decimal = Decimal("100")
     max_outstanding_credits_usd: Decimal = Decimal("100")
     rate_limit_per_minute: int = 600
+    operator_token: str | None = None
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -236,6 +240,7 @@ class Settings:
             max_daily_sales_usd=Decimal(e.get("BG_MAX_DAILY_SALES_USD", "100")),
             max_outstanding_credits_usd=Decimal(e.get("BG_MAX_OUTSTANDING_CREDITS_USD", "100")),
             rate_limit_per_minute=int(e.get("BG_RATE_LIMIT_PER_MINUTE", "600")),
+            operator_token=e.get("BG_OPERATOR_TOKEN") or None,
         )
 
 
@@ -606,6 +611,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 headers={"Retry-After": str(retry_after)},
             )
         window.append(now)
+        request.state.workspace_id = workspace_id
         return workspace_id
 
     require_workspace = Depends(_workspace)
@@ -631,6 +637,9 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
     @app.exception_handler(InferrailError)
     async def inferrail_error(request: Request, exc: InferrailError) -> JSONResponse:
         status = next((s for t, s in _STATUS_BY_ERROR if isinstance(exc, t)), 500)
+        workspace_id = getattr(request.state, "workspace_id", None)
+        if workspace_id and isinstance(exc, BudgetExceededError | BudgetUnpricedModelError):
+            ledger.count_event(workspace_id, "budget_refused")
         code = code_for(exc)
         body = ErrorResponse(
             error=ErrorDetail(
@@ -657,6 +666,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         work_id = attributes.setdefault("work_id", f"call_{uuid.uuid4().hex[:16]}")
         admission = ledger.hold_run(workspace_id, work_id)
         if not admission.admitted:
+            ledger.count_event(workspace_id, "allowance_exhausted")
             rails = price_sheet()["credits"]
             how = (
                 "Buy credits to continue (see 'purchase')"
@@ -790,6 +800,27 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 for r in rows
             ],
         }
+
+    # -- operator ---------------------------------------------------------------------------------
+    @app.get("/v1/operator/report", include_in_schema=False)
+    async def operator_report(request: Request) -> dict[str, Any]:
+        """The operator's funnel, money and liability report (report.py). Off (404) unless
+        BG_OPERATOR_TOKEN is set. Internal workspaces and test wallets to leave out of the
+        commercial numbers are passed by the caller: `?exclude=ws_a:test,ws_b:founder` and
+        `?exclude_wallets=0xabc:test`."""
+        if not settings.operator_token:
+            raise HTTPException(404)
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not hmac.compare_digest(token.encode(), settings.operator_token.encode()):
+            raise HTTPException(401, "operator token required")
+        q = request.query_params
+        return await asyncio.to_thread(
+            report.build,
+            ledger,
+            exclude_workspaces=report.parse_labels(q.get("exclude", "")),
+            exclude_wallets=report.parse_labels(q.get("exclude_wallets", "")),
+        )
 
     # -- credits: card ----------------------------------------------------------------------------
     @app.post("/v1/credits/checkout")
@@ -933,7 +964,20 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
 
         @app.middleware("http")
         async def _x402(request: Request, call_next: Any) -> Any:
-            return await x402_gate(request, call_next)
+            response = await x402_gate(request, call_next)
+            if (
+                response.status_code == 402
+                and request.url.path.endswith("/v1/credits/x402")
+                and not request.headers.get("payment-signature")
+            ):
+                # Purchase intent: a payment challenge was served. Counted per workspace when
+                # the caller sent a valid key (the challenge itself needs none).
+                header = request.headers.get("authorization", "")
+                token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+                ledger.count_event(
+                    (ledger.authenticate(token) if token else None) or "", "x402_challenge"
+                )
+            return response
 
         @app.post("/v1/credits/x402")
         async def buy_credits_x402(
