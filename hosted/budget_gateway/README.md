@@ -1,6 +1,7 @@
 # Inferrail Hosted
 
-**Status: experimental. Not deployed. Pricing is an experiment, not validated demand.**
+**Status: experimental. Credit purchases are not open yet. Pricing is an experiment, not
+validated demand.**
 
 The Inferrail gateway, run for you. Give each AI run a dollar ceiling in a request header. Every
 call in that run, from any agent or machine using the same workspace, draws on one ledger. A
@@ -21,9 +22,18 @@ must share one budget. It adds:
 
 ## Quickstart
 
+Two keys, never mixed up:
+
+| Key | What it is | Where it goes |
+|---|---|---|
+| **Workspace key** (`irw_...`) | Identifies your workspace on Inferrail Hosted. Shown once at creation; only its hash is stored | `Authorization: Bearer <key>` or `x-api-key: <key>`: what an SDK sends for `api_key=` |
+| **Provider key** (`sk-...`) | Your own OpenAI or Anthropic key. Your provider bills you | `X-Provider-Api-Key` on every request. Read per request, never stored or logged |
+
 ```bash
 curl -s -X POST https://<host>/v1/workspaces    # returns {"api_key": "irw_...", ...} once
 ```
+
+OpenAI SDK (`pip install openai`):
 
 ```python
 from openai import OpenAI
@@ -44,13 +54,58 @@ client.chat.completions.create(
 )
 ```
 
+Anthropic SDK (`pip install anthropic`). Note the base URL has **no** `/v1`: the SDK adds it.
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    base_url="https://<host>",
+    api_key="irw_...",  # workspace key
+    default_headers={"X-Provider-Api-Key": "sk-ant-..."},  # your Anthropic key: never stored
+)
+client.messages.create(
+    model="claude-haiku-4-5",
+    max_tokens=200,
+    messages=[{"role": "user", "content": "Summarize this contract."}],
+    extra_headers={
+        "X-Inferrail-Attribute-Work-Id": "contract-review-42",
+        "X-Inferrail-Budget-Usd": "0.50",
+    },
+)
+```
+
+**Budgets:**
+- The first ceiling declared for a work id is kept for the whole run. A different value later
+  gets a 400, never a silent change.
+- Without `X-Inferrail-Budget-Usd`, a call is metered and receipted but **not capped**.
+- A call that would cross the ceiling gets a 402 (`BudgetExceededError`, `INFERRAIL_E010`)
+  before anything reaches the provider.
+
+**Usage and receipts:**
 - `GET /v1/work/contract-review-42` lists the run's calls, cost and receipts.
 - `GET /v1/workspace` shows usage and credits.
 - `GET /v1/workspace/ledger` lists every credit grant, refund and pending purchase.
-- Anthropic works the same way through `POST /v1/messages`.
+
+**For agents:**
+- `GET /llms.txt` is the whole contract in plain text: headers, errors and retries, pricing,
+  and how to buy credits when a rail is open. It's generated from the running configuration.
+- `GET /pricing` is the same contract as JSON; `GET /openapi.json` is the schema.
+
+**Errors you can act on:**
+
+| Status | Meaning | Do |
+|---|---|---|
+| 400 | Missing provider key, bad budget header, or a conflicting ceiling | Fix the request |
+| 401 | Missing or invalid workspace key | Check the key, or create a workspace |
+| 402 `BudgetExceededError` | The run's ceiling would be exceeded | Not retryable as-is |
+| 402 `allowance_exhausted` | Free runs used, no credits | Buy credits, or wait for `free_allowance_resets_at` |
+| 429 | Workspace rate limit | Wait `Retry-After` seconds |
+| 502 / 504 | Provider error or timeout | `error.remediation` says whether to retry |
 
 To try it locally with no payments: `python hosted/budget_gateway/service.py`, then use
-`http://localhost:8424`.
+`http://localhost:8424`. A runnable multi-agent example is in
+[`examples/hosted_shared_budget/`](../../examples/hosted_shared_budget/).
 
 ## Billing (experimental pricing)
 
