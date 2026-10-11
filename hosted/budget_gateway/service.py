@@ -358,11 +358,18 @@ def _agent_guide(p: dict[str, Any], settings: Settings) -> str:
             f"exact, ${x402['price_usd']} to {x402['pay_to']}). Sign it with your wallet and "
             "repeat the same request with the PAYMENT-SIGNATURE header. "
             f"One pack = {x402['governed_runs']:,} governed runs. No account.\n"
-            "- Each signed payment (payer + nonce) adds credits at most once; re-sending the "
-            "same signed payment can't charge twice. If a paid request times out, do NOT sign a "
-            "new payment: check GET /v1/workspace/ledger. A pending purchase is settled or "
-            "failed from on-chain state within minutes.\n"
-            "- 503 on purchase: a sales limit is reached; nothing is charged. Retry later.\n"
+            "- Each signed payment adds credits at most once; re-sending the same signed "
+            "payment can't charge twice. Its id is payment_ref = '<payer>:<nonce>' (both "
+            "lower-case, from the authorization you signed).\n"
+            "- After you send PAYMENT-SIGNATURE:\n"
+            "  - HTTP 200 (status settled): paid and credited. See GET /v1/workspace.\n"
+            "  - HTTP 402, or a timeout: do NOT sign a new payment yet. Look up your payment_ref "
+            "in GET /v1/workspace/ledger -> purchases:\n"
+            "    - pending: wait; it is settled or failed from on-chain state within a few "
+            "minutes;\n"
+            "    - settled: you were charged once and credited;\n"
+            "    - failed, or not listed: you were not charged; you may pay again.\n"
+            "  - HTTP 503: a sales limit is reached; nothing is charged. Retry later.\n"
         )
     else:
         buy = "- Credit purchases are not open on this deployment yet.\n"
@@ -945,14 +952,18 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                         example={
                             "workspace_id": "ws_0123456789abcdef0123",
                             "governed_runs": settings.x402_pack_runs,
-                            "status": "credits are added once the payment settles",
+                            "payment_ref": "0xpayer:0xnonce",
+                            "status": "settled",
+                            "next": "Credits are in GET /v1/workspace.",
                         },
                         schema={
                             "type": "object",
                             "properties": {
                                 "workspace_id": {"type": "string"},
                                 "governed_runs": {"type": "integer"},
-                                "status": {"type": "string"},
+                                "payment_ref": {"type": "string"},
+                                "status": {"type": "string", "enum": ["settled"]},
+                                "next": {"type": "string"},
                             },
                             "required": ["workspace_id", "governed_runs", "status"],
                         },
@@ -1000,10 +1011,16 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 nonce=str(auth["nonce"]),
                 valid_before=int(auth["validBefore"]),
             )
+            # The payment middleware delivers this body only after the payment settled (a
+            # failed settlement replaces it with a 402), and the settle hook has granted the
+            # credits by then.
             return {
                 "workspace_id": workspace_id,
                 "governed_runs": settings.x402_pack_runs,
-                "status": "credits are added once the payment settles",
+                "payment_ref": ref,
+                "status": "settled",
+                "next": "Credits are in GET /v1/workspace. If they are not there yet, they "
+                "arrive within a minute from on-chain reconciliation; do not pay again.",
             }
 
     return app

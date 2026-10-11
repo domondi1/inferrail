@@ -554,10 +554,30 @@ class WorkspaceLedger:
                     (workspace_id,),
                 )
             ]
+            purchases = [
+                {
+                    "source": s,
+                    "payment_ref": r,
+                    "runs": n,
+                    "amount_usd_cents": c,
+                    "state": st,
+                    "created_at": t,
+                    "valid_before": vb,
+                }
+                for s, r, n, c, st, t, vb in self._db.execute(
+                    "SELECT source, ref, runs, amount_usd_cents, state, created_at, valid_before "
+                    "FROM pending_purchases WHERE workspace_id=? "
+                    "ORDER BY created_at DESC, ref LIMIT 50",
+                    (workspace_id,),
+                )
+            ]
             return {
                 "grants": grants,
                 "reversals": reversals,
                 "pending_purchases": pending,
+                # Every signed x402 purchase seen, newest first: pending (wait), settled
+                # (credited), failed (not charged; safe to pay again).
+                "purchases": purchases,
                 "credits_remaining": self._credits_remaining(workspace_id),
             }
 
