@@ -433,6 +433,20 @@ class WorkspaceLedger:
                 out["unresolved"] += 1
         return out
 
+    def outstanding_liability_cents(self, cents_per_run: float = 0.1) -> int:
+        """What could be owed back: unspent prepaid credits across all workspaces at the
+        published price (default $0.001 per run = 0.1 cents), plus pending purchases."""
+        with self._lock:
+            ids = [
+                r[0] for r in self._db.execute("SELECT DISTINCT workspace_id FROM credit_grants")
+            ]
+            unspent = sum(max(self._credits_remaining(w), 0) for w in ids)
+            pending = self._db.execute(
+                "SELECT COALESCE(SUM(amount_usd_cents),0) FROM pending_purchases "
+                "WHERE state='pending'"
+            ).fetchone()[0]
+            return int(-(-unspent * cents_per_run // 1)) + int(pending)
+
     def sales_cents_since(self, ts: float) -> int:
         """Confirmed plus pending purchase value since `ts`: the exposure a daily cap bounds."""
         with self._lock:

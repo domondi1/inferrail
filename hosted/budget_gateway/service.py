@@ -50,6 +50,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from decimal import Decimal
@@ -167,6 +168,8 @@ class Settings:
     mount_prefix: str = ""
     client_ip_header: str = "true-client-ip"
     max_daily_sales_usd: Decimal = Decimal("100")
+    max_outstanding_credits_usd: Decimal = Decimal("100")
+    rate_limit_per_minute: int = 600
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -211,7 +214,49 @@ class Settings:
             mount_prefix=e.get("BG_MOUNT_PREFIX", "").rstrip("/"),
             client_ip_header=e.get("BG_CLIENT_IP_HEADER", "true-client-ip").strip().lower(),
             max_daily_sales_usd=Decimal(e.get("BG_MAX_DAILY_SALES_USD", "100")),
+            max_outstanding_credits_usd=Decimal(e.get("BG_MAX_OUTSTANDING_CREDITS_USD", "100")),
+            rate_limit_per_minute=int(e.get("BG_RATE_LIMIT_PER_MINUTE", "600")),
         )
+
+
+class _BodyLimit:
+    """Refuse oversized request bodies, with or without `Content-Length` (chunked uploads are
+    counted as they arrive). Bodies under the limit are buffered and replayed unchanged."""
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app, self.max_bytes = app, max_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        length = dict(scope.get("headers") or []).get(b"content-length", b"")
+        if length.isdigit() and int(length) > self.max_bytes:
+            await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+            return
+        chunks: list[bytes] = []
+        total, more = 0, True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body = message.get("body", b"")
+            total += len(body)
+            if total > self.max_bytes:
+                await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+                return
+            chunks.append(body)
+            more = message.get("more_body", False)
+        data, replayed = b"".join(chunks), False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": data, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
 
 
 class InstanceLockError(RuntimeError):
@@ -295,10 +340,15 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
     checker = authorization_checker(settings) if settings.x402_pay_to else None
 
     def _within_daily_sales_cap(cents: int) -> None:
-        """Bounded experiment: refuse new purchases past the daily cap (refund exposure)."""
+        """Bounded experiment. Two separate limits on refund exposure:
+        - daily: confirmed plus pending sales in the last 24 hours;
+        - outstanding: the value of all unspent prepaid credits plus pending purchases."""
         sold = ledger.sales_cents_since(time.time() - 86_400)
         if sold + cents > int(settings.max_daily_sales_usd * 100):
             raise HTTPException(503, "daily credit sales limit reached; try again tomorrow")
+        owed = ledger.outstanding_liability_cents()
+        if owed + cents > int(settings.max_outstanding_credits_usd * 100):
+            raise HTTPException(503, "credit sales are paused: outstanding prepaid credit limit")
 
     def reconcile() -> dict[str, int] | None:
         return ledger.reconcile_pending(checker) if checker else None
@@ -333,12 +383,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
 
     app.state.release_instance_lock = release_instance_lock
 
-    @app.middleware("http")
-    async def body_limit(request: Request, call_next: Any) -> Any:
-        length = request.headers.get("content-length")
-        if length and length.isdigit() and int(length) > settings.max_body_bytes:
-            return JSONResponse({"detail": "request body too large"}, status_code=413)
-        return await call_next(request)
+    app.add_middleware(_BodyLimit, max_bytes=settings.max_body_bytes)
+    calls: dict[str, deque[float]] = defaultdict(deque)
 
     # -- published terms ---------------------------------------------------------------------------
     def price_sheet() -> dict[str, Any]:
@@ -440,6 +486,13 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         workspace_id = ledger.authenticate(token) if token else None
         if workspace_id is None:
             raise HTTPException(401, "missing or invalid workspace key")
+        now = time.monotonic()
+        window = calls[workspace_id]
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= settings.rate_limit_per_minute:
+            raise HTTPException(429, "workspace rate limit reached; slow down")
+        window.append(now)
         return workspace_id
 
     require_workspace = Depends(_workspace)
