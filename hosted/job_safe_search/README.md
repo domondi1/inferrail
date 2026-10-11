@@ -48,6 +48,10 @@ The production factory refuses Base mainnet unless all gates are satisfied:
 - SEARCH_RESOURCE_URL is public HTTPS and SEARCH_PAY_TO is the approved
   merchant wallet.
 - SEARCH_SUPPLIER explicitly selects serpex, exa or mojeek, with its credential.
+- Serpex requires SEARCH_SUPPLIER_CREDIT_USD to reflect the verified all-in
+  paid invoice cost per credit, including taxes, exchange and purchase fees.
+  The template rate is an example, not proof of actual cost. A higher verified
+  cost is allowed only when the selling price covers the full cost envelope.
 - Mojeek requires the Business plan's accepted account terms, storage/output
   rights and SEARCH_MOJEEK_BUSINESS_TERMS_CONFIRMED=1. Its
   SEARCH_MOJEEK_VERIFIED_UNIT_COST_USD must be the actual all-in USD cost per
@@ -64,8 +68,10 @@ configuration needs a higher price than the $0.010 Serpex default.
 Mojeek also requires a price that covers its verified unit cost, payment-fee
 bound and margin floor; its public GBP rate alone is insufficient.
 Unresolved exposure plus prepaid supplier capital must not exceed $20.
-The mainnet template reserves $5 prepaid capital and $15 unresolved exposure. Each uncertain purchase reserves its
-full price plus maximum supplier cost and payment fee. Unknown costs keep
+The mainnet template reserves $5 prepaid capital and $15 unresolved exposure.
+Set prepaid capital to the actual all-in purchase amount and reduce unresolved
+exposure if necessary to preserve the $20 total ceiling. Each uncertain purchase
+reserves its full price plus maximum supplier cost and payment fee. Unknown costs keep
 margin unrecognized.
 
 SEARCH_DB_PATH must use durable storage. SEARCH_ALLOW_NEW_DB=1 is only for the

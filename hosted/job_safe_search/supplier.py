@@ -85,8 +85,8 @@ class SerpexSearch:
     def __init__(self, key: str, credit_cost: int):
         if not key.strip():
             raise ValueError("supplier_credential_required")
-        if not 0 < credit_cost <= 800:
-            raise ValueError("verified_paid_credit_cost_must_be_within_800_atomic_USD")
+        if type(credit_cost) is not int or credit_cost <= 0:
+            raise ValueError("verified_positive_paid_credit_cost_required")
         self.max_cost = credit_cost
         self.client = httpx.AsyncClient(timeout=40)
         self.key = key
