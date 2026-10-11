@@ -2801,3 +2801,136 @@ async def test_streamed_exact_body_limit_delivers_and_replays_without_new_spend(
         assert financial_state(row(service))["realized_margin"] == "0.008"
         assert service.supplier.calls == service.facilitator.settles == 1
     assert chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.fixture
+def cohost_parts(system: Any, tmp_path: Path) -> tuple[Any, Any, Any, Any]:
+    from hosted.budget_gateway import cohost as hosted_cohost
+
+    previous, account, chain = system
+    search_dir = tmp_path / "job-search"
+    search_dir.mkdir()
+    service = SearchService(
+        replace(previous.config, resource_url="https://search.example.com/job-search/search"),
+        Store(search_dir / "search.sqlite3"),
+        previous.facilitator,
+        previous.chain,
+        previous.supplier,
+    )
+    modules = hosted_cohost.load_modules()
+    settings = modules[1].Settings.from_env(
+        {
+            "BG_DATA_DIR": str(tmp_path / "hosted"),
+            "BG_MOUNT_PREFIX": "/hosted",
+            "BG_PUBLIC_BASE_URL": "https://search.example.com/hosted",
+            "BG_X402_PAY_TO": "0x" + "9" * 40,
+        }
+    )
+    return service, account, settings, modules
+
+
+@pytest.mark.asyncio
+async def test_cohosted_search_preserves_trial_credit_challenge_and_paid_replay(
+    cohost_parts: Any, tmp_path: Path
+) -> None:
+    from hosted.job_safe_search.cohost import create_cohosted_app
+
+    service, account, settings, modules = cohost_parts
+    signed = payment(service, account)
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        app = create_cohosted_app(
+            tmp_path / "trial",
+            settings,
+            create_app(service),
+            facilitator=service.facilitator.inner,
+            modules=modules,
+        )
+        async with app.router.lifespan_context(app):
+            with pytest.raises(RuntimeError, match="database_already_has_a_service_writer"):
+                with Store(service.store.path).writer_lease():
+                    pytest.fail("search writer lease must cover the combined service lifetime")
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://search.example.com"
+            ) as client:
+                assert (await client.get("/health")).json() == {"status": "ok"}
+                assert (await client.get("/hosted/health")).status_code == 200
+                assert (await client.get("/job-search/health")).json()["network"] == "eip155:84532"
+                trial = await client.post("/v1/trial")
+                assert trial.status_code == 200
+                demo = await client.post(
+                    "/v1/demo/chat/completions",
+                    headers={"Authorization": "Bearer " + trial.json()["api_key"]},
+                    json={"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+                )
+                assert demo.status_code == 200
+                workspace = await client.post("/hosted/v1/workspaces")
+                assert workspace.status_code == 201
+                key = workspace.json()["api_key"]
+                credit = await client.post(
+                    "/hosted/v1/credits/x402", headers={"Authorization": "Bearer " + key}
+                )
+                assert credit.status_code == 402
+                for credential in [key, trial.json()["api_key"]]:
+                    unpaid = await client.post(
+                        "/job-search/search",
+                        json={},
+                        headers={"Authorization": "Bearer " + credential},
+                    )
+                    assert unpaid.status_code == 402
+                    assert unpaid.json()["resource"]["url"] == service.config.resource_url
+                manifest = (await client.get("/job-search/.well-known/x402.json")).json()
+                assert manifest["resource"] == service.config.resource_url
+                response = await client.post(
+                    "/job-search/search",
+                    json=body().model_dump(),
+                    headers={"payment-signature": signed},
+                )
+                assert response.status_code == 200
+                assert response.json()["receipt"]["charged_usd"] == ("0" if restart else "0.015")
+                assert financial_state(row(service))["realized_margin"] == "0.008"
+                assert service.facilitator.settles == service.supplier.calls == 1
+        with Store(service.store.path).writer_lease():
+            pass
+    assert service.chain.chain.balance_of(service.config.pay_to) == 15000
+
+
+@pytest.mark.parametrize(
+    "violation",
+    ["resource", "query", "fragment", "same_dir", "nested_dir", "trial_dir", "same_merchant"],
+)
+def test_cohosted_search_refuses_unsafe_configuration_before_other_app_creation(
+    cohost_parts: Any, monkeypatch: pytest.MonkeyPatch, violation: str
+) -> None:
+    from hosted.job_safe_search import cohost
+
+    service, _, settings, modules = cohost_parts
+    trial_dir = service.store.path.parent.parent / "trial"
+    if violation == "resource":
+        service.config = replace(service.config, resource_url="https://search.example.com/search")
+    elif violation in ("query", "fragment"):
+        suffix = "?x=1" if violation == "query" else "#x"
+        service.config = replace(service.config, resource_url=service.config.resource_url + suffix)
+    elif violation == "same_dir":
+        settings = replace(settings, data_dir=service.store.path.parent)
+    elif violation == "nested_dir":
+        settings = replace(settings, data_dir=service.store.path.parent / "nested")
+    elif violation == "trial_dir":
+        trial_dir = service.store.path.parent
+    else:
+        settings = replace(settings, x402_pay_to=service.config.pay_to.lower())
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("invalid isolation must fail before creating other applications")
+
+    monkeypatch.setattr(cohost.hosted_cohost, "create_combined_app", forbidden)
+    with pytest.raises(ValueError, match="cohosted_"):
+        cohost.create_cohosted_app(trial_dir, settings, create_app(service), modules=modules)
+    assert service.facilitator.settles == service.supplier.calls == 0
