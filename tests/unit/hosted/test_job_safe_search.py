@@ -2698,3 +2698,106 @@ async def test_serpex_invoice_cost_preserves_envelope_billing_and_recovery(
         assert financial_state(row(restarted)) == financial
     finally:
         await supplier.client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", ["none", "unsettled", "settled"])
+@pytest.mark.parametrize("declared_length", [None, "16"])
+async def test_streamed_oversize_stops_reading_and_preserves_payment_state(
+    system: Any, authorization: str, declared_length: str | None
+) -> None:
+    from hosted.job_safe_search.payments import decode
+
+    service, account, chain = system
+    service.config = replace(service.config, recovery_from_block="0x0")
+    signed = None if authorization == "none" else payment(service, account)
+    if authorization == "settled":
+        await service.facilitator.inner.settle(decode(signed), service.requirements)
+    headers = {} if signed is None else {"payment-signature": signed}
+    if declared_length is not None:
+        headers["content-length"] = declared_length
+    for restart in [False, True]:
+        if restart:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+        consumed = 0
+
+        async def oversized() -> Any:
+            nonlocal consumed
+            for _ in range(100):
+                consumed += 1
+                yield b"x" * 8192
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(service)),
+            base_url="https://search.example.com",
+        ) as client:
+            response = await client.post("/search", content=oversized(), headers=headers)
+        assert response.status_code == 413
+        assert response.json()["error"] == "body_too_large"
+        assert consumed == 3, "the untrusted body must not be drained into memory"
+        metrics = report(service.store.path, set(), network="eip155:84532")
+        assert (
+            service.supplier.calls
+            == service.facilitator.verifies
+            == service.facilitator.settles
+            == 0
+        )
+        assert metrics["supplier_cogs_usd"] == "0"
+        assert metrics["external_paid_calls"] == 0
+        assert metrics["realized_external_contribution_margin_usd"] == (
+            "0" if signed is None else None
+        )
+        if authorization == "settled":
+            assert response.json()["charged_usd"] == "0.015"
+            assert metrics["gross_external_settled_revenue_usd"] == "0.015"
+            assert metrics["unfulfilled_settled_payments"] == 1
+            assert metrics["additional_payment_liability_usd"] == "0.015"
+        elif authorization == "unsettled":
+            assert response.json()["charged_usd"] is None
+            assert metrics["unresolved_payment_observations"] == 1
+        else:
+            assert response.json()["charged_usd"] == "0"
+            assert metrics["unresolved_transactions"] == 0
+    assert chain.balance_of(service.config.pay_to) == (15000 if authorization == "settled" else 0)
+
+
+@pytest.mark.asyncio
+async def test_streamed_exact_body_limit_delivers_and_replays_without_new_spend(
+    system: Any,
+) -> None:
+    service, account, chain = system
+    encoded = body().model_dump_json().encode()
+    encoded += b" " * (16384 - len(encoded))
+    signed = payment(service, account)
+    for replay in [False, True]:
+        if replay:
+            service = SearchService(
+                service.config,
+                Store(service.store.path),
+                service.facilitator,
+                service.chain,
+                service.supplier,
+            )
+
+        async def chunks() -> Any:
+            for start in range(0, len(encoded), 1024):
+                yield encoded[start : start + 1024]
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(service)),
+            base_url="https://search.example.com",
+        ) as client:
+            response = await client.post(
+                "/search", content=chunks(), headers={"payment-signature": signed}
+            )
+        assert response.status_code == 200
+        assert response.json()["receipt"]["charged_usd"] == ("0" if replay else "0.015")
+        assert financial_state(row(service))["realized_margin"] == "0.008"
+        assert service.supplier.calls == service.facilitator.settles == 1
+    assert chain.balance_of(service.config.pay_to) == 15000

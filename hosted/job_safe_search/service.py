@@ -781,7 +781,6 @@ def create_app(service: SearchService) -> FastAPI:
     @app.post("/search")
     async def search(request: Request) -> JSONResponse:
         signature = request.headers.get("payment-signature")
-        raw = await request.body()
 
         async def refused(status: int, error: str) -> JSONResponse:
             observed = await service.observe_payment(signature)
@@ -807,8 +806,11 @@ def create_app(service: SearchService) -> FastAPI:
                 )
             return JSONResponse(status_code=status, content=details)
 
-        if len(raw) > 16_384:
-            return await refused(413, "body_too_large")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 16_384:
+                return await refused(413, "body_too_large")
+            raw.extend(chunk)
         # Discovery probes with an empty body must receive the complete 402 contract.
         if not raw or raw.strip() == b"{}":
             if not signature:
