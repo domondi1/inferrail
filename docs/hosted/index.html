@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Inferrail Hosted pricing</title>
-  <meta name="description" content="Inferrail Hosted: per-run dollar budgets for AI agents, shared by every agent and machine in a workspace. 2,000 governed runs a month free, then $0.001 per run. Bring your own provider key.">
+  <meta name="description" content="Inferrail Hosted: per-run dollar budgets for AI agents, shared by every agent and machine in a workspace. 250 governed runs a month free, then $0.001 per run. Bring your own provider key.">
   <link rel="canonical" href="https://tryinferrail.com/hosted/">
   <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
@@ -69,7 +69,7 @@
     <p class="eyebrow">For agents and the people who run them</p>
     <h1>Inferrail Hosted<span>One budget per run, across your whole fleet.</span></h1>
     <p class="lede">Give each AI run a dollar ceiling in a request header. Every call in that run shares it, including parallel calls from different agents and machines, and a call that would push the run past it is refused before it reaches OpenAI or Anthropic. You bring your own provider key with each request; we never store it.</p>
-    <p class="pill">Experimental · 2,000 governed runs a month free · then $0.001 per run · no subscription</p>
+    <p class="pill">Experimental · 250 governed runs a month free · then $0.001 per run · no subscription</p>
     <p class="testnet-note"><strong>Not open yet.</strong> This page describes the terms Inferrail Hosted will launch with. The hosted service isn't accepting workspaces yet; until it is, the <a href="https://github.com/domondi1/inferrail#quickstart">open-source gateway</a> does the same per-run enforcement on your own machine.</p>
 
     <section class="block" aria-labelledby="price-title">
@@ -77,7 +77,7 @@
       <div class="facts">
         <div class="fact-row"><span class="fact-label">Unit</span><p>A <strong>governed run</strong>: a distinct work id (<code>X-Inferrail-Attribute-Work-Id</code>) in a calendar month (UTC). Calls inside a run are not charged separately.</p></div>
         <div class="fact-row"><span class="fact-label">Billed when</span><p>At least one call in the run is answered by your provider. A run whose calls all fail, or are all refused by its own budget, costs nothing.</p></div>
-        <div class="fact-row"><span class="fact-label">Free</span><p>2,000 governed runs per workspace per month.</p></div>
+        <div class="fact-row"><span class="fact-label">Free</span><p>250 governed runs per workspace per month.</p></div>
         <div class="fact-row"><span class="fact-label">After that</span><p>Prepaid credits at $0.001 per run. People pay by card: $10 for 10,000 runs. Agents pay in USDC over x402: $1 for 1,000 runs, with no account.</p></div>
         <div class="fact-row"><span class="fact-label">No surprises</span><p>Credits are prepaid. No subscription, no auto top-up, no overage bill. When the allowance and credits run out, calls are refused before reaching your provider, with a link to buy more.</p></div>
         <div class="fact-row"><span class="fact-label">Model spend</span><p>Billed by your provider on your own key. Inferrail doesn't resell model access or mark it up.</p></div>
