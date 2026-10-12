@@ -2,6 +2,7 @@
 
     /          -> hosted/cost_gateway (the /try/ trial API, unchanged)
     /hosted/*  -> hosted/budget_gateway (Inferrail Hosted)
+    /openapi.json -> the trial's schema plus Hosted's purchasable operations (see below)
 
 Why one process: it reuses an already-paid instance. Both apps are small (measured in this
 module's tests and the PR). Isolation holds in one process because:
@@ -24,6 +25,7 @@ process. Run with one worker:
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import os
 import sys
@@ -33,7 +35,9 @@ from types import ModuleType
 from typing import Any
 
 from starlette.applications import Starlette
-from starlette.routing import Mount
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
 
 HOSTED_DIR = Path(__file__).resolve().parent
 TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
@@ -84,11 +88,135 @@ def create_combined_app(
         finally:
             hosted_app.state.release_instance_lock()
 
+    async def openapi(_: Request) -> JSONResponse:
+        return JSONResponse(origin_openapi(app))
+
     app = Starlette(
-        routes=[Mount(PREFIX, app=hosted_app), Mount("/", app=trial_app)], lifespan=lifespan
+        routes=[
+            Route("/openapi.json", openapi),
+            Mount(PREFIX, app=hosted_app),
+            Mount("/", app=trial_app),
+        ],
+        lifespan=lifespan,
     )
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
+    app.state.hosted_settings = hosted_settings
+    # Another app sharing this origin adds its paid operations here: callables returning
+    # OpenAPI `paths` entries keyed by full origin path.
+    app.state.discovery_paths = []
     return app
+
+
+def origin_openapi(app: Starlette) -> dict[str, Any]:
+    """The origin's `GET /openapi.json`.
+
+    x402 catalogs (x402scan, which feeds AgentCash) discover an origin only through this
+    document: they register an endpoint only if it's listed here, and read its price from
+    `x-payment-info`. Without it the trial's schema answered alone, so neither Hosted
+    operation was discoverable. The trial's own paths stay unchanged, so its /docs still work.
+    """
+    settings = app.state.hosted_settings
+    doc = copy.deepcopy(app.state.trial_app.openapi())
+    doc["info"]["title"] = "Inferrail"
+    doc["info"]["description"] = (
+        "Inferrail Hosted: one dollar budget shared by every agent and process using a "
+        "workspace key, reserved before each LLM provider call, so parallel agents can't "
+        f"overspend. Create a workspace free with POST {PREFIX}/v1/workspaces, then buy "
+        f"governed runs with USDC over x402 at POST {PREFIX}/v1/credits/x402."
+    )
+    doc["x-agentcash-guidance"] = {"llmsTxtUrl": settings.public_base_url + "/llms.txt"}
+    schemes = doc.setdefault("components", {}).setdefault("securitySchemes", {})
+    schemes["WorkspaceKey"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": f"Workspace key from POST {PREFIX}/v1/workspaces. "
+        "'Authorization: Bearer <key>' also works.",
+    }
+    paths = doc.setdefault("paths", {})
+    paths.update(_hosted_paths(settings))
+    for provider in app.state.discovery_paths:
+        paths.update(provider())
+    return doc
+
+
+def _hosted_paths(settings: Any) -> dict[str, Any]:
+    paths: dict[str, Any] = {
+        f"{PREFIX}/v1/workspaces": {
+            "post": {
+                "summary": "Create an Inferrail Hosted workspace (free)",
+                "description": "Returns a workspace key, shown once. Every client using the key "
+                "shares one dollar budget, reserved before each provider call. "
+                f"{settings.free_runs_per_month} governed runs a month are free.",
+                "security": [],
+                "responses": {
+                    "201": {
+                        "description": "Workspace created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "workspace_id": {"type": "string"},
+                                        "api_key": {"type": "string"},
+                                        "base_url": {"type": "string"},
+                                    },
+                                    "required": ["workspace_id", "api_key", "base_url"],
+                                }
+                            }
+                        },
+                    },
+                    "429": {"description": "Too many workspaces from this address"},
+                    "503": {"description": "Workspace creation paused or at capacity"},
+                },
+            }
+        }
+    }
+    if not settings.x402_pay_to:
+        return paths
+    paths[f"{PREFIX}/v1/credits/x402"] = {
+        "post": {
+            "summary": f"Buy {settings.x402_pack_runs:,} governed runs of Inferrail Hosted",
+            "description": "Pay with USDC over x402. The 402 challenge needs no key; the paid "
+            "request must carry the workspace key the runs are credited to.",
+            "security": [{"WorkspaceKey": []}],
+            "x-payment-info": {
+                "price": {
+                    "mode": "fixed",
+                    "currency": "USD",
+                    "amount": settings.x402_pack_price_usd,
+                },
+                "protocols": [{"x402": {}}],
+            },
+            "requestBody": {
+                "required": False,
+                "content": {"application/json": {"schema": {"type": "object", "properties": {}}}},
+            },
+            "responses": {
+                "200": {
+                    "description": "Payment settled; runs credited",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "workspace_id": {"type": "string"},
+                                    "governed_runs": {"type": "integer"},
+                                    "payment_ref": {"type": "string"},
+                                    "status": {"type": "string", "enum": ["settled"]},
+                                    "next": {"type": "string"},
+                                },
+                                "required": ["workspace_id", "governed_runs", "status"],
+                            }
+                        }
+                    },
+                },
+                "401": {"description": "Missing or invalid workspace key"},
+                "402": {"description": "Payment Required"},
+            },
+        }
+    }
+    return paths
 
 
 def settings_from_env(hosted_mod: ModuleType) -> Any:
