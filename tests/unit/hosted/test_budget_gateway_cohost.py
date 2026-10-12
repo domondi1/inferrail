@@ -326,3 +326,37 @@ def test_origin_openapi_includes_operations_added_by_a_cohosted_app(parts):
         paths = c.get("/openapi.json").json()["paths"]
         assert paths["/other/search"] == {"post": {"summary": "x"}}
         assert "/hosted/v1/credits/x402" in paths
+
+
+def test_an_agent_can_follow_the_401_instruction_on_the_shared_origin(parts):
+    # The mounted app used to say "POST /v1/workspaces", which on this origin is the trial
+    # app (404). The instruction must name a URL that works when followed literally.
+    build, *_ = parts
+    with TestClient(build()) as c:
+        detail = c.post("/hosted/v1/credits/x402", headers={"x-api-key": "irw_bad"})
+        assert detail.status_code == 402  # the challenge comes first; the key is checked after
+        refused = c.get("/hosted/v1/workspace", headers={"x-api-key": "irw_bad"})
+        assert refused.status_code == 401
+        url = refused.json()["detail"].rsplit("POST ", 1)[1]
+        assert url == "http://testserver/hosted/v1/workspaces"
+        assert c.post(url).status_code == 201
+
+
+def test_purchase_with_the_listed_api_key_header_settles_and_points_to_the_credits(parts):
+    # The origin's /openapi.json lists the credits purchase with an apiKey scheme named
+    # x-api-key; AgentCash's `fetch -H "x-api-key: ..."` sends exactly that.
+    build, *_ = parts
+    with TestClient(build()) as c:
+        key = _hosted_key(c)
+        doc = c.get("/openapi.json").json()
+        assert doc["components"]["securitySchemes"]["WorkspaceKey"]["name"] == "x-api-key"
+        unpaid = c.post("/hosted/v1/credits/x402", headers={"x-api-key": key})
+        signed = sign_payment(decode_payment_required(unpaid))
+        paid = c.post(
+            "/hosted/v1/credits/x402",
+            headers={"x-api-key": key, "PAYMENT-SIGNATURE": signed.header},
+        )
+        assert paid.status_code == 200, paid.text
+        follow = paid.json()["next"].split("GET ", 1)[1].split(". ", 1)[0]
+        assert follow == "http://testserver/hosted/v1/workspace"
+        assert c.get(follow, headers={"x-api-key": key}).json()["credits_remaining"] == 1000
