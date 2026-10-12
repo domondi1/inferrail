@@ -226,6 +226,49 @@ Save as `~/.config/goose/custom_providers/inferrail.json` and select the
 `inferrail` provider. goose v1.53.0. On refusal: stops with its generic
 "add more credits" message, no retry loop.
 
+### ZeroClaw (one ceiling across all your instances, Inferrail Hosted)
+
+ZeroClaw's cost tracker is per process, so several ZeroClaw instances (on one
+machine or many) each spend up to their own limit. To give all of them one
+ceiling, point a `custom` provider at [Inferrail Hosted](../hosted/budget_gateway/README.md)
+and send a shared run id and ceiling with `extra_headers`:
+
+```toml
+schema_version = 3
+
+[providers.models.custom.inferrail]
+uri = "https://inferrail-cost-gateway.onrender.com/hosted/v1"
+model = "gpt-4o-mini"
+api_key = "irw_..."   # Inferrail Hosted workspace key: POST /hosted/v1/workspaces
+
+[providers.models.custom.inferrail.extra_headers]
+X-Provider-Api-Key = "sk-..."                       # your OpenAI key, sent per request, never stored
+X-Inferrail-Attribute-Work-Id = "zeroclaw-2026-10"  # the same id on every instance = one shared budget
+X-Inferrail-Budget-Usd = "5.00"                     # the ceiling for that id, across all instances
+
+[agents.assistant]
+model_provider = "custom.inferrail"
+risk_profile = "default"
+
+[risk_profiles.default]
+```
+
+Every call reserves its worst-case cost against the shared ceiling before it
+goes to OpenAI, so concurrent instances can't overshoot it together. Use a new
+work id (for example per month) to start a new budget; a work id keeps the
+first ceiling it was given. `GET /hosted/v1/work/zeroclaw-2026-10` (with the
+workspace key) shows the calls and their cost. All instances on one work id
+count as one governed run.
+
+ZeroClaw v0.8.5 (release binary), two separate instances with their own
+config directories, against Inferrail Hosted with a stand-in OpenAI upstream
+reporting usage sized from each request: with a $0.01 ceiling, 2 calls were
+answered ($0.004832; ZeroClaw's default prompt is about 16K tokens per turn),
+then 14 calls from both instances were refused before reaching the provider.
+On refusal: ZeroClaw prints "The selected model provider rejected the
+request" and doesn't retry; the reason is in `GET /hosted/v1/work/<id>`.
+ZeroClaw's startup `GET /models` probe gets a 404, which it ignores.
+
 ### Hermes Agent (per conversation)
 
 A custom provider can send Hermes' conversation id under any header name
