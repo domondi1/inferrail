@@ -178,7 +178,10 @@ def _hosted_paths(settings: Any) -> dict[str, Any]:
         "post": {
             "summary": f"Buy {settings.x402_pack_runs:,} governed runs of Inferrail Hosted",
             "description": "Pay with USDC over x402. The 402 challenge needs no key; the paid "
-            "request must carry the workspace key the runs are credited to.",
+            "request must carry the workspace key the runs are credited to. Each workspace "
+            f"gets {settings.free_runs_per_month} governed runs a month free, so buy only once "
+            "they are used up (GET /hosted/v1/workspace shows what is left). Using the runs "
+            "requires your own OpenAI or Anthropic key, sent per call and never stored.",
             "security": [{"WorkspaceKey": []}],
             "x-payment-info": {
                 "price": {

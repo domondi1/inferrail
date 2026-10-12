@@ -362,9 +362,9 @@ def _agent_guide(p: dict[str, Any], settings: Settings) -> str:
             "payment can't charge twice. Its id is payment_ref = '<payer>:<nonce>' (both "
             "lower-case, from the authorization you signed).\n"
             "- After you send PAYMENT-SIGNATURE:\n"
-            "  - HTTP 200 (status settled): paid and credited. See GET /v1/workspace.\n"
+            f"  - HTTP 200 (status settled): paid and credited. See GET {base}/v1/workspace.\n"
             "  - HTTP 402, or a timeout: do NOT sign a new payment yet. Look up your payment_ref "
-            "in GET /v1/workspace/ledger -> purchases:\n"
+            f"in GET {base}/v1/workspace/ledger -> purchases:\n"
             "    - pending: wait; it is settled or failed from on-chain state within a few "
             "minutes;\n"
             "    - settled: you were charged once and credited;\n"
@@ -603,7 +603,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             raise HTTPException(
                 401,
                 "missing or invalid workspace key: send it as 'Authorization: Bearer <key>' or "
-                "'x-api-key: <key>'. Create one with POST /v1/workspaces",
+                "'x-api-key: <key>'. Create one with POST "
+                f"{settings.public_base_url}/v1/workspaces",
             )
         now = time.monotonic()
         window = calls[workspace_id]
@@ -954,7 +955,7 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                             "governed_runs": settings.x402_pack_runs,
                             "payment_ref": "0xpayer:0xnonce",
                             "status": "settled",
-                            "next": "Credits are in GET /v1/workspace.",
+                            "next": f"Credits are in GET {settings.public_base_url}/v1/workspace.",
                         },
                         schema={
                             "type": "object",
@@ -1019,7 +1020,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 "governed_runs": settings.x402_pack_runs,
                 "payment_ref": ref,
                 "status": "settled",
-                "next": "Credits are in GET /v1/workspace. If they are not there yet, they "
+                "next": f"Credits are in GET {settings.public_base_url}/v1/workspace. If they "
+                "are not there yet, they "
                 "arrive within a minute from on-chain reconciliation; do not pay again.",
             }
 

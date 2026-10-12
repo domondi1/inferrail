@@ -118,7 +118,7 @@ def test_a_wrong_key_in_either_header_is_rejected_with_guidance(mods, tmp_path):
     for headers in ({}, {"x-api-key": "irw_nope"}, {"Authorization": "Bearer irw_nope"}):
         r = c.get("/v1/workspace", headers=headers)
         assert r.status_code == 401
-        assert "POST /v1/workspaces" in r.json()["detail"]
+        assert r.json()["detail"].endswith("POST https://hosted.example/hosted/v1/workspaces")
 
 
 def test_rate_limited_responses_say_when_to_retry(mods, tmp_path):
