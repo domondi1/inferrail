@@ -278,3 +278,51 @@ def test_failed_startup_releases_hosted_writer_lock(parts, monkeypatch):
             pass
     with TestClient(build()) as client:
         assert client.get("/hosted/health").status_code == 200
+
+
+def test_origin_openapi_lists_hosted_operations_for_x402_catalogs(parts):
+    # x402scan registers an endpoint only if the origin's /openapi.json lists it, and reads
+    # the price from x-payment-info. An agent must be able to go from the listing to a 402.
+    build, *_ = parts
+    with TestClient(build()) as c:
+        doc = c.get("/openapi.json").json()
+        assert doc["openapi"].startswith("3.")
+        assert doc["info"]["title"] and doc["info"]["version"]
+        assert "/v1/trial" in doc["paths"]  # the trial's schema is still served
+
+        signup = doc["paths"]["/hosted/v1/workspaces"]["post"]
+        assert signup["security"] == []
+        assert "x-payment-info" not in signup
+        assert c.post("/hosted/v1/workspaces").status_code == 201
+
+        buy = doc["paths"]["/hosted/v1/credits/x402"]["post"]
+        assert buy["x-payment-info"] == {
+            "price": {"mode": "fixed", "currency": "USD", "amount": "1.00"},
+            "protocols": [{"x402": {}}],
+        }
+        (requirement,) = buy["security"]
+        (scheme,) = requirement
+        assert doc["components"]["securitySchemes"][scheme]["type"] == "apiKey"
+        for op in (signup, buy):
+            assert op["summary"] and op["responses"]
+        # The catalog probe sends no key and no body; it must still reach the challenge.
+        assert c.post("/hosted/v1/credits/x402").status_code == 402
+        assert doc["x-agentcash-guidance"]["llmsTxtUrl"] == "http://testserver/hosted/llms.txt"
+
+
+def test_origin_openapi_omits_the_purchase_when_x402_is_off(parts):
+    build, *_ = parts
+    with TestClient(build(BG_X402_PAY_TO="")) as c:
+        paths = c.get("/openapi.json").json()["paths"]
+        assert "/hosted/v1/workspaces" in paths
+        assert "/hosted/v1/credits/x402" not in paths
+
+
+def test_origin_openapi_includes_operations_added_by_a_cohosted_app(parts):
+    build, *_ = parts
+    app = build()
+    app.state.discovery_paths.append(lambda: {"/other/search": {"post": {"summary": "x"}}})
+    with TestClient(app) as c:
+        paths = c.get("/openapi.json").json()["paths"]
+        assert paths["/other/search"] == {"post": {"summary": "x"}}
+        assert "/hosted/v1/credits/x402" in paths
