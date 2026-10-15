@@ -288,7 +288,9 @@ def test_origin_openapi_lists_hosted_operations_for_x402_catalogs(parts):
         doc = c.get("/openapi.json").json()
         assert doc["openapi"].startswith("3.")
         assert doc["info"]["title"] and doc["info"]["version"]
-        assert "/v1/trial" in doc["paths"]  # the trial's schema is still served
+        # Only Hosted's operations: catalogs described the trial's ops with Hosted's text.
+        assert all(path.startswith("/hosted/") for path in doc["paths"])
+        assert c.post("/v1/trial").status_code == 200  # the trial itself still works
 
         signup = doc["paths"]["/hosted/v1/workspaces"]["post"]
         assert signup["security"] == []
@@ -360,3 +362,18 @@ def test_purchase_with_the_listed_api_key_header_settles_and_points_to_the_credi
         follow = paid.json()["next"].split("GET ", 1)[1].split(". ", 1)[0]
         assert follow == "http://testserver/hosted/v1/workspace"
         assert c.get(follow, headers={"x-api-key": key}).json()["credits_remaining"] == 1000
+
+
+def test_every_operation_in_the_origin_document_exists_and_is_complete(parts):
+    # An agent that follows a catalog entry literally must reach a real route.
+    build, *_ = parts
+    with TestClient(build()) as c:
+        key = _hosted_key(c)
+        doc = c.get("/openapi.json").json()
+        assert {"/hosted/v1/chat/completions", "/hosted/v1/messages"} <= set(doc["paths"])
+        for path, item in doc["paths"].items():
+            for method, op in item.items():
+                assert op["summary"] and op["responses"] and "security" in op, (method, path)
+                url = path.replace("{work_id}", "wk-docs")
+                r = c.request(method.upper(), url, headers={"x-api-key": key}, json={})
+                assert r.status_code not in (404, 405), (method, path, r.status_code)

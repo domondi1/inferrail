@@ -2,7 +2,7 @@
 
     /          -> hosted/cost_gateway (the /try/ trial API, unchanged)
     /hosted/*  -> hosted/budget_gateway (Inferrail Hosted)
-    /openapi.json -> the trial's schema plus Hosted's purchasable operations (see below)
+    /openapi.json -> Hosted's operations, for agent catalogs (see origin_openapi)
 
 Why one process: it reuses an already-paid instance. Both apps are small (measured in this
 module's tests and the PR). Isolation holds in one process because:
@@ -25,7 +25,6 @@ process. Run with one worker:
 from __future__ import annotations
 
 import contextlib
-import copy
 import importlib.util
 import os
 import sys
@@ -108,36 +107,110 @@ def create_combined_app(
 
 
 def origin_openapi(app: Starlette) -> dict[str, Any]:
-    """The origin's `GET /openapi.json`.
+    """The origin's `GET /openapi.json`: what agent catalogs index for this origin.
 
-    x402 catalogs (x402scan, which feeds AgentCash) discover an origin only through this
-    document: they register an endpoint only if it's listed here, and read its price from
-    `x-payment-info`. Without it the trial's schema answered alone, so neither Hosted
-    operation was discoverable. The trial's own paths stay unchanged, so its /docs still work.
+    x402scan registers an endpoint only if it's listed here and reads its price from
+    `x-payment-info`; AgentCash indexes every operation listed here for search. So the
+    document lists only what an outside agent should call: Hosted's operations, with the
+    workspace key and governance headers each one needs. The trial's operations (`/v1/...`
+    at the root, a separate free product used from the /try/ page) used to be listed too;
+    catalogs described them with Hosted's text, which sent agents to the trial's
+    `/v1/chat/completions` with the wrong key. The trial still serves its own routes.
     """
     settings = app.state.hosted_settings
-    doc = copy.deepcopy(app.state.trial_app.openapi())
-    doc["info"]["title"] = "Inferrail"
-    doc["info"]["description"] = (
-        "Inferrail Hosted: one dollar budget shared by every agent and process using a "
-        "workspace key, reserved before each LLM provider call, so parallel agents can't "
-        f"overspend. Create a workspace free with POST {PREFIX}/v1/workspaces, then buy "
-        f"governed runs with USDC over x402 at POST {PREFIX}/v1/credits/x402."
-    )
-    doc["x-agentcash-guidance"] = {"llmsTxtUrl": settings.public_base_url + "/llms.txt"}
-    schemes = doc.setdefault("components", {}).setdefault("securitySchemes", {})
-    schemes["WorkspaceKey"] = {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-api-key",
-        "description": f"Workspace key from POST {PREFIX}/v1/workspaces. "
-        "'Authorization: Bearer <key>' also works.",
+    base = settings.public_base_url
+    doc: dict[str, Any] = {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Inferrail Hosted",
+            "version": "1",
+            "description": (
+                "One dollar budget shared by every agent and process that uses a workspace "
+                "key, reserved before each OpenAI or Anthropic call, so parallel agents can't "
+                f"overspend a run. Create a workspace free with POST {base}/v1/workspaces; "
+                f"{settings.free_runs_per_month} governed runs a month are free. Send calls "
+                f"to {base}/v1/chat/completions (OpenAI shape) or {base}/v1/messages "
+                "(Anthropic shape) with your own provider key, a work id and a ceiling. "
+                f"More runs: USDC over x402 at POST {base}/v1/credits/x402."
+            ),
+        },
+        "x-agentcash-guidance": {"llmsTxtUrl": base + "/llms.txt"},
+        "components": {
+            "securitySchemes": {
+                "WorkspaceKey": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "x-api-key",
+                    "description": f"Workspace key from POST {base}/v1/workspaces. "
+                    "'Authorization: Bearer <key>' also works.",
+                }
+            }
+        },
+        "paths": _hosted_paths(settings),
     }
-    paths = doc.setdefault("paths", {})
-    paths.update(_hosted_paths(settings))
     for provider in app.state.discovery_paths:
-        paths.update(provider())
+        doc["paths"].update(provider())
     return doc
+
+
+_GOVERNANCE_HEADERS = [
+    {
+        "name": "X-Provider-Api-Key",
+        "in": "header",
+        "required": True,
+        "schema": {"type": "string"},
+        "description": "Your own OpenAI or Anthropic key. Sent per call, never stored.",
+    },
+    {
+        "name": "X-Inferrail-Attribute-Work-Id",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string"},
+        "description": "Run id. Every agent and process using the same id shares one budget.",
+    },
+    {
+        "name": "X-Inferrail-Budget-Usd",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string", "example": "0.50"},
+        "description": "Ceiling for the run in USD (max 100). The first value given for a "
+        "work id is kept.",
+    },
+]
+
+
+def _governed_call(summary: str, required: list[str]) -> dict[str, Any]:
+    return {
+        "post": {
+            "summary": summary,
+            "description": "Reserves the call's worst-case cost against the run's shared "
+            "ceiling before it is sent to the provider; a call that would exceed it is refused "
+            "and never reaches the provider. Provider spend is billed to your own key.",
+            "security": [{"WorkspaceKey": []}],
+            "parameters": _GOVERNANCE_HEADERS,
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": required,
+                            "properties": {name: {} for name in required},
+                        }
+                    }
+                },
+            },
+            "responses": {
+                "200": {"description": "The provider's response, unchanged"},
+                "401": {"description": "Missing or invalid workspace key"},
+                "402": {
+                    "description": "Refused before the provider: the run's ceiling, or the "
+                    "workspace's free runs and credits, would be exceeded. Not an x402 "
+                    "payment request."
+                },
+            },
+        }
+    }
 
 
 def _hosted_paths(settings: Any) -> dict[str, Any]:
@@ -170,6 +243,30 @@ def _hosted_paths(settings: Any) -> dict[str, Any]:
                     "503": {"description": "Workspace creation paused or at capacity"},
                 },
             }
+        }
+    }
+    paths[f"{PREFIX}/v1/chat/completions"] = _governed_call(
+        "Governed OpenAI-shaped chat completion (shared run budget)", ["model", "messages"]
+    )
+    paths[f"{PREFIX}/v1/messages"] = _governed_call(
+        "Governed Anthropic-shaped message (shared run budget)",
+        ["model", "max_tokens", "messages"],
+    )
+    paths[f"{PREFIX}/v1/workspace"] = {
+        "get": {
+            "summary": "Workspace usage: governed runs this month, free runs and credits left",
+            "security": [{"WorkspaceKey": []}],
+            "responses": {"200": {"description": "Usage"}, "401": {"description": "Bad key"}},
+        }
+    }
+    paths[f"{PREFIX}/v1/work/{{work_id}}"] = {
+        "get": {
+            "summary": "One run's calls, cost and receipts",
+            "security": [{"WorkspaceKey": []}],
+            "parameters": [
+                {"name": "work_id", "in": "path", "required": True, "schema": {"type": "string"}}
+            ],
+            "responses": {"200": {"description": "The run"}, "401": {"description": "Bad key"}},
         }
     }
     if not settings.x402_pay_to:
