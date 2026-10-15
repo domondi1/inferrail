@@ -377,3 +377,13 @@ def test_every_operation_in_the_origin_document_exists_and_is_complete(parts):
                 url = path.replace("{work_id}", "wk-docs")
                 r = c.request(method.upper(), url, headers={"x-api-key": key}, json={})
                 assert r.status_code not in (404, 405), (method, path, r.status_code)
+
+
+def test_workspace_creation_says_where_to_send_the_first_call(parts):
+    build, *_ = parts
+    with TestClient(build()) as c:
+        created = c.post("/hosted/v1/workspaces").json()
+        url = created["next"].split("POST ", 1)[1].split(" ", 1)[0]
+        assert url == "http://testserver/hosted/v1/chat/completions"
+        r = c.post(url, headers={"x-api-key": created["api_key"]}, json={})
+        assert r.status_code not in (404, 405)
