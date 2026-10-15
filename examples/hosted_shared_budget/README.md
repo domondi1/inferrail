@@ -22,7 +22,22 @@ python examples/hosted_shared_budget/shared_budget.py
 ```
 
 It starts Inferrail Hosted on your machine with a stand-in for OpenAI that answers instantly
-and reports the full `max_tokens` as used. Typical output:
+and reports the full `max_tokens` as used. It first runs the agents with per-process caps (each
+agent caps only itself, like an in-process cost limit), then on one shared ceiling. Typical
+output with `--agents 4 --calls-per-agent 12 --budget 0.002`:
+
+```
+  Each agent stayed under its own cap, but together they spent $0.005904: 3.0x the $0.002 you meant to allow.
+
+With one shared ceiling on Inferrail Hosted:
+
+    agent-1:   7 answered,   5 refused (402)
+    ...
+  16 calls answered, 32 refused before the provider, in 7.9s.
+  Run spend recorded by Inferrail: $0.001968 of $0.002 (within the ceiling).
+```
+
+With the defaults (6 agents, 25 calls each, $0.005):
 
 ```
     agent-1:   7 answered,  18 refused (402)
@@ -42,11 +57,14 @@ The exact split between agents varies from run to run; the total never exceeds t
 
 ```bash
 python examples/hosted_shared_budget/shared_budget.py \
-    --base-url https://<host> --provider-key sk-... --budget 0.02
+    --base-url https://inferrail-cost-gateway.onrender.com/hosted \
+    --provider-key sk-... --budget 0.02
 ```
 
-Your OpenAI key goes in `X-Provider-Api-Key` on each request. Inferrail never stores it, and
-OpenAI bills you for the calls that are answered. The run ceiling (`--budget`) caps that spend.
-The restart step only runs in local mode.
+It creates a free workspace (250 governed runs a month are free; this run uses one). Your
+OpenAI key goes in `X-Provider-Api-Key` on each request. Inferrail never stores it, and OpenAI
+bills you for the calls that are answered. The run ceiling (`--budget`) caps that spend. The
+restart step only runs in local mode. Add `--compare` to also run the per-process-caps baseline
+against the real API; that spends up to agents x budget of your OpenAI usage.
 
-Options: `--agents N`, `--calls-per-agent N`, `--budget USD`.
+Options: `--agents N`, `--calls-per-agent N`, `--budget USD`, `--compare` / `--no-compare`.
