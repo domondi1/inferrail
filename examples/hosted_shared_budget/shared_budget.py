@@ -13,12 +13,19 @@ Two ways to run it:
     pip install -e ".[ap]" -r hosted/budget_gateway/requirements.txt
     python examples/hosted_shared_budget/shared_budget.py
 
-    # Against a real Inferrail Hosted deployment with your own OpenAI key (costs a few cents
-    # of your OpenAI usage; the run ceiling below caps it).
+    # Against Inferrail Hosted with your own OpenAI key (costs a few cents of your OpenAI
+    # usage; the run ceiling caps it; a new workspace's 250 free runs a month cover it).
     python examples/hosted_shared_budget/shared_budget.py \
-        --base-url https://<host> --provider-key sk-... --budget 0.02
+        --base-url https://inferrail-cost-gateway.onrender.com/hosted \
+        --provider-key sk-... --budget 0.02
 
-Options: --agents N (default 6), --calls-per-agent N (default 25), --budget USD (default 0.005).
+Locally it first runs the same agents with per-process caps (each agent caps only itself, the
+way an in-process cost limit works) to show what the shared ceiling prevents. Against a real
+deployment that comparison spends up to agents x budget of your OpenAI usage, so it only runs
+with --compare.
+
+Options: --agents N (default 6), --calls-per-agent N (default 25), --budget USD (default 0.005),
+--compare / --no-compare.
 """
 
 from __future__ import annotations
@@ -56,6 +63,7 @@ def agent(
     calls: int,
     name: str,
     out: Any,
+    own_run: bool = False,
 ) -> None:
     """One independent agent process. Nothing Inferrail-specific beyond the base URL, the
     workspace key and three headers."""
@@ -67,6 +75,8 @@ def agent(
         default_headers={"X-Provider-Api-Key": provider_key},
         max_retries=0,
     )
+    if own_run:  # a per-process cap: this agent's own run, invisible to the others
+        work_id = f"{work_id}-{name}"
     answered = refused = other = 0
     for i in range(calls):
         try:
@@ -89,14 +99,31 @@ def agent(
 
 
 def run_agents(
-    base_url: str, key: str, provider_key: str, work_id: str, budget: str, n: int, calls: int
+    base_url: str,
+    key: str,
+    provider_key: str,
+    work_id: str,
+    budget: str,
+    n: int,
+    calls: int,
+    own_runs: bool = False,
 ) -> list[dict[str, int]]:
     ctx = mp.get_context("spawn")  # truly separate interpreters, like separate machines
     out = ctx.Queue()
     procs = [
         ctx.Process(
             target=agent,
-            args=(base_url, key, provider_key, work_id, budget, calls, f"agent-{i + 1}", out),
+            args=(
+                base_url,
+                key,
+                provider_key,
+                work_id,
+                budget,
+                calls,
+                f"agent-{i + 1}",
+                out,
+                own_runs,
+            ),
         )
         for i in range(n)
     ]
@@ -217,9 +244,36 @@ def demonstrate(
     calls: int,
     budget: str,
     hosted: LocalHosted | None,
+    compare: bool = False,
 ) -> dict[str, Any]:
-    key = httpx.post(f"{base_url}/v1/workspaces", timeout=30).json()["api_key"]
+    created = httpx.post(f"{base_url}/v1/workspaces", timeout=30)
+    if created.status_code != 201:
+        sys.exit(
+            f"Creating a workspace at {base_url}/v1/workspaces returned HTTP "
+            f"{created.status_code}. --base-url must be the Hosted base URL, e.g. "
+            "https://inferrail-cost-gateway.onrender.com/hosted"
+        )
+    key = created.json()["api_key"]
     work_id = f"shared-run-{uuid.uuid4().hex[:8]}"
+    baseline: dict[str, Any] | None = None
+    if compare:
+        base_id = f"per-process-{uuid.uuid4().hex[:8]}"
+        print(
+            f"Without a shared ceiling: {agents} agents, each capped at ${budget} on its own "
+            "(like an in-process cost limit).\n"
+        )
+        run_agents(base_url, key, provider_key, base_id, budget, agents, calls, own_runs=True)
+        own = [
+            Decimal(work_record(base_url, key, f"{base_id}-agent-{i + 1}")["cost_usd"])
+            for i in range(agents)
+        ]
+        total = sum(own, Decimal(0))
+        print(
+            f"  Each agent stayed under its own cap, but together they spent ${total}: "
+            f"{total / Decimal(budget):.1f}x the ${budget} you meant to allow.\n"
+        )
+        baseline = {"per_agent_cap_usd": budget, "total_spent_usd": str(total)}
+        print("With one shared ceiling on Inferrail Hosted:\n")
     print(
         f"Workspace created. Run {work_id!r}, ceiling ${budget}, "
         f"{agents} agents x {calls} calls each, all at once.\n"
@@ -255,6 +309,8 @@ def demonstrate(
         "within_budget": spent <= Decimal(budget),
         "receipts": record["calls"],
     }
+    if baseline is not None:
+        summary["per_process_caps"] = baseline
     if hosted is not None:
         hosted.restart()
         after = work_record(base_url, key, work_id)
@@ -274,11 +330,20 @@ def demonstrate(
 
 def main(argv: list[str] | None = None) -> dict[str, Any]:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--base-url", help="an Inferrail Hosted deployment, e.g. https://<host>")
+    ap.add_argument(
+        "--base-url",
+        help="Inferrail Hosted's base URL, e.g. https://inferrail-cost-gateway.onrender.com/hosted",
+    )
     ap.add_argument("--provider-key", help="your OpenAI key (with --base-url)")
     ap.add_argument("--agents", type=int, default=6)
     ap.add_argument("--calls-per-agent", type=int, default=25)
     ap.add_argument("--budget", default="0.005")
+    ap.add_argument(
+        "--compare",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="first run the agents with per-process caps (default: on locally, off remotely)",
+    )
     args = ap.parse_args(argv)
     if args.base_url:
         if not args.provider_key:
@@ -290,6 +355,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             args.calls_per_agent,
             args.budget,
             None,
+            compare=bool(args.compare),
         )
     with tempfile.TemporaryDirectory() as tmp:
         hosted = LocalHosted(Path(tmp) / "hosted-data")
@@ -303,6 +369,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
                 args.calls_per_agent,
                 args.budget,
                 hosted,
+                compare=args.compare is not False,
             )
         finally:
             hosted.stop()
