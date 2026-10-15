@@ -587,8 +587,11 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             "api_key": api_key,
             "api_key_notice": "Shown once. Inferrail stores only its hash.",
             "base_url": settings.public_base_url + "/v1",
-            "next": "Send a call with Authorization: Bearer <api_key>, X-Provider-Api-Key, "
-            "X-Inferrail-Attribute-Work-Id and X-Inferrail-Budget-Usd.",
+            "next": f"POST {settings.public_base_url}/v1/chat/completions (OpenAI shape) or "
+            f"{settings.public_base_url}/v1/messages (Anthropic shape) with "
+            "Authorization: Bearer <api_key>, X-Provider-Api-Key: <your provider key>, "
+            "X-Inferrail-Attribute-Work-Id: <run id> and X-Inferrail-Budget-Usd: <ceiling>. "
+            "Every agent using the same run id shares that ceiling.",
             "pricing": price_sheet(),
         }
 
