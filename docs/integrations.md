@@ -429,6 +429,30 @@ instructor.from_openai(OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unus
 ```
 
 crawl4ai 0.9.4, scrapegraphai 2.3.0, prefect 3.8.7, atomic-agents 2.10.3.
+
+**Prefect tasks in several processes or on several workers (Inferrail Hosted).**
+A local gateway on each worker would give each one its own ledger, so a flow
+run fanned out across processes could spend the ceiling once per process. Point
+every task at [Inferrail Hosted](../hosted/budget_gateway/README.md) instead, so
+the flow run has one ceiling wherever its tasks run:
+
+```python
+client = OpenAI(
+    base_url="https://inferrail-cost-gateway.onrender.com/hosted/v1",
+    api_key=workspace_key,  # POST https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces
+    default_headers={
+        "X-Provider-Api-Key": openai_key,  # sent per request, never stored
+        "X-Inferrail-Attribute-Work-Id": f"prefect-{prefect.runtime.flow_run.id}",
+        "X-Inferrail-Budget-Usd": "5.00",
+    },
+)
+```
+
+Prefect 3.8.8, one flow run with `ProcessPoolTaskRunner(max_workers=4)`, four
+tasks in four processes making 10 calls each, a $0.002 ceiling, and a stand-in
+for OpenAI that reports usage sized from each request: with a separate ceiling
+per task, the run spent $0.007164 (3.6x); with the one shared work id, 9 calls
+were answered and 31 refused before the provider, and the run spent $0.001791.
 **Retries:** a refused call can't pass on retry, but some retry layers
 resend it anyway (free, since refusals never reach the provider, but
 wasted). Prefect `@task(retries=...)` and instructor's default
