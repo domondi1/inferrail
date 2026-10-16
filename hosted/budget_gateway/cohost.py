@@ -2,6 +2,7 @@
 
     /          -> hosted/cost_gateway (the /try/ trial API, unchanged)
     /hosted/*  -> hosted/budget_gateway (Inferrail Hosted)
+    /read/*    -> hosted/web_read (Inferrail Web Read), only when READ_PAY_TO is set
     /openapi.json -> Hosted's operations, for agent catalogs (see origin_openapi)
 
 Why one process: it reuses an already-paid instance. Both apps are small (measured in this
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import logging
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -41,6 +43,8 @@ from starlette.routing import Mount, Route
 HOSTED_DIR = Path(__file__).resolve().parent
 TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
 PREFIX = "/hosted"
+READ_PREFIX = "/read"
+log = logging.getLogger("inferrail.cohost")
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -72,8 +76,11 @@ def create_combined_app(
     *,
     facilitator: Any | None = None,
     modules: tuple[ModuleType, ModuleType] | None = None,
+    web_read: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
+    if web_read == "env":
+        web_read = web_read_from_env(hosted_settings)
     trial_app = trial_mod.create_app(trial_data_dir)
     hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
 
@@ -90,20 +97,77 @@ def create_combined_app(
     async def openapi(_: Request) -> JSONResponse:
         return JSONResponse(origin_openapi(app))
 
-    app = Starlette(
-        routes=[
-            Route("/openapi.json", openapi),
-            Mount(PREFIX, app=hosted_app),
-            Mount("/", app=trial_app),
-        ],
-        lifespan=lifespan,
-    )
+    routes = [Route("/openapi.json", openapi), Mount(PREFIX, app=hosted_app)]
+    if web_read is not None:
+        routes.append(Mount(READ_PREFIX, app=web_read[0]))
+    app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
     # Another app sharing this origin adds its paid operations here: callables returning
     # OpenAPI `paths` entries keyed by full origin path.
     app.state.discovery_paths = []
+    if web_read is not None:
+        app.state.discovery_paths.append(lambda: _web_read_paths(web_read[1]))
     return app
+
+
+def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+    """(app, settings) for Inferrail Web Read when READ_PAY_TO is set, else None.
+
+    Fail-isolated: a Web Read configuration error is logged and Web Read stays unmounted, so it
+    can never take Hosted or the trial down. Its receiving address must differ from Hosted's and
+    Search's: an EIP-3009 transfer binds to a merchant and amount, not an endpoint.
+    """
+    e = dict(os.environ if env is None else env)
+    if not e.get("READ_PAY_TO"):
+        return None
+    try:
+        mod = _load("web_read_service", HOSTED_DIR.parent / "web_read" / "service.py")
+        origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+        e.setdefault("READ_RESOURCE_URL", f"{origin}{READ_PREFIX}/v1/page")
+        e["READ_MOUNT_PREFIX"] = READ_PREFIX
+        e.setdefault("READ_NETWORK", hosted_settings.x402_network)
+        e.setdefault("READ_DATA_DIR", str(Path(hosted_settings.data_dir).parent / "web-read"))
+        settings = mod.Settings.from_env(e)
+        taken = {a.lower() for a in (hosted_settings.x402_pay_to, e.get("SEARCH_PAY_TO")) if a}
+        if settings.pay_to.lower() in taken:
+            raise RuntimeError("READ_PAY_TO must differ from Hosted's and Search's payTo")
+        return mod.create_app(settings), settings
+    except Exception:
+        log.exception("Web Read not mounted: configuration error")
+        return None
+
+
+def _web_read_paths(settings: Any) -> dict[str, Any]:
+    mod = sys.modules["web_read_service"]
+    return {
+        f"{READ_PREFIX}/v1/page": {
+            "post": {
+                "summary": "Read a public web page as clean markdown (pay per delivered page)",
+                "description": mod.DESCRIPTION,
+                "security": [],
+                "x-payment-info": {
+                    "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
+                    "protocols": [{"x402": {}}],
+                },
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": mod.PageRequest.model_json_schema()}
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The page, delivered and paid",
+                        "content": {"application/json": {"schema": mod.OUTPUT_SCHEMA}},
+                    },
+                    "402": {"description": "Payment Required"},
+                    "422": {"description": "Not readable (see error); nothing charged"},
+                    "502": {"description": "Upstream failure; nothing charged"},
+                },
+            }
+        }
+    }
 
 
 def origin_openapi(app: Starlette) -> dict[str, Any]:

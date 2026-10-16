@@ -210,3 +210,24 @@ def test_without_search_configured_nothing_extra_is_built(preflight, tmp_path):
     assert (
         preflight.check(_env(tmp_path), None, build=lambda s: None, build_search=must_not_run) == []
     )
+
+
+READ = "0x" + "5" * 40
+
+
+def test_web_read_is_built_and_checked_against_its_approved_address(preflight, tmp_path, capsys):
+    pytest.importorskip("x402")  # the hosted CI job installs it and fails on skips
+    env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=READ)
+    assert preflight.check(env, APPROVED, build=lambda s: None, expect_read_pay_to=READ) == []
+    assert f"web read: builds; network eip155:84532, payTo {READ}, price $0.002" in (
+        capsys.readouterr().out
+    )
+    wrong = preflight.check(env, APPROVED, build=lambda s: None, expect_read_pay_to=APPROVED)
+    assert any("READ_PAY_TO is" in p for p in wrong)
+
+
+def test_web_read_that_would_not_mount_stops_the_deploy(preflight, tmp_path):
+    env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=APPROVED)  # Hosted's own address
+    problems = preflight.check(env, APPROVED, build=lambda s: None)
+    assert any("Web Read is configured" in p for p in problems)
+    assert not (tmp_path / "web-read").exists()  # the check never writes to the real disk
