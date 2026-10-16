@@ -121,6 +121,7 @@ def check(
     build: Callable[[Any], None] = build_app,
     build_search: Callable[[Any, dict[str, str]], None] = build_search_app,
     expect_search_pay_to: str | None = None,
+    expect_read_pay_to: str | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -152,6 +153,19 @@ def check(
             problems.append(
                 f"SEARCH_PAY_TO is {env['SEARCH_PAY_TO']}, not the approved {expect_search_pay_to}"
             )
+    if env.get("READ_PAY_TO"):
+        with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+            web_read = cohost.web_read_from_env(settings, {**env, "READ_DATA_DIR": tmp})
+        if web_read is None:
+            problems.append(
+                "Web Read is configured (READ_PAY_TO) but would not mount; the configuration "
+                "error is logged above"
+            )
+        else:
+            w = web_read[1]
+            print(f"web read: builds; network {w.network}, payTo {w.pay_to}, price ${w.price_usd}")
+            if expect_read_pay_to and w.pay_to.lower() != expect_read_pay_to.lower():
+                problems.append(f"READ_PAY_TO is {w.pay_to}, not the approved {expect_read_pay_to}")
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -195,9 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--expect-pay-to", help="the approved receiving address (EIP-55)")
     ap.add_argument("--expect-search-pay-to", help="Job-Safe Search's approved receiving address")
+    ap.add_argument("--expect-read-pay-to", help="Web Read's approved receiving address")
     args = ap.parse_args(argv)
     problems = check(
-        dict(os.environ), args.expect_pay_to, expect_search_pay_to=args.expect_search_pay_to
+        dict(os.environ),
+        args.expect_pay_to,
+        expect_search_pay_to=args.expect_search_pay_to,
+        expect_read_pay_to=args.expect_read_pay_to,
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
