@@ -216,6 +216,7 @@ READ = "0x" + "5" * 40
 
 
 def test_web_read_is_built_and_checked_against_its_approved_address(preflight, tmp_path, capsys):
+    pytest.importorskip("x402")  # the hosted CI job installs it and fails on skips
     env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=READ)
     assert preflight.check(env, APPROVED, build=lambda s: None, expect_read_pay_to=READ) == []
     assert f"web read: builds; network eip155:84532, payTo {READ}, price $0.002" in (
