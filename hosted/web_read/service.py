@@ -8,12 +8,18 @@ non-public address, a non-text page, too large, an upstream error or timeout) re
 and nothing is charged.
 
 No third-party data supplier: pages are fetched directly from the public web, honoring
-robots.txt with an identifying user agent (see fetch.py). Content isn't stored; the ledger keeps
-only the URL, sizes, a content hash and the payment reference.
+robots.txt with an identifying user agent (see fetch.py). The ledger keeps the URL, sizes, a
+content hash and the payment reference.
+
+**A retry never pays twice.** Standard x402 clients sign a fresh payment when they retry after a
+lost response. So a delivered result is kept for `READ_RECOVERY_S` (default 10 minutes, then
+deleted), keyed by payer, URL and `request_id`. The same wallet sending the same request in that
+window, with any valid signature, gets the stored page back and that payment is never settled.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import json
@@ -75,13 +81,19 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
     "with word count, a content hash and a receipt. Pay only for a delivered page: refusals "
-    "(robots.txt, non-public address, non-text, >2 MB, upstream error) are not charged."
+    "(robots.txt, non-public address, non-text, >2 MB, upstream error) are not charged. "
+    "A retry from the same wallet never pays twice."
 )
 
 
 class PageRequest(BaseModel):
     url: str = Field(..., max_length=2048, description="Public http(s) URL to read")
-    request_id: str | None = Field(None, max_length=128, description="Your id, echoed back")
+    request_id: str | None = Field(
+        None,
+        max_length=128,
+        description="Your id, echoed back. Retrying with the same url and request_id within the "
+        "recovery window returns the paid page without a second charge.",
+    )
 
 
 @dataclass(frozen=True)
@@ -94,6 +106,7 @@ class Settings:
     user_agent: str = "InferrailReader/1.0 (+https://github.com/domondi1/inferrail)"
     operator_token: str | None = None
     mount_prefix: str = ""  # e.g. "/read" when mounted on a shared origin
+    recovery_s: int = 600  # how long a delivered page can be recovered without paying again
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -107,6 +120,9 @@ class Settings:
         if network == MAINNET and e.get("READ_MAINNET_APPROVED") != "1":
             raise RuntimeError("mainnet sales require READ_MAINNET_APPROVED=1")
         price = e.get("READ_PRICE_USD", "0.002")
+        recovery_s = int(e.get("READ_RECOVERY_S", "600"))
+        if not 0 <= recovery_s <= 3600:
+            raise RuntimeError("READ_RECOVERY_S must be between 0 and 3600")
         if not Decimal("0.001") <= Decimal(price) <= Decimal("1"):
             raise RuntimeError("READ_PRICE_USD must be between 0.001 and 1")
         return cls(
@@ -117,11 +133,13 @@ class Settings:
             data_dir=Path(e.get("READ_DATA_DIR", "/tmp/inferrail_web_read")),
             operator_token=e.get("BG_OPERATOR_TOKEN") or None,
             mount_prefix=e.get("READ_MOUNT_PREFIX", "").rstrip("/"),
+            recovery_s=recovery_s,
         )
 
 
 class Ledger:
-    """Delivered reads and their settlement. No page content is stored."""
+    """Delivered reads and their settlement. A delivered page is kept only for the recovery
+    window, so the paying wallet can get it back after a lost response."""
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,18 +155,46 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS events (kind TEXT, code TEXT, at REAL);
             """
         )
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(reads)")}
+        for column in ("idem", "result"):  # added for retry recovery; older ledgers lack them
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE reads ADD COLUMN {column} TEXT")
+        self._db.execute("CREATE INDEX IF NOT EXISTS reads_idem ON reads (payer, idem)")
 
     def event(self, kind: str, code: str = "") -> None:
         with self._lock:
             self._db.execute("INSERT INTO events VALUES (?,?,?)", (kind, code, time.time()))
 
-    def delivered(self, ref: str, payer: str, row: dict[str, Any], price: str) -> None:
+    def delivered(
+        self, ref: str, payer: str, row: dict[str, Any], price: str, idem: str, result: str | None
+    ) -> None:
         with self._lock:
             self._db.execute(
-                "INSERT OR IGNORE INTO reads VALUES (?,?,?,?,?,?,?,?,?,0)",
+                "INSERT OR IGNORE INTO reads (payment_ref, payer, url, final_url, bytes, words, "
+                "sha256, price_usd, created_at, settled, idem, result) "
+                "VALUES (?,?,?,?,?,?,?,?,?,0,?,?)",
                 (ref, payer, row["url"], row["final_url"], row["bytes"], row["word_count"],
-                 row["content_sha256"], price, time.time()),
+                 row["content_sha256"], price, time.time(), idem, result),
             )  # fmt: skip
+
+    def expire(self, window_s: int) -> None:
+        """Delete delivered pages older than the recovery window (the ledger row stays)."""
+        with self._lock:
+            self._db.execute(
+                "UPDATE reads SET result=NULL WHERE result IS NOT NULL AND created_at < ?",
+                (time.time() - window_s,),
+            )
+
+    def recoverable(self, payer: str, idem: str, window_s: int) -> str | None:
+        """The stored result of a settled read of this request by this payer, if still kept."""
+        self.expire(window_s)
+        with self._lock:
+            hit = self._db.execute(
+                "SELECT result FROM reads WHERE payer=? AND idem=? AND settled=1 "
+                "AND result IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+                (payer, idem),
+            ).fetchone()
+        return hit[0] if hit else None
 
     def settled(self, ref: str) -> None:
         with self._lock:
@@ -175,6 +221,47 @@ class Ledger:
             "reads_by_payer": by_payer,
             "events": events,
         }
+
+
+def _idem(url: str, request_id: str | None) -> str:
+    return hashlib.sha256(f"{url.strip()}\n{request_id or ''}".encode()).hexdigest()
+
+
+def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
+    """The payer, if this is a valid EOA-signed EIP-3009 payment to us at our price.
+
+    Checked locally (no facilitator call, nothing submitted), so a retry can prove it comes from
+    the wallet that already paid without creating a second charge. Anything else (another
+    merchant, a different amount, a smart-wallet signature) returns None and takes the normal
+    paid path."""
+    from x402.mechanisms.evm.eip712 import hash_eip3009_authorization
+    from x402.mechanisms.evm.types import ExactEIP3009Payload
+    from x402.mechanisms.evm.utils import get_evm_chain_id
+    from x402.mechanisms.evm.verify import verify_eoa_signature
+
+    try:
+        req = payload.accepted
+        evm = ExactEIP3009Payload.from_dict(payload.payload)
+        auth = evm.authorization
+        price_units = int(Decimal(settings.price_usd) * 10**6)
+        if (
+            req.network != settings.network
+            or req.pay_to.lower() != settings.pay_to.lower()
+            or auth.to.lower() != settings.pay_to.lower()
+            or int(auth.value) != price_units
+            or not evm.signature
+        ):
+            return None
+        digest = hash_eip3009_authorization(
+            auth, get_evm_chain_id(req.network), req.asset,
+            (req.extra or {})["name"], (req.extra or {})["version"],
+        )  # fmt: skip
+        signature = bytes.fromhex(evm.signature.removeprefix("0x"))
+        if verify_eoa_signature(digest, signature, auth.from_address):
+            return auth.from_address.lower()
+    except Exception:  # malformed or unsupported: fall through to the paid path
+        return None
+    return None
 
 
 def _payment_ref(payload: Any) -> tuple[str, str] | None:
@@ -252,10 +339,47 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
         server,
     )
     app = FastAPI(title="Inferrail Web Read")
+    in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
+
+    async def _recover(request: Request) -> tuple[str, str] | None:
+        """(payer, idem) for a signed page request from a valid payer; None otherwise."""
+        header = request.headers.get("payment-signature")
+        if request.method != "POST" or not header or not request.url.path.endswith("/v1/page"):
+            return None
+        try:
+            body = PageRequest.model_validate_json(await request.body())
+            payer = _signed_by_payer(decode_payment_signature_header(header), settings)
+        except Exception:
+            return None
+        return (payer, _idem(body.url, body.request_id)) if payer else None
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
-        response = await gate(request, call_next)
+        if request.method == "POST":
+            ledger.expire(settings.recovery_s)
+        key = await _recover(request) if settings.recovery_s else None
+        if key is None:
+            response = await gate(request, call_next)
+        else:
+            # One request per (payer, request) at a time, so a retry that arrives while the
+            # first is still settling waits for it and then gets its result.
+            lock, users = in_flight.get(key, (asyncio.Lock(), 0))
+            in_flight[key] = (lock, users + 1)
+            try:
+                async with lock:
+                    stored = ledger.recoverable(*key, settings.recovery_s)
+                    if stored is not None:
+                        ledger.event("recovered")
+                        body = json.loads(stored)
+                        body["receipt"]["recovered"] = True
+                        return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
+                    response = await gate(request, call_next)
+            finally:
+                lock, users = in_flight[key]
+                if users <= 1:
+                    del in_flight[key]
+                else:
+                    in_flight[key] = (lock, users - 1)
         if response.status_code == 402 and not request.headers.get("payment-signature"):
             ledger.event("challenge")
         return response
@@ -273,6 +397,9 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
             f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
             f"{settings.network} to {settings.pay_to}). Sign it and repeat the request with the "
             "PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
+            f"Lost the response? Send the same url and request_id again from the same wallet "
+            f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
+            "signature is not settled (no second charge).\n"
             "Errors: 422 {error: unsupported_url | non_public_address | dns_failed | "
             "disallowed_by_robots_txt | unsupported_content_type | too_large | "
             "too_many_redirects}, 502 {error: upstream_status | fetch_failed | timeout}.\n"
@@ -305,13 +432,16 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
             "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "bytes": len(got.body),
         }
-        if ref:
-            ledger.delivered(ref[0], ref[1], row, settings.price_usd)
         row["receipt"] = {
             "payment_ref": ref[0] if ref else None,
             "price_usd": settings.price_usd,
             "request_id": body.request_id,
         }
+        if ref:
+            ledger.delivered(
+                ref[0], ref[1], row, settings.price_usd, _idem(body.url, body.request_id),
+                json.dumps(row) if settings.recovery_s else None,
+            )  # fmt: skip
         return JSONResponse(row)
 
     @app.get("/v1/operator/stats", include_in_schema=False)
