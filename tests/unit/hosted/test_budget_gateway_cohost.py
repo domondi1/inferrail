@@ -312,6 +312,25 @@ def test_origin_openapi_lists_hosted_operations_for_x402_catalogs(parts):
         assert doc["x-agentcash-guidance"]["llmsTxtUrl"] == "http://testserver/hosted/llms.txt"
 
 
+def test_the_origin_describes_itself_for_catalog_listings(parts):
+    # Catalogs (x402scan, AgentCash) read the origin's title, description and icon, and the
+    # OpenAPI contact, guidance and servers. The origin root used to be a 404.
+    build, *_ = parts
+    with TestClient(build()) as c:
+        home = c.get("/")
+        assert home.status_code == 200 and "text/html" in home.headers["content-type"]
+        assert "<title>Inferrail Hosted</title>" in home.text
+        assert 'name="description"' in home.text and 'rel="icon"' in home.text
+        icon = c.get("/favicon.ico", follow_redirects=False)
+        assert icon.status_code == 301 and icon.headers["location"].startswith("https://")
+        doc = c.get("/openapi.json").json()
+        assert doc["info"]["contact"]["url"].startswith("https://")
+        assert "/hosted/v1/workspaces" in doc["info"]["x-guidance"]
+        # A server URL with a path would be prefixed onto every listed route by catalogs.
+        assert doc["servers"] == [{"url": "http://testserver"}]
+        assert c.post("/v1/trial").status_code == 200  # the trial still owns its routes
+
+
 def test_origin_openapi_omits_the_purchase_when_x402_is_off(parts):
     build, *_ = parts
     with TestClient(build(BG_X402_PAY_TO="")) as c:

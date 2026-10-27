@@ -218,7 +218,7 @@ def test_a_retry_with_a_fresh_signature_gets_the_paid_page_without_paying_again(
     assert all(call.nonce != signed.nonce for call in fac.calls)  # nor even verified
     assert seen.count("news.test/a") == pages_fetched  # and the page wasn't fetched again
     stats = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()
-    assert stats["settled_reads"] == 1 and stats["events"]["recovered:"] == 1
+    assert stats["settled_reads"] == 1 and stats["funnel"]["recovered"] == 1
 
 
 def test_resending_the_same_payment_returns_the_page_and_settles_once(tmp_path):
@@ -350,6 +350,37 @@ def test_a_retry_that_arrives_while_the_first_is_settling_waits_and_is_not_charg
     assert len(fac.calls_to("settle")) == 1
 
 
+def test_the_funnel_separates_price_checks_from_payments_without_recording_payloads(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason=None)
+    c, _ = _recovering_client(tmp_path, fac)
+    crawler = {"User-Agent": "x402scan-bot/1.0"}
+    c.post("/v1/page", headers=crawler)  # a catalog probe: a price check, not a purchase
+    c.post("/v1/page", json={"url": "https://news.test/a"}, headers=crawler)
+    agent = {"User-Agent": "python-httpx/0.28"}
+    unpaid = c.post("/v1/page", json={"url": "https://news.test/a"}, headers=agent)
+    signed = sign_payment(decode_payment_required(unpaid))
+    paid = c.post("/v1/page", json={"url": "https://news.test/a"},
+                  headers={**agent, "PAYMENT-SIGNATURE": signed.header})  # fmt: skip
+    assert paid.status_code == 200
+    bad = c.post("/v1/page", json={"url": "https://news.test/a"},
+                 headers={**agent, "PAYMENT-SIGNATURE": "not-a-payment"})  # fmt: skip
+    assert bad.status_code == 402
+    c.post("/v1/page", json={"url": "http://localhost/"},
+           headers={**agent, "PAYMENT-SIGNATURE": sign_payment(
+               decode_payment_required(unpaid)).header})  # fmt: skip
+
+    f = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()["funnel"]
+    assert f["challenge"] == 3 and f["payment_attempt"] == 3 and f["payment_rejected"] == 1
+    assert f["settled_reads"] == 1 and f["refused"] == 1
+    assert f["by_client"]["x402scan"] == {"challenge": 2}
+    assert f["by_client"]["python"]["payment_attempt"] == 3
+    import sqlite3
+
+    codes = {row[0] for row in sqlite3.connect(tmp_path / "web_read.sqlite3").execute(
+        "SELECT code FROM events")}  # fmt: skip
+    assert not any("news.test" in code or "localhost" in code for code in codes)  # no URLs
+
+
 def test_recovery_can_be_turned_off(tmp_path):
     fac = FakeFacilitator()
     c, _ = _recovering_client(tmp_path, fac, recovery_s=0)
@@ -395,6 +426,11 @@ def test_mounted_on_the_origin_and_listed_for_catalogs(tmp_path):
         assert r.status_code == 402
         assert decode_payment_required(r).resource.url == "http://testserver/read/v1/page"
         assert c.get("/hosted/health").status_code == 200
+        # The origin now sells two things; its listing says so.
+        assert doc["info"]["title"] == "Inferrail"
+        assert "Web Read" in doc["info"]["description"]
+        assert "/read/v1/page" in doc["info"]["x-guidance"]
+        assert "<title>Inferrail</title>" in c.get("/").text
 
 
 @pytest.mark.parametrize(

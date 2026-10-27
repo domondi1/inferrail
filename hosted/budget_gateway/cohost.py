@@ -37,13 +37,15 @@ from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Mount, Route
 
 HOSTED_DIR = Path(__file__).resolve().parent
 TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
 PREFIX = "/hosted"
 READ_PREFIX = "/read"
+SITE = "https://tryinferrail.com"
+REPO = "https://github.com/domondi1/inferrail"
 log = logging.getLogger("inferrail.cohost")
 
 
@@ -97,7 +99,18 @@ def create_combined_app(
     async def openapi(_: Request) -> JSONResponse:
         return JSONResponse(origin_openapi(app))
 
-    routes = [Route("/openapi.json", openapi), Mount(PREFIX, app=hosted_app)]
+    async def home(_: Request) -> HTMLResponse:
+        return HTMLResponse(origin_home(app))
+
+    async def favicon(_: Request) -> RedirectResponse:
+        return RedirectResponse(SITE + "/favicon.ico", status_code=301)
+
+    routes = [
+        Route("/openapi.json", openapi),
+        Route("/", home),
+        Route("/favicon.ico", favicon),
+        Mount(PREFIX, app=hosted_app),
+    ]
     if web_read is not None:
         routes.append(Mount(READ_PREFIX, app=web_read[0]))
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
@@ -170,6 +183,43 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
     }
 
 
+def _origin_summary(app: Starlette) -> tuple[str, str]:
+    """(title, one-paragraph description) of what this origin sells, for catalogs."""
+    settings = app.state.hosted_settings
+    hosted = (
+        "Inferrail Hosted: one dollar budget shared by every agent and process using a "
+        f"workspace key ({settings.free_runs_per_month} governed runs a month free, then "
+        "$0.001/run in x402 credits)."
+    )
+    if not app.state.discovery_paths:
+        return "Inferrail Hosted", hosted
+    return "Inferrail", (
+        "Paid services for AI agents over x402 on Base. Inferrail Web Read: one public web "
+        "page as clean markdown, $0.002 per delivered page, refusals never charged, a retry "
+        "never pays twice. " + hosted
+    )
+
+
+def origin_home(app: Starlette) -> str:
+    """The origin root: a minimal page with the title, description and icon that catalogs read
+    for the origin's listing (the APIs themselves are described in /openapi.json)."""
+    import html
+
+    title, description = (html.escape(t) for t in _origin_summary(app))
+    return (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f"<title>{title}</title>"
+        f'<meta name="description" content="{description}">'
+        f'<meta property="og:title" content="{title}">'
+        f'<meta property="og:description" content="{description}">'
+        f'<meta property="og:image" content="{SITE}/favicon-192x192.png">'
+        f'<link rel="icon" href="{SITE}/favicon.ico">'
+        f"</head><body><h1>{title}</h1><p>{description}</p>"
+        '<p>Machine-readable: <a href="/openapi.json">/openapi.json</a>. Docs: '
+        f'<a href="{REPO}">{REPO}</a>.</p></body></html>'
+    )
+
+
 def origin_openapi(app: Starlette) -> dict[str, Any]:
     """The origin's `GET /openapi.json`: what agent catalogs index for this origin.
 
@@ -183,21 +233,40 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
     """
     settings = app.state.hosted_settings
     base = settings.public_base_url
+    title, summary = _origin_summary(app)
+    read_intro = summary.split(" Inferrail Hosted:")[0] + " " if title == "Inferrail" else ""
+    origin = base.removesuffix(PREFIX)
+    guidance = (
+        f"Hosted: create a workspace (POST {base}/v1/workspaces), then call "
+        f"{base}/v1/chat/completions or {base}/v1/messages with the workspace key, your own "
+        "provider key, a work id and a ceiling; full guide at " + base + "/llms.txt."
+    )
+    if app.state.discovery_paths:
+        guidance = (
+            f'Web Read: POST {origin}{READ_PREFIX}/v1/page with {{"url": ...}}; pay the x402 '
+            "challenge; HTTP 200 is the page. Send a request_id and retry with it if the "
+            f"response is lost (no second charge). Guide: {origin}{READ_PREFIX}/llms.txt. "
+        ) + guidance
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {
-            "title": "Inferrail Hosted",
+            "title": title,
             "version": "1",
-            "description": (
-                "One dollar budget shared by every agent and process that uses a workspace "
-                "key, reserved before each OpenAI or Anthropic call, so parallel agents can't "
+            "description": read_intro
+            + (
+                "Inferrail Hosted: one dollar budget shared by every agent and process that "
+                "uses a workspace key, reserved before each OpenAI or Anthropic call, so "
+                "parallel agents can't "
                 f"overspend a run. Create a workspace free with POST {base}/v1/workspaces; "
                 f"{settings.free_runs_per_month} governed runs a month are free. Send calls "
                 f"to {base}/v1/chat/completions (OpenAI shape) or {base}/v1/messages "
                 "(Anthropic shape) with your own provider key, a work id and a ceiling. "
                 f"More runs: USDC over x402 at POST {base}/v1/credits/x402."
             ),
+            "x-guidance": guidance,
+            "contact": {"name": "Inferrail", "url": REPO},
         },
+        "servers": [{"url": origin}],
         "x-agentcash-guidance": {"llmsTxtUrl": base + "/llms.txt"},
         "components": {
             "securitySchemes": {

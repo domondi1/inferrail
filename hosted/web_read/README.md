@@ -64,4 +64,7 @@ and the trial keep serving.
 The facilitator is the same CDP configuration Hosted uses. The pre-deploy check
 (`preflight.py --expect-read-pay-to <address>`) builds Web Read and stops the deploy if it
 wouldn't mount. `GET /read/v1/operator/stats` (with `BG_OPERATOR_TOKEN`) reports settled reads,
-distinct and repeat payers, revenue and refusals by reason.
+distinct and repeat payers, revenue, refusals by reason, and a `funnel`: unsigned 402s (price
+checks), requests carrying a payment, rejected payments, recoveries and settled reads, each split
+by client family taken from the User-Agent (for example `x402scan`, `agentcash`, `python`). No
+IPs, URLs or bodies are recorded in it.
