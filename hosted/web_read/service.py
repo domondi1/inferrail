@@ -200,6 +200,25 @@ class Ledger:
         with self._lock:
             self._db.execute("UPDATE reads SET settled=1 WHERE payment_ref=?", (ref,))
 
+    def funnel(self) -> dict[str, Any]:
+        """Each stage of the purchase path, in total and by client family. An unsigned 402 is
+        a price check, not a purchase attempt; only a request carrying a payment is."""
+        stages = ("challenge", "payment_attempt", "payment_rejected", "recovered", "refused")
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT kind, code, COUNT(*) FROM events WHERE kind IN (?,?,?,?,?) "
+                "GROUP BY kind, code",
+                stages,
+            ).fetchall()
+            settled = self._db.execute("SELECT COUNT(*) FROM reads WHERE settled=1").fetchone()
+        totals = dict.fromkeys(stages, 0)
+        by_client: dict[str, dict[str, int]] = {}
+        for kind, code, n in rows:
+            totals[kind] += n
+            if kind != "refused":  # refusals are keyed by reason, not client
+                by_client.setdefault(code or "unknown", {})[kind] = n
+        return {**totals, "settled_reads": settled[0], "by_client": by_client}
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             q = self._db.execute
@@ -220,7 +239,26 @@ class Ledger:
             "revenue_usd": str(revenue),
             "reads_by_payer": by_payer,
             "events": events,
+            "funnel": self.funnel(),
         }
+
+
+# Coarse client families, from the User-Agent only (no IPs, URLs or bodies are recorded), so the
+# operator can tell catalog crawlers and our own probes from agent clients that try to pay.
+_CLIENTS = (
+    ("x402scan", "x402scan"), ("agentcash", "agentcash"), ("coinbase", "cdp"), ("cdp", "cdp"),
+    ("inferrail", "inferrail"), ("curl", "curl"), ("python", "python"), ("httpx", "python"),
+    ("aiohttp", "python"), ("node", "node"), ("undici", "node"), ("axios", "node"),
+    ("go-http", "go"), ("bot", "crawler"), ("spider", "crawler"), ("crawl", "crawler"),
+    ("mozilla", "browser"),
+)  # fmt: skip
+
+
+def _client_class(user_agent: str | None) -> str:
+    ua = (user_agent or "").lower()
+    if not ua:
+        return "none"
+    return next((cls for needle, cls in _CLIENTS if needle in ua), "other")
 
 
 def _idem(url: str, request_id: str | None) -> str:
@@ -355,8 +393,12 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
+        client = _client_class(request.headers.get("user-agent"))
+        signed = bool(request.headers.get("payment-signature"))
         if request.method == "POST":
             ledger.expire(settings.recovery_s)
+            if signed and request.url.path.endswith("/v1/page"):
+                ledger.event("payment_attempt", client)
         key = await _recover(request) if settings.recovery_s else None
         if key is None:
             response = await gate(request, call_next)
@@ -369,7 +411,7 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
                 async with lock:
                     stored = ledger.recoverable(*key, settings.recovery_s)
                     if stored is not None:
-                        ledger.event("recovered")
+                        ledger.event("recovered", client)
                         body = json.loads(stored)
                         body["receipt"]["recovered"] = True
                         return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
@@ -380,8 +422,8 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
                     del in_flight[key]
                 else:
                     in_flight[key] = (lock, users - 1)
-        if response.status_code == 402 and not request.headers.get("payment-signature"):
-            ledger.event("challenge")
+        if response.status_code == 402:
+            ledger.event("payment_rejected" if signed else "challenge", client)
         return response
 
     @app.get("/health")
