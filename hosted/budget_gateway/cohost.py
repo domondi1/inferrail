@@ -151,6 +151,16 @@ def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -
         return None
 
 
+def _mpp_protocols(settings: Any) -> list[dict[str, Any]]:
+    """The MPP (Tempo) offer, when Web Read also accepts it."""
+    if not getattr(settings, "mpp", None):
+        return []
+    from mpp.methods.tempo import PATH_USD, USDC
+
+    currency = USDC if settings.mpp.chain_id == 4217 else PATH_USD
+    return [{"mpp": {"method": "tempo", "intent": "charge", "currency": currency}}]
+
+
 def _web_read_paths(settings: Any) -> dict[str, Any]:
     mod = sys.modules["web_read_service"]
     return {
@@ -161,7 +171,7 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
                 "security": [],
                 "x-payment-info": {
                     "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
-                    "protocols": [{"x402": {}}],
+                    "protocols": [{"x402": {}}] + _mpp_protocols(settings),
                 },
                 "requestBody": {
                     "required": True,

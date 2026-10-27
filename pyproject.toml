@@ -93,6 +93,7 @@ hosted = [
     "cdp-sdk==1.48.1",
     "x402[evm,fastapi,httpx,extensions]==2.22.0",
     "a2a-sdk[fastapi]==1.1.2",
+    "pympp[tempo,server]==0.16.0",
 ]
 
 [project.scripts]
