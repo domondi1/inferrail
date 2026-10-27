@@ -20,8 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _x402_fake_facilitator import (  # noqa: E402
     FakeFacilitator,
     decode_payment_required,
+    settle_failure,
     sign_payment,
 )
+from eth_account import Account  # noqa: E402
+from x402.http.utils import encode_payment_signature_header  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 PAY_TO = "0x" + "7" * 40
@@ -157,6 +160,211 @@ def test_settings_guard_mainnet_and_price():
     with pytest.raises(RuntimeError, match="between"):
         svc.Settings.from_env({**base, "READ_PRICE_USD": "0.0001"})
     assert svc.Settings.from_env(base).price_usd == "0.002"
+
+
+# -- a retry never pays twice -------------------------------------------------------------------
+# Standard x402 clients sign a fresh authorization when they retry after a lost response
+# (x402-foundation/x402#3438). The same wallet asking for the same page again inside the recovery
+# window must get the paid result back without a second settlement or a second fetch.
+
+
+def _counting_site(routes: dict[str, httpx.Response]) -> tuple[httpx.MockTransport, list[str]]:
+    seen: list[str] = []
+    inner = _site(routes)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.url.host}{request.url.path}")
+        return inner.handle_request(request)
+
+    return httpx.MockTransport(handler), seen
+
+
+def _recovering_client(tmp_path: Path, fac: FakeFacilitator, recovery_s: int = 600):
+    transport, seen = _counting_site(
+        {"news.test/robots.txt": ROBOTS_OK,
+         "news.test/a": httpx.Response(200, text=ARTICLE, headers=HTML)}
+    )  # fmt: skip
+    settings = svc.Settings(
+        pay_to=PAY_TO, resource_url="http://testserver/v1/page", data_dir=tmp_path,
+        operator_token="op-token", recovery_s=recovery_s,
+    )  # fmt: skip
+    reader = fetch.Fetcher(settings.user_agent, transport=transport, resolve=_public_dns)
+    return TestClient(svc.create_app(settings, facilitator=fac, fetcher=reader)), seen
+
+
+def _buy(c: TestClient, body: dict, account=None):
+    unpaid = c.post("/v1/page", json=body)
+    assert unpaid.status_code == 402
+    signed = sign_payment(decode_payment_required(unpaid), account)
+    return c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": signed.header}), signed
+
+
+def test_a_retry_with_a_fresh_signature_gets_the_paid_page_without_paying_again(tmp_path):
+    fac = FakeFacilitator()
+    c, seen = _recovering_client(tmp_path, fac)
+    buyer = Account.create()
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    first, _ = _buy(c, body, buyer)
+    assert first.status_code == 200 and len(fac.calls_to("settle")) == 1
+    pages_fetched = seen.count("news.test/a")
+
+    retry, signed = _buy(c, body, buyer)  # the response was lost; the client signs again
+    assert retry.status_code == 200, retry.text
+    assert retry.headers["x-inferrail-recovered"] == "1"
+    assert retry.json()["content_sha256"] == first.json()["content_sha256"]
+    assert retry.json()["receipt"]["payment_ref"] == first.json()["receipt"]["payment_ref"]
+    assert retry.json()["receipt"]["recovered"] is True
+    assert len(fac.calls_to("settle")) == 1  # the second signature was never settled
+    assert all(call.nonce != signed.nonce for call in fac.calls)  # nor even verified
+    assert seen.count("news.test/a") == pages_fetched  # and the page wasn't fetched again
+    stats = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()
+    assert stats["settled_reads"] == 1 and stats["events"]["recovered:"] == 1
+
+
+def test_resending_the_same_payment_returns_the_page_and_settles_once(tmp_path):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac)
+    body = {"url": "https://news.test/a"}
+    first, signed = _buy(c, body)
+    again = c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": signed.header})
+    assert again.status_code == 200 and again.headers["x-inferrail-recovered"] == "1"
+    assert len(fac.calls_to("settle")) == 1
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        {"url": "https://news.test/a", "request_id": "job-8"},  # a new request id is a new read
+        {"url": "https://news.test/a?v=2", "request_id": "job-7"},  # so is a different page
+    ],
+)
+def test_a_different_request_is_a_new_paid_read(tmp_path, second):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac)
+    buyer = Account.create()
+    _buy(c, {"url": "https://news.test/a", "request_id": "job-7"}, buyer)
+    r, _ = _buy(c, second, buyer)
+    assert r.status_code == 200 and "x-inferrail-recovered" not in r.headers
+    assert len(fac.calls_to("settle")) == 2
+
+
+def test_another_wallet_cannot_recover_someone_elses_page(tmp_path):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac)
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    _, original = _buy(c, body)
+    r, _ = _buy(c, body)  # same request, different wallet: an ordinary paid read
+    assert "x-inferrail-recovered" not in r.headers and len(fac.calls_to("settle")) == 2
+
+    # A header that claims the first payer but is signed by someone else isn't recovered either.
+    unpaid = c.post("/v1/page", json=body)
+    forged = sign_payment(decode_payment_required(unpaid)).payload.model_copy(deep=True)
+    forged.payload["authorization"]["from"] = original.payer
+    header = encode_payment_signature_header(forged)
+    r = c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": header})
+    assert "x-inferrail-recovered" not in r.headers
+
+
+def test_an_unsettled_read_is_not_recoverable(tmp_path):
+    fac = FakeFacilitator(settle_outcomes=[settle_failure()])
+    c, _ = _recovering_client(tmp_path, fac)
+    buyer = Account.create()
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    first, _ = _buy(c, body, buyer)
+    assert first.status_code != 200  # settlement failed, so nothing was sold
+    retry, _ = _buy(c, body, buyer)
+    assert retry.status_code == 200 and "x-inferrail-recovered" not in retry.headers
+    assert len(fac.calls_to("settle")) == 2
+
+
+def test_after_the_window_the_page_is_deleted_and_a_read_is_paid_again(tmp_path, monkeypatch):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac, recovery_s=60)
+    buyer = Account.create()
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    _buy(c, body, buyer)
+    later = svc.time.time() + 61
+    monkeypatch.setattr(svc.time, "time", lambda: later)
+    r, _ = _buy(c, body, buyer)
+    assert "x-inferrail-recovered" not in r.headers and len(fac.calls_to("settle")) == 2
+    import sqlite3
+
+    rows = (
+        sqlite3.connect(tmp_path / "web_read.sqlite3")
+        .execute("SELECT result IS NULL FROM reads ORDER BY created_at")
+        .fetchall()
+    )
+    assert rows[0] == (1,)  # the expired page content is gone from the ledger
+
+
+def test_an_expired_page_is_deleted_by_any_later_request(tmp_path, monkeypatch):
+    c, _ = _recovering_client(tmp_path, FakeFacilitator(), recovery_s=60)
+    _buy(c, {"url": "https://news.test/a"})
+    later = svc.time.time() + 61
+    monkeypatch.setattr(svc.time, "time", lambda: later)
+    c.post("/v1/page")  # an unrelated catalog probe
+    import sqlite3
+
+    (kept,) = (
+        sqlite3.connect(tmp_path / "web_read.sqlite3")
+        .execute("SELECT COUNT(*) FROM reads WHERE result IS NOT NULL")
+        .fetchone()
+    )
+    assert kept == 0
+
+
+def test_a_retry_that_arrives_while_the_first_is_settling_waits_and_is_not_charged(tmp_path):
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def slow_settle(_payload):
+        await release.wait()
+
+    fac = FakeFacilitator(on_settle=slow_settle)
+    c, _ = _recovering_client(tmp_path, fac)
+    buyer = Account.create()
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    required = decode_payment_required(c.post("/v1/page", json=body))
+    first, second = sign_payment(required, buyer), sign_payment(required, buyer)
+
+    async def run():
+        transport = httpx.ASGITransport(app=c.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as a:
+            one = asyncio.create_task(
+                a.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": first.header})
+            )
+            while not fac.calls_to("settle"):  # the first payment is now settling
+                await asyncio.sleep(0.01)
+            two = asyncio.create_task(
+                a.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": second.header})
+            )
+            await asyncio.sleep(0.05)
+            assert not two.done()  # the retry waits for the first instead of paying
+            release.set()
+            return await one, await two
+
+    r1, r2 = asyncio.run(run())
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r2.headers["x-inferrail-recovered"] == "1"
+    assert len(fac.calls_to("settle")) == 1
+
+
+def test_recovery_can_be_turned_off(tmp_path):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac, recovery_s=0)
+    buyer = Account.create()
+    body = {"url": "https://news.test/a", "request_id": "job-7"}
+    _buy(c, body, buyer)
+    r, _ = _buy(c, body, buyer)
+    assert "x-inferrail-recovered" not in r.headers and len(fac.calls_to("settle")) == 2
+
+
+def test_recovery_window_is_bounded():
+    base = {"READ_PAY_TO": PAY_TO, "READ_RESOURCE_URL": "https://x/read/v1/page"}
+    assert svc.Settings.from_env(base).recovery_s == 600
+    with pytest.raises(RuntimeError, match="READ_RECOVERY_S"):
+        svc.Settings.from_env({**base, "READ_RECOVERY_S": "86400"})
 
 
 # -- mounted next to Hosted on the shared origin ---------------------------------------------------

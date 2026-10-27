@@ -21,6 +21,14 @@ need a page's text to finish a task: research, citation checks, docs lookups, ex
 2. Sign it with the agent's wallet and repeat the same request with `PAYMENT-SIGNATURE`.
 3. HTTP 200 means delivered and paid. Any other status means not charged.
 
+**A retry never pays twice.** If the response is lost (timeout, dropped connection, crashed
+process), send the same `url` and `request_id` again from the same wallet within 10 minutes. Most
+x402 clients will sign a new payment when they do; Web Read checks that signature locally, returns
+the page you already paid for (with the original `receipt` and `"recovered": true`, header
+`x-inferrail-recovered: 1`), and never submits the new payment. A request that arrives while the
+first one is still settling waits for it. A different `request_id`, a different URL or a different
+wallet is a new read.
+
 With AgentCash: `npx agentcash fetch <origin>/read/v1/page -m POST -b '{"url":"https://..."}'`.
 The operation is listed in the origin's `/openapi.json` with its price and schemas, and
 `GET /read/llms.txt` has the same instructions in plain text.
@@ -35,8 +43,9 @@ Directly from the public web, with no third-party data supplier:
   re-checked before any body is read);
 - no logins, cookies or paywall workarounds; text content types only.
 
-Page content isn't stored. The ledger keeps the URL, sizes, a content hash and the payment
-reference.
+The ledger keeps the URL, sizes, a content hash and the payment reference. The delivered page
+itself is kept only for the recovery window (10 minutes by default) so the paying wallet can get
+it back; it is deleted when the next request arrives after the window ends.
 
 ## Running it (operators)
 
@@ -50,6 +59,7 @@ and the trial keep serving.
 | `READ_NETWORK` | Defaults to Hosted's network. `eip155:8453` also needs `READ_MAINNET_APPROVED=1`. |
 | `READ_PRICE_USD` | Default `0.002`; allowed range 0.001–1. |
 | `READ_DATA_DIR` | Default: `web-read` next to `BG_DATA_DIR` (the persistent disk). |
+| `READ_RECOVERY_S` | Default `600`; 0–3600. How long a paid page can be recovered without paying again. `0` turns recovery off and keeps no page content. |
 
 The facilitator is the same CDP configuration Hosted uses. The pre-deploy check
 (`preflight.py --expect-read-pay-to <address>`) builds Web Read and stops the deploy if it
