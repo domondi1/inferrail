@@ -29,6 +29,13 @@ the page you already paid for (with the original `receipt` and `"recovered": tru
 first one is still settling waits for it. A different `request_id`, a different URL or a different
 wallet is a new read.
 
+**Also payable with MPP on Tempo** when the operator turns it on (`READ_MPP_CHAIN_ID`). The same
+402 carries a `WWW-Authenticate: Payment` challenge next to x402's `PAYMENT-REQUIRED`; an MPP
+client repeats the request with `Authorization: Payment <credential>`. The signed transfer is
+validated first and **broadcast only after the page is delivered**, so the promise is the same
+on both rails. (A client that broadcasts the transfer itself and sends only its hash has already
+paid; if that page can't be delivered the response says `"refund": "owed"`.)
+
 With AgentCash: `npx agentcash fetch <origin>/read/v1/page -m POST -b '{"url":"https://..."}'`.
 The operation is listed in the origin's `/openapi.json` with its price and schemas, and
 `GET /read/llms.txt` has the same instructions in plain text.
@@ -59,6 +66,7 @@ and the trial keep serving.
 | `READ_NETWORK` | Defaults to Hosted's network. `eip155:8453` also needs `READ_MAINNET_APPROVED=1`. |
 | `READ_PRICE_USD` | Default `0.002`; allowed range 0.001–1. |
 | `READ_DATA_DIR` | Default: `web-read` next to `BG_DATA_DIR` (the persistent disk). |
+| `READ_MPP_CHAIN_ID` | Unset (MPP off) by default. `42431` = Tempo testnet, `4217` = Tempo mainnet (also needs `READ_MPP_MAINNET_APPROVED=1`). Payments go to `READ_PAY_TO` on Tempo. |
 | `READ_RECOVERY_S` | Default `600`; 0–3600. How long a paid page can be recovered without paying again. `0` turns recovery off and keeps no page content. |
 
 The facilitator is the same CDP configuration Hosted uses. The pre-deploy check

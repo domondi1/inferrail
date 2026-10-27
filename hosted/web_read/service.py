@@ -20,6 +20,7 @@ window, with any valid signature, gets the stored page back and that payment is 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -33,6 +34,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -56,6 +58,7 @@ def _sibling(name: str) -> Any:
 
 extract = _sibling("extract")
 fetch = _sibling("fetch")
+mpp_rail = _sibling("mpp_rail")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -107,6 +110,7 @@ class Settings:
     operator_token: str | None = None
     mount_prefix: str = ""  # e.g. "/read" when mounted on a shared origin
     recovery_s: int = 600  # how long a delivered page can be recovered without paying again
+    mpp: Any = None  # mpp_rail.MppSettings when MPP (Tempo) payments are also accepted
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -134,6 +138,7 @@ class Settings:
             operator_token=e.get("BG_OPERATOR_TOKEN") or None,
             mount_prefix=e.get("READ_MOUNT_PREFIX", "").rstrip("/"),
             recovery_s=recovery_s,
+            mpp=mpp_rail.MppSettings.from_env(e, realm=urlsplit(e["READ_RESOURCE_URL"]).netloc),
         )
 
 
@@ -203,10 +208,13 @@ class Ledger:
     def funnel(self) -> dict[str, Any]:
         """Each stage of the purchase path, in total and by client family. An unsigned 402 is
         a price check, not a purchase attempt; only a request carrying a payment is."""
-        stages = ("challenge", "payment_attempt", "payment_rejected", "recovered", "refused")
+        stages = (
+            "challenge", "payment_attempt", "payment_rejected", "recovered", "refused",
+            "refund_owed",
+        )  # fmt: skip
         with self._lock:
             rows = self._db.execute(
-                "SELECT kind, code, COUNT(*) FROM events WHERE kind IN (?,?,?,?,?) "
+                "SELECT kind, code, COUNT(*) FROM events WHERE kind IN (?,?,?,?,?,?) "
                 "GROUP BY kind, code",
                 stages,
             ).fetchall()
@@ -310,7 +318,9 @@ def _payment_ref(payload: Any) -> tuple[str, str] | None:
     return f"{payer}:{str(auth['nonce']).lower()}", payer
 
 
-def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = None) -> FastAPI:
+def create_app(
+    settings: Settings, *, facilitator: Any = None, fetcher: Any = None, tempo_rail: Any = None
+) -> FastAPI:
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
     from x402.http.middleware.fastapi import payment_middleware
@@ -320,6 +330,11 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
     from x402.server import x402ResourceServer
 
     ledger = Ledger(settings.data_dir / "web_read.sqlite3")
+    rail = tempo_rail or (
+        mpp_rail.TempoRail(settings.mpp, settings.pay_to, settings.price_usd)
+        if settings.mpp
+        else None
+    )
     reader = fetcher or fetch.Fetcher(settings.user_agent)
     if facilitator is None:
         if settings.network == MAINNET:
@@ -391,10 +406,91 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
             return None
         return (payer, _idem(body.url, body.request_id)) if payer else None
 
+    @contextlib.asynccontextmanager
+    async def exclusive(key: tuple[str, str]) -> Any:
+        """One request per (payer, request) at a time, so a retry that arrives while the first
+        is still settling waits for it and then gets its result."""
+        lock, users = in_flight.get(key, (asyncio.Lock(), 0))
+        in_flight[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            lock, users = in_flight[key]
+            if users <= 1:
+                del in_flight[key]
+            else:
+                in_flight[key] = (lock, users - 1)
+
+    def recovered(stored: str, client: str) -> JSONResponse:
+        ledger.event("recovered", client)
+        body = json.loads(stored)
+        body["receipt"]["recovered"] = True
+        return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
+
+    async def mpp_challenge(request: Request, error: str | None = None) -> JSONResponse:
+        headers = await rail.challenge_headers(str(request.url)) if rail else []
+        body = {"error": error, "charged": False} if error else {}
+        response = JSONResponse(body, status_code=402)
+        for k, v in headers:
+            response.headers.append(k, v)
+        return response
+
+    async def mpp_purchase(request: Request, client: str) -> JSONResponse:
+        """MPP (Tempo) purchase: validate the credential, deliver, then broadcast."""
+        assert rail is not None
+        ledger.event("payment_attempt", client)
+        try:
+            body = PageRequest.model_validate_json(await request.body())
+        except Exception:
+            return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
+        valid = await rail.validate(request.headers["authorization"])
+        if valid is None:
+            ledger.event("payment_rejected", client)
+            return await mpp_challenge(request, "payment_invalid")
+        credential, payer, kind = valid
+        idem = _idem(body.url, body.request_id)
+        async with exclusive((payer, idem)):
+            if kind == "transaction" and settings.recovery_s:
+                stored = ledger.recoverable(payer, idem, settings.recovery_s)
+                if stored is not None:  # the new transfer is never broadcast: no second charge
+                    return recovered(stored, client)
+            status, row = await deliver(body)
+            if status != 200:
+                if kind == "hash":  # the client already paid on chain; we owe it back
+                    with contextlib.suppress(Exception):
+                        await rail.settle(credential)
+                    ledger.event("refund_owed", client)
+                    row.update(charged=True, refund="owed")
+                return JSONResponse(row, status_code=status)
+            try:
+                receipt = await rail.settle(credential)
+            except Exception:
+                ledger.event("payment_rejected", client)
+                return await mpp_challenge(request, "settlement_failed")
+            ref = f"tempo:{receipt.reference}"
+            payer = (receipt.payer or payer).lower()
+            row["receipt"] = {
+                "payment_ref": ref,
+                "price_usd": settings.price_usd,
+                "request_id": body.request_id,
+                "rail": "mpp-tempo",
+            }
+            ledger.delivered(
+                ref, payer, row, settings.price_usd, idem,
+                json.dumps(row) if settings.recovery_s else None,
+            )  # fmt: skip
+            ledger.settled(ref)
+            return JSONResponse(row, headers={"Payment-Receipt": receipt.to_payment_receipt()})
+
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
         client = _client_class(request.headers.get("user-agent"))
         signed = bool(request.headers.get("payment-signature"))
+        is_page = request.method == "POST" and request.url.path.endswith("/v1/page")
+        if rail and is_page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
+            ledger.expire(settings.recovery_s)
+            return await mpp_purchase(request, client)
         if request.method == "POST":
             ledger.expire(settings.recovery_s)
             if signed and request.url.path.endswith("/v1/page"):
@@ -403,27 +499,16 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
         if key is None:
             response = await gate(request, call_next)
         else:
-            # One request per (payer, request) at a time, so a retry that arrives while the
-            # first is still settling waits for it and then gets its result.
-            lock, users = in_flight.get(key, (asyncio.Lock(), 0))
-            in_flight[key] = (lock, users + 1)
-            try:
-                async with lock:
-                    stored = ledger.recoverable(*key, settings.recovery_s)
-                    if stored is not None:
-                        ledger.event("recovered", client)
-                        body = json.loads(stored)
-                        body["receipt"]["recovered"] = True
-                        return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
-                    response = await gate(request, call_next)
-            finally:
-                lock, users = in_flight[key]
-                if users <= 1:
-                    del in_flight[key]
-                else:
-                    in_flight[key] = (lock, users - 1)
+            async with exclusive(key):
+                stored = ledger.recoverable(*key, settings.recovery_s)
+                if stored is not None:
+                    return recovered(stored, client)
+                response = await gate(request, call_next)
         if response.status_code == 402:
             ledger.event("payment_rejected" if signed else "challenge", client)
+            if rail and is_page and not signed:  # offer MPP (Tempo) next to x402
+                for k, v in await rail.challenge_headers(str(request.url)):
+                    response.headers.append(k, v)
         return response
 
     @app.get("/health")
@@ -442,23 +527,27 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
             f"Lost the response? Send the same url and request_id again from the same wallet "
             f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
             "signature is not settled (no second charge).\n"
-            "Errors: 422 {error: unsupported_url | non_public_address | dns_failed | "
+            + (
+                f"Also payable with MPP on Tempo (chain {settings.mpp.chain_id}): the same 402 "
+                "carries a WWW-Authenticate Payment challenge; repeat the request with "
+                "Authorization: Payment <credential>. The transfer is broadcast only after the "
+                "page is delivered.\n"
+                if settings.mpp
+                else ""
+            )
+            + "Errors: 422 {error: unsupported_url | non_public_address | dns_failed | "
             "disallowed_by_robots_txt | unsupported_content_type | too_large | "
             "too_many_redirects}, 502 {error: upstream_status | fetch_failed | timeout}.\n"
         )
 
-    @app.post("/v1/page")
-    async def page(body: PageRequest, request: Request) -> JSONResponse:
-        header = request.headers.get("payment-signature")
-        ref = _payment_ref(decode_payment_signature_header(header)) if header else None
+    async def deliver(body: PageRequest) -> tuple[int, dict[str, Any]]:
+        """Fetch and convert the page: (200, row) or (422/502, error). Payment-agnostic."""
         try:
             got = await reader.fetch(body.url.strip())
         except fetch.Refused as exc:
             ledger.event("refused", exc.code)
             status = 502 if exc.code in ("upstream_status", "fetch_failed", "timeout") else 422
-            return JSONResponse(
-                {"error": exc.code, "detail": exc.detail, "charged": False}, status_code=status
-            )
+            return status, {"error": exc.code, "detail": exc.detail, "charged": False}
         text = got.body.decode(got.encoding, "replace")
         if got.content_type in ("text/html", "application/xhtml+xml"):
             title, content = extract.html_to_markdown(text)
@@ -474,6 +563,15 @@ def create_app(settings: Settings, *, facilitator: Any = None, fetcher: Any = No
             "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "bytes": len(got.body),
         }
+        return 200, row
+
+    @app.post("/v1/page")
+    async def page(body: PageRequest, request: Request) -> JSONResponse:
+        header = request.headers.get("payment-signature")
+        ref = _payment_ref(decode_payment_signature_header(header)) if header else None
+        status, row = await deliver(body)
+        if status != 200:
+            return JSONResponse(row, status_code=status)
         row["receipt"] = {
             "payment_ref": ref[0] if ref else None,
             "price_usd": settings.price_usd,
