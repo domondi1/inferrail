@@ -179,3 +179,65 @@ def test_mpp_is_off_by_default_and_its_secret_is_stable_across_restarts():
         {"READ_MPP_CHAIN_ID": "4217", "READ_MPP_MAINNET_APPROVED": "1"}, realm="x"
     )
     assert mainnet.chain_id == 4217
+
+
+def test_replay_claims_survive_a_restart_and_temporary_records_expire(tmp_path, monkeypatch):
+    import asyncio
+
+    path = tmp_path / "mpp_replay.sqlite3"
+    store = rail_mod.ReplayStore(path)
+    assert asyncio.run(store.put_if_absent("mpp:charge:0xabc", "0xabc")) is True
+    assert asyncio.run(store.put_if_absent("mpp:charge:0xabc", "0xabc")) is False
+    restarted = rail_mod.ReplayStore(path)
+    assert asyncio.run(restarted.get("mpp:charge:0xabc")) == "0xabc"
+    assert asyncio.run(restarted.put_if_absent("mpp:charge:0xabc", "0xabc")) is False
+
+    now = rail_mod.time.time()
+    assert asyncio.run(restarted.put_if_absent_until("marker", {"tx": 1}, now + 60)) is True
+    assert asyncio.run(restarted.put_if_absent_until("marker", {"tx": 2}, now + 60)) is False
+    with pytest.raises(ValueError):
+        asyncio.run(restarted.put_if_absent_until("late", 1, now - 1))
+    monkeypatch.setattr(rail_mod.time, "time", lambda: now + 61)
+    assert asyncio.run(restarted.get("marker")) is None
+    assert asyncio.run(restarted.put_if_absent_until("marker", {"tx": 3}, now + 120)) is True
+    assert asyncio.run(restarted.get("mpp:charge:0xabc")) == "0xabc"  # claims never expire
+    asyncio.run(restarted.delete("marker"))
+    assert asyncio.run(restarted.get("marker")) is None
+
+
+def test_a_used_transaction_hash_stays_used_after_a_restart(tmp_path):
+    """The real SDK, wired as in production: a hash credential's transfer, once claimed, can't
+    buy a second page from a restarted process (the SDK's default store forgets it)."""
+    import asyncio
+
+    pytest.importorskip("mpp.methods.tempo")
+    from mpp.errors import CredentialReplayedError
+    from mpp.store import ExpiringStore
+
+    def intents(rail):  # the SDK keeps each charge intent in its methods' closures
+        cells = (c.cell_contents for m in rail.server.methods for c in m.broadcast.__closure__)
+        return [v for v in cells if hasattr(v, "_reserve_hash")]
+
+    cfg = rail_mod.MppSettings(chain_id=rail_mod.TESTNET, secret_key="k", realm="x")
+    path = tmp_path / "mpp_replay.sqlite3"
+    tx = "0x" + "c" * 64
+    store = rail_mod.ReplayStore(path)
+    assert isinstance(store, ExpiringStore)
+    first = rail_mod.TempoRail(cfg, PAY_TO, "0.002", store)
+    assert intents(first) and all(i._store is store for i in intents(first))
+    asyncio.run(intents(first)[0]._reserve_hash(tx))
+
+    restarted = rail_mod.TempoRail(cfg, PAY_TO, "0.002", rail_mod.ReplayStore(path))
+    for intent in intents(restarted):
+        with pytest.raises(CredentialReplayedError):
+            asyncio.run(intent._ensure_hash_unused(tx))
+
+
+def test_the_service_keeps_mpp_replay_keys_on_its_data_disk(tmp_path):
+    pytest.importorskip("mpp.methods.tempo")
+    settings = svc.Settings(
+        pay_to=PAY_TO, resource_url="http://testserver/v1/page", data_dir=tmp_path,
+        mpp=rail_mod.MppSettings(chain_id=rail_mod.TESTNET, secret_key="k", realm="x"),
+    )  # fmt: skip
+    svc.create_app(settings, facilitator=FakeFacilitator())
+    assert (tmp_path / "mpp_replay.sqlite3").exists()

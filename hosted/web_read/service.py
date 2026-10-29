@@ -331,7 +331,12 @@ def create_app(
 
     ledger = Ledger(settings.data_dir / "web_read.sqlite3")
     rail = tempo_rail or (
-        mpp_rail.TempoRail(settings.mpp, settings.pay_to, settings.price_usd)
+        mpp_rail.TempoRail(
+            settings.mpp,
+            settings.pay_to,
+            settings.price_usd,
+            mpp_rail.ReplayStore(settings.data_dir / "mpp_replay.sqlite3"),
+        )
         if settings.mpp
         else None
     )
