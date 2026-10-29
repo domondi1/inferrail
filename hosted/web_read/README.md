@@ -34,7 +34,9 @@ wallet is a new read.
 client repeats the request with `Authorization: Payment <credential>`. The signed transfer is
 validated first and **broadcast only after the page is delivered**, so the promise is the same
 on both rails. (A client that broadcasts the transfer itself and sends only its hash has already
-paid; if that page can't be delivered the response says `"refund": "owed"`.)
+paid; if that page can't be delivered the response says `"refund": "owed"`.) Used transaction
+hashes are kept in `mpp_replay.sqlite3` in `READ_DATA_DIR`, so one transfer buys one page even
+across restarts.
 
 With AgentCash: `npx agentcash fetch <origin>/read/v1/page -m POST -b '{"url":"https://..."}'`.
 The operation is listed in the origin's `/openapi.json` with its price and schemas, and
