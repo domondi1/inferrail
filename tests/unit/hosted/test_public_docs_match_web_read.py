@@ -29,3 +29,21 @@ def test_the_readme_states_web_reads_price_route_and_recovery_window():
     assert f"${defaults.price_usd} per delivered page" in text
     assert f"{cohost.READ_PREFIX}/v1/page" in text
     assert f"within {defaults.recovery_s // 60} minutes" in text
+
+
+def test_the_homepage_states_the_live_prices_and_allowance():
+    import json
+    import re
+
+    svc = _load("web_read_service_site", ROOT / "hosted" / "web_read" / "service.py")
+    hosted = _load("budget_gateway_service_site", ROOT / "hosted" / "budget_gateway" / "service.py")
+    page = (ROOT / "docs" / "index.html").read_text()
+    text = " ".join(page.split())
+    price = svc.Settings(pay_to="0x" + "0" * 40).price_usd
+    free_runs = hosted.Settings.__dataclass_fields__["free_runs_per_month"].default
+
+    assert f"${price} per delivered page" in text
+    assert f"{free_runs} runs a month free" in text
+    ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)[1])
+    (web_read,) = [g for g in ld["@graph"] if g["name"] == "Inferrail Web Read"]
+    assert web_read["offers"]["price"] == price
