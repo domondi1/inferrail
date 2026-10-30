@@ -538,3 +538,17 @@ def test_a_refused_or_malformed_get_is_never_charged(tmp_path):
     missing = c.get("/v1/page", headers={"PAYMENT-SIGNATURE": signed.header})
     assert missing.status_code == 422 and missing.json()["charged"] is False
     assert fac.calls_to("settle") == []
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 410, 429, 500, 503])
+def test_a_target_site_error_is_never_charged_as_the_offer_says(tmp_path, status):
+    # The offer (DESCRIPTION, MPP_DESCRIPTION) promises that a blocked, missing or failing page
+    # costs nothing; any target status >= 400 must be refused and never settled.
+    fac = FakeFacilitator()
+    site = {"news.test/robots.txt": ROBOTS_OK, "news.test/x": httpx.Response(status, text="no")}
+    r = _paid(_client(tmp_path, site, fac), "https://news.test/x")
+    assert r.status_code == 502 and r.json() == {
+        "error": "upstream_status", "detail": str(status), "charged": False,
+    }  # fmt: skip
+    assert fac.calls_to("settle") == []
+    assert "403, 404, 5xx" in svc.DESCRIPTION and "403, 404 or 5xx" in svc.MPP_DESCRIPTION

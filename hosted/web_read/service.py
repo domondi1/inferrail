@@ -83,15 +83,17 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 }
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
-    "with word count, a content hash and a receipt. Pay only for a delivered page: refusals "
-    "(robots.txt, non-public address, non-text, >2 MB, upstream error) are not charged. "
-    "A retry from the same wallet never pays twice."
+    "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
+    "missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do "
+    "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
+    "never pays twice."
 )
 
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
 MPP_DESCRIPTION = (
-    "Read one public web page as clean markdown with a content hash and receipt. "
-    "Charged only when the page is delivered; a retry never pays twice."
+    "Read one public web page as clean markdown with a content hash and receipt. Charged "
+    "only when the page is delivered: a 403, 404 or 5xx from the site costs nothing, and a "
+    "retry never pays twice."
 )
 
 
