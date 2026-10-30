@@ -469,3 +469,72 @@ def test_a_bad_web_read_config_leaves_it_unmounted_and_hosted_up(tmp_path, env):
 def test_unset_means_not_mounted(tmp_path):
     app, web_read = _combined(tmp_path, {})
     assert web_read is None
+
+
+def _get_client(tmp_path: Path, fac: FakeFacilitator, allow_get: bool = True):
+    transport, seen = _counting_site(
+        {"news.test/robots.txt": ROBOTS_OK,
+         "news.test/a": httpx.Response(200, text=ARTICLE, headers=HTML)}
+    )  # fmt: skip
+    settings = svc.Settings(
+        pay_to=PAY_TO, resource_url="http://testserver/v1/page", data_dir=tmp_path,
+        operator_token="op-token", allow_get=allow_get,
+    )  # fmt: skip
+    reader = fetch.Fetcher(settings.user_agent, transport=transport, resolve=_public_dns)
+    return TestClient(svc.create_app(settings, facilitator=fac, fetcher=reader)), seen
+
+
+def _buy_get(c: TestClient, params: dict, account=None):
+    unpaid = c.get("/v1/page", params=params)
+    assert unpaid.status_code == 402
+    signed = sign_payment(decode_payment_required(unpaid), account)
+    return c.get("/v1/page", params=params, headers={"PAYMENT-SIGNATURE": signed.header}), signed
+
+
+def test_get_is_off_unless_the_operator_turns_it_on(tmp_path):
+    c, _ = _get_client(tmp_path, FakeFacilitator(), allow_get=False)
+    assert c.get("/v1/page", params={"url": "https://news.test/a"}).status_code == 405
+    assert "GET " not in c.get("/llms.txt").text
+    assert svc.Settings.from_env({"READ_PAY_TO": PAY_TO, "READ_RESOURCE_URL": "http://x/v1/page"}
+                                 ).allow_get is False  # fmt: skip
+
+
+def test_an_unpaid_get_probe_gets_the_same_offer_and_nothing_is_fetched(tmp_path):
+    c, seen = _get_client(tmp_path, FakeFacilitator())
+    for params in ({}, {"url": "https://news.test/a"}):  # index probes often send no query
+        r = c.get("/v1/page", params=params)
+        assert r.status_code == 402
+        (accept,) = decode_payment_required(r).accepts
+        assert accept.amount == "2000" and accept.pay_to == PAY_TO
+    assert seen == []  # a crawler or prefetch can't make us read (or charge for) anything
+    assert "GET http://testserver/v1/page?url=" in c.get("/llms.txt").text
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_a_paid_get_delivers_settles_once_and_a_retry_never_pays_twice(tmp_path):
+    fac = FakeFacilitator()
+    c, seen = _get_client(tmp_path, fac)
+    buyer = Account.create()
+    params = {"url": "https://news.test/a", "request_id": "job-9"}
+    first, _ = _buy_get(c, params, buyer)
+    assert first.status_code == 200, first.text
+    assert "# Paying per call" in first.json()["content_markdown"]
+    assert first.json()["receipt"]["request_id"] == "job-9"
+    assert len(fac.calls_to("settle")) == 1
+
+    retry, _ = _buy_get(c, params, buyer)  # lost response; the client signs again
+    assert retry.status_code == 200 and retry.headers["x-inferrail-recovered"] == "1"
+    assert first.headers["cache-control"] == retry.headers["cache-control"] == "no-store"
+    assert len(fac.calls_to("settle")) == 1 and seen.count("news.test/a") == 1
+
+
+def test_a_refused_or_malformed_get_is_never_charged(tmp_path):
+    fac = FakeFacilitator()
+    c, _ = _get_client(tmp_path, fac)
+    refused, _ = _buy_get(c, {"url": "http://localhost/"})
+    assert refused.status_code == 422 and refused.json()["charged"] is False
+    unpaid = c.get("/v1/page")
+    signed = sign_payment(decode_payment_required(unpaid))
+    missing = c.get("/v1/page", headers={"PAYMENT-SIGNATURE": signed.header})
+    assert missing.status_code == 422 and missing.json()["charged"] is False
+    assert fac.calls_to("settle") == []

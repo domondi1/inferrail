@@ -46,8 +46,10 @@ class StubRail:
     def __init__(self, kind: str = "transaction", valid: bool = True, settle_ok: bool = True):
         self.kind, self.valid, self.settle_ok = kind, valid, settle_ok
         self.validated, self.settled = 0, 0
+        self.challenged: list[str] = []
 
-    async def challenge_headers(self, url: str):
+    async def challenge_headers(self, url: str, method: str = "POST"):
+        self.challenged.append(method)
         return [("WWW-Authenticate", 'Payment id="x", method="tempo", intent="charge"')]
 
     async def validate(self, authorization: str):
@@ -62,7 +64,7 @@ class StubRail:
                                to_payment_receipt=lambda: "receipt-header")  # fmt: skip
 
 
-def _client(tmp_path: Path, rail: StubRail):
+def _client(tmp_path: Path, rail: StubRail, allow_get: bool = False):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/robots.txt":
             return httpx.Response(200, text="User-agent: *\nAllow: /\n")
@@ -72,7 +74,8 @@ def _client(tmp_path: Path, rail: StubRail):
         return {"localhost": ["127.0.0.1"]}.get(host, ["93.184.216.34"])
 
     settings = svc.Settings(pay_to=PAY_TO, resource_url="http://testserver/v1/page",
-                            data_dir=tmp_path, operator_token="op")  # fmt: skip
+                            data_dir=tmp_path, operator_token="op",
+                            allow_get=allow_get)  # fmt: skip
     reader = fetch.Fetcher(settings.user_agent, transport=httpx.MockTransport(handler), resolve=dns)
     app = svc.create_app(settings, facilitator=FakeFacilitator(), fetcher=reader, tempo_rail=rail)
     return TestClient(app)
@@ -241,3 +244,25 @@ def test_the_service_keeps_mpp_replay_keys_on_its_data_disk(tmp_path):
     )  # fmt: skip
     svc.create_app(settings, facilitator=FakeFacilitator())
     assert (tmp_path / "mpp_replay.sqlite3").exists()
+
+
+def test_mpp_over_get_offers_a_get_challenge_and_broadcasts_only_after_delivery(tmp_path):
+    rail = StubRail()
+    c = _client(tmp_path, rail, allow_get=True)
+    probe = c.get("/v1/page")
+    assert probe.status_code == 402 and probe.headers["www-authenticate"].startswith("Payment")
+    assert rail.challenged == ["GET"]
+    paid = c.get("/v1/page", params={"url": "https://news.test/a"},
+                 headers={"Authorization": "Payment cred"})  # fmt: skip
+    assert paid.status_code == 200, paid.text
+    assert paid.json()["receipt"]["rail"] == "mpp-tempo" and rail.settled == 1
+    refused = c.get("/v1/page", params={"url": "http://localhost/"},
+                    headers={"Authorization": "Payment cred"})  # fmt: skip
+    assert refused.status_code == 422 and rail.settled == 1  # never broadcast
+
+
+def test_mpp_get_without_a_url_is_rejected_before_validation(tmp_path):
+    rail = StubRail()
+    c = _client(tmp_path, rail, allow_get=True)
+    r = c.get("/v1/page", headers={"Authorization": "Payment cred"})
+    assert r.status_code == 422 and rail.validated == 0 and rail.settled == 0

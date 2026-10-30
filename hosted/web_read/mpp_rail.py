@@ -140,11 +140,11 @@ class TempoRail:
         self._charge = self.server.charge(amount=price_usd)
         self.atomic = int(Decimal(price_usd) * 10**6)
 
-    async def challenge_headers(self, url: str) -> list[tuple[str, str]]:
+    async def challenge_headers(self, url: str, method: str = "POST") -> list[tuple[str, str]]:
         """The WWW-Authenticate header(s) of a fresh charge challenge for this route."""
         from mpp.server import Request as MppRequest
 
-        result = await self._charge(MppRequest(method="POST", url=url, headers={}))
+        result = await self._charge(MppRequest(method=method, url=url, headers={}))
         challenge = getattr(result, "challenge", None)
         if challenge is None:
             return []

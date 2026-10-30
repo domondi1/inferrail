@@ -113,6 +113,7 @@ class Settings:
     mount_prefix: str = ""  # e.g. "/read" when mounted on a shared origin
     recovery_s: int = 600  # how long a delivered page can be recovered without paying again
     mpp: Any = None  # mpp_rail.MppSettings when MPP (Tempo) payments are also accepted
+    allow_get: bool = False  # also sell GET /v1/page?url=... (for clients and indexes that GET)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -141,6 +142,7 @@ class Settings:
             mount_prefix=e.get("READ_MOUNT_PREFIX", "").rstrip("/"),
             recovery_s=recovery_s,
             mpp=mpp_rail.MppSettings.from_env(e, realm=urlsplit(e["READ_RESOURCE_URL"]).netloc),
+            allow_get=e.get("READ_ALLOW_GET") == "1",
         )
 
 
@@ -374,40 +376,52 @@ def create_app(
         "fetched_at": "2026-10-16T12:00:00Z",
         "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": settings.price_usd},
     }
+
+    def offer(method: str) -> Any:
+        body = {"body_type": "json"} if method == "POST" else {}  # GET takes the query string
+        return RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to=settings.pay_to,
+                price=f"${settings.price_usd}",
+                network=settings.network,
+            ),
+            resource=settings.resource_url,
+            description=DESCRIPTION,
+            mime_type="application/json",
+            service_name="Inferrail Web Read",
+            tags=["web-read", "scrape", "markdown", "fetch"],
+            extensions=declare_discovery_extension(
+                input={"url": "https://example.com/"},
+                input_schema=PageRequest.model_json_schema(),
+                output=OutputConfig(example=example, schema=OUTPUT_SCHEMA),
+                **body,
+            ),
+        )
+
+    methods = ("POST", "GET") if settings.allow_get else ("POST",)
     gate = payment_middleware(
-        {
-            f"POST {settings.mount_prefix}/v1/page": RouteConfig(
-                accepts=PaymentOption(
-                    scheme="exact",
-                    pay_to=settings.pay_to,
-                    price=f"${settings.price_usd}",
-                    network=settings.network,
-                ),
-                resource=settings.resource_url,
-                description=DESCRIPTION,
-                mime_type="application/json",
-                service_name="Inferrail Web Read",
-                tags=["web-read", "scrape", "markdown", "fetch"],
-                extensions=declare_discovery_extension(
-                    input={"url": "https://example.com/"},
-                    input_schema=PageRequest.model_json_schema(),
-                    body_type="json",
-                    output=OutputConfig(example=example, schema=OUTPUT_SCHEMA),
-                ),
-            )
-        },
-        server,
+        {f"{m} {settings.mount_prefix}/v1/page": offer(m) for m in methods}, server
     )
     app = FastAPI(title="Inferrail Web Read")
     in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
 
+    def is_page(request: Request) -> bool:
+        return request.method in methods and request.url.path.endswith("/v1/page")
+
+    async def page_request(request: Request) -> PageRequest:
+        """The page request: a POST's JSON body, or a GET's query string."""
+        if request.method == "GET":
+            return PageRequest.model_validate(dict(request.query_params))
+        return PageRequest.model_validate_json(await request.body())
+
     async def _recover(request: Request) -> tuple[str, str] | None:
         """(payer, idem) for a signed page request from a valid payer; None otherwise."""
         header = request.headers.get("payment-signature")
-        if request.method != "POST" or not header or not request.url.path.endswith("/v1/page"):
+        if not is_page(request) or not header:
             return None
         try:
-            body = PageRequest.model_validate_json(await request.body())
+            body = await page_request(request)
             payer = _signed_by_payer(decode_payment_signature_header(header), settings)
         except Exception:
             return None
@@ -436,7 +450,7 @@ def create_app(
         return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
 
     async def mpp_challenge(request: Request, error: str | None = None) -> JSONResponse:
-        headers = await rail.challenge_headers(str(request.url)) if rail else []
+        headers = await rail.challenge_headers(str(request.url), request.method) if rail else []
         body = {"error": error, "charged": False} if error else {}
         response = JSONResponse(body, status_code=402)
         for k, v in headers:
@@ -448,7 +462,7 @@ def create_app(
         assert rail is not None
         ledger.event("payment_attempt", client)
         try:
-            body = PageRequest.model_validate_json(await request.body())
+            body = await page_request(request)
         except Exception:
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
         valid = await rail.validate(request.headers["authorization"])
@@ -492,15 +506,21 @@ def create_app(
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
+        response = await sell_or_challenge(request, call_next)
+        if is_page(request):  # paid pages and one-time challenges must never be served from a cache
+            response.headers["cache-control"] = "no-store"
+        return response
+
+    async def sell_or_challenge(request: Request, call_next: Any) -> Any:
         client = _client_class(request.headers.get("user-agent"))
         signed = bool(request.headers.get("payment-signature"))
-        is_page = request.method == "POST" and request.url.path.endswith("/v1/page")
-        if rail and is_page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
+        page = is_page(request)
+        if rail and page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
             ledger.expire(settings.recovery_s)
             return await mpp_purchase(request, client)
-        if request.method == "POST":
+        if request.method == "POST" or page:
             ledger.expire(settings.recovery_s)
-            if signed and request.url.path.endswith("/v1/page"):
+            if signed and page:
                 ledger.event("payment_attempt", client)
         key = await _recover(request) if settings.recovery_s else None
         if key is None:
@@ -513,8 +533,8 @@ def create_app(
                 response = await gate(request, call_next)
         if response.status_code == 402:
             ledger.event("payment_rejected" if signed else "challenge", client)
-            if rail and is_page and not signed:  # offer MPP (Tempo) next to x402
-                for k, v in await rail.challenge_headers(str(request.url)):
+            if rail and page and not signed:  # offer MPP (Tempo) next to x402
+                for k, v in await rail.challenge_headers(str(request.url), request.method):
                     response.headers.append(k, v)
         return response
 
@@ -528,7 +548,13 @@ def create_app(
             "# Inferrail Web Read\n\n"
             f"> {DESCRIPTION}\n\n"
             f'POST {settings.resource_url} with JSON {{"url": "https://..."}}.\n'
-            f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
+            + (
+                f"Or GET {settings.resource_url}?url=...&request_id=... (same price and terms; "
+                "use POST for URLs that carry secrets, since query strings can end up in logs).\n"
+                if settings.allow_get
+                else ""
+            )
+            + f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
             f"{settings.network} to {settings.pay_to}). Sign it and repeat the request with the "
             "PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
             f"Lost the response? Send the same url and request_id again from the same wallet "
@@ -573,7 +599,21 @@ def create_app(
         return 200, row
 
     @app.post("/v1/page")
-    async def page(body: PageRequest, request: Request) -> JSONResponse:
+    async def page_post(body: PageRequest, request: Request) -> JSONResponse:
+        return await sell(body, request)
+
+    if settings.allow_get:
+
+        @app.get("/v1/page", include_in_schema=False)
+        async def page_get(request: Request) -> JSONResponse:
+            try:
+                body = await page_request(request)
+            except Exception:
+                return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
+            return await sell(body, request)
+
+    async def sell(body: PageRequest, request: Request) -> JSONResponse:
+        """Deliver a page the x402 gate has already verified payment for (settled after)."""
         header = request.headers.get("payment-signature")
         ref = _payment_ref(decode_payment_signature_header(header)) if header else None
         status, row = await deliver(body)
