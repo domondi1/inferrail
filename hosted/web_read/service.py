@@ -88,6 +88,12 @@ DESCRIPTION = (
     "A retry from the same wallet never pays twice."
 )
 
+# Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
+MPP_DESCRIPTION = (
+    "Read one public web page as clean markdown with a content hash and receipt. "
+    "Charged only when the page is delivered; a retry never pays twice."
+)
+
 
 class PageRequest(BaseModel):
     url: str = Field(..., max_length=2048, description="Public http(s) URL to read")
@@ -340,6 +346,7 @@ def create_app(
             settings.pay_to,
             settings.price_usd,
             mpp_rail.ReplayStore(settings.data_dir / "mpp_replay.sqlite3"),
+            MPP_DESCRIPTION,
         )
         if settings.mpp
         else None
