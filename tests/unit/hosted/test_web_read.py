@@ -433,6 +433,22 @@ def test_mounted_on_the_origin_and_listed_for_catalogs(tmp_path):
         assert "<title>Inferrail</title>" in c.get("/").text
 
 
+def test_the_listed_request_contract_has_plain_types(tmp_path):
+    # Catalogs that route tasks read required fields and types from the schema; an `anyOf`
+    # property made one of them record the contract as partial, with no required field.
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO})
+    with TestClient(app) as c:
+        op = c.get("/openapi.json").json()["paths"]["/read/v1/page"]["post"]
+        listed = op["requestBody"]["content"]["application/json"]["schema"]
+        bazaar = decode_payment_required(c.post("/read/v1/page")).extensions["bazaar"]
+        for schema in (listed, bazaar["schema"]["properties"]["input"]["properties"]["body"]):
+            assert schema["required"] == ["url"]
+            assert {name: prop["type"] for name, prop in schema["properties"].items()} == {
+                "url": "string", "request_id": "string",
+            }  # fmt: skip
+    assert svc.PageRequest.model_validate({"url": "https://a.example", "request_id": None})
+
+
 @pytest.mark.parametrize(
     "env",
     [

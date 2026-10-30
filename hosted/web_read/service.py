@@ -33,12 +33,12 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 HERE = Path(__file__).resolve().parent
 MAINNET, TESTNET = "eip155:8453", "eip155:84532"
@@ -91,7 +91,9 @@ DESCRIPTION = (
 
 class PageRequest(BaseModel):
     url: str = Field(..., max_length=2048, description="Public http(s) URL to read")
-    request_id: str | None = Field(
+    # Published as a plain optional string: a catalog that reads the request contract from the
+    # schema (required fields, types) read `anyOf: [string, null]` as a partial contract.
+    request_id: Annotated[str | None, WithJsonSchema({"type": "string", "maxLength": 128})] = Field(
         None,
         max_length=128,
         description="Your id, echoed back. Retrying with the same url and request_id within the "
