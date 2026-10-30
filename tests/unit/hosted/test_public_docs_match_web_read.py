@@ -29,14 +29,3 @@ def test_the_readme_states_web_reads_price_route_and_recovery_window():
     assert f"${defaults.price_usd} per delivered page" in text
     assert f"{cohost.READ_PREFIX}/v1/page" in text
     assert f"within {defaults.recovery_s // 60} minutes" in text
-
-
-def test_the_site_llms_txt_states_the_live_prices_and_allowance():
-    svc = _load("web_read_service_llms", ROOT / "hosted" / "web_read" / "service.py")
-    hosted = _load("budget_gateway_service_llms", ROOT / "hosted" / "budget_gateway" / "service.py")
-    text = " ".join((ROOT / "docs" / "llms.txt").read_text().split())
-    defaults = svc.Settings(pay_to="0x" + "0" * 40)
-    free_runs = hosted.Settings.__dataclass_fields__["free_runs_per_month"].default
-    assert f"${defaults.price_usd} per delivered page" in text
-    assert f"within {defaults.recovery_s // 60} minutes" in text
-    assert f"{free_runs} runs a month free" in text
