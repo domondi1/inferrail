@@ -146,6 +146,62 @@
     .apply-status:empty { display: none; }
     .apply-status.ok { padding: 12px 14px; color: var(--good); background: var(--good-tint); border: 1px solid var(--good); font-weight: 600; }
     .apply-status.error { color: var(--stamp); font-weight: 600; }
+    /* Lifecycle demo. Base markup is a readable ordered list; .lc-js (set by lifecycle-demo.js) turns it into a stepper. */
+    .lc { display: grid; gap: var(--space-3); }
+    .lc > *, .lc-body > *, .lc-step { min-width: 0; }
+    .lc-note { margin: 0; display: flex; gap: 10px; align-items: center; color: var(--ink-2); font-size: 15px; }
+    .lc-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .lc-controls[hidden] { display: none; }
+    .lc-count { font: 500 15px var(--mono); color: var(--ink-2); min-width: 4ch; text-align: center; }
+    .lc-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: clamp(16px, 2.5vw, 36px); align-items: start; }
+    .lc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; counter-reset: lc; }
+    .lc-step { position: relative; background: var(--card); border: 1px solid var(--rule); padding: 18px 20px 18px 64px; counter-increment: lc; transition: opacity .25s ease, transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
+    .lc-step::before { content: counter(lc); position: absolute; left: 18px; top: 18px; width: 30px; height: 30px; display: grid; place-items: center; font: 700 15px var(--mono); border: 1px solid var(--rule); background: var(--paper); }
+    .lc-step h3 { margin: 6px 0 4px; font: 700 clamp(18px, 1.4vw, 21px)/1.25 var(--sans); }
+    .lc-step p { margin: 0; color: var(--ink-2); }
+    .lc-chip { display: inline-flex; gap: 6px; align-items: center; font: 600 13px var(--sans); text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border: 1px solid currentColor; color: var(--ink-2); }
+    .lc-step[data-state="settled"] .lc-chip, .lc-step[data-state="receipt"] .lc-chip { color: var(--good); background: var(--good-tint); }
+    .lc-step[data-state="refused"] .lc-chip { color: var(--stamp-dark); background: var(--stamp-tint); }
+    .lc-step[data-state="recovered"] .lc-chip { color: var(--labs); background: var(--labs-tint); }
+    .lc-wire { margin: 10px 0 0; padding: 8px 12px; background: var(--code-bg); color: var(--code-ink); font: 500 14px/1.5 var(--mono); overflow-x: auto; }
+    .lc-wire code { background: none; color: inherit; padding: 0; border: 0; font: inherit; }
+    .lc-side { display: grid; gap: var(--space-2); position: sticky; top: 96px; }
+    .lc-budget { background: var(--card); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: 18px 20px; }
+    .lc-label { margin: 0 0 10px; font-size: 15px; color: var(--ink-2); }
+    .lc-meter { display: flex; height: 14px; background: var(--paper-2); border: 1px solid var(--rule); overflow: hidden; }
+    .lc-spent { background: var(--good); transition: width .3s ease; }
+    .lc-held { background: repeating-linear-gradient(135deg, var(--good) 0 4px, var(--good-tint) 4px 8px); transition: width .3s ease; }
+    .lc-figures { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 15px; color: var(--ink-2); }
+    .lc-figures strong { font: 600 15px var(--mono); color: var(--ink); }
+    .lc-receipt { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--rule); font-size: 15px; }
+    .lc-receipt caption { text-align: left; font: 700 14px/1.2 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--stamp); padding: 0 0 8px; }
+    .lc-receipt th, .lc-receipt td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--rule); vertical-align: top; }
+    .lc-receipt td:last-child, .lc-receipt th:last-child { text-align: right; font-family: var(--mono); white-space: nowrap; }
+    .lc-receipt tr { transition: opacity .25s ease; }
+    .lc-ref { display: block; font: 400 13px var(--mono); color: var(--ink-3); }
+    .lc-footnote { margin: 0; font-size: 15px; color: var(--ink-2); max-width: 80ch; }
+    /* Stepper mode: the current step stands out, later steps and receipt rows wait. */
+    .lc-js .lc-steps { gap: 8px; }
+    .lc-js .lc-step { cursor: pointer; padding-top: 12px; padding-bottom: 12px; opacity: .62; }
+    .lc-js .lc-step::before { top: 12px; }
+    .lc-js .lc-step:not(.is-current) h3 { display: inline; margin: 0 0 0 10px; font-size: 16px; }
+    .lc-js .lc-step:not(.is-current) p, .lc-js .lc-step:not(.is-current) .lc-wire { display: none; }
+    .lc-js .lc-step.is-done { opacity: .85; }
+    .lc-js .lc-step.is-done::before { background: var(--good-tint); border-color: var(--good); }
+    .lc-js .lc-step.is-current { cursor: default; opacity: 1; padding-top: 18px; padding-bottom: 18px; border-color: var(--ink); box-shadow: var(--shadow); transform: translateX(4px); }
+    .lc-js .lc-step.is-current::before { top: 18px; background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .lc-js .lc-receipt tr.is-pending { opacity: .15; }
+    @media (max-width: 900px) {
+      .lc-body { grid-template-columns: minmax(0, 1fr); }
+      .lc-side { position: static; }
+      .lc-js .lc-step.is-current { transform: none; }
+    }
+    @media (max-width: 560px) {
+      .lc-step { padding: 16px 16px 16px 56px; }
+      .lc-step::before { left: 14px; top: 16px; }
+      .lc-wire { font-size: 13px; white-space: pre-wrap; }
+    }
+    .lc-controls [aria-disabled="true"] { opacity: .45; cursor: default; }
   </style>
 </head>
 <body>
@@ -159,6 +215,7 @@
       </div>
       <nav class="nav" id="primary-nav" aria-label="Primary">
         <a href="#product">Product</a>
+        <a href="#lifecycle">For agents</a>
         <a href="https://github.com/domondi1/inferrail#readme">Docs</a>
         <a href="/labs/">Labs</a>
         <a href="#company">Company</a>
@@ -231,6 +288,87 @@
     </section>
 
     <!-- Core benefits -->
+    <!-- The agent purchase lifecycle, as an explorable simulation. Readable as a plain ordered list
+         without JavaScript; lifecycle-demo.js turns it into a stepper. -->
+    <section class="section wrap" id="lifecycle" aria-labelledby="lifecycle-title">
+      <p class="eyebrow">For agents that pay</p>
+      <h2 class="section-title" id="lifecycle-title">One agent job, from price to receipt</h2>
+      <p class="section-lede">An agent buys three web pages for one job. It pays only for what it gets, a refused page costs nothing, and a retry never pays twice.</p>
+      <div class="lc" data-lifecycle aria-describedby="lc-note">
+        <p class="lc-note" id="lc-note"><span class="example-tag">Simulation</span> Example data. No payment is made.</p>
+        <div class="lc-controls" hidden>
+          <button type="button" class="button button-secondary" data-lc="prev">Back</button>
+          <span class="lc-count" aria-hidden="true"><span data-lc="pos">1</span> / 6</span>
+          <button type="button" class="button button-primary" data-lc="next">Next</button>
+          <button type="button" class="button button-secondary" data-lc="replay">Replay</button>
+        </div>
+        <div class="lc-body">
+          <ol class="lc-steps">
+            <li class="lc-step" data-state="quoted" data-held="0" data-spent="0">
+              <span class="lc-chip"><span aria-hidden="true">○</span> Priced</span>
+              <h3>The agent checks the price</h3>
+              <p>It asks Web Read for <code>news.example/a</code> and gets HTTP 402: the price, the network and where to pay. Nothing is held yet.</p>
+              <pre class="lc-wire"><code>402  $0.002 USDC · Base (x402) or Tempo (MPP)</code></pre>
+            </li>
+            <li class="lc-step" data-state="authorized" data-held="0.002" data-spent="0">
+              <span class="lc-chip"><span aria-hidden="true">◐</span> Authorized</span>
+              <h3>It authorizes the payment</h3>
+              <p>The purchase fits the job's budget, so the agent signs a payment for exactly $0.002 and repeats the request. The money hasn't moved.</p>
+              <pre class="lc-wire"><code>POST /read/v1/page  PAYMENT-SIGNATURE: …</code></pre>
+            </li>
+            <li class="lc-step" data-state="settled" data-held="0" data-spent="0.002" data-receipt="a">
+              <span class="lc-chip"><span aria-hidden="true">●</span> Settled</span>
+              <h3>Delivered, then settled</h3>
+              <p>Web Read fetches the page, returns it as markdown with a content hash, and only then settles the payment.</p>
+              <pre class="lc-wire"><code>200  412 words · sha256 3f1c…e09a · settled</code></pre>
+            </li>
+            <li class="lc-step" data-state="refused" data-held="0" data-spent="0.002" data-receipt="b">
+              <span class="lc-chip"><span aria-hidden="true">⊘</span> Refused, not charged</span>
+              <h3>A refused page costs nothing</h3>
+              <p>The next page is blocked by the site's robots.txt. Web Read refuses it, and the signed payment is never settled.</p>
+              <pre class="lc-wire"><code>422  disallowed_by_robots_txt · charged: false</code></pre>
+            </li>
+            <li class="lc-step" data-state="recovered" data-held="0" data-spent="0.004" data-receipt="c">
+              <span class="lc-chip"><span aria-hidden="true">↺</span> Recovered</span>
+              <h3>A retry never pays twice</h3>
+              <p>The agent buys <code>news.example/c</code>, but the response is lost. It retries with the same <code>request_id</code> and a new signature, gets the page it paid for, and the new signature is never settled.</p>
+              <pre class="lc-wire"><code>200  recovered: true · no second charge</code></pre>
+            </li>
+            <li class="lc-step" data-state="receipt" data-held="0" data-spent="0.004" data-receipt="total">
+              <span class="lc-chip"><span aria-hidden="true">≡</span> Receipt</span>
+              <h3>A receipt for the whole job</h3>
+              <p>Every purchase has a payment reference and a content hash the agent can check, so the job's cost reconciles to what it received.</p>
+            </li>
+          </ol>
+          <aside class="lc-side" aria-label="Job budget and receipt">
+            <div class="lc-budget">
+              <p class="lc-label">Job <code>research-7</code> · budget $0.010</p>
+              <div class="lc-meter" role="img" data-lc="meter" aria-label="Spent $0.004 of $0.010">
+                <span class="lc-spent" style="width:40%"></span><span class="lc-held" style="width:0%"></span>
+              </div>
+              <p class="lc-figures"><span>Spent <strong data-lc="spent">$0.004</strong></span><span>Held <strong data-lc="held">$0.000</strong></span><span>Left <strong data-lc="left">$0.006</strong></span></p>
+            </div>
+            <table class="lc-receipt">
+              <caption>Receipt</caption>
+              <thead><tr><th scope="col">Page</th><th scope="col">Result</th><th scope="col">Cost</th></tr></thead>
+              <tbody>
+                <tr data-row="a"><td><code>/a</code><span class="lc-ref">0x51…:0x07 · 3f1c…</span></td><td>Delivered</td><td>$0.002</td></tr>
+                <tr data-row="b"><td><code>/private</code><span class="lc-ref">refused</span></td><td>Not charged</td><td>$0.000</td></tr>
+                <tr data-row="c"><td><code>/c</code><span class="lc-ref">0x51…:0x09 · 8b20…</span></td><td>Delivered; retry recovered</td><td>$0.002</td></tr>
+              </tbody>
+              <tfoot><tr data-row="total"><th scope="row" colspan="2">Job total</th><td>$0.004</td></tr></tfoot>
+            </table>
+          </aside>
+        </div>
+        <p class="sr-only" aria-live="polite" data-lc="live"></p>
+        <p class="lc-footnote">The Web Read steps (price, payment, settlement after delivery, refusal, retry recovery, receipt) work this way in the live service, over x402 and MPP. The job budget shows how an Inferrail budget tracks them; budgets that cover purchases are <a href="https://github.com/domondi1/inferrail/tree/main/examples/agent_economy">experimental</a>.</p>
+        <div class="button-row">
+          <a class="button button-primary" href="https://github.com/domondi1/inferrail/blob/main/hosted/web_read/README.md">For agents: Web Read <span class="arrow" aria-hidden="true"></span></a>
+          <a class="button button-secondary" href="#local">For developers: run the gateway</a>
+        </div>
+      </div>
+    </section>
+
     <section class="section section-tint" id="product" aria-labelledby="benefits-title">
       <div class="wrap">
         <h2 class="section-title" id="benefits-title">What Inferrail does</h2>
@@ -427,6 +565,7 @@ work-support-1   failed      2         $0.007825</pre>
           </ul>
           <ul class="status-list" aria-label="Newer capabilities">
             <li><strong><a href="/hosted/">Inferrail Hosted</a></strong><span class="desc">Per-run budgets shared across agents and machines. 250 runs a month free.</span><span class="badge badge-preview">Preview</span></li>
+            <li><strong><a href="#lifecycle">Web Read for agents</a></strong><span class="desc">A web page as clean markdown with a receipt, $0.002 per delivered page, paid over x402 or MPP.</span><span class="badge badge-preview">Preview</span></li>
             <li><strong>Hosted trial</strong><span class="desc">A temporary personal gateway, deleted within 24 hours.</span><span class="badge badge-preview">Preview</span></li>
             <li><strong>Local dashboard</strong><span class="desc">Live feed, work, budgets, snippets.</span><span class="badge badge-preview">Preview</span></li>
             <li><strong>Cost per task</strong><span class="desc">Steps inside a job, with a Python helper.</span><span class="badge badge-preview">Preview</span></li>
@@ -627,6 +766,7 @@ work-support-1   failed      2         $0.007825</pre>
     </div>
   </footer>
   <script src="site.js"></script>
+  <script src="lifecycle-demo.js" defer></script>
   <script>
     // Careers interest form: submits in-page to the endpoint in the form's
     // action, so the visitor stays on this page. One request at a time.
