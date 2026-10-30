@@ -69,6 +69,7 @@ and the trial keep serving.
 | `READ_PRICE_USD` | Default `0.002`; allowed range 0.001–1. |
 | `READ_DATA_DIR` | Default: `web-read` next to `BG_DATA_DIR` (the persistent disk). |
 | `READ_MPP_CHAIN_ID` | Unset (MPP off) by default. `42431` = Tempo testnet, `4217` = Tempo mainnet (also needs `READ_MPP_MAINNET_APPROVED=1`). Payments go to `READ_PAY_TO` on Tempo. |
+| `READ_ALLOW_GET` | Unset (off) by default. `1` also sells `GET <route>?url=...&request_id=...`, for clients and catalog probes that use GET. Same price, payment checks, recovery and refusals as POST. Page responses are `Cache-Control: no-store`. Query strings can reach access logs, so the agent notes recommend POST for URLs that carry secrets. |
 | `READ_RECOVERY_S` | Default `600`; 0–3600. How long a paid page can be recovered without paying again. `0` turns recovery off and keeps no page content. |
 
 The facilitator is the same CDP configuration Hosted uses. The pre-deploy check
