@@ -207,6 +207,26 @@ claude mcp add inferrail \
 Other clients, and where `--app-mode` keeps its receipts:
 [docs/integrations.md](docs/integrations.md#mcp).
 
+## For agents: Web Read (preview)
+
+A hosted endpoint an agent pays per call, with no account or API key: one public web page
+as clean markdown, with its word count, a SHA-256 of the content and a receipt.
+**$0.002 per delivered page**, paid over [x402](https://x402.org) (USDC on Base) or
+[MPP](https://mpp.dev) (Tempo). The payment is checked first and settled only after the page
+is delivered, so refusals (robots.txt, non-public addresses, non-text, over 2 MB, target-site
+errors) are never charged. Retrying the same `url` and `request_id` from the same wallet within
+10 minutes returns the page already paid for.
+
+```bash
+curl -i -X POST https://inferrail-cost-gateway.onrender.com/read/v1/page \
+  -H 'content-type: application/json' -d '{"url": "https://example.com/"}'
+# HTTP 402 with the price; an x402 or MPP client pays and repeats the request
+```
+
+[For agents: llms.txt](https://inferrail-cost-gateway.onrender.com/read/llms.txt) ·
+[OpenAPI](https://inferrail-cost-gateway.onrender.com/openapi.json) ·
+[how it works](hosted/web_read/README.md)
+
 ## Current support
 
 - **Endpoints:** `POST /v1/chat/completions` (OpenAI-compatible) and
