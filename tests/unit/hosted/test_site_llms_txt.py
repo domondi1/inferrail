@@ -28,3 +28,19 @@ def test_the_site_llms_txt_states_the_live_prices_and_allowance():
     assert f"${defaults.price_usd} per delivered page" in text
     assert f"within {defaults.recovery_s // 60} minutes" in text
     assert f"{free_runs} runs a month free" in text
+
+
+def test_the_site_links_its_machine_entry_points():
+    # An agent reading any main page can reach /llms.txt and the live contract; crawlers that
+    # follow the sitemap find llms.txt; canonical URLs point at the production domain.
+    import re
+
+    docs = ROOT / "docs"
+    for page in ("index.html", "ap/index.html", "try/index.html", "labs/index.html"):
+        html = (docs / page).read_text()
+        assert 'href="/llms.txt"' in html, page
+        assert 'href="https://inferrail-cost-gateway.onrender.com/openapi.json"' in html, page
+    assert "<loc>https://tryinferrail.com/llms.txt</loc>" in (docs / "sitemap.xml").read_text()
+    for page in docs.rglob("*.html"):
+        for href in re.findall(r'<link rel="canonical" href="([^"]+)"', page.read_text()):
+            assert href.startswith("https://tryinferrail.com/"), (page, href)
