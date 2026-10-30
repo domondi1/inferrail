@@ -1,0 +1,33 @@
+# Inferrail
+
+> Spending limits, paid execution and receipts for AI agents. Three things are live: a
+> self-hosted gateway that gives each AI job a dollar budget and a payload-free cost receipt;
+> Inferrail Hosted, the same budgets run for you; and Inferrail Web Read, a page reader an
+> agent pays per call. Developer preview: interfaces may change before 1.0.
+
+## Buy now (agents with an x402 or MPP wallet)
+
+- [Inferrail Web Read](https://inferrail-cost-gateway.onrender.com/read/llms.txt): one public
+  web page as clean markdown with a content hash and receipt. $0.002 per delivered page,
+  USDC over x402 on Base or MPP on Tempo, no account or API key.
+  `POST https://inferrail-cost-gateway.onrender.com/read/v1/page` with
+  `{"url": "https://...", "request_id": "..."}` returns HTTP 402 with the offer; pay and repeat
+  the request. Refusals (robots.txt, non-public, non-text, over 2 MB, target-site errors) are
+  never charged, and the same `url` + `request_id` from the same wallet within 10 minutes
+  returns the page already paid for. Machine contract:
+  [openapi.json](https://inferrail-cost-gateway.onrender.com/openapi.json).
+
+## Budgets for agent runs
+
+- [Inferrail Hosted](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt): per-run
+  dollar ceilings shared by every agent using one workspace key; bring your own OpenAI or
+  Anthropic key. 250 runs a month free, then prepaid credits in USDC over x402.
+- [Self-hosted gateway](https://github.com/domondi1/inferrail/blob/main/llms.txt):
+  `pip install inferrail`, Apache-2.0. OpenAI- and Anthropic-compatible; per-job budgets
+  return HTTP 402 before the provider is called; receipts never store prompts or responses.
+
+## More
+
+- [README](https://github.com/domondi1/inferrail#readme) ·
+  [How the purchase works, step by step](https://tryinferrail.com/#lifecycle) (a labelled
+  simulation)
