@@ -31,6 +31,8 @@
     .hero-support { margin: clamp(16px, 1.6vw, 24px) 0 0; font-size: clamp(17px, 1.3vw, 20px); color: var(--ink-2); max-width: 44ch; }
     .hero-ctas { margin-top: clamp(20px, 2.2vw, 32px); }
     .hero-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 18px 0 0; padding: 0; list-style: none; font-size: 15px; color: var(--ink-2); }
+    .hero-agents { margin: 18px 0 0; max-width: 60ch; font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+    .hero-agents .badge { margin-right: 8px; vertical-align: 1px; }
     .hero-meta li::before { content: "\2713"; margin-right: 6px; color: var(--good); font-weight: 700; }
     .example-tag { font: 600 13px var(--sans); color: var(--ink-2); text-transform: uppercase; letter-spacing: .08em; padding: 3px 8px; border: 1px dashed var(--ink-3); }
     .example-note { margin: 12px 0 0; font-size: 15px; color: var(--ink-2); }
@@ -203,6 +205,21 @@
     }
     .lc-controls [aria-disabled="true"] { opacity: .45; cursor: default; }
   </style>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@graph": [
+    {"@type": "SoftwareApplication", "name": "Inferrail", "url": "https://tryinferrail.com/",
+     "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux, macOS, Windows",
+     "license": "https://www.apache.org/licenses/LICENSE-2.0",
+     "sameAs": ["https://github.com/domondi1/inferrail", "https://pypi.org/project/inferrail/"],
+     "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}},
+    {"@type": "Service", "name": "Inferrail Web Read",
+     "description": "One public web page as clean markdown with a content hash and receipt, for AI agents. Charged only when the page is delivered.",
+     "url": "https://inferrail-cost-gateway.onrender.com/read/llms.txt",
+     "provider": {"@type": "Organization", "name": "Inferrail", "url": "https://tryinferrail.com/"},
+     "offers": {"@type": "Offer", "price": "0.002", "priceCurrency": "USD",
+                "description": "Per delivered page, paid over x402 (USDC on Base) or MPP (Tempo)"}}
+  ]}
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -246,6 +263,7 @@
             <li>Demo mode needs no API key</li>
             <li>Open source, Apache 2.0</li>
           </ul>
+          <p class="hero-agents"><span class="badge badge-preview">For agents</span> Buying web pages for an agent? <a href="#lifecycle">See how Web Read charges $0.002 per delivered page</a>, or point it at <a href="https://inferrail-cost-gateway.onrender.com/read/llms.txt">llms.txt</a>.</p>
         </div>
 
         <!-- 2. Can I see it? -->
