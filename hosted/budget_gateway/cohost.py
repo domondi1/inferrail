@@ -37,7 +37,7 @@ from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Mount, Route
 
 HOSTED_DIR = Path(__file__).resolve().parent
@@ -102,12 +102,16 @@ def create_combined_app(
     async def home(_: Request) -> HTMLResponse:
         return HTMLResponse(origin_home(app))
 
+    async def llms(_: Request) -> PlainTextResponse:
+        return PlainTextResponse(origin_llms(app))
+
     async def favicon(_: Request) -> RedirectResponse:
         return RedirectResponse(SITE + "/favicon.ico", status_code=301)
 
     routes = [
         Route("/openapi.json", openapi),
         Route("/", home),
+        Route("/llms.txt", llms),
         Route("/favicon.ico", favicon),
         Mount(PREFIX, app=hosted_app),
     ]
@@ -116,6 +120,7 @@ def create_combined_app(
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
+    app.state.web_read_settings = web_read[1] if web_read is not None else None
     # Another app sharing this origin adds its paid operations here: callables returning
     # OpenAPI `paths` entries keyed by full origin path.
     app.state.discovery_paths = []
@@ -201,13 +206,49 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
         f"workspace key ({settings.free_runs_per_month} governed runs a month free, then "
         "$0.001/run in x402 credits)."
     )
-    if not app.state.discovery_paths:
+    read = getattr(app.state, "web_read_settings", None)
+    if not app.state.discovery_paths or read is None:
         return "Inferrail Hosted", hosted
     return "Inferrail", (
-        "Paid services for AI agents over x402 on Base. Inferrail Web Read: one public web "
-        "page as clean markdown, $0.002 per delivered page, refusals never charged, a retry "
-        "never pays twice. " + hosted
+        f"Paid services for AI agents over {_rails(read)}. Inferrail Web Read: one public web "
+        f"page as clean markdown, ${read.price_usd} per delivered page, refusals and target-site "
+        "errors never charged, a retry never pays twice. " + hosted
     )
+
+
+def _rails(read: Any) -> str:
+    """The payment rails Web Read accepts, as an agent would look for them."""
+    return "x402 on Base and MPP on Tempo" if read.mpp else "x402 on Base"
+
+
+def origin_llms(app: Starlette) -> str:
+    """`/llms.txt` at the origin root: where an agent that only knows this origin (from a
+    registry listing or a 402) starts. An index of each service's own guide and the contract;
+    the facts come from the same settings the services run with."""
+    settings = app.state.hosted_settings
+    base = settings.public_base_url
+    origin = base.removesuffix(PREFIX)
+    title, summary = _origin_summary(app)
+    lines = [f"# {title}", "", f"> {summary}", "", "## Services", ""]
+    read = getattr(app.state, "web_read_settings", None)
+    if app.state.discovery_paths and read is not None:
+        lines += [
+            f"- [Inferrail Web Read]({origin}{READ_PREFIX}/llms.txt): "
+            f'`POST {origin}{READ_PREFIX}/v1/page` with `{{"url": "https://...", '
+            f'"request_id": "..."}}` returns HTTP 402; pay ${read.price_usd} over '
+            f"{_rails(read).replace(' and ', ' or ')} and repeat the request.",
+        ]
+    lines += [
+        f"- [Inferrail Hosted]({base}/llms.txt): per-run dollar budgets shared across agents; "
+        f"{settings.free_runs_per_month} governed runs a month free.",
+        "",
+        "## Contract",
+        "",
+        f"- [OpenAPI]({origin}/openapi.json): every operation here, with price and schemas.",
+        f"- [Source and docs]({REPO})",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def origin_home(app: Starlette) -> str:
@@ -225,7 +266,8 @@ def origin_home(app: Starlette) -> str:
         f'<meta property="og:image" content="{SITE}/favicon-192x192.png">'
         f'<link rel="icon" href="{SITE}/favicon.ico">'
         f"</head><body><h1>{title}</h1><p>{description}</p>"
-        '<p>Machine-readable: <a href="/openapi.json">/openapi.json</a>. Docs: '
+        '<p>Machine-readable: <a href="/llms.txt">/llms.txt</a>, '
+        '<a href="/openapi.json">/openapi.json</a>. Docs: '
         f'<a href="{REPO}">{REPO}</a>.</p></body></html>'
     )
 
@@ -251,10 +293,12 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
         f"{base}/v1/chat/completions or {base}/v1/messages with the workspace key, your own "
         "provider key, a work id and a ceiling; full guide at " + base + "/llms.txt."
     )
-    if app.state.discovery_paths:
+    read = getattr(app.state, "web_read_settings", None)
+    if app.state.discovery_paths and read is not None:
         guidance = (
-            f'Web Read: POST {origin}{READ_PREFIX}/v1/page with {{"url": ...}}; pay the x402 '
-            "challenge; HTTP 200 is the page. Send a request_id and retry with it if the "
+            f'Web Read: POST {origin}{READ_PREFIX}/v1/page with {{"url": ...}}; pay the '
+            f"{'x402 or MPP' if read.mpp else 'x402'} challenge; HTTP 200 "
+            "is the page. Send a request_id and retry with it if the "
             f"response is lost (no second charge). Guide: {origin}{READ_PREFIX}/llms.txt. "
         ) + guidance
     doc: dict[str, Any] = {
