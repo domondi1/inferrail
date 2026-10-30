@@ -120,7 +120,12 @@ class ReplayStore:
 
 class TempoRail:
     def __init__(
-        self, cfg: MppSettings, pay_to: str, price_usd: str, store: ReplayStore | None = None
+        self,
+        cfg: MppSettings,
+        pay_to: str,
+        price_usd: str,
+        store: ReplayStore | None = None,
+        description: str | None = None,
     ) -> None:
         from mpp.methods.tempo import server as tempo
         from mpp.server import Mpp
@@ -137,7 +142,11 @@ class TempoRail:
             secret_key=cfg.secret_key,
             store=store,
         )
-        self._charge = self.server.charge(amount=price_usd)
+        # The challenge's `description` is what MPP indexes and clients show for the offer; it
+        # isn't part of the challenge id, so changing it doesn't invalidate open challenges.
+        self._charge = self.server.charge(
+            amount=price_usd, **({"description": description} if description else {})
+        )
         self.atomic = int(Decimal(price_usd) * 10**6)
 
     async def challenge_headers(self, url: str, method: str = "POST") -> list[tuple[str, str]]:

@@ -266,3 +266,19 @@ def test_mpp_get_without_a_url_is_rejected_before_validation(tmp_path):
     c = _client(tmp_path, rail, allow_get=True)
     r = c.get("/v1/page", headers={"Authorization": "Payment cred"})
     assert r.status_code == 422 and rail.validated == 0 and rail.settled == 0
+
+
+def test_the_mpp_challenge_describes_the_offer(tmp_path):
+    # MPP indexes and clients list a seller by the challenge's description parameter.
+    import asyncio
+    import re
+
+    pytest.importorskip("mpp.methods.tempo")
+    cfg = rail_mod.MppSettings(chain_id=rail_mod.TESTNET, secret_key="k", realm="x")
+    rail = rail_mod.TempoRail(cfg, PAY_TO, "0.002", description=svc.MPP_DESCRIPTION)
+    headers = asyncio.run(rail.challenge_headers("http://x/v1/page", "GET"))
+    assert len(headers) == 2  # one per currency
+    for _, header in headers:
+        assert dict(re.findall(r'(\w+)="([^"]*)"', header))["description"] == svc.MPP_DESCRIPTION
+    plain = rail_mod.TempoRail(cfg, PAY_TO, "0.002")
+    assert "description=" not in asyncio.run(plain.challenge_headers("http://x/v1/page"))[0][1]
