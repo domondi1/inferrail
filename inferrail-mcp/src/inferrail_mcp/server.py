@@ -25,9 +25,10 @@ import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
+from pydantic import Field
 
 from inferrail import __version__
 from inferrail.cli.report import ReportGroup, aggregate, load_receipts
@@ -110,10 +111,28 @@ def _receipt_summary(receipt: InferenceReceipt) -> dict[str, Any]:
     ),
 )
 def get_spend(
-    by: str = "customer",
-    receipts_path: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
+    by: Annotated[
+        str,
+        Field(
+            description='Group by "provider", "model", "route", or any attribute name sent '
+            'with the requests (e.g. "customer", "work_id", "agent").'
+        ),
+    ] = "customer",
+    receipts_path: Annotated[
+        str | None,
+        Field(
+            description="JSONL or SQLite receipts file. Default: $INFERRAIL_RECEIPTS_PATH, "
+            "else ./inferrail-receipts.jsonl."
+        ),
+    ] = None,
+    since: Annotated[
+        str | None,
+        Field(description='Inclusive start, ISO 8601 (e.g. "2026-08-01T00:00:00Z"); UTC if naive.'),
+    ] = None,
+    until: Annotated[
+        str | None,
+        Field(description="Exclusive end, ISO 8601; UTC if naive."),
+    ] = None,
 ) -> dict[str, Any]:
     """Aggregate local Inferrail receipts by `by`, optionally within [since, until).
 
@@ -176,8 +195,16 @@ def get_spend(
     ),
 )
 async def get_health(
-    base_url: str = "http://127.0.0.1:8000",
-    receipts_path: str | None = None,
+    base_url: Annotated[
+        str, Field(description="Base URL of the Inferrail gateway to check (its /health).")
+    ] = "http://127.0.0.1:8000",
+    receipts_path: Annotated[
+        str | None,
+        Field(
+            description="JSONL or SQLite receipts file. Default: $INFERRAIL_RECEIPTS_PATH, "
+            "else ./inferrail-receipts.jsonl."
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Report gateway reachability and the most recent local receipt, if any.
 
