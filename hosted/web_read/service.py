@@ -592,7 +592,7 @@ def create_app(
             return status, {"error": exc.code, "detail": exc.detail, "charged": False}
         text = got.body.decode(got.encoding, "replace")
         if got.content_type in ("text/html", "application/xhtml+xml"):
-            title, content = extract.html_to_markdown(text)
+            title, content = extract.html_to_markdown(text, got.final_url)
         else:
             title, content = "", text.strip()
         row = {

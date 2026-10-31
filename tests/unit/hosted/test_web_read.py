@@ -618,3 +618,56 @@ def test_the_listed_operation_has_an_id_and_a_request_example_that_validates(tmp
         example = op["requestBody"]["content"]["application/json"]["example"]
         svc.PageRequest.model_validate(example)
         assert c.post("/read/v1/page", json=example).status_code == 402
+
+
+extract = sys.modules["web_read_extract"]
+
+
+def test_a_data_table_is_a_markdown_table():
+    html = """<main><table><caption>Plans</caption><tr><th>Plan</th><th>Price</th></tr>
+    <tr><td>Basic</td><td>$5 | month</td></tr><tr><td>Pro<td>$20</table></main>"""
+    _, md = extract.html_to_markdown(html)
+    assert md == (
+        "Plans\n\n| Plan | Price |\n| --- | --- |\n| Basic | $5 \\| month |\n| Pro | $20 |"
+    )
+
+
+def test_a_layout_table_keeps_its_cells_as_blocks():
+    # Whole pages built from tables must not collapse into one table row.
+    html = "<body><table><tr><td><h2>Story</h2><p>First.</p></td><td><p>Side</p></td></tr></table>"
+    _, md = extract.html_to_markdown(html)
+    assert md == "## Story\n\nFirst.\n\nSide"
+
+
+def test_links_resolve_to_absolute_urls_an_agent_can_follow():
+    html = """<main><p><a href="/a">root</a> <a href="b/c">relative</a> <a href="#top">top</a>
+    <a href="mailto:x@y.z">mail</a> <a href="https://other.test/">abs</a></p></main>"""
+    _, md = extract.html_to_markdown(html, "https://news.test/dir/page")
+    assert "[root](https://news.test/a)" in md and "[relative](https://news.test/dir/b/c)" in md
+    assert "[abs](https://other.test/)" in md and "top" in md and "](#top)" not in md
+    assert "mailto:" not in md and "mail" in md
+    _, based = extract.html_to_markdown('<base href="https://cdn.test/x/"><a href="y">y</a>')
+    assert based == "[y](https://cdn.test/x/y)"
+
+
+def test_a_paid_page_links_resolve_against_its_final_url(tmp_path):
+    page = (
+        '<main><h1>Moved</h1><p>See <a href="next">next</a> and <a href="/top">top</a>.</p></main>'
+    )
+    site = {
+        "news.test/robots.txt": ROBOTS_OK,
+        "news.test/old": httpx.Response(301, headers={"location": "https://news.test/new/here"}),
+        "news.test/new/here": httpx.Response(200, text=page, headers=HTML),
+    }
+    r = _paid(_client(tmp_path, site, FakeFacilitator()), "https://news.test/old")
+    assert r.status_code == 200 and r.json()["final_url"] == "https://news.test/new/here"
+    md = r.json()["content_markdown"]
+    assert "[next](https://news.test/new/next)" in md and "[top](https://news.test/top)" in md
+
+
+def test_one_paragraph_per_cell_is_still_a_data_table():
+    html = (
+        "<table><tr><th><p>Op</p></th><th><p>Result</p></th></tr>"
+        "<tr><td><p>x or y</p></td><td><p>x</p></td></tr></table>"
+    )
+    assert extract.html_to_markdown(html)[1] == "| Op | Result |\n| --- | --- |\n| x or y | x |"
