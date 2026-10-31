@@ -380,3 +380,34 @@ def test_report_answers_who_paid_again_and_what_is_owed_on_shutdown(mods, ledger
     assert any("hosting" in c for c in r["cost_inputs_needed"])
     costed = report.build(ledger, costs_cents={"hosting_share": 50}, now=T0)
     assert costed["cost_inputs_needed"] == [] and costed["contribution_margin_cents"] == -50
+
+
+def test_the_report_shows_where_workspaces_stop_before_a_first_answer(mods, tmp_path):
+    # Who creates workspaces (SDK vs crawler), who calls, and why calls never get an answer:
+    # no provider key, or a budgeted call on a model the catalog can't price.
+    c = _client(mods, tmp_path, BG_OPERATOR_TOKEN="op-secret")
+    sdk = c.post("/v1/workspaces", headers={"User-Agent": "OpenAI/Python 2.3.0"}).json()
+    c.post("/v1/workspaces", headers={"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"})
+    auth = {"Authorization": f"Bearer {sdk['api_key']}", "User-Agent": "OpenAI/Python 2.3.0"}
+    body = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]}
+    assert c.post("/v1/chat/completions", headers=auth, json=body).status_code == 400
+    unpriced = {**body, "model": "not-a-priced-model"}
+    priced_headers = {
+        **auth,
+        "X-Provider-Api-Key": "sk-test-0123456789",
+        "X-Inferrail-Attribute-Work-Id": "w1",
+        "X-Inferrail-Budget-Usd": "0.50",
+    }
+    refused = c.post("/v1/chat/completions", headers=priced_headers, json=unpriced)
+    assert refused.status_code == 402  # a refusal, not a server error SDKs would retry
+    assert refused.json()["error"]["code"] == "INFERRAIL_E012"
+    report = c.get("/v1/operator/report", headers={"Authorization": "Bearer op-secret"}).json()
+    f = report["funnel"]
+    assert f["workspaces_created_by_client"] == {"openai-sdk": 1, "crawler": 1}
+    assert f["workspaces_that_called"] == 1
+    assert f["workspaces_calling_by_client"] == {"openai-sdk": 1}
+    assert f["workspaces_that_sent_no_provider_key"] == 1
+    assert f["workspaces_refused_for_an_unpriced_model"] == 1
+    assert f["workspaces_that_called_but_never_got_an_answer"] == 1
+    assert report["usage"]["budget_refused_calls"] == 1
+    assert "hi" not in json.dumps(f) and "sk-test" not in json.dumps(report)
