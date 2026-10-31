@@ -175,6 +175,7 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
     return {
         f"{READ_PREFIX}/v1/page": {
             "post": {
+                "operationId": "readPage",
                 "summary": "Read a public web page as clean markdown (pay per delivered page)",
                 "description": mod.DESCRIPTION,
                 "security": [],
@@ -185,7 +186,12 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
                 "requestBody": {
                     "required": True,
                     "content": {
-                        "application/json": {"schema": mod.PageRequest.model_json_schema()}
+                        "application/json": {
+                            "schema": mod.PageRequest.model_json_schema(),
+                            # Catalogs build their first call from this (Mercator's
+                            # inputExample); a real, stable page.
+                            "example": {"url": "https://example.com/"},
+                        }
                     },
                 },
                 "responses": {
