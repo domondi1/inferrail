@@ -345,3 +345,12 @@ def test_server_name_and_instructions_are_set() -> None:
     assert server.name == "inferrail"
     assert server.instructions is not None
     assert "read-only" in server.instructions
+
+
+async def test_every_tool_parameter_is_described_for_clients() -> None:
+    # Clients build calls from the input schema alone; a parameter without a description
+    # leaves an agent guessing what `by` or `since` accept.
+    for tool in await server.list_tools():
+        schema = tool.model_dump().get("input_schema") or tool.model_dump()["inputSchema"]
+        for name, prop in schema["properties"].items():
+            assert prop.get("description"), f"{tool.name}.{name} has no description"

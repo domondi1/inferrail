@@ -23,7 +23,7 @@ def test_the_readme_states_web_reads_price_route_and_recovery_window():
     svc = _load("web_read_service_docs", ROOT / "hosted" / "web_read" / "service.py")
     cohost = _load("budget_gateway_cohost_docs", ROOT / "hosted" / "budget_gateway" / "cohost.py")
     readme = (ROOT / "README.md").read_text()
-    section = readme.split("## For agents: Web Read", 1)[1].split("\n## ", 1)[0]
+    section = readme.split("## For agents", 1)[1].split("\n## ", 1)[0]
     text = " ".join(section.split())  # ignore line wrapping
     defaults = svc.Settings(pay_to="0x" + "0" * 40)
     assert f"${defaults.price_usd} per delivered page" in text
