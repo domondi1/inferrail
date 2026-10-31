@@ -6,6 +6,16 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.17 — 2026-10-31
+
+### Fixed
+- The MCP server's tools describe every parameter in their input schema.
+  `get_spend` and `get_health` documented `by`, `since`, `until`,
+  `receipts_path` and `base_url` only in Python docstrings, which MCP
+  clients never see. Each now carries a schema description (what `by`
+  accepts, the timestamp format, the receipts-path default), so an agent
+  can build a valid call from the schema alone (#190).
+
 ## v0.4.16 — 2026-10-07
 
 ### Added
