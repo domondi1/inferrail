@@ -102,6 +102,9 @@ def create_combined_app(
     async def home(_: Request) -> HTMLResponse:
         return HTMLResponse(origin_home(app))
 
+    async def api_catalog(_: Request) -> JSONResponse:
+        return JSONResponse(origin_api_catalog(app), media_type="application/linkset+json")
+
     async def llms(_: Request) -> PlainTextResponse:
         return PlainTextResponse(origin_llms(app))
 
@@ -112,6 +115,7 @@ def create_combined_app(
         Route("/openapi.json", openapi),
         Route("/", home),
         Route("/llms.txt", llms),
+        Route("/.well-known/api-catalog", api_catalog),
         Route("/favicon.ico", favicon),
         Mount(PREFIX, app=hosted_app),
     ]
@@ -219,6 +223,22 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
 def _rails(read: Any) -> str:
     """The payment rails Web Read accepts, as an agent would look for them."""
     return "x402 on Base and MPP on Tempo" if read.mpp else "x402 on Base"
+
+
+def origin_api_catalog(app: Starlette) -> dict[str, Any]:
+    """`/.well-known/api-catalog` (RFC 9727): a linkset pointing API catalogs (Mercator reads
+    it) at this origin's OpenAPI description."""
+    origin = app.state.hosted_settings.public_base_url.removesuffix(PREFIX)
+    return {
+        "linkset": [
+            {
+                "anchor": origin,
+                "service-desc": [
+                    {"href": f"{origin}/openapi.json", "type": "application/vnd.oai.openapi+json"}
+                ],
+            }
+        ]
+    }
 
 
 def origin_llms(app: Starlette) -> str:

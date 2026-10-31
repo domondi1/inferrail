@@ -579,3 +579,30 @@ def test_a_hosted_only_origin_does_not_advertise_web_read(tmp_path):
     with TestClient(app) as c:
         text = c.get("/llms.txt").text
         assert "Web Read" not in text and "http://testserver/hosted/llms.txt" in text
+
+
+def test_the_api_catalog_points_catalogs_at_the_openapi_description(tmp_path):
+    # RFC 9727 /.well-known/api-catalog, in the exact shape Mercator's catalog reads; the
+    # OpenAPI it names must stay reachable with Web Read's x-payment-info.
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO})
+    with TestClient(app) as c:
+        r = c.get("/.well-known/api-catalog")
+        assert r.status_code == 200
+        assert r.headers["content-type"].split(";")[0] == "application/linkset+json"
+        assert r.json() == {
+            "linkset": [
+                {
+                    "anchor": "http://testserver",
+                    "service-desc": [
+                        {
+                            "href": "http://testserver/openapi.json",
+                            "type": "application/vnd.oai.openapi+json",
+                        }
+                    ],
+                }
+            ]
+        }
+        doc = c.get("/openapi.json").json()
+        payment = doc["paths"]["/read/v1/page"]["post"]["x-payment-info"]
+        assert payment["price"] == {"mode": "fixed", "currency": "USD", "amount": "0.002"}
+        assert c.post("/read/v1/page").status_code == 402  # the paid route still answers
