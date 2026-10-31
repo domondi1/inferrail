@@ -552,3 +552,30 @@ def test_a_target_site_error_is_never_charged_as_the_offer_says(tmp_path, status
     }  # fmt: skip
     assert fac.calls_to("settle") == []
     assert "403, 404, 5xx" in svc.DESCRIPTION and "403, 404 or 5xx" in svc.MPP_DESCRIPTION
+
+
+@pytest.mark.parametrize("mpp", [False, True])
+def test_an_agent_that_only_knows_the_origin_finds_the_services_from_llms_txt(tmp_path, mpp):
+    # Registries and 402s give agents the origin; /llms.txt at its root must lead them to each
+    # service's guide and the contract, with the live price and rails.
+    pytest.importorskip("mpp.methods.tempo") if mpp else None
+    env = {"READ_PAY_TO": PAY_TO, **({"READ_MPP_CHAIN_ID": "42431"} if mpp else {})}
+    app, web_read = _combined(tmp_path, env)
+    with TestClient(app) as c:
+        r = c.get("/llms.txt")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain")
+        text = r.text
+        assert "http://testserver/read/llms.txt" in text
+        assert "http://testserver/hosted/llms.txt" in text
+        assert "http://testserver/openapi.json" in text
+        assert f"${web_read[1].price_usd}" in text
+        rails = "x402 on Base and MPP on Tempo" if mpp else "x402 on Base"
+        assert rails in text and rails in c.get("/openapi.json").json()["info"]["description"]
+        assert 'href="/llms.txt"' in c.get("/").text
+
+
+def test_a_hosted_only_origin_does_not_advertise_web_read(tmp_path):
+    app, _ = _combined(tmp_path, {})
+    with TestClient(app) as c:
+        text = c.get("/llms.txt").text
+        assert "Web Read" not in text and "http://testserver/hosted/llms.txt" in text
