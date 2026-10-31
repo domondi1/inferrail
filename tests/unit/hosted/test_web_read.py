@@ -606,3 +606,15 @@ def test_the_api_catalog_points_catalogs_at_the_openapi_description(tmp_path):
         payment = doc["paths"]["/read/v1/page"]["post"]["x-payment-info"]
         assert payment["price"] == {"mode": "fixed", "currency": "USD", "amount": "0.002"}
         assert c.post("/read/v1/page").status_code == 402  # the paid route still answers
+
+
+def test_the_listed_operation_has_an_id_and_a_request_example_that_validates(tmp_path):
+    # Catalogs build their first call from the request example and match tasks against it;
+    # the example must be a request the schema accepts, and asking with it gets a priced 402.
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO})
+    with TestClient(app) as c:
+        op = c.get("/openapi.json").json()["paths"]["/read/v1/page"]["post"]
+        assert op["operationId"] == "readPage"
+        example = op["requestBody"]["content"]["application/json"]["example"]
+        svc.PageRequest.model_validate(example)
+        assert c.post("/read/v1/page", json=example).status_code == 402
