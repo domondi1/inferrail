@@ -107,6 +107,25 @@ from inferrail.telemetry.sinks import NullTelemetrySink  # noqa: E402
 
 log = logging.getLogger("inferrail.hosted")
 PROVIDER_KEY_HEADER = "x-provider-api-key"
+
+# Payload-free client classes for the activation funnel (the operator report), so real SDK
+# callers can be told apart from catalog crawlers and probes. Matched in order, lower-cased.
+_CLIENTS = (
+    ("openai/", "openai-sdk"), ("anthropic/", "anthropic-sdk"), ("x402scan", "x402scan"),
+    ("agentcash", "agentcash"), ("agent402", "agent402"), ("inferrail", "inferrail"),
+    ("curl", "curl"), ("python", "python"), ("httpx", "python"), ("aiohttp", "python"),
+    ("node", "node"), ("undici", "node"), ("axios", "node"), ("go-http", "go"),
+    ("bot", "crawler"), ("spider", "crawler"), ("crawl", "crawler"), ("mozilla", "browser"),
+)  # fmt: skip
+
+
+def client_class(user_agent: str | None) -> str:
+    ua = (user_agent or "").lower()
+    if not ua:
+        return "none"
+    return next((cls for needle, cls in _CLIENTS if needle in ua), "other")
+
+
 MAINNET = "eip155:8453"
 TESTNET = "eip155:84532"
 BILLING_RULE = (
@@ -139,6 +158,10 @@ _HOSTED_REMEDIATION = {
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
+    # A budgeted call on a model with no verified price is refused before the provider, like
+    # an over-ceiling call (402, as the open-source gateway answers). It is not a server error:
+    # a 500 made SDK clients retry a request that can never succeed.
+    (BudgetUnpricedModelError, 402),
     (BudgetDeclarationError, 400),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
@@ -417,7 +440,8 @@ def _agent_guide(p: dict[str, Any], settings: Settings) -> str:
         "## Errors and retries\n"
         "- 400: missing provider key, bad budget header or conflicting ceiling. Fix the request.\n"
         "- 401: missing or invalid workspace key.\n"
-        "- 402: run ceiling (BudgetExceededError) or allowance_exhausted. Not retryable as-is.\n"
+        "- 402: run ceiling (BudgetExceededError), a budgeted call on an unpriced model "
+        "(BudgetUnpricedModelError, INFERRAIL_E012) or allowance_exhausted. Not retryable as-is.\n"
         "- 413: request body too large.\n"
         "- 429: workspace rate limit; wait for the Retry-After seconds.\n"
         "- 502/504: provider error or timeout; error.remediation says whether to retry.\n\n"
@@ -582,6 +606,9 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             raise HTTPException(429, "too many workspaces created from this address")
         creations[ip] = [*recent, now]
         workspace_id, api_key = ledger.create_workspace()
+        ledger.count_event(
+            workspace_id, f"created_by:{client_class(request.headers.get('user-agent'))}"
+        )
         return {
             "workspace_id": workspace_id,
             "api_key": api_key,
@@ -651,6 +678,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         workspace_id = getattr(request.state, "workspace_id", None)
         if workspace_id and isinstance(exc, BudgetExceededError | BudgetUnpricedModelError):
             ledger.count_event(workspace_id, "budget_refused")
+            if isinstance(exc, BudgetUnpricedModelError):  # a model our catalog can't price
+                ledger.count_event(workspace_id, "unpriced_model")
         code = code_for(exc)
         body = ErrorResponse(
             error=ErrorDetail(
@@ -669,8 +698,12 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         return JSONResponse({"detail": "internal error"}, status_code=500)
 
     def _admit(request: Request, workspace_id: str) -> tuple[dict[str, str], Decimal | None, Any]:
+        ledger.count_event(
+            workspace_id, f"call_by:{client_class(request.headers.get('user-agent'))}"
+        )
         provider_key = request.headers.get(PROVIDER_KEY_HEADER, "").strip()
         if not provider_key:
+            ledger.count_event(workspace_id, "missing_provider_key")
             raise HTTPException(400, "send your provider key in X-Provider-Api-Key")
         attributes = extract_attributes(request.headers)
         declared = extract_declared_budget(request.headers)
