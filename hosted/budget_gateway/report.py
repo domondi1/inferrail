@@ -226,6 +226,7 @@ def build(
             "workspaces_with_an_answered_run": len(activated),
             "time_to_first_answered_run_hours": _hours(to_first),
         },
+        "funnel": _funnel(ev, activated),
         "usage": {
             "answered_runs": sum(len(v) for v in billed_seen.values()),
             "paid_answered_runs": sum(paid_billed.values()),
@@ -283,4 +284,27 @@ def build(
         "cost_inputs_needed": [] if costs else COST_INPUTS_NEEDED,
         "contribution_margin_cents": (recognized_cents - sum(costs.values())) if costs else None,
         "limitations": LIMITATIONS,
+    }
+
+
+def _funnel(ev: dict[str, dict[str, int]], activated: Any) -> dict[str, Any]:
+    """Where external workspaces stop on the way to a first answered run. Counted from
+    payload-free events (client class from the User-Agent, never content) since they existed."""
+
+    def by_class(prefix: str) -> dict[str, int]:
+        out: dict[str, int] = defaultdict(int)
+        for kind, per_ws in ev.items():
+            if kind.startswith(prefix):
+                out[kind[len(prefix) :]] += len(per_ws)
+        return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+    called = {ws for kind, per_ws in ev.items() if kind.startswith("call_by:") for ws in per_ws}
+    return {
+        "workspaces_created_by_client": by_class("created_by:"),
+        "workspaces_that_called": len(called),
+        "workspaces_calling_by_client": by_class("call_by:"),
+        "workspaces_that_sent_no_provider_key": len(ev["missing_provider_key"]),
+        "workspaces_refused_for_an_unpriced_model": len(ev["unpriced_model"]),
+        "workspaces_that_called_but_never_got_an_answer": len(called - set(activated)),
+        "note": "since these events existed; a workspace is not a customer",
     }
