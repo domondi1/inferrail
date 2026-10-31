@@ -200,8 +200,16 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
                         "content": {"application/json": {"schema": mod.OUTPUT_SCHEMA}},
                     },
                     "402": {"description": "Payment Required"},
-                    "422": {"description": "Not readable (see error); nothing charged"},
-                    "502": {"description": "Upstream failure; nothing charged"},
+                    "422": {
+                        "description": "Not readable (see error), including a target-site 4xx "
+                        "(missing, gone, forbidden); retrying the same URL won't help; nothing "
+                        "charged"
+                    },
+                    "502": {
+                        "description": "Target site failed (5xx, 408, 429, connection); may "
+                        "succeed later; nothing charged"
+                    },
+                    "504": {"description": "Target site timed out; nothing charged"},
                 },
             }
         }

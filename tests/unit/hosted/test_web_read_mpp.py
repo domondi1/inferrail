@@ -64,11 +64,11 @@ class StubRail:
                                to_payment_receipt=lambda: "receipt-header")  # fmt: skip
 
 
-def _client(tmp_path: Path, rail: StubRail, allow_get: bool = False):
+def _client(tmp_path: Path, rail: StubRail, allow_get: bool = False, page_status: int = 200):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/robots.txt":
             return httpx.Response(200, text="User-agent: *\nAllow: /\n")
-        return httpx.Response(200, text=PAGE, headers=HTML)
+        return httpx.Response(page_status, text=PAGE, headers=HTML)
 
     async def dns(host: str, port: int):
         return {"localhost": ["127.0.0.1"]}.get(host, ["93.184.216.34"])
@@ -112,6 +112,17 @@ def test_a_refused_page_is_never_broadcast(tmp_path):
     rail = StubRail()
     r = _client(tmp_path, rail).post("/v1/page", json={"url": "http://localhost/"}, headers=PAY)
     assert r.status_code == 422 and r.json()["charged"] is False
+    assert rail.validated == 1 and rail.settled == 0
+
+
+@pytest.mark.parametrize(("page_status", "answer"), [(404, 422), (503, 502)])
+def test_a_target_site_error_over_mpp_is_never_broadcast(tmp_path, page_status, answer):
+    rail = StubRail()
+    c = _client(tmp_path, rail, page_status=page_status)
+    r = c.post("/v1/page", json={"url": "https://site.test/a"}, headers=PAY)
+    assert r.status_code == answer and r.json() == {
+        "error": "upstream_status", "detail": str(page_status), "charged": False,
+    }  # fmt: skip
     assert rail.validated == 1 and rail.settled == 0
 
 

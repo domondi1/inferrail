@@ -281,6 +281,24 @@ def _client_class(user_agent: str | None) -> str:
     return next((cls for needle, cls in _CLIENTS if needle in ua), "other")
 
 
+# A site's 4xx is its answer about the page the caller chose (missing, gone, forbidden): the
+# read worked and a retry won't change it, like a DNS failure or a robots.txt refusal (422).
+# Request Timeout and Too Many Requests are the site failing to answer for now, so they stay
+# with 5xx as upstream failures (502); our own timeout is a gateway timeout (504).
+_TRANSIENT_4XX = {"408", "429"}
+
+
+def refusal_status(exc: Any) -> int:
+    """HTTP status for a refused read; every refusal is uncharged."""
+    if exc.code == "timeout":
+        return 504
+    if exc.code == "fetch_failed":
+        return 502
+    if exc.code == "upstream_status":
+        return 422 if exc.detail.startswith("4") and exc.detail not in _TRANSIENT_4XX else 502
+    return 422
+
+
 def _idem(url: str, request_id: str | None) -> str:
     return hashlib.sha256(f"{url.strip()}\n{request_id or ''}".encode()).hexdigest()
 
@@ -577,18 +595,21 @@ def create_app(
                 if settings.mpp
                 else ""
             )
-            + "Errors: 422 {error: unsupported_url | non_public_address | dns_failed | "
-            "disallowed_by_robots_txt | unsupported_content_type | too_large | "
-            "too_many_redirects}, 502 {error: upstream_status | fetch_failed | timeout}.\n"
+            + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
+            "dns_failed | disallowed_by_robots_txt | unsupported_content_type | too_large | "
+            "too_many_redirects | upstream_status (the site answered 4xx: missing, gone or "
+            "forbidden; detail is its status)} means retrying the same URL won't help; "
+            "502 {error: upstream_status (the site answered 5xx, 408 or 429) | fetch_failed} "
+            "and 504 {error: timeout} may succeed later.\n"
         )
 
     async def deliver(body: PageRequest) -> tuple[int, dict[str, Any]]:
-        """Fetch and convert the page: (200, row) or (422/502, error). Payment-agnostic."""
+        """Fetch and convert the page: (200, row) or (422/502/504, error). Payment-agnostic."""
         try:
             got = await reader.fetch(body.url.strip())
         except fetch.Refused as exc:
             ledger.event("refused", exc.code)
-            status = 502 if exc.code in ("upstream_status", "fetch_failed", "timeout") else 422
+            status = refusal_status(exc)
             return status, {"error": exc.code, "detail": exc.detail, "charged": False}
         text = got.body.decode(got.encoding, "replace")
         if got.content_type in ("text/html", "application/xhtml+xml"):
