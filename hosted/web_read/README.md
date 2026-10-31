@@ -10,9 +10,13 @@ need a page's text to finish a task: research, citation checks, docs lookups, ex
 - **Price:** $0.002 per delivered page, USDC on Base (`eip155:8453`), x402 `exact`.
 - **You pay only for a delivered page.** The payment settles after the page has been fetched
   and converted. Refusals return an error and nothing is charged:
-  - 422: `unsupported_url`, `non_public_address`, `dns_failed`, `disallowed_by_robots_txt`,
-    `unsupported_content_type`, `too_large` (over 2 MB), `too_many_redirects`;
-  - 502: `upstream_status`, `fetch_failed`, `timeout` (15 s).
+  - 422 (retrying the same URL won't help): `unsupported_url`, `non_public_address`,
+    `dns_failed`, `disallowed_by_robots_txt`, `unsupported_content_type`, `too_large` (over
+    2 MB), `too_many_redirects`, and `upstream_status` when the site answered 4xx (missing,
+    gone, forbidden; `detail` is its status);
+  - 502 (may succeed later): `upstream_status` when the site answered 5xx, 408 or 429, and
+    `fetch_failed` (connection or TLS);
+  - 504: `timeout` (15 s).
 
 ## How an agent buys a page
 

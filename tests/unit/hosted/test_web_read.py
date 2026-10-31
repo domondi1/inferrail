@@ -115,7 +115,7 @@ def test_a_paid_read_delivers_markdown_with_a_receipt_and_settles_once(tmp_path)
     [
         ("https://news.test/private", {"news.test/robots.txt": httpx.Response(
             200, text="User-agent: *\nDisallow: /private\n")}, 422, "disallowed_by_robots_txt"),
-        ("https://news.test/missing", {"news.test/robots.txt": ROBOTS_OK}, 502, "upstream_status"),
+        ("https://news.test/missing", {"news.test/robots.txt": ROBOTS_OK}, 422, "upstream_status"),
         ("https://news.test/img", {"news.test/robots.txt": ROBOTS_OK, "news.test/img":
             httpx.Response(200, content=b"\x89PNG", headers={"content-type": "image/png"})},
          422, "unsupported_content_type"),
@@ -540,18 +540,58 @@ def test_a_refused_or_malformed_get_is_never_charged(tmp_path):
     assert fac.calls_to("settle") == []
 
 
-@pytest.mark.parametrize("status", [401, 403, 404, 410, 429, 500, 503])
-def test_a_target_site_error_is_never_charged_as_the_offer_says(tmp_path, status):
+@pytest.mark.parametrize(
+    ("status", "answer"),
+    [(401, 422), (403, 422), (404, 422), (410, 422), (451, 422),  # the site's answer: don't retry
+     (408, 502), (429, 502), (500, 502), (503, 502)],  # the site failing for now: may retry
+)  # fmt: skip
+def test_a_target_site_error_is_never_charged_as_the_offer_says(tmp_path, status, answer):
     # The offer (DESCRIPTION, MPP_DESCRIPTION) promises that a blocked, missing or failing page
-    # costs nothing; any target status >= 400 must be refused and never settled.
+    # costs nothing; any target status >= 400 must be refused and never settled. A 4xx is the
+    # site's answer about the page the caller chose (422); 5xx, 408 and 429 are upstream
+    # failures (502).
     fac = FakeFacilitator()
     site = {"news.test/robots.txt": ROBOTS_OK, "news.test/x": httpx.Response(status, text="no")}
     r = _paid(_client(tmp_path, site, fac), "https://news.test/x")
-    assert r.status_code == 502 and r.json() == {
+    assert r.status_code == answer and r.json() == {
         "error": "upstream_status", "detail": str(status), "charged": False,
     }  # fmt: skip
     assert fac.calls_to("settle") == []
     assert "403, 404, 5xx" in svc.DESCRIPTION and "403, 404 or 5xx" in svc.MPP_DESCRIPTION
+
+
+@pytest.mark.parametrize(
+    ("failure", "answer", "code"),
+    [(httpx.ReadTimeout("slow"), 504, "timeout"),
+     (httpx.ConnectError("refused"), 502, "fetch_failed")],
+)  # fmt: skip
+def test_a_site_that_times_out_or_cannot_be_reached_is_an_upstream_failure_and_free(
+    tmp_path, failure, answer, code
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        raise failure
+
+    fac = FakeFacilitator()
+    settings = svc.Settings(pay_to=PAY_TO, resource_url="http://testserver/v1/page",
+                            data_dir=tmp_path, operator_token="op-token")  # fmt: skip
+    reader = fetch.Fetcher(settings.user_agent, transport=httpx.MockTransport(handler),
+                           resolve=_public_dns)  # fmt: skip
+    c = TestClient(svc.create_app(settings, facilitator=fac, fetcher=reader))
+    r = _paid(c, "https://news.test/x")
+    assert r.status_code == answer and r.json()["error"] == code
+    assert r.json()["charged"] is False and fac.calls_to("settle") == []
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_the_published_contract_lists_every_refusal_status(tmp_path):
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO})
+    with TestClient(app) as c:
+        responses = c.get("/openapi.json").json()["paths"]["/read/v1/page"]["post"]["responses"]
+        assert {"402", "422", "502", "504"} <= set(responses)
+        guide = c.get("/read/llms.txt").text
+        assert "504 {error: timeout}" in guide and "the site answered 4xx" in guide
 
 
 @pytest.mark.parametrize("mpp", [False, True])
