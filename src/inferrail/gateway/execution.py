@@ -95,7 +95,10 @@ from inferrail.gateway.schemas import (
 )
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.base import NormalizedChatRequest, NormalizedChatResponse, Provider
-from inferrail.providers.openai import openai_cached_prompt_tokens
+from inferrail.providers.openai import (
+    openai_cache_write_prompt_tokens,
+    openai_cached_prompt_tokens,
+)
 from inferrail.receipts.builder import build_receipt, new_receipt_id
 from inferrail.receipts.calculator import CacheTokens
 from inferrail.receipts.sinks import ReceiptSink
@@ -144,6 +147,7 @@ class _SseBookkeeper:
         self.prompt_tokens: int | None = None
         self.completion_tokens: int | None = None
         self.cached_prompt_tokens: int | None = None
+        self.cache_write_prompt_tokens: int | None = None
 
     def feed(self, chunk: bytes) -> None:
         self._buffer += chunk.replace(b"\r\n", b"\n")
@@ -167,6 +171,7 @@ class _SseBookkeeper:
                 self.prompt_tokens = usage.get("prompt_tokens")
                 self.completion_tokens = usage.get("completion_tokens")
                 self.cached_prompt_tokens = openai_cached_prompt_tokens(usage)
+                self.cache_write_prompt_tokens = openai_cache_write_prompt_tokens(usage)
 
 
 @dataclass
@@ -397,7 +402,8 @@ class InferenceEngine(BudgetAdmission):
                 )
             )
             cache = self._priced_cache(
-                decision.provider_name, decision.model, result.cached_prompt_tokens
+                decision.provider_name, decision.model, result.cached_prompt_tokens,
+                result.cache_write_prompt_tokens,
             )
             receipt_attributes = self._augment_overrun(
                 attributes, decision.provider_name, decision.model,
@@ -547,7 +553,8 @@ class InferenceEngine(BudgetAdmission):
         # failure) — build_receipt only prices when both token counts are
         # actually known, so this never fabricates a cost either way.
         cache = self._priced_cache(
-            ctx.decision.provider_name, ctx.decision.model, bookkeeper.cached_prompt_tokens
+            ctx.decision.provider_name, ctx.decision.model, bookkeeper.cached_prompt_tokens,
+            bookkeeper.cache_write_prompt_tokens,
         )
         receipt_attributes = self._augment_overrun(
             ctx.attributes, ctx.decision.provider_name, ctx.decision.model,
@@ -688,12 +695,24 @@ class InferenceEngine(BudgetAdmission):
         )
 
     def _priced_cache(
-        self, provider: str, model: str, cached_prompt_tokens: int | None
+        self, provider: str, model: str, cached_prompt_tokens: int | None,
+        cache_write_prompt_tokens: int | None = None,
     ) -> CacheTokens | None:
         """Cached prompt tokens as a cache read, when the price entry has a
         cached-input rate. Without one (e.g. an operator price that doesn't
         declare it), cached tokens stay in `prompt_tokens` at the full input
-        rate: overstated, as before, rather than turning the cost unknown."""
+        rate: overstated, as before, rather than turning the cost unknown.
+
+        Cache *writes* (OpenAI GPT-5.6+) cost more than input, so pricing them
+        as input would understate. They are passed on as cache writes whose
+        lifetime split isn't known, which makes the cost unknown: the request
+        then settles as a hold of its reservation (an upper bound), never as a
+        smaller guessed cost."""
+        if cache_write_prompt_tokens:
+            return CacheTokens(
+                creation=cache_write_prompt_tokens, creation_5m=None, creation_1h=None,
+                read=cached_prompt_tokens or 0,
+            )
         if not cached_prompt_tokens:
             return None
         price = self._pricing_resolver.resolve(provider, model)

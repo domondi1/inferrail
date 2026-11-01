@@ -147,6 +147,10 @@ class NormalizedChatResponse(BaseModel):
     # cache (OpenAI: `usage.prompt_tokens_details.cached_tokens`), or None
     # if it didn't say.
     cached_prompt_tokens: int | None = None
+    # Of `prompt_tokens`, how many the provider wrote to its prompt cache
+    # (OpenAI: `usage.prompt_tokens_details.cache_write_tokens`), billed at a
+    # cache-write rate rather than the input rate; None if it didn't say.
+    cache_write_prompt_tokens: int | None = None
     # The model's refusal message (e.g. under structured outputs), passed
     # back to the client — never persisted.
     refusal: str | None = None
