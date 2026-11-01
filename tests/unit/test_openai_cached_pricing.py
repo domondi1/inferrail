@@ -162,3 +162,111 @@ def test_operator_price_without_a_cached_rate_keeps_the_full_input_rate(
     receipt = _only_receipt(tmp_path)
     assert Decimal(receipt["estimated_cost_usd"]) == _FULL_RATE_COST
     assert receipt["cache_read_input_tokens"] is None
+
+
+# GPT-5.6+: prompt tokens written to the cache are billed at a cache-write rate
+# (1.25x input for 30 minutes, 2.5x for 12 hours), reported in
+# `usage.prompt_tokens_details.cache_write_tokens` and included in `prompt_tokens`.
+_WRITE_USAGE = {
+    "prompt_tokens": 2000,
+    "completion_tokens": 50,
+    "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 1500},
+}
+
+
+def _completion_with(usage: dict[str, Any], model: str = "gpt-5.6-terra") -> Any:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "chatcmpl-2", "model": model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                         "finish_reason": "stop"}],
+            "usage": usage,
+        })
+    return handler
+
+
+def _terra_config(tmp_path: Path) -> InferrailConfig:
+    return _config(tmp_path, routes={"default": {"provider": "openai", "model": "gpt-5.6-terra"}})
+
+
+def _receipt_row(tmp_path: Path) -> sqlite3.Row:
+    db = sqlite3.connect(tmp_path / "receipts.db")
+    db.row_factory = sqlite3.Row
+    [row] = db.execute("SELECT * FROM receipts")
+    return row
+
+
+def test_cache_writes_are_never_priced_as_plain_input(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pricing written tokens at the input rate would understate the cost by
+    at least 25%. With no write rate in the catalog the cost is unknown (never
+    a smaller guess), and the written tokens are recorded."""
+    client = _client(monkeypatch, _terra_config(tmp_path), _completion_with(_WRITE_USAGE))
+
+    response = client.post("/v1/chat/completions", json=_body())
+
+    assert response.status_code == 200, response.text
+    receipt = _receipt_row(tmp_path)
+    assert receipt["estimated_cost_usd"] is None
+    assert receipt["cache_creation_input_tokens"] == 1500
+
+
+def test_streamed_cache_writes_are_never_priced_as_plain_input(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def stream(_: httpx.Request) -> httpx.Response:
+        chunks = [
+            {"id": "c2", "object": "chat.completion.chunk", "model": "gpt-5.6-terra",
+             "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"},
+                          "finish_reason": "stop"}]},
+            {"id": "c2", "object": "chat.completion.chunk", "model": "gpt-5.6-terra",
+             "choices": [], "usage": _WRITE_USAGE},
+        ]
+        body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, content=body.encode(),
+                              headers={"content-type": "text/event-stream"})
+
+    client = _client(monkeypatch, _terra_config(tmp_path), stream)
+    with client.stream("POST", "/v1/chat/completions", json=_body(stream=True)) as response:
+        assert response.status_code == 200
+        b"".join(response.iter_bytes())
+
+    receipt = _receipt_row(tmp_path)
+    assert receipt["estimated_cost_usd"] is None
+    assert receipt["cache_creation_input_tokens"] == 1500
+
+
+def test_zero_cache_writes_keep_the_exact_price(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Models before GPT-5.6 report `cache_write_tokens: 0`: unchanged pricing."""
+    usage = {**_USAGE, "prompt_tokens_details": {"cached_tokens": 800, "cache_write_tokens": 0}}
+    client = _client(monkeypatch, _config(tmp_path), _completion_with(usage, "gpt-4o-mini"))
+
+    response = client.post("/v1/chat/completions", json=_body())
+
+    assert response.status_code == 200, response.text
+    assert Decimal(_receipt_row(tmp_path)["estimated_cost_usd"]) == _CACHED_COST
+
+
+def test_a_budgeted_call_that_wrote_cache_holds_its_reservation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Under a budget, an unknown cost settles as a hold of the reservation (an
+    upper bound), so the budget is never charged less than the call could cost."""
+    config = _config(
+        tmp_path, routes={"default": {"provider": "openai", "model": "gpt-5.6-terra"}},
+        budgets={"enabled": True, "path": str(tmp_path / "budgets.db")},
+    )
+    client = _client(monkeypatch, config, _completion_with(_WRITE_USAGE))
+
+    response = client.post(
+        "/v1/chat/completions", json=_body(max_tokens=50),
+        headers={"X-Inferrail-Attribute-Work-Id": "run-1", "X-Inferrail-Budget-Usd": "1.00"},
+    )
+
+    assert response.status_code == 200, response.text
+    receipt = _receipt_row(tmp_path)
+    assert receipt["estimated_cost_usd"] is None
+    assert Decimal(json.loads(receipt["attributes_json"])["budget_held_usd"]) > 0

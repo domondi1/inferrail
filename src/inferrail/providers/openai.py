@@ -32,6 +32,22 @@ from inferrail.providers.base import (
 from inferrail.providers.upstream_errors import upstream_budget_refusal_type
 
 
+def openai_cache_write_prompt_tokens(usage: object) -> int | None:
+    """`usage.prompt_tokens_details.cache_write_tokens` as a non-negative int,
+    or None when absent or malformed. GPT-5.6 and later bill these tokens at a
+    cache-write rate (1.25x input for the default 30-minute lifetime, 2.5x for
+    12 hours), not at the input rate; they are part of `prompt_tokens`."""
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return None
+    written = details.get("cache_write_tokens")
+    if isinstance(written, bool) or not isinstance(written, int) or written < 0:
+        return None
+    return written
+
+
 def openai_cached_prompt_tokens(usage: object) -> int | None:
     """`usage.prompt_tokens_details.cached_tokens` as a non-negative int,
     or None when absent or malformed."""
@@ -249,6 +265,7 @@ class OpenAIProvider:
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
             cached_prompt_tokens=openai_cached_prompt_tokens(usage),
+            cache_write_prompt_tokens=openai_cache_write_prompt_tokens(usage),
             tool_calls=tool_calls,
             raw_model=data.get("model"),
             provider_request_id=data.get("id"),
