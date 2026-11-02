@@ -2028,3 +2028,73 @@ def test_try_page_has_no_fixed_openai_model():
     page = (HOSTED_DIR.parents[1] / "docs" / "try" / "index.html").read_text()
     assert "gpt-4o-mini" not in page
     assert not re.search(r"['\"]gpt-[0-9a-z.\-]+['\"]", page)
+
+
+# The /try/ pickers choose only models the pricing catalog can price: a budgeted request can't
+# be reserved against anything else (INFERRAIL_E012). Regression for the live demo failure: the
+# key listed gpt-5.4-nano (newest nano, no verified price) and the name-based picker chose it.
+_UNPRICED_NEWEST_NANO = [
+    _oa("gpt-5.4-nano", 1773700000),  # newest, smallest, unpriced
+    _oa("gpt-5-nano", 1754426384),
+    _oa("gpt-4o-mini", 1721172741),
+]
+
+
+def test_the_try_page_never_picks_a_model_without_a_verified_price(
+    service_module, client, monkeypatch
+):
+    captured = _mock_openai_discovery(monkeypatch, service_module, models=_UNPRICED_NEWEST_NANO)
+    trial = _trial_with_openai_key(client)
+    body = _discover_openai(client, trial).json()
+    assert body["selected_model"] == "gpt-5-nano"  # cheapest verified price the key can use
+    assert {m["id"]: m["priced"] for m in body["models"]} == {
+        "gpt-5.4-nano": False, "gpt-5-nano": True, "gpt-4o-mini": True}
+    # The whole real-request path then works: reserved, answered, receipted with a cost.
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": body["selected_model"],
+              "messages": [{"role": "user", "content": "Say hello in five words."}]},
+        headers=_auth(trial["api_key"]),
+    )
+    assert resp.status_code == 200, resp.text
+    receipt = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"][0]
+    assert receipt["model"] == "gpt-5-nano" and receipt["estimated_cost_usd"] is not None
+    assert [json.loads(r.content)["model"] for r in captured if r.method == "POST"] == ["gpt-5-nano"]
+
+
+def test_only_unpriced_models_fail_clearly_before_any_provider_call(
+    service_module, client, monkeypatch
+):
+    captured = _mock_openai_discovery(
+        monkeypatch, service_module, models=[_oa("gpt-5.4-nano", 1773700000),
+                                             _oa("gpt-5.4-mini", 1773700001)])
+    trial = _trial_with_openai_key(client)
+    body = _discover_openai(client, trial).json()
+    assert body["selected_model"] is None
+    assert "gpt-5.4-mini, gpt-5.4-nano" in body["message"]
+    assert "verified price" in body["message"] and "nothing was sent" in body["message"]
+    assert not [r for r in captured if r.method == "POST"]  # nothing chargeable was attempted
+
+
+def test_a_newly_listed_model_becomes_eligible_once_its_price_is_verified(service_module):
+    from decimal import Decimal as D
+    from types import SimpleNamespace
+
+    select = service_module.select_openai_test_model
+    models = [_oa("gpt-new-nano", 1790000000), _oa("gpt-4o-mini", 1721172741)]
+    unverified = {"gpt-4o-mini": SimpleNamespace(input_usd_per_million=D("0.15"),
+                                                 output_usd_per_million=D("0.60"))}
+    assert select(models, unverified.get) == "gpt-4o-mini"
+    verified = {**unverified, "gpt-new-nano": SimpleNamespace(
+        input_usd_per_million=D("0.05"), output_usd_per_million=D("0.40"))}
+    assert select(models, verified.get) == "gpt-new-nano"  # cheaper once verified
+
+
+def test_anthropic_picker_skips_an_unpriced_newest_model(service_module, client, monkeypatch):
+    models = [*_MODELS_LIST,
+              {"type": "model", "id": "claude-haiku-9-9", "created_at": "2099-01-01T00:00:00Z"}]
+    _mock_anthropic(monkeypatch, service_module, models=models)
+    trial = _trial_with_anthropic_key(client)
+    body = _discover(client, trial).json()
+    assert body["selected_model"] != "claude-haiku-9-9"
+    assert next(m for m in body["models"] if m["id"] == "claude-haiku-9-9")["priced"] is False
