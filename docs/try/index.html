@@ -797,7 +797,10 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           const err = new Error(message);
           // Machine-readable reason, when the server gives one (e.g.
           // model discovery: provider_key_rejected vs model_discovery_failed).
-          err.code = detail && typeof detail === 'object' ? detail.code : undefined;
+          err.code = detail && typeof detail === 'object' ? detail.code
+            : (body && body.error && body.error.code) || undefined;
+          // Structured fields of a gateway error (e.g. the provider's own refusal type).
+          err.details = body && body.error && body.error.details;
           // Marks this as "we reached the server and it gave a real
           // answer" (rate-limited, out of capacity, ...) as opposed to a
           // genuine connectivity failure (DNS/connection-refused/CORS,
@@ -1220,8 +1223,29 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           const label = `Real receipt: your ${PROVIDER_LABELS[provider]} key · model ${model} (picked automatically from the models your key can use)`;
           renderReceiptResult('real-result', label, response);
           refreshAll();
-        } catch (e) { $('real-result').textContent = 'Real request failed: ' + e.message; }
+        } catch (e) { $('real-result').textContent = realRequestProblem(e); }
         finally { btn.disabled = false; btn.textContent = original; }
+      }
+
+      // A real request can fail after every Inferrail check passed: the key is valid and the model
+      // is priced, but the provider account behind the key refuses (no credits, or a rate limit).
+      // Say which side refused, so a provider's billing state never reads as an Inferrail budget.
+      function realRequestProblem(e) {
+        const provider = trial.openai_configured ? 'openai' : 'anthropic';
+        const label = PROVIDER_LABELS[provider];
+        if (e.code === 'INFERRAIL_E014') {
+          return `${label} refused this request: the ${label} account behind your key has no API ` +
+            `credits or quota left (${(e.details && e.details.upstream_type) || 'quota'}). Your key ` +
+            `was accepted and the model has a verified price; Inferrail's budget did not block it, ` +
+            `and no answer or cost was recorded. Add credits in your ${label} billing settings and ` +
+            `send again, or use "Run demo" at the top of this page: a simulation with a demo model ` +
+            `and made-up prices that sends nothing to ${label}.`;
+        }
+        if (e.httpStatus === 429) {
+          return `${label} is rate-limiting your key right now. Wait a moment and send again. ` +
+            `Inferrail's budget did not block this request.`;
+        }
+        return 'Real request failed: ' + e.message;
       }
 
       async function submitKeys(ev) {
