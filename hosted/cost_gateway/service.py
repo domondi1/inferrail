@@ -758,7 +758,32 @@ ranks alongside Sonnet: usable, but not preferred over a known-light
 model."""
 
 
-def select_anthropic_test_model(models: list[dict[str, Any]]) -> str | None:
+PriceLookup = Callable[[str], Any]
+"""`model id -> verified PriceEntry or None`: the pricing catalog, as the /try/ page's model
+pickers see it."""
+
+
+def _price_rank(priced: PriceLookup | None, model_id: str) -> tuple[int, Decimal]:
+    """Cheapest verified price first (input + output per million tokens at the base tier).
+    Without a lookup every model ranks equal, so the name-based order alone decides."""
+    if priced is None:
+        return (0, Decimal(0))
+    price = priced(model_id)
+    return (0, price.input_usd_per_million + price.output_usd_per_million)
+
+
+def _only_priced(models: list[dict[str, Any]], priced: PriceLookup | None) -> list[dict[str, Any]]:
+    """A budgeted request can only be reserved against a model with a verified price, so the
+    picker offers nothing else: a model the key can use but the catalog can't price would be
+    refused at reservation (INFERRAIL_E012) after the visitor pressed the button."""
+    if priced is None:
+        return models
+    return [m for m in models if priced(str(m.get("id", ""))) is not None]
+
+
+def select_anthropic_test_model(
+    models: list[dict[str, Any]], priced: PriceLookup | None = None
+) -> str | None:
     """Picks the model the /try/ page uses for its one-line Anthropic test
     request, from what Anthropic reports *this key* can use -- never a
     hardcoded, dated model id, so a model's retirement can't break the
@@ -769,19 +794,23 @@ def select_anthropic_test_model(models: list[dict[str, Any]]) -> str | None:
     those, the lightest family wins, then the newest release (by
     `created_at`) within it. Returns `None` if nothing usable was listed.
     """
-    usable = [
-        m
-        for m in models
-        if m.get("type", "model") == "model" and str(m.get("id", "")).startswith("claude")
-    ]
+    usable = _only_priced(
+        [
+            m
+            for m in models
+            if m.get("type", "model") == "model" and str(m.get("id", "")).startswith("claude")
+        ],
+        priced,
+    )
 
     def family_rank(model: dict[str, Any]) -> int:
         model_id = str(model["id"]).lower()
         return next((rank for name, rank in _ANTHROPIC_FAMILY_RANK if name in model_id), 1)
 
-    # Two stable sorts: newest first, then lightest family first.
+    # Stable sorts: newest first, then lightest family, then cheapest verified price.
     usable.sort(key=lambda m: str(m.get("created_at", "")), reverse=True)
     usable.sort(key=family_rank)
+    usable.sort(key=lambda m: _price_rank(priced, str(m["id"])))
     return str(usable[0]["id"]) if usable else None
 
 
@@ -814,7 +843,9 @@ ranks after them."""
 _DATED_SNAPSHOT = re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{4})$")
 
 
-def select_openai_test_model(models: list[dict[str, Any]]) -> str | None:
+def select_openai_test_model(
+    models: list[dict[str, Any]], priced: PriceLookup | None = None
+) -> str | None:
     """Picks the model the /try/ page uses for its one-line OpenAI test
     request, from what OpenAI reports *this key* can use.
 
@@ -826,19 +857,23 @@ def select_openai_test_model(models: list[dict[str, Any]]) -> str | None:
     OpenAI points at the current snapshot) over a dated snapshot; then the
     newest by `created`. Returns `None` if nothing passes the filter.
     """
-    usable = [
-        m
-        for m in models
-        if str(m.get("id", "")).startswith("gpt-")
-        and not any(marker in str(m["id"]).lower() for marker in _OPENAI_EXCLUDED_MARKERS)
-    ]
+    usable = _only_priced(
+        [
+            m
+            for m in models
+            if str(m.get("id", "")).startswith("gpt-")
+            and not any(marker in str(m["id"]).lower() for marker in _OPENAI_EXCLUDED_MARKERS)
+        ],
+        priced,
+    )
 
-    def rank(model: dict[str, Any]) -> tuple[int, int, float]:
+    def rank(model: dict[str, Any]) -> tuple[tuple[int, Decimal], int, int, float]:
         model_id = str(model["id"]).lower()
         size = next((r for marker, r in _OPENAI_SIZE_RANK if marker in model_id), 2)
         dated = 1 if _DATED_SNAPSHOT.search(model_id) else 0
         created = model.get("created")
-        return (size, dated, -float(created) if isinstance(created, (int, float)) else 0.0)
+        newest = -float(created) if isinstance(created, (int, float)) else 0.0
+        return (_price_rank(priced, str(model["id"])), size, dated, newest)
 
     usable.sort(key=rank)
     return str(usable[0]["id"]) if usable else None
@@ -854,7 +889,7 @@ class _DiscoverySpec:
     models_url: str
     auth_headers: Callable[[str], dict[str, str]]
     client_factory: Callable[[], httpx.AsyncClient | None]
-    select: Callable[[list[dict[str, Any]]], str | None]
+    select: Callable[[list[dict[str, Any]], PriceLookup | None], str | None]
     created_field: str
     params: dict[str, int]
 
@@ -889,6 +924,19 @@ the same seam the proxy routes use."""
 
 def no_compatible_model_message(label: str) -> str:
     return f"{label} key connected, but no compatible text model was available for this test."
+
+
+def no_priced_model_message(label: str, unpriced: list[str]) -> str:
+    """Compatible models exist, but none has a verified price, so no budgeted request could be
+    reserved. Nothing is sent to the provider; the visitor learns why and what would work."""
+    more = f" and {len(unpriced) - 5} more" if len(unpriced) > 5 else ""
+    shown = ", ".join(unpriced[:5]) + more
+    return (
+        f"{label} key connected, but none of the text models it can use ({shown}) has a "
+        "verified price in Inferrail's catalog yet, so a budgeted request can't be reserved "
+        "and nothing was sent. Inferrail never guesses a price; models are added once their "
+        "price is verified on the provider's own pricing page."
+    )
 
 
 class ModelDiscoveryError(Exception):
@@ -1251,7 +1299,23 @@ def create_app(data_dir: Path) -> FastAPI:
                     ),
                 },
             ) from None
-        selected = spec.select(models)
+        def priced(model_id: str) -> Any:
+            return pricing_resolver.resolve(provider, model_id)
+
+        selected = spec.select(models, priced)
+        message = None
+        if not selected:
+            compatible = spec.select(models, None) is not None
+            unpriced = sorted(
+                str(m.get("id"))
+                for m in models
+                if spec.select([m], None) and not priced(str(m.get("id")))
+            )
+            message = (
+                no_priced_model_message(spec.label, unpriced)
+                if compatible
+                else no_compatible_model_message(spec.label)
+            )
         return {
             "provider": provider,
             "models": [
@@ -1259,11 +1323,13 @@ def create_app(data_dir: Path) -> FastAPI:
                     "id": m.get("id"),
                     "display_name": m.get("display_name"),
                     "created": m.get(spec.created_field),
+                    "priced": priced(str(m.get("id"))) is not None,
                 }
                 for m in models
             ],
             "selected_model": selected,
-            "message": None if selected else no_compatible_model_message(spec.label),
+            "selection_basis": "cheapest verified price among the models this key can use",
+            "message": message,
         }
 
     @app.delete("/v1/trial/{tenant_id}")
