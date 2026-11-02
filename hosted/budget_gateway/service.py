@@ -84,6 +84,7 @@ from inferrail.errors import (  # noqa: E402
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.errors.codes import code_for, docs_url_for  # noqa: E402
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine  # noqa: E402
@@ -153,6 +154,10 @@ _HOSTED_REMEDIATION = {
     "INFERRAIL_E013": "Send X-Inferrail-Budget-Usd as a positive decimal (at most the per-run "
     "maximum in GET /pricing) together with X-Inferrail-Attribute-Work-Id, and the same value "
     "on every call of the run.",
+    "INFERRAIL_E014": "Your provider refused this call: the provider account behind your key "
+    "has no credits or quota left (for OpenAI, insufficient_quota). Inferrail's budget didn't "
+    "block it and nothing was charged. Add credits or raise the limit with the provider, then "
+    "retry; retrying before that won't help.",
 }
 
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
@@ -163,6 +168,9 @@ _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     # a 500 made SDK clients retry a request that can never succeed.
     (BudgetUnpricedModelError, 402),
     (BudgetDeclarationError, 400),
+    # The provider's own quota or billing refusal (OpenAI `insufficient_quota`, sent as 429) is
+    # not a server failure and not a rate limit: 402, never retried, as the OSS gateway answers.
+    (UpstreamBudgetExceededError, 402),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),

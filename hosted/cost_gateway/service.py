@@ -84,7 +84,9 @@ from inferrail.budgets.schema import new_budget_id
 from inferrail.config.models import ProviderConfig, RouteConfig
 from inferrail.errors import (
     AuthenticationError,
+    BudgetDeclarationError,
     BudgetExceededError,
+    BudgetUnpricedModelError,
     InferrailError,
     InvalidRequestError,
     ProviderError,
@@ -92,6 +94,7 @@ from inferrail.errors import (
     RateLimitError,
     RoutingError,
     UnsupportedFeatureError,
+    UpstreamBudgetExceededError,
 )
 from inferrail.errors.codes import code_for, docs_url_for
 from inferrail.gateway.anthropic_execution import AnthropicInferenceEngine
@@ -321,6 +324,12 @@ def _cors_origins_from_env() -> list[str]:
 _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (AuthenticationError, 401),
     (BudgetExceededError, 402),
+    # Same as gateway/app.py: refusals are not server failures. An unpriced model under a
+    # budget, and the provider's own quota or billing refusal (OpenAI `insufficient_quota`,
+    # sent as 429), are 402s that SDKs don't retry; before this they fell through to 502/500.
+    (BudgetUnpricedModelError, 402),
+    (BudgetDeclarationError, 400),
+    (UpstreamBudgetExceededError, 402),
     (RateLimitError, 429),
     (ProviderTimeoutError, 504),
     (InvalidRequestError, 400),
@@ -328,6 +337,16 @@ _STATUS_BY_ERROR: list[tuple[type[InferrailError], int]] = [
     (RoutingError, 400),
     (ProviderError, 502),
 ]
+
+
+# The library's E014 remediation is written for a gateway in front of another gateway ("raise
+# that gateway key's budget"). Here the upstream is the visitor's own provider account.
+_REMEDIATION = {
+    "INFERRAIL_E014": "Your provider refused this call: the provider account behind your key "
+    "has no credits or quota left (for OpenAI, insufficient_quota). Inferrail's budget didn't "
+    "block it and nothing was charged. Add credits or raise the limit with the provider, then "
+    "retry; retrying before that won't help.",
+}
 
 
 def _status_for(exc: InferrailError) -> int:
@@ -353,6 +372,12 @@ def _error_details(exc: InferrailError) -> dict[str, str] | None:
             "estimated_request_usd": str(exc.estimated_request_usd),
             "projected_total_usd": str(exc.projected_total_usd),
         }
+    if isinstance(exc, UpstreamBudgetExceededError):
+        return {"upstream_status": str(exc.status_code), "upstream_type": exc.upstream_type}
+    if isinstance(exc, BudgetDeclarationError):
+        return {"reason": exc.reason}
+    if isinstance(exc, BudgetUnpricedModelError):
+        return {"budget_id": exc.budget_id, "provider": exc.provider, "model": exc.model}
     return None
 
 
@@ -1168,7 +1193,7 @@ def create_app(data_dir: Path) -> FastAPI:
                 message=str(exc),
                 type=type(exc).__name__,
                 code=error_code.code,
-                remediation=error_code.remediation,
+                remediation=_REMEDIATION.get(error_code.code, error_code.remediation),
                 docs_url=docs_url_for(error_code.code),
                 details=_error_details(exc),
             )

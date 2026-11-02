@@ -2032,9 +2032,11 @@ def test_try_page_has_no_fixed_openai_model():
 
 # The /try/ pickers choose only models the pricing catalog can price: a budgeted request can't
 # be reserved against anything else (INFERRAIL_E012). Regression for the live demo failure: the
-# key listed gpt-5.4-nano (newest nano, no verified price) and the name-based picker chose it.
+# key listed a newer nano model with no verified price (then gpt-5.4-nano) and the name-based
+# picker chose it. The ids below are never on a pricing page, so the test can't go stale when a
+# real model gets priced.
 _UNPRICED_NEWEST_NANO = [
-    _oa("gpt-5.4-nano", 1773700000),  # newest, smallest, unpriced
+    _oa("gpt-0-unpriced-nano", 1773700000),  # newest, smallest, never priced
     _oa("gpt-5-nano", 1754426384),
     _oa("gpt-4o-mini", 1721172741),
 ]
@@ -2048,7 +2050,7 @@ def test_the_try_page_never_picks_a_model_without_a_verified_price(
     body = _discover_openai(client, trial).json()
     assert body["selected_model"] == "gpt-5-nano"  # cheapest verified price the key can use
     assert {m["id"]: m["priced"] for m in body["models"]} == {
-        "gpt-5.4-nano": False, "gpt-5-nano": True, "gpt-4o-mini": True}
+        "gpt-0-unpriced-nano": False, "gpt-5-nano": True, "gpt-4o-mini": True}
     # The whole real-request path then works: reserved, answered, receipted with a cost.
     resp = client.post(
         "/v1/chat/completions",
@@ -2068,12 +2070,12 @@ def test_only_unpriced_models_fail_clearly_before_any_provider_call(
     service_module, client, monkeypatch
 ):
     captured = _mock_openai_discovery(
-        monkeypatch, service_module, models=[_oa("gpt-5.4-nano", 1773700000),
-                                             _oa("gpt-5.4-mini", 1773700001)])
+        monkeypatch, service_module, models=[_oa("gpt-0-unpriced-nano", 1773700000),
+                                             _oa("gpt-0-unpriced-mini", 1773700001)])
     trial = _trial_with_openai_key(client)
     body = _discover_openai(client, trial).json()
     assert body["selected_model"] is None
-    assert "gpt-5.4-mini, gpt-5.4-nano" in body["message"]
+    assert "gpt-0-unpriced-mini, gpt-0-unpriced-nano" in body["message"]
     assert "verified price" in body["message"] and "nothing was sent" in body["message"]
     assert not [r for r in captured if r.method == "POST"]  # nothing chargeable was attempted
 
@@ -2100,3 +2102,63 @@ def test_anthropic_picker_skips_an_unpriced_newest_model(service_module, client,
     body = _discover(client, trial).json()
     assert body["selected_model"] != "claude-haiku-9-9"
     assert next(m for m in body["models"] if m["id"] == "claude-haiku-9-9")["priced"] is False
+
+
+def _openai_refusing(monkeypatch, service_module, status, error):
+    """Model discovery works; the chat call gets the provider's own refusal."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/models":
+            return httpx.Response(200, json={"object": "list", "data": _OPENAI_MODELS_LIST})
+        return httpx.Response(status, json={"error": error})
+
+    monkeypatch.setattr(service_module, "openai_client_factory",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+def _real_request(client, trial):
+    model = _discover_openai(client, trial).json()["selected_model"]
+    return client.post(
+        "/v1/chat/completions",
+        json={"model": model,
+              "messages": [{"role": "user", "content": "Say hello in five words."}]},
+        headers=_auth(trial["api_key"]),
+    )
+
+
+def test_a_provider_account_without_credits_is_a_402_with_its_reason_not_a_502(
+    service_module, client, monkeypatch
+):
+    """OpenAI answers a key whose account has no credits with 429 insufficient_quota. That's the
+    provider's billing refusal, not a rate limit and not an Inferrail failure: 402 (SDKs don't
+    retry it), INFERRAIL_E014, the provider's refusal type, and advice to add credits."""
+    _openai_refusing(monkeypatch, service_module, 429, {
+        "message": "You have no credits remaining.", "type": "insufficient_quota",
+        "code": "insufficient_quota"})
+    trial = _trial_with_openai_key(client)
+    resp = _real_request(client, trial)
+    assert resp.status_code == 402, resp.text
+    err = resp.json()["error"]
+    assert err["code"] == "INFERRAIL_E014"
+    assert err["details"] == {"upstream_status": "429", "upstream_type": "insufficient_quota"}
+    assert "credits" in err["remediation"] and "budget didn't block" in err["remediation"]
+    assert OPENAI_SECRET not in resp.text
+    # No answer and no cost: a refused request never becomes a priced, successful receipt.
+    [receipt] = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipt["status"] == "error" and receipt["estimated_cost_usd"] is None
+    assert receipt["prompt_tokens"] is None and receipt["retry_count"] == 0  # never retried
+
+
+def test_a_real_provider_rate_limit_stays_a_429(service_module, client, monkeypatch):
+    _openai_refusing(monkeypatch, service_module, 429, {
+        "message": "Rate limit reached", "type": "requests", "code": "rate_limit_exceeded"})
+    trial = _trial_with_openai_key(client)
+    resp = _real_request(client, trial)
+    assert resp.status_code == 429 and resp.json()["error"]["type"] == "RateLimitError"
+
+
+def test_the_try_page_explains_a_provider_credit_refusal():
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[3] / "docs" / "try" / "index.html").read_text()
+    assert "e.code === 'INFERRAIL_E014'" in page
+    assert "Inferrail's budget did not block it" in page and "Run demo" in page
