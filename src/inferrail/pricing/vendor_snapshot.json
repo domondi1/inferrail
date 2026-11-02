@@ -1,0 +1,472 @@
+{
+ "schema": 1,
+ "generated": "2026-11-02",
+ "sources": {
+  "openai": {
+   "url": "https://developers.openai.com/api/docs/pricing.md",
+   "sha256": "56e3da9bb29246cad60003e01f3fdc6b536149a09f5effe5e79af020a4922cfc"
+  },
+  "anthropic": {
+   "url": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+   "sha256": "79f8d09b6562f37f5edba5108b871cdd13dba26603efbd748e77a40f18c5ff53"
+  }
+ },
+ "prices": {
+  "openai": {
+   "gpt-3.5-turbo": {
+    "input_usd_per_million": "0.50",
+    "output_usd_per_million": "1.50",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-3.5-turbo-0125": {
+    "input_usd_per_million": "0.50",
+    "output_usd_per_million": "1.50",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-4-0613": {
+    "input_usd_per_million": "30.00",
+    "output_usd_per_million": "60.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-4-turbo-2024-04-09": {
+    "input_usd_per_million": "10.00",
+    "output_usd_per_million": "30.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-4.1": {
+    "input_usd_per_million": "2.00",
+    "output_usd_per_million": "8.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "gpt-4.1-mini": {
+    "input_usd_per_million": "0.40",
+    "output_usd_per_million": "1.60",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.10",
+    "long_context": null
+   },
+   "gpt-4.1-nano": {
+    "input_usd_per_million": "0.10",
+    "output_usd_per_million": "0.40",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.025",
+    "long_context": null
+   },
+   "gpt-4o": {
+    "input_usd_per_million": "2.50",
+    "output_usd_per_million": "10.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "1.25",
+    "long_context": null
+   },
+   "gpt-4o-2024-05-13": {
+    "input_usd_per_million": "5.00",
+    "output_usd_per_million": "15.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-4o-mini": {
+    "input_usd_per_million": "0.15",
+    "output_usd_per_million": "0.60",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.075",
+    "long_context": null
+   },
+   "gpt-5": {
+    "input_usd_per_million": "1.25",
+    "output_usd_per_million": "10.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.125",
+    "long_context": null
+   },
+   "gpt-5-mini": {
+    "input_usd_per_million": "0.25",
+    "output_usd_per_million": "2.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.025",
+    "long_context": null
+   },
+   "gpt-5-nano": {
+    "input_usd_per_million": "0.05",
+    "output_usd_per_million": "0.40",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.005",
+    "long_context": null
+   },
+   "gpt-5-pro": {
+    "input_usd_per_million": "15.00",
+    "output_usd_per_million": "120.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-5.1": {
+    "input_usd_per_million": "1.25",
+    "output_usd_per_million": "10.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.125",
+    "long_context": null
+   },
+   "gpt-5.2": {
+    "input_usd_per_million": "1.75",
+    "output_usd_per_million": "14.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.175",
+    "long_context": null
+   },
+   "gpt-5.2-pro": {
+    "input_usd_per_million": "21.00",
+    "output_usd_per_million": "168.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "gpt-5.4": {
+    "input_usd_per_million": "2.50",
+    "output_usd_per_million": "15.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.25",
+    "long_context": {
+     "above_input_tokens": 272000,
+     "input_usd_per_million": "5.00",
+     "output_usd_per_million": "22.50",
+     "cache_read_usd_per_million": "0.50"
+    }
+   },
+   "gpt-5.4-mini": {
+    "input_usd_per_million": "0.75",
+    "output_usd_per_million": "4.50",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.075",
+    "long_context": null
+   },
+   "gpt-5.4-nano": {
+    "input_usd_per_million": "0.20",
+    "output_usd_per_million": "1.25",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.02",
+    "long_context": null
+   },
+   "gpt-5.4-pro": {
+    "input_usd_per_million": "30.00",
+    "output_usd_per_million": "180.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": {
+     "above_input_tokens": 272000,
+     "input_usd_per_million": "60.00",
+     "output_usd_per_million": "270.00",
+     "cache_read_usd_per_million": null
+    }
+   },
+   "gpt-5.5": {
+    "input_usd_per_million": "5.00",
+    "output_usd_per_million": "30.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.50",
+    "long_context": {
+     "above_input_tokens": 272000,
+     "input_usd_per_million": "10.00",
+     "output_usd_per_million": "45.00",
+     "cache_read_usd_per_million": "1.00"
+    }
+   },
+   "gpt-5.5-pro": {
+    "input_usd_per_million": "30.00",
+    "output_usd_per_million": "180.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": {
+     "above_input_tokens": 272000,
+     "input_usd_per_million": "60.00",
+     "output_usd_per_million": "270.00",
+     "cache_read_usd_per_million": null
+    }
+   },
+   "o1": {
+    "input_usd_per_million": "15.00",
+    "output_usd_per_million": "60.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "7.50",
+    "long_context": null
+   },
+   "o1-pro": {
+    "input_usd_per_million": "150.00",
+    "output_usd_per_million": "600.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "o3": {
+    "input_usd_per_million": "2.00",
+    "output_usd_per_million": "8.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "o3-mini": {
+    "input_usd_per_million": "1.10",
+    "output_usd_per_million": "4.40",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.55",
+    "long_context": null
+   },
+   "o3-pro": {
+    "input_usd_per_million": "20.00",
+    "output_usd_per_million": "80.00",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": null,
+    "long_context": null
+   },
+   "o4-mini": {
+    "input_usd_per_million": "1.10",
+    "output_usd_per_million": "4.40",
+    "source": "https://developers.openai.com/api/docs/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": null,
+    "cache_write_1h_usd_per_million": null,
+    "cache_read_usd_per_million": "0.275",
+    "long_context": null
+   }
+  },
+  "anthropic": {
+   "claude-fable-5": {
+    "input_usd_per_million": "10",
+    "output_usd_per_million": "50",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "12.50",
+    "cache_write_1h_usd_per_million": "20",
+    "cache_read_usd_per_million": "1",
+    "long_context": null
+   },
+   "claude-fable-5-1": {
+    "input_usd_per_million": "10",
+    "output_usd_per_million": "50",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "12.50",
+    "cache_write_1h_usd_per_million": "20",
+    "cache_read_usd_per_million": "0.25",
+    "long_context": null
+   },
+   "claude-mythos-5": {
+    "input_usd_per_million": "10",
+    "output_usd_per_million": "50",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "12.50",
+    "cache_write_1h_usd_per_million": "20",
+    "cache_read_usd_per_million": "1",
+    "long_context": null
+   },
+   "claude-mythos-5-1": {
+    "input_usd_per_million": "10",
+    "output_usd_per_million": "50",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "12.50",
+    "cache_write_1h_usd_per_million": "20",
+    "cache_read_usd_per_million": "0.25",
+    "long_context": null
+   },
+   "claude-opus-4-6": {
+    "input_usd_per_million": "5",
+    "output_usd_per_million": "25",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "6.25",
+    "cache_write_1h_usd_per_million": "10",
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "claude-opus-4-7": {
+    "input_usd_per_million": "5",
+    "output_usd_per_million": "25",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "6.25",
+    "cache_write_1h_usd_per_million": "10",
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "claude-opus-4-8": {
+    "input_usd_per_million": "5",
+    "output_usd_per_million": "25",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "6.25",
+    "cache_write_1h_usd_per_million": "10",
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "claude-opus-5": {
+    "input_usd_per_million": "5",
+    "output_usd_per_million": "25",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "6.25",
+    "cache_write_1h_usd_per_million": "10",
+    "cache_read_usd_per_million": "0.50",
+    "long_context": null
+   },
+   "claude-opus-5-5": {
+    "input_usd_per_million": "4",
+    "output_usd_per_million": "20",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "5",
+    "cache_write_1h_usd_per_million": "8",
+    "cache_read_usd_per_million": "0.20",
+    "long_context": null
+   },
+   "claude-sonnet-4-6": {
+    "input_usd_per_million": "3",
+    "output_usd_per_million": "15",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "3.75",
+    "cache_write_1h_usd_per_million": "6",
+    "cache_read_usd_per_million": "0.30",
+    "long_context": null
+   },
+   "claude-sonnet-5": {
+    "input_usd_per_million": "2",
+    "output_usd_per_million": "10",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "2.50",
+    "cache_write_1h_usd_per_million": "4",
+    "cache_read_usd_per_million": "0.20",
+    "long_context": null
+   },
+   "claude-sonnet-5-5": {
+    "input_usd_per_million": "2",
+    "output_usd_per_million": "10",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing.md",
+    "verified_date": "2026-11-02",
+    "cache_write_5m_usd_per_million": "2.50",
+    "cache_write_1h_usd_per_million": "4",
+    "cache_read_usd_per_million": "0.10",
+    "long_context": null
+   }
+  }
+ },
+ "unpriced": {
+  "openai": {
+   "gpt-5.6-luna": "long-context threshold not stated on the pricing page",
+   "gpt-5.6-sol": "long-context threshold not stated on the pricing page",
+   "gpt-5.6-terra": "long-context threshold not stated on the pricing page",
+   "gpt-6-astra": "long-context threshold not stated on the pricing page",
+   "gpt-6-luna": "long-context threshold not stated on the pricing page",
+   "gpt-6-sol": "long-context threshold not stated on the pricing page",
+   "gpt-6.1-sol": "long-context threshold not stated on the pricing page",
+   "gpt-6.1-terra": "long-context threshold not stated on the pricing page"
+  },
+  "anthropic": {
+   "claude-haiku-3-5": "retired",
+   "claude-haiku-4-5": "page doesn't state flat pricing across its full context window",
+   "claude-haiku-5-5": "priced by prompt length with cache-write rates; not representable yet",
+   "claude-opus-4": "retired",
+   "claude-opus-4-1": "retired",
+   "claude-opus-4-5": "page doesn't state flat pricing across its full context window",
+   "claude-sonnet-4": "retired",
+   "claude-sonnet-4-5": "page doesn't state flat pricing across its full context window"
+  }
+ }
+}

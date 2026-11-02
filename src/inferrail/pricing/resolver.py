@@ -10,14 +10,23 @@ from __future__ import annotations
 from inferrail.config.models import PriceEntry, ProviderConfig
 from inferrail.pricing.builtin import BUILTIN_OPENAI_PRICING
 from inferrail.pricing.builtin_anthropic import BUILTIN_ANTHROPIC_PRICING
+from inferrail.pricing.vendor_pages import load_snapshot
+
 
 # Keyed by a provider's own verified `type` — deliberately *not* including
 # "openai_compatible"/"anthropic_compatible" as keys, since those types
 # may be a completely different backend that merely speaks the same wire
 # format (see `resolve`'s docstring).
+def _catalog(provider_type: str, builtin: dict[str, PriceEntry]) -> dict[str, PriceEntry]:
+    """The vendor-page snapshot (`vendor_snapshot.json`, regenerated from the vendor's own
+    pricing page and merged only after review) over the hand-verified built-in entries, which
+    remain for anything the snapshot can't express. Loaded once, at import."""
+    return {**builtin, **load_snapshot().get(provider_type, {})}
+
+
 _BUILTIN_CATALOGS: dict[str, dict[str, PriceEntry]] = {
-    "openai": BUILTIN_OPENAI_PRICING,
-    "anthropic": BUILTIN_ANTHROPIC_PRICING,
+    "openai": _catalog("openai", BUILTIN_OPENAI_PRICING),
+    "anthropic": _catalog("anthropic", BUILTIN_ANTHROPIC_PRICING),
 }
 
 
