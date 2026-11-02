@@ -6,6 +6,19 @@ correspond to the milestones in `MISSION.md`, not necessarily to a new
 PyPI release (the hosted service and website ship independently of the
 `inferrail` package).
 
+## v0.4.18 — 2026-11-02
+
+### Fixed
+- OpenAI cache writes are never priced as plain input. GPT-5.6 and later
+  write prompt prefixes to the cache by default and bill those tokens at
+  1.25x the input rate (30-minute lifetime) or 2.5x (12 hours), reported in
+  `usage.prompt_tokens_details.cache_write_tokens`. The gateway read only
+  `cached_tokens`, so written tokens were priced at the input rate and costs
+  were understated. Written tokens are now recorded as cache writes; until
+  the catalog carries write rates the cost is unknown (never a smaller
+  guess), and a budgeted call keeps its reservation as a hold. Calls that
+  wrote nothing are priced exactly as before (#197).
+
 ## v0.4.17 — 2026-10-31
 
 ### Fixed
