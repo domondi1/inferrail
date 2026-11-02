@@ -2058,8 +2058,10 @@ def test_the_try_page_never_picks_a_model_without_a_verified_price(
     )
     assert resp.status_code == 200, resp.text
     receipt = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"][0]
-    assert receipt["model"] == "gpt-5-nano" and receipt["estimated_cost_usd"] is not None
-    assert [json.loads(r.content)["model"] for r in captured if r.method == "POST"] == ["gpt-5-nano"]
+    assert receipt["model"] == "gpt-5-nano"
+    assert receipt["estimated_cost_usd"] is not None
+    sent = [json.loads(r.content)["model"] for r in captured if r.method == "POST"]
+    assert sent == ["gpt-5-nano"]
 
 
 def test_only_unpriced_models_fail_clearly_before_any_provider_call(
