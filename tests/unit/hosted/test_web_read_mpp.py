@@ -43,8 +43,9 @@ rail_mod = sys.modules["web_read_mpp_rail"]
 class StubRail:
     """Records what a real Tempo rail would do; `kind` is the credential type to report."""
 
-    def __init__(self, kind: str = "transaction", valid: bool = True, settle_ok: bool = True):
-        self.kind, self.valid, self.settle_ok = kind, valid, settle_ok
+    def __init__(self, kind: str = "transaction", valid: bool = True, settle_ok: bool = True,
+                 reason: str | None = None):  # fmt: skip
+        self.kind, self.valid, self.settle_ok, self.reason = kind, valid, settle_ok, reason
         self.validated, self.settled = 0, 0
         self.challenged: list[str] = []
 
@@ -54,7 +55,7 @@ class StubRail:
 
     async def validate(self, authorization: str):
         self.validated += 1
-        return (object(), PAYER, self.kind) if self.valid else None
+        return (object(), PAYER, self.kind) if self.valid else self.reason
 
     async def settle(self, credential):
         if not self.settle_ok:
@@ -293,3 +294,47 @@ def test_the_mpp_challenge_describes_the_offer(tmp_path):
         assert dict(re.findall(r'(\w+)="([^"]*)"', header))["description"] == svc.MPP_DESCRIPTION
     plain = rail_mod.TempoRail(cfg, PAY_TO, "0.002")
     assert "description=" not in asyncio.run(plain.challenge_headers("http://x/v1/page"))[0][1]
+
+
+def _failed(c):
+    return _stats(c)["funnel"]["attempt_failed"]
+
+
+def test_an_invalid_credential_records_the_rails_reason(tmp_path):
+    c = _client(tmp_path, StubRail(valid=False, reason="ChallengeExpiredError"))
+    r = c.post("/v1/page", json={"url": "https://site.test/a"}, headers=PAY)
+    assert r.status_code == 402 and r.json()["error"] == "payment_invalid"
+    assert _failed(c) == {"mpp:challengeexpirederror": 1}
+    assert _stats(c)["funnel"]["payment_rejected"] == 1  # the existing count is unchanged
+
+
+def test_a_failed_broadcast_records_its_reason(tmp_path):
+    c = _client(tmp_path, StubRail(settle_ok=False))
+    c.post("/v1/page", json={"url": "https://site.test/a"}, headers=PAY)
+    assert _failed(c) == {"mpp:settle_runtimeerror": 1}
+
+
+def test_a_paid_request_with_a_bad_body_is_recorded_not_lost(tmp_path):
+    rail = StubRail()
+    c = _client(tmp_path, rail)
+    r = c.post(
+        "/v1/page", content=b"{not json", headers={**PAY, "content-type": "application/json"}
+    )
+    assert r.status_code == 422 and r.json()["charged"] is False
+    assert _failed(c) == {"mpp:invalid_request": 1} and rail.settled == 0
+
+
+def test_a_delivered_page_records_no_failure(tmp_path):
+    c = _client(tmp_path, StubRail())
+    c.post("/v1/page", json={"url": "https://site.test/a"}, headers=PAY)
+    assert _failed(c) == {}
+
+
+def test_every_paid_attempt_ends_delivered_recovered_or_failed(tmp_path):
+    c = _client(tmp_path, StubRail())
+    c.post("/v1/page", json={"url": "https://site.test/a", "request_id": "j1"}, headers=PAY)
+    c.post("/v1/page", json={"url": "https://site.test/a", "request_id": "j1"}, headers=PAY)
+    c.post("/v1/page", json={"url": "http://localhost/"}, headers=PAY)  # refused, uncharged
+    f = _stats(c)["funnel"]
+    assert f["attempt_failed"] == {"mpp:http_422": 1}
+    assert f["payment_attempt"] == f["settled_reads"] + f["recovered"] + 1

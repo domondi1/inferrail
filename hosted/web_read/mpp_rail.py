@@ -161,15 +161,16 @@ class TempoRail:
             (k, v) for k, v in challenge.headers.multi_items() if k.lower() == "www-authenticate"
         ]
 
-    async def validate(self, authorization: str) -> tuple[Any, str, str] | None:
+    async def validate(self, authorization: str) -> tuple[Any, str, str] | str:
         """(credential, payer, credential type) when the credential is a valid, unspent payment
-        for this route's price; None otherwise. Nothing is broadcast."""
+        for this route's price; otherwise the reason, as the error's class name (never its
+        message, which can quote the credential). Nothing is broadcast."""
         try:
             v = await self.server.validate_credential(
                 authorization, intent="charge", request={"amount": self.price}
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            return type(exc).__name__
         payload = v.credential.payload
         kind = payload.get("type") if isinstance(payload, dict) else getattr(payload, "type", "")
         return v.credential, (v.payer or "").lower(), str(kind)
