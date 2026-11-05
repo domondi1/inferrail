@@ -711,3 +711,68 @@ def test_one_paragraph_per_cell_is_still_a_data_table():
         "<tr><td><p>x or y</p></td><td><p>x</p></td></tr></table>"
     )
     assert extract.html_to_markdown(html)[1] == "| Op | Result |\n| --- | --- |\n| x or y | x |"
+
+
+def _failed(c: TestClient) -> dict:
+    s = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()
+    return s["funnel"]["attempt_failed"]
+
+
+def test_a_rejected_x402_payment_records_the_protocol_reason(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason="insufficient_funds")
+    c, _ = _recovering_client(tmp_path, fac)
+    body = {"url": "https://news.test/a"}
+    signed = sign_payment(decode_payment_required(c.post("/v1/page", json=body)))
+    r = c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": signed.header})
+    assert r.status_code == 402
+    assert _failed(c) == {"x402:insufficient_funds": 1}
+
+
+def test_a_reused_x402_payment_records_why_it_was_refused(tmp_path):
+    fac = FakeFacilitator()
+    c, _ = _recovering_client(tmp_path, fac, recovery_s=0)
+    body = {"url": "https://news.test/a"}
+    signed = sign_payment(decode_payment_required(c.post("/v1/page", json=body)))
+    assert (
+        c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": signed.header}).status_code
+        == 200
+    )
+    again = c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": signed.header})
+    assert again.status_code == 402
+    assert _failed(c) == {"x402:invalid_exact_evm_nonce_already_used": 1}
+
+
+def test_failure_reasons_are_codes_only_and_paid_reads_record_none(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason=None)
+    c, _ = _recovering_client(tmp_path, fac)
+    _buy(c, {"url": "https://news.test/a"})
+    r = c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": "not-a-payment"})  # fmt: skip
+    assert r.status_code == 402
+    failed = _failed(c)
+    assert sum(failed.values()) == 1
+    (code,) = failed
+    assert code.startswith("x402:") and len(code) <= 53
+    assert set(code) <= set("abcdefghijklmnopqrstuvwxyz0123456789_:")
+
+
+def test_reason_folding_is_bounded_and_payload_free():
+    reason = svc._reason
+    assert (
+        reason("x402", "No matching payment requirements")
+        == "x402:no_matching_payment_requirements"
+    )
+    assert reason("mpp", None) == "mpp:unknown"
+    assert reason("mpp", "ä<script>" + "x" * 200).startswith("mpp:script_x")
+    assert len(reason("mpp", "y" * 500)) == len("mpp:") + 48
+
+
+def test_a_refused_x402_page_is_a_failed_attempt_not_a_sale(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason=None)
+    c, _ = _recovering_client(tmp_path, fac)
+    unpaid = c.post("/v1/page", json={"url": "https://news.test/a"})
+    signed = sign_payment(decode_payment_required(unpaid))
+    r = c.post("/v1/page", json={"url": "http://localhost/"},
+               headers={"PAYMENT-SIGNATURE": signed.header})  # fmt: skip
+    assert r.status_code == 422 and r.json()["charged"] is False
+    assert _failed(c) == {"x402:http_422": 1}

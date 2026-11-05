@@ -231,13 +231,19 @@ class Ledger:
                 stages,
             ).fetchall()
             settled = self._db.execute("SELECT COUNT(*) FROM reads WHERE settled=1").fetchone()
+            failed = dict(self._db.execute(
+                "SELECT code, COUNT(*) FROM events WHERE kind='attempt_failed' GROUP BY code"
+            ).fetchall())  # fmt: skip
         totals = dict.fromkeys(stages, 0)
         by_client: dict[str, dict[str, int]] = {}
         for kind, code, n in rows:
             totals[kind] += n
             if kind != "refused":  # refusals are keyed by reason, not client
                 by_client.setdefault(code or "unknown", {})[kind] = n
-        return {**totals, "settled_reads": settled[0], "by_client": by_client}
+        return {
+            **totals, "settled_reads": settled[0], "by_client": by_client,
+            "attempt_failed": failed,
+        }  # fmt: skip
 
     def stats(self) -> dict[str, Any]:
         with self._lock:
@@ -272,6 +278,24 @@ _CLIENTS = (
     ("go-http", "go"), ("bot", "crawler"), ("spider", "crawler"), ("crawl", "crawler"),
     ("mozilla", "browser"),
 )  # fmt: skip
+
+
+def _reason(rail: str, text: Any) -> str:
+    """`rail:reason` for a failed payment attempt. The reason is a protocol error code or an
+    exception class name, folded to [a-z0-9_] and capped, so no payload can end up in it."""
+    folded = "".join(ch if ch.isascii() and ch.isalnum() else "_" for ch in str(text or "").lower())
+    return f"{rail}:{'_'.join(filter(None, folded.split('_')))[:48] or 'unknown'}"
+
+
+def _x402_rejection(response: Any) -> str:
+    """Why the x402 gate refused a signed payment, from its PAYMENT-REQUIRED `error` field."""
+    from x402.http.utils import decode_payment_required_header
+
+    try:
+        required = decode_payment_required_header(response.headers["payment-required"])
+        return _reason("x402", getattr(required, "error", None))
+    except Exception:
+        return _reason("x402", None)
 
 
 def _client_class(user_agent: str | None) -> str:
@@ -491,10 +515,12 @@ def create_app(
         try:
             body = await page_request(request)
         except Exception:
+            ledger.event("attempt_failed", _reason("mpp", "invalid_request"))
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
         valid = await rail.validate(request.headers["authorization"])
-        if valid is None:
+        if valid is None or isinstance(valid, str):  # a str is the rail's reason for refusing
             ledger.event("payment_rejected", client)
+            ledger.event("attempt_failed", _reason("mpp", valid))
             return await mpp_challenge(request, "payment_invalid")
         credential, payer, kind = valid
         idem = _idem(body.url, body.request_id)
@@ -505,6 +531,7 @@ def create_app(
                     return recovered(stored, client)
             status, row = await deliver(body)
             if status != 200:
+                ledger.event("attempt_failed", _reason("mpp", f"http_{status}"))
                 if kind == "hash":  # the client already paid on chain; we owe it back
                     with contextlib.suppress(Exception):
                         await rail.settle(credential)
@@ -513,8 +540,9 @@ def create_app(
                 return JSONResponse(row, status_code=status)
             try:
                 receipt = await rail.settle(credential)
-            except Exception:
+            except Exception as exc:
                 ledger.event("payment_rejected", client)
+                ledger.event("attempt_failed", _reason("mpp", f"settle_{type(exc).__name__}"))
                 return await mpp_challenge(request, "settlement_failed")
             ref = f"tempo:{receipt.reference}"
             payer = (receipt.payer or payer).lower()
@@ -558,6 +586,10 @@ def create_app(
                 if stored is not None:
                     return recovered(stored, client)
                 response = await gate(request, call_next)
+        if signed and page and response.status_code == 402:
+            ledger.event("attempt_failed", _x402_rejection(response))
+        elif signed and page and response.status_code >= 400:  # a refused page or a bad body
+            ledger.event("attempt_failed", _reason("x402", f"http_{response.status_code}"))
         if response.status_code == 402:
             ledger.event("payment_rejected" if signed else "challenge", client)
             if rail and page and not signed:  # offer MPP (Tempo) next to x402
