@@ -30,7 +30,8 @@ def format_transaction(transaction: TaskTransaction) -> str:
             e.event_type,
             e.event_id,
             e.status,
-            "unknown" if e.cost_usd is None else format_usd(e.cost_usd),
+            ("unknown" if e.cost_usd is None else format_usd(e.cost_usd))
+            + (" (simulated)" if e.simulated else ""),
         ]
         for e in transaction.events
     ]
@@ -52,6 +53,12 @@ def format_transaction(transaction: TaskTransaction) -> str:
     lines.append(f"Known total cost: {known_total}")
     if transaction.unknown_cost_event_count:
         lines.append(f"Unknown-cost events: {transaction.unknown_cost_event_count}")
+    if transaction.simulated_event_count:
+        lines.append(
+            f"Simulated (demo) events: {transaction.simulated_event_count}, "
+            f"{format_usd(transaction.simulated_total_cost_usd)} illustrative, "
+            "not in the known total"
+        )
     lines.append(f"Started: {transaction.started_at.isoformat()}")
     lines.append(f"Ended:   {transaction.ended_at.isoformat()}")
     return "\n".join(lines)

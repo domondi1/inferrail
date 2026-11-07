@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from typing import Literal
 
 from inferrail.receipts.aggregation import summarize_receipts
+from inferrail.receipts.classification import is_simulated
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.transactions.schema import EconomicEventRef, TaskTransaction
 
@@ -66,6 +67,7 @@ def build_transaction(
                 event_id=receipt.receipt_id,
                 cost_usd=receipt.estimated_cost_usd,
                 status=receipt.status,
+                simulated=is_simulated(receipt),
             )
         )
     economics = summarize_receipts(matching)
@@ -80,6 +82,8 @@ def build_transaction(
         events=events,
         known_total_cost_usd=economics.known_cost_usd,
         unknown_cost_event_count=economics.unknown_cost_count,
+        simulated_event_count=economics.simulated_receipt_count,
+        simulated_total_cost_usd=economics.simulated_cost_usd,
         status=status,
         started_at=economics.started_at,
         ended_at=economics.ended_at,

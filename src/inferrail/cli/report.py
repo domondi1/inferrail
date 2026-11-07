@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
+from inferrail.receipts.classification import is_simulated
 from inferrail.receipts.jsonl_io import read_jsonl_receipts
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.receipts.sqlite_store import ReceiptsStore, looks_like_sqlite
@@ -31,6 +32,10 @@ class ReportGroup:
     output_tokens: int = 0
     known_cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
     unknown_cost_requests: int = 0
+    # Demo calls (see receipts.classification): counted in `requests`, but their
+    # tokens and illustrative cost are kept here, never in the real columns.
+    simulated_requests: int = 0
+    simulated_cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
 
 
 def _group_key(receipt: InferenceReceipt, by: str) -> str:
@@ -65,6 +70,11 @@ def aggregate(receipts: list[InferenceReceipt], by: str) -> list[ReportGroup]:
         group.requests += 1
         if receipt.status == "success":
             group.successful_requests += 1
+        if is_simulated(receipt):
+            group.simulated_requests += 1
+            if receipt.estimated_cost_usd is not None:
+                group.simulated_cost_usd += receipt.estimated_cost_usd
+            continue
         if receipt.prompt_tokens is not None:
             group.input_tokens += receipt.prompt_tokens
         if receipt.completion_tokens is not None:
@@ -125,48 +135,54 @@ def _cost_cell(group: ReportGroup) -> str:
     return format_usd(group.known_cost_usd)
 
 
+def _simulated_cell(group: ReportGroup) -> str:
+    """Demo calls in this group and their illustrative (never real) cost."""
+    if not group.simulated_requests:
+        return ""
+    return f"{group.simulated_requests} ({format_usd(group.simulated_cost_usd)})"
+
+
 def format_table(groups: list[ReportGroup], by: str) -> str:
     if not groups:
         return "No receipts to report on."
 
+    # The simulated column appears only when there are demo calls, so a report on
+    # real usage alone is unchanged.
+    show_simulated = any(g.simulated_requests for g in groups)
     header_label = by.upper()
     columns = [
         header_label, "REQUESTS", "FAILED", "INPUT TOKENS", "OUTPUT TOKENS", "COST (USD)",
         "UNKNOWN COST",
     ]
+    if show_simulated:
+        columns.append("SIMULATED (ILLUSTRATIVE, NOT SPEND)")
     rows: list[list[str]] = []
+
+    def _row(g: ReportGroup) -> list[str]:
+        cells = [
+            g.key,
+            str(g.requests),
+            _failed_cell(g),
+            str(g.input_tokens),
+            str(g.output_tokens),
+            _cost_cell(g),
+            str(g.unknown_cost_requests) if g.unknown_cost_requests else "",
+        ]
+        return [*cells, _simulated_cell(g)] if show_simulated else cells
 
     total = ReportGroup(key="TOTAL")
     for g in groups:
-        rows.append(
-            [
-                g.key,
-                str(g.requests),
-                _failed_cell(g),
-                str(g.input_tokens),
-                str(g.output_tokens),
-                _cost_cell(g),
-                str(g.unknown_cost_requests) if g.unknown_cost_requests else "",
-            ]
-        )
+        rows.append(_row(g))
         total.requests += g.requests
         total.successful_requests += g.successful_requests
         total.input_tokens += g.input_tokens
         total.output_tokens += g.output_tokens
         total.known_cost_usd += g.known_cost_usd
         total.unknown_cost_requests += g.unknown_cost_requests
+        total.simulated_requests += g.simulated_requests
+        total.simulated_cost_usd += g.simulated_cost_usd
 
-    rows.append(
-        [
-            "TOTAL",
-            str(total.requests),
-            _failed_cell(total),
-            str(total.input_tokens),
-            str(total.output_tokens),
-            _cost_cell(total),
-            str(total.unknown_cost_requests) if total.unknown_cost_requests else "",
-        ]
-    )
+    rows.append(_row(total))
 
     widths = [
         max(len(col), *(len(row[i]) for row in rows)) for i, col in enumerate(columns)
@@ -193,6 +209,8 @@ def _summary_group(receipts: list[InferenceReceipt]) -> ReportGroup:
         summary.output_tokens += group.output_tokens
         summary.known_cost_usd += group.known_cost_usd
         summary.unknown_cost_requests += group.unknown_cost_requests
+        summary.simulated_requests += group.simulated_requests
+        summary.simulated_cost_usd += group.simulated_cost_usd
     return summary
 
 
@@ -203,17 +221,21 @@ def format_summary(receipts: list[InferenceReceipt]) -> str:
         return "No receipts to report on."
     failed = summary.requests - summary.successful_requests
     cost = _cost_cell(summary)
-    return "\n".join(
-        [
-            "INFERRAIL SPEND SUMMARY",
-            f"Requests:        {summary.requests}",
-            f"Failed requests: {failed}",
-            f"Input tokens:    {summary.input_tokens}",
-            f"Output tokens:   {summary.output_tokens}",
-            f"Known cost (USD): {cost}",
-            f"Unknown cost:    {summary.unknown_cost_requests}",
-        ]
-    )
+    lines = [
+        "INFERRAIL SPEND SUMMARY",
+        f"Requests:        {summary.requests}",
+        f"Failed requests: {failed}",
+        f"Input tokens:    {summary.input_tokens}",
+        f"Output tokens:   {summary.output_tokens}",
+        f"Known cost (USD): {cost}",
+        f"Unknown cost:    {summary.unknown_cost_requests}",
+    ]
+    if summary.simulated_requests:
+        lines.append(
+            f"Simulated:       {summary.simulated_requests} demo request(s), "
+            f"{format_usd(summary.simulated_cost_usd)} illustrative, not in the known cost"
+        )
+    return "\n".join(lines)
 
 
 def run_report(path: Path, by: str | None = None) -> int:

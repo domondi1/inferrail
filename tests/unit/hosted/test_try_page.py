@@ -71,3 +71,19 @@ def test_trial_start_has_a_timeout_with_retry():
     assert _js_const("START_TRIAL_TIMEOUT_MS") <= 30_000
     assert "controller.abort()" in PAGE
     assert "btn.textContent = 'Try again'" in PAGE
+
+
+def test_the_real_job_declares_its_budget_on_every_call():
+    start, end = PAGE.index("async function runRealJob"), PAGE.index("async function renderRealJob")
+    runner = PAGE[start:end]
+    assert "'X-Inferrail-Budget-Usd': ceiling" in runner
+    assert "'X-Inferrail-Attribute-Work-Id': work" in runner
+    assert "if (btn.disabled) return;" in runner  # one click never runs the paid job twice
+
+
+def test_real_and_demo_amounts_are_shown_apart():
+    assert "Real spend today" in PAGE
+    assert "w.simulated_cost_usd" in PAGE and "w.real_receipt_count" in PAGE
+    assert "illustrative, not counted" in PAGE
+    # Cost per outcome counts succeeded jobs that made real calls only.
+    assert "if (real && w.outcome_status === 'succeeded') succeeded += 1;" in PAGE

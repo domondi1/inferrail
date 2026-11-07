@@ -439,7 +439,28 @@ def test_work_outcome_and_summary_roundtrip(client):
     assert summary["work_id"] == "wid-1"
     assert summary["outcome_status"] == "resolved"
     assert summary["receipt_count"] == 1
-    assert summary["known_attributed_inference_cost_usd"] == "0.000160"
+    # A demo call's price is illustrative: reported apart, never as known (real) cost.
+    assert summary["known_attributed_inference_cost_usd"] is None
+    assert summary["simulated_receipt_count"] == 1 and summary["real_receipt_count"] == 0
+    assert summary["simulated_cost_usd"] == "0.000160"
+
+
+def test_demo_calls_never_count_as_real_spend_anywhere(client):
+    trial = _issue(client)
+    headers = {**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": "wid-sim",
+               "X-Inferrail-Attribute-Task-Id": "t-sim"}  # fmt: skip
+    for _ in range(3):
+        client.post("/v1/demo/chat/completions", json=_demo_payload(), headers=headers)
+    status = client.get(f"/v1/trial/{trial['tenant_id']}", headers=_auth(trial["api_key"]))
+    assert status.json()["spent_today_usd"] == "0"  # the daily budget counts real spend only
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipts and all(r["simulated"] is True for r in receipts)
+    tx = client.get("/v1/transaction/t-sim", headers=_auth(trial["api_key"])).json()
+    assert tx["known_total_cost_usd"] == "0" and tx["simulated_event_count"] == 3
+    assert tx["simulated_total_cost_usd"] == "0.000480"
+    assert all(e["simulated"] for e in tx["events"])
+    (row,) = client.get("/v1/report?by=work_id", headers=_auth(trial["api_key"])).json()["rows"]
+    assert row["known_cost_usd"] == "0" and row["simulated_receipt_count"] == 3
 
 
 def test_work_summary_404_for_unknown_work_id(client):
@@ -471,7 +492,9 @@ def test_transaction_groups_by_task_id(client):
     tx = client.get("/v1/transaction/task-1", headers=_auth(trial["api_key"])).json()
     assert tx["task_id"] == "task-1"
     assert len(tx["events"]) == 2
-    assert tx["known_total_cost_usd"] == "0.000320"
+    # Demo calls: illustrative cost reported apart, never in the real known total.
+    assert tx["known_total_cost_usd"] == "0"
+    assert tx["simulated_total_cost_usd"] == "0.000320"
     assert tx["status"] == "success"
 
 
@@ -493,7 +516,8 @@ def test_report_groups_by_arbitrary_attribute_and_labels_unattributed(client):
     report = client.get("/v1/report?by=customer", headers=_auth(trial["api_key"])).json()
     rows = {r["group"]: r for r in report["rows"]}
     assert rows["acme"]["receipt_count"] == 2
-    assert rows["acme"]["known_cost_usd"] == "0.000320"
+    assert rows["acme"]["known_cost_usd"] == "0"  # demo calls are not real spend
+    assert rows["acme"]["simulated_cost_usd"] == "0.000320"
     assert rows["(unattributed)"]["receipt_count"] == 1
 
 
@@ -2162,3 +2186,63 @@ def test_the_try_page_explains_a_provider_credit_refusal():
     page = (Path(__file__).resolve().parents[3] / "docs" / "try" / "index.html").read_text()
     assert "e.code === 'INFERRAIL_E014'" in page
     assert "Inferrail's budget did not block it" in page and "Run demo" in page
+
+
+def _counting_openai_client(calls: list[int]):
+    def factory() -> httpx.AsyncClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return _mock_openai_handler(request)
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    return factory
+
+
+def test_a_job_budget_is_enforced_before_the_provider_is_called(
+    service_module, client, monkeypatch
+):
+    calls: list[int] = []
+    monkeypatch.setattr(service_module, "openai_client_factory", _counting_openai_client(calls))
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    job = {**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": "real-ticket-1"}
+    body = {"model": "gpt-4o-mini", "max_completion_tokens": 200,
+            "messages": [{"role": "user", "content": "hi"}]}  # fmt: skip
+    ok = client.post("/v1/chat/completions", json=body,
+                     headers={**job, "X-Inferrail-Budget-Usd": "0.02"})  # fmt: skip
+    assert ok.status_code == 200 and calls == [1]
+
+    tiny = {**job, "X-Inferrail-Attribute-Work-Id": "real-ticket-2",
+            "X-Inferrail-Budget-Usd": "0.0001"}  # fmt: skip
+    refused = client.post("/v1/chat/completions", json=body, headers=tiny)
+    assert refused.status_code == 402
+    details = refused.json()["error"]["details"]
+    assert details["scope"] == "work_id" and details["scope_value"] == "real-ticket-2"
+    assert details["limit_usd"] == "0.0001"
+    assert calls == [1]  # the refused call never reached the provider
+    # A Work's budget is fixed by its first call: declaring another one is refused too.
+    again = client.post("/v1/chat/completions", json=body,
+                        headers={**job, "X-Inferrail-Budget-Usd": "0.05"})  # fmt: skip
+    assert again.status_code == 400 and calls == [1]
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    errors = [r for r in receipts if r["status"] == "error"]
+    assert len(errors) == 2  # every refusal is recorded, the conflict included
+    blocked = [r for r in errors if r["attributes"].get("work_id") == "real-ticket-2"]
+    assert len(blocked) == 1 and blocked[0]["attributes"]["budget_id"]
+    assert blocked[0]["simulated"] is False and blocked[0]["estimated_cost_usd"] is None
+
+
+def test_a_malformed_job_budget_is_refused_without_calling_the_provider(
+    service_module, client, monkeypatch
+):
+    calls: list[int] = []
+    monkeypatch.setattr(service_module, "openai_client_factory", _counting_openai_client(calls))
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        headers={**_auth(trial["api_key"]), "X-Inferrail-Budget-Usd": "-1"},
+    )
+    assert r.status_code == 400 and calls == []

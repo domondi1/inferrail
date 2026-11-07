@@ -46,6 +46,12 @@ def format_work_summary(summary: WorkSummary) -> str:
         f"Attributed tokens:                  {_tokens_cell(summary)}",
         f"Unknown-cost inference receipts:    {summary.unknown_cost_count}",
     ]
+    if summary.simulated_receipt_count:
+        lines.append(
+            f"Simulated (demo) receipts:          {summary.simulated_receipt_count}, "
+            f"{format_usd(summary.simulated_cost_usd or Decimal('0'))} illustrative, "
+            "not in the known cost"
+        )
     if summary.outcome_recorded_at is not None:
         lines.append(
             f"Outcome last declared:              {summary.outcome_recorded_at.isoformat()}"
@@ -122,9 +128,8 @@ def format_work_aggregate(summaries: list[WorkSummary]) -> str:
             Decimal("0"),
         )
         unknown_cost_work_count = sum(summary.unknown_cost_count > 0 for summary in group)
-        known_cost_cell = (
-            format_usd(known_cost) if no_receipt_evidence_count != len(group) else "unavailable"
-        )
+        has_real_cost = any(s.known_attributed_inference_cost_usd is not None for s in group)
+        known_cost_cell = format_usd(known_cost) if has_real_cost else "unavailable"
         average = (
             f"{format_usd(fully_known_cost / Decimal(len(fully_known)))} (known-only)"
             if fully_known
