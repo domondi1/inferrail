@@ -2186,3 +2186,63 @@ def test_the_try_page_explains_a_provider_credit_refusal():
     page = (Path(__file__).resolve().parents[3] / "docs" / "try" / "index.html").read_text()
     assert "e.code === 'INFERRAIL_E014'" in page
     assert "Inferrail's budget did not block it" in page and "Run demo" in page
+
+
+def _counting_openai_client(calls: list[int]):
+    def factory() -> httpx.AsyncClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return _mock_openai_handler(request)
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    return factory
+
+
+def test_a_job_budget_is_enforced_before_the_provider_is_called(
+    service_module, client, monkeypatch
+):
+    calls: list[int] = []
+    monkeypatch.setattr(service_module, "openai_client_factory", _counting_openai_client(calls))
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    job = {**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": "real-ticket-1"}
+    body = {"model": "gpt-4o-mini", "max_completion_tokens": 200,
+            "messages": [{"role": "user", "content": "hi"}]}  # fmt: skip
+    ok = client.post("/v1/chat/completions", json=body,
+                     headers={**job, "X-Inferrail-Budget-Usd": "0.02"})  # fmt: skip
+    assert ok.status_code == 200 and calls == [1]
+
+    tiny = {**job, "X-Inferrail-Attribute-Work-Id": "real-ticket-2",
+            "X-Inferrail-Budget-Usd": "0.0001"}  # fmt: skip
+    refused = client.post("/v1/chat/completions", json=body, headers=tiny)
+    assert refused.status_code == 402
+    details = refused.json()["error"]["details"]
+    assert details["scope"] == "work_id" and details["scope_value"] == "real-ticket-2"
+    assert details["limit_usd"] == "0.0001"
+    assert calls == [1]  # the refused call never reached the provider
+    # A Work's budget is fixed by its first call: declaring another one is refused too.
+    again = client.post("/v1/chat/completions", json=body,
+                        headers={**job, "X-Inferrail-Budget-Usd": "0.05"})  # fmt: skip
+    assert again.status_code == 400 and calls == [1]
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    errors = [r for r in receipts if r["status"] == "error"]
+    assert len(errors) == 2  # every refusal is recorded, the conflict included
+    blocked = [r for r in errors if r["attributes"].get("work_id") == "real-ticket-2"]
+    assert len(blocked) == 1 and blocked[0]["attributes"]["budget_id"]
+    assert blocked[0]["simulated"] is False and blocked[0]["estimated_cost_usd"] is None
+
+
+def test_a_malformed_job_budget_is_refused_without_calling_the_provider(
+    service_module, client, monkeypatch
+):
+    calls: list[int] = []
+    monkeypatch.setattr(service_module, "openai_client_factory", _counting_openai_client(calls))
+    trial = _issue(client)
+    _with_openai_key(client, trial)
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        headers={**_auth(trial["api_key"]), "X-Inferrail-Budget-Usd": "-1"},
+    )
+    assert r.status_code == 400 and calls == []

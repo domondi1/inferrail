@@ -324,6 +324,11 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
     .mode-badge.real { color: var(--good); background: var(--good-tint); }
     .sim-tag, .real-tag { display: inline-block; padding: 0 6px; font: 700 11px var(--display); letter-spacing: .08em; text-transform: uppercase; border: 1px solid currentColor; }
     .sim-tag { color: var(--ink-2); }
+    .real-job textarea { width: 100%; font: inherit; padding: 10px; border: 1px solid var(--rule); background: var(--card); color: inherit; resize: vertical; }
+    .real-job-row { display: flex; flex-wrap: wrap; gap: 12px; }
+    .real-job-row .field { flex: 1 1 180px; }
+    .real-job-output { white-space: pre-wrap; margin: 6px 0 0; }
+    .refusal { border-left: 3px solid var(--stamp); padding: 8px 12px; margin: 10px 0; }
     .real-tag { color: var(--good); background: var(--good-tint); }
     .trial-notice { margin: 0 0 16px; font-size: 15px; color: var(--ink-2); }
     .budget-mini { flex: 1 1 220px; min-width: 200px; }
@@ -519,6 +524,30 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           <p class="body-copy" id="real-request-hint">Add a key above first. The request is tagged with the Work from the top of the page.</p>
           <button class="button button-primary hidden" id="send-real-btn" type="button">Send a real request</button>
           <div id="real-result"></div>
+
+          <h3 class="sub-h">Run a real multi-step job</h3>
+          <p class="body-copy" id="real-job-hint">Add a key above first. Then run a real support-ticket job: 4 model calls with your key, one Work, a job budget Inferrail enforces before each call, and a receipt for every call.</p>
+          <div class="real-job hidden" id="real-job">
+            <div class="field">
+              <label for="real-ticket-input">Customer ticket</label>
+              <textarea id="real-ticket-input" rows="4" maxlength="1200" aria-describedby="real-ticket-hint">Hi, I was charged twice for my Pro plan this month (two charges of $29 on October 3). I've been a customer for two years. Can you refund the duplicate charge? Also, the "Export to CSV" button has been greyed out since yesterday. Thanks, Sam</textarea>
+              <p class="hint" id="real-ticket-hint">Sent to your provider in 4 steps: classify, draft a reply, check it against a policy, write the final reply. Inferrail records counts, cost and timing, never this text or the replies.</p>
+            </div>
+            <div class="real-job-row">
+              <div class="field">
+                <label for="real-work-input">Work</label>
+                <input id="real-work-input" maxlength="80" value="Real ticket #1" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="real-ceiling-input">Job budget (USD)</label>
+                <input id="real-ceiling-input" maxlength="12" value="0.02" inputmode="decimal" autocomplete="off" aria-describedby="real-ceiling-hint">
+              </div>
+            </div>
+            <p class="hint" id="real-ceiling-hint">Inferrail refuses any call that could take this job past its budget, before the call reaches your provider. Set it to 0.0001 to see a refusal that costs nothing.</p>
+            <button class="button button-primary" id="run-real-job-btn" type="button">Run real job (4 calls)</button>
+            <p class="run-status" id="real-job-status" role="status" aria-live="polite"></p>
+            <div id="real-job-result"></div>
+          </div>
         </div>
       </details>
 
@@ -934,6 +963,10 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         $('key-status').textContent = parts.length ? parts.join(' · ') : 'No key added. Demo mode only.';
         const hasKey = trial.openai_configured || trial.anthropic_configured;
         $('send-real-btn').classList.toggle('hidden', !hasKey);
+        $('real-job').classList.toggle('hidden', !hasKey);
+        $('real-job-hint').textContent = hasKey
+          ? 'A real support-ticket job: 4 model calls with your key, one Work, a job budget Inferrail enforces before each call, and a receipt for every call. Billed to your provider account (typically well under a cent).'
+          : 'Add a key above first. Then run a real support-ticket job: 4 model calls with your key, one Work, a job budget Inferrail enforces before each call, and a receipt for every call.';
         $('real-request-hint').textContent = hasKey
           ? 'Sends one short request with your key, tagged with the Work from the top of the page.'
           : 'Add a key above first. The request is tagged with the Work from the top of the page.';
@@ -1632,6 +1665,151 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         }
       }
 
+      // A real job: four chained calls with the visitor's own key. Each call is tagged
+      // with one Work and its own Task, and carries the job budget as
+      // X-Inferrail-Budget-Usd, which the gateway enforces before contacting the provider.
+      // The ticket and replies stay in this page; the gateway records counts, cost, time.
+      const REAL_JOB_POLICY = '1) Never promise a refund outside the 30-day refund window. ' +
+        '2) Never ask for or repeat passwords or full card numbers. ' +
+        '3) Give the customer one concrete next step. 4) At most 120 words.';
+      const REAL_JOB_STEPS = [
+        { task: 'classify', label: 'Classify the ticket', prompt: (c) =>
+          'You triage customer support tickets. Reply with exactly three lines:\n' +
+          'Category: billing, technical, account or other\nUrgency: low, medium or high\n' +
+          'Summary: one sentence\n\nTicket:\n' + c.ticket },
+        { task: 'draft-reply', label: 'Draft a reply', prompt: (c) =>
+          'Write a reply to this customer: friendly, at most 120 words, with one concrete next step. ' +
+          'Use the triage notes.\n\nTriage notes:\n' + c.classify + '\n\nTicket:\n' + c.ticket },
+        { task: 'check-policy', label: 'Check the reply against policy', prompt: (c) =>
+          'Check this draft support reply against the policy. Answer PASS, or list each violation ' +
+          'on its own line.\n\nPolicy: ' + REAL_JOB_POLICY + '\n\nDraft:\n' + c['draft-reply'] },
+        { task: 'final-reply', label: 'Write the final reply', prompt: (c) =>
+          'Rewrite the draft so it meets the policy, fixing every issue the check found. ' +
+          'Return only the final reply.\n\nPolicy: ' + REAL_JOB_POLICY + '\n\nCheck result:\n' +
+          c['check-policy'] + '\n\nDraft:\n' + c['draft-reply'] },
+      ];
+      Object.assign(STEP_LABELS, Object.fromEntries(REAL_JOB_STEPS.map((s) => [s.task, s.label])));
+
+      function realCallBody(provider, model, prompt) {
+        if (provider === 'anthropic') {
+          return { model, max_tokens: 500, messages: [{ role: 'user', content: prompt }] };
+        }
+        // Output is capped so each call's budget reservation stays small; reasoning
+        // models get low effort so the cap leaves room for the answer.
+        const body = { model, max_completion_tokens: 1500, messages: [{ role: 'user', content: prompt }] };
+        if (/^(o\d|gpt-5)/.test(model)) body.reasoning_effort = 'low';
+        return body;
+      }
+
+      function realCallText(provider, response) {
+        if (provider === 'anthropic') {
+          return ((response.content || []).find((b) => b.type === 'text') || {}).text || '';
+        }
+        return (response.choices && response.choices[0] && response.choices[0].message.content) || '';
+      }
+
+      function budgetRefusal(e, step, provider) {
+        const d = e.details || {};
+        return `<div class="refusal"><strong>Inferrail stopped "${esc(step.label)}" before it reached ` +
+          `${esc(PROVIDER_LABELS[provider])}.</strong> This job's budget is $${esc(d.limit_usd)}; ` +
+          `it had spent $${esc(d.spent_so_far_usd)}, and this call could cost up to ` +
+          `$${esc(d.estimated_request_usd)}. Nothing was sent to the provider and nothing was charged ` +
+          `for this call. The refusal is recorded as a receipt.</div>`;
+      }
+
+      async function runRealJob() {
+        const btn = $('run-real-job-btn');
+        if (btn.disabled) return; // real money: never run twice from a double-click
+        const work = $('real-work-input').value.trim();
+        const ticket = $('real-ticket-input').value.trim();
+        const ceiling = $('real-ceiling-input').value.trim();
+        const status = $('real-job-status');
+        if (!work || !headerSafe(work)) { status.textContent = 'Give the job a Work name using plain letters, numbers, spaces and punctuation.'; return; }
+        if (!ticket) { status.textContent = 'Paste a customer ticket first.'; return; }
+        if (!/^\d*\.?\d+$/.test(ceiling) || parseFloat(ceiling) <= 0) { status.textContent = 'Set a job budget in dollars, for example 0.02.'; return; }
+        const provider = trial.openai_configured ? 'openai' : 'anthropic';
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Running…';
+        $('real-job-result').innerHTML = '';
+        const outputs = { ticket };
+        let refusal = '', failure = '';
+        try {
+          if (!modelsByProvider[provider].selected) {
+            try { await discoverModels(provider); }
+            catch (e) { status.textContent = modelProblem(provider, e); return; }
+          }
+          const model = modelsByProvider[provider].selected;
+          if (!model) { status.textContent = modelsByProvider[provider].message; return; }
+          const path = provider === 'anthropic' ? '/v1/messages' : '/v1/chat/completions';
+          for (let i = 0; i < REAL_JOB_STEPS.length; i += 1) {
+            const step = REAL_JOB_STEPS[i];
+            status.textContent = `Call ${i + 1} of ${REAL_JOB_STEPS.length}: ${step.label} (${model})…`;
+            const headers = Object.assign(authHeaders(), {
+              'X-Inferrail-Attribute-Work-Id': work,
+              'X-Inferrail-Attribute-Task-Id': step.task,
+              'X-Inferrail-Budget-Usd': ceiling,
+            });
+            try {
+              const response = await apiFetch(path, {
+                method: 'POST', headers, body: JSON.stringify(realCallBody(provider, model, step.prompt(outputs))),
+              });
+              outputs[step.task] = realCallText(provider, response).trim();
+              if (!outputs[step.task]) { failure = `"${step.label}" came back with no text (the model may have spent its output limit on reasoning).`; break; }
+            } catch (e) {
+              if (e.httpStatus === 402 && e.details && e.details.limit_usd) refusal = budgetRefusal(e, step, provider);
+              else if (e.httpStatus === 401 || e.httpStatus === 403) { trialGone('Your trial has expired or was ended.'); return; }
+              else failure = realRequestProblem(e);
+              break;
+            }
+          }
+          status.textContent = refusal ? 'Stopped by the job budget.' : failure ? 'The job stopped early.' : '';
+          await renderRealJob(work, provider, outputs, refusal, failure);
+          $('real-work-input').value = nextWorkName(work);
+          refreshAll();
+        } catch (e) {
+          status.textContent = 'Could not load the result: ' + e.message;
+        } finally {
+          btn.disabled = false; btn.textContent = original;
+        }
+      }
+
+      async function renderRealJob(work, provider, outputs, refusal, failure) {
+        // Everything below the reply comes from the gateway: the Work summary and receipts.
+        const summary = await apiFetch(`/v1/work/${encodeURIComponent(work)}`, { headers: authHeaders() });
+        const page = await fetchLatestReceipts(200, null);
+        const receipts = page.receipts.filter((r) => r.attributes && r.attributes.work_id === work);
+        const rows = receipts.map((r, i) => {
+          // A refused or failed call has no usage: show that plainly, never a guessed cost.
+          const refused = r.status === 'error' && r.attributes.budget_id;
+          const tokens = r.status === 'error' ? '&mdash;' : `${esc(r.prompt_tokens ?? '?')} / ${esc(r.completion_tokens ?? '?')}`;
+          const cost = refused ? 'not sent' : r.status === 'error' ? '&mdash;' : esc(fmtUsd(r.estimated_cost_usd));
+          return `<tr><td>${i + 1}</td><td>${esc(STEP_LABELS[r.attributes.task_id] || r.attributes.task_id || '')}</td>` +
+            `<td class="col-model">${esc(r.provider)} / ${esc(r.model)}</td><td class="num">${tokens}</td>` +
+            `<td class="num">${cost}</td><td class="num">${esc(Math.round(r.total_latency_ms))} ms</td>` +
+            `<td>${esc(r.status)}${refused ? ' (refused by budget)' : ''}</td></tr>`;
+        }).join('');
+        const completed = Boolean(outputs['final-reply']);
+        const final = outputs['final-reply'];
+        const real = summary.known_attributed_inference_cost_usd;
+        $('real-job-result').innerHTML = `
+          <div class="receipt-card">
+            <p class="eyebrow">Real job · ${esc(work)} · ${esc(PROVIDER_LABELS[provider])}, billed to your account</p>
+            ${final ? `<p class="body-copy" style="margin:0"><strong>Final reply</strong></p><p class="real-job-output">${esc(final)}</p>` : ''}
+            ${outputs['check-policy'] ? `<p class="small" style="margin:8px 0 0">Policy check: ${esc(outputs['check-policy'].split('\n')[0])}</p>` : ''}
+            ${refusal}${failure ? `<p class="refusal">${esc(failure)}</p>` : ''}
+            <div class="receipt-row"><span>real cost of this job</span><span>${esc(fmtMoney(real))} of a $${esc($('real-ceiling-input').value.trim())} job budget</span></div>
+            <div class="receipt-row"><span>model calls (receipts)</span><span>${esc(summary.receipt_count)}</span></div>
+            <div class="receipt-row"><span>tokens in / out</span><span>${summary.prompt_tokens === null && summary.completion_tokens === null ? 'none (nothing reached the provider)' : esc(summary.prompt_tokens ?? 0) + ' / ' + esc(summary.completion_tokens ?? 0)}</span></div>
+            <div class="table-scroll"><table class="calls-table"><caption class="sr-only">Every call in this job</caption>
+              <thead><tr><th scope="col">#</th><th scope="col">Step</th><th scope="col" class="col-model">Model</th><th scope="col" class="num">Tokens in / out</th><th scope="col" class="num">Cost</th><th scope="col" class="num">Time</th><th scope="col">Status</th></tr></thead>
+              <tbody>${rows}</tbody></table></div>
+            ${completed ? `<p class="small" style="margin:8px 0 0">Costs use the provider's published prices for this model. Did the reply do its job? Mark the outcome to see real cost per successful outcome.</p>
+            <div class="button-row"><button class="button button-secondary" type="button" data-work-id="${esc(work)}" data-outcome="succeeded" data-real-outcome="1">Mark succeeded</button>
+            <button class="button button-quiet" type="button" data-work-id="${esc(work)}" data-outcome="failed" data-real-outcome="1">Mark failed</button></div>` : ''}
+          </div>`;
+      }
+
       function nextWorkName(name) {
         // "Support ticket #42" -> "Support ticket #43"; no number -> "name 2".
         const m = name.match(/^(.*?)(\d+)(\D*)$/);
@@ -1671,6 +1849,11 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
       });
       $('send-demo-btn').addEventListener('click', sendDemoRequest);
       $('send-real-btn').addEventListener('click', sendRealRequest);
+      $('run-real-job-btn').addEventListener('click', runRealJob);
+      $('real-job-result').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-real-outcome]');
+        if (btn) markOutcome(btn).then(() => goTo('sec-receipts'));
+      });
       $('key-form').addEventListener('submit', submitKeys);
       $('forget-keys-btn').addEventListener('click', forgetKeys);
       $('end-trial-btn').addEventListener('click', endTrial);

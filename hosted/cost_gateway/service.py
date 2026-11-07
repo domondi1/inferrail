@@ -102,7 +102,7 @@ from inferrail.gateway.anthropic_schemas import (
     MessagesRequest,
     absent_cache_usage_fields,
 )
-from inferrail.gateway.attribution import extract_attributes
+from inferrail.gateway.attribution import extract_attributes, extract_declared_budget
 from inferrail.gateway.execution import InferenceEngine
 from inferrail.gateway.schemas import (
     ChatCompletionRequest,
@@ -1653,6 +1653,10 @@ def create_app(data_dir: Path) -> FastAPI:
         `inferrail serve --quickstart`."""
         stores = _stores_for(tenant)
         api_key = _require_openai_key(tenant)
+        # A run's declared ceiling (X-Inferrail-Budget-Usd, ADR-0022): enforced per Work
+        # before the provider is called, on top of the trial's daily cap. Never loosens it.
+        # Parsed first, so a malformed value is refused before any client is opened.
+        declared = extract_declared_budget(request.headers)
         provider = OpenAIProvider(
             name="openai",
             api_key=api_key,
@@ -1672,7 +1676,9 @@ def create_app(data_dir: Path) -> FastAPI:
         attributes = extract_attributes(request.headers)
         if payload.stream:
             try:
-                body = await engine.prepare_stream(payload, attributes=attributes)
+                body = await engine.prepare_stream(
+                    payload, attributes=attributes, declared_budget_usd=declared
+                )
             except BaseException:
                 await provider.aclose()
                 raise
@@ -1680,7 +1686,9 @@ def create_app(data_dir: Path) -> FastAPI:
                 _stream_and_close(body, provider), media_type="text/event-stream"
             )
         try:
-            return await engine.execute(payload, attributes=attributes)
+            return await engine.execute(
+                payload, attributes=attributes, declared_budget_usd=declared
+            )
         finally:
             await provider.aclose()
 
@@ -1695,6 +1703,7 @@ def create_app(data_dir: Path) -> FastAPI:
         reasoning as `chat_completions` above."""
         stores = _stores_for(tenant)
         api_key = _require_anthropic_key(tenant)
+        declared = extract_declared_budget(request.headers)  # see chat_completions
         provider = AnthropicProvider(
             name="anthropic",
             api_key=api_key,
@@ -1713,7 +1722,9 @@ def create_app(data_dir: Path) -> FastAPI:
         attributes = extract_attributes(request.headers)
         if payload.stream:
             try:
-                body = await engine.prepare_stream(payload, attributes=attributes)
+                body = await engine.prepare_stream(
+                    payload, attributes=attributes, declared_budget_usd=declared
+                )
             except BaseException:
                 await provider.aclose()
                 raise
@@ -1721,7 +1732,9 @@ def create_app(data_dir: Path) -> FastAPI:
                 _stream_and_close(body, provider), media_type="text/event-stream"
             )
         try:
-            result = await engine.execute(payload, attributes=attributes)
+            result = await engine.execute(
+                payload, attributes=attributes, declared_budget_usd=declared
+            )
         finally:
             await provider.aclose()
         # Same serialization as the self-hosted route: prompt-cache usage
