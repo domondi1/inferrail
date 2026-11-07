@@ -74,7 +74,8 @@ def test_trial_start_has_a_timeout_with_retry():
 
 
 def test_the_real_job_declares_its_budget_on_every_call():
-    runner = PAGE[PAGE.index("async function runRealJob"):PAGE.index("async function renderRealJob")]
+    start, end = PAGE.index("async function runRealJob"), PAGE.index("async function renderRealJob")
+    runner = PAGE[start:end]
     assert "'X-Inferrail-Budget-Usd': ceiling" in runner
     assert "'X-Inferrail-Attribute-Work-Id': work" in runner
     assert "if (btn.disabled) return;" in runner  # one click never runs the paid job twice
