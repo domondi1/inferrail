@@ -170,50 +170,96 @@ def _mpp_protocols(settings: Any) -> list[dict[str, Any]]:
     return [{"mpp": {"method": "tempo", "intent": "charge", "currency": currency}}]
 
 
+# Catalogs that route agents' tasks match a task against each operation's summary,
+# description and tags; a long summary + description can end up as one long "alias" that no
+# short task phrase matches. Keep the summary a task phrase, lead the description with what it
+# does, and tag the tasks.
+WEB_READ_SUMMARY = "Web page to markdown: read any public URL as clean, LLM-ready markdown"
+WEB_READ_TAGS = ["web page to markdown", "url to markdown", "web scraper", "read url", "markdown"]
+
+
+def _web_read_description(price_usd: str) -> str:
+    return (
+        "Read any public web page as clean, LLM-ready markdown (title, main text, headings, "
+        "lists, links, tables), with word count and a content hash. URL to markdown for agents: "
+        f"articles, docs, blog posts, product pages. ${price_usd} per delivered page; a "
+        "missing, blocked, failing or refused page costs nothing, and a retry with the same "
+        "request_id never pays twice."
+    )
+
+
 def _web_read_paths(settings: Any) -> dict[str, Any]:
     mod = sys.modules["web_read_service"]
-    return {
-        f"{READ_PREFIX}/v1/page": {
-            "post": {
-                "operationId": "readPage",
-                "summary": "Read a public web page as clean markdown (pay per delivered page)",
-                "description": mod.DESCRIPTION,
-                "security": [],
-                "x-payment-info": {
-                    "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
-                    "protocols": [{"x402": {}}] + _mpp_protocols(settings),
+    shared = {
+        "summary": WEB_READ_SUMMARY,
+        "description": _web_read_description(settings.price_usd),
+        "tags": WEB_READ_TAGS,
+        "security": [],
+        "x-payment-info": {
+            "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
+            "protocols": [{"x402": {}}] + _mpp_protocols(settings),
+        },
+    }
+    responses = {
+        "200": {
+            "description": "The page, delivered and paid",
+            "content": {"application/json": {"schema": mod.OUTPUT_SCHEMA}},
+        },
+        "402": {"description": "Payment Required"},
+        "422": {
+            "description": "Not readable (see error), including a target-site 4xx "
+            "(missing, gone, forbidden); retrying the same URL won't help; nothing "
+            "charged"
+        },
+        "502": {
+            "description": "Target site failed (5xx, 408, 429, connection); may "
+            "succeed later; nothing charged"
+        },
+        "504": {"description": "Target site timed out; nothing charged"},
+    }
+    operations: dict[str, Any] = {
+        "post": {
+            "operationId": "readPage",
+            **shared,
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": mod.PageRequest.model_json_schema(),
+                        # Catalogs build their first call from this (Mercator's
+                        # inputExample); a real, stable page.
+                        "example": {"url": "https://example.com/"},
+                    }
                 },
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": mod.PageRequest.model_json_schema(),
-                            # Catalogs build their first call from this (Mercator's
-                            # inputExample); a real, stable page.
-                            "example": {"url": "https://example.com/"},
-                        }
-                    },
-                },
-                "responses": {
-                    "200": {
-                        "description": "The page, delivered and paid",
-                        "content": {"application/json": {"schema": mod.OUTPUT_SCHEMA}},
-                    },
-                    "402": {"description": "Payment Required"},
-                    "422": {
-                        "description": "Not readable (see error), including a target-site 4xx "
-                        "(missing, gone, forbidden); retrying the same URL won't help; nothing "
-                        "charged"
-                    },
-                    "502": {
-                        "description": "Target site failed (5xx, 408, 429, connection); may "
-                        "succeed later; nothing charged"
-                    },
-                    "504": {"description": "Target site timed out; nothing charged"},
-                },
-            }
+            },
+            "responses": responses,
         }
     }
+    if getattr(settings, "allow_get", False):
+        # The same sale over GET (the URL in the query string), already served when enabled;
+        # many agent clients and routers call page readers this way.
+        fields = mod.PageRequest.model_json_schema()["properties"]
+        operations["get"] = {
+            "operationId": "readPageGet",
+            **shared,
+            "parameters": [
+                {
+                    "name": "url",
+                    "in": "query",
+                    "required": True,
+                    "schema": fields["url"],
+                    "example": "https://example.com/",
+                },
+                {
+                    "name": "request_id",
+                    "in": "query",
+                    "required": False,
+                    "schema": fields["request_id"],
+                },
+            ],
+            "responses": responses,
+        }
+    return {f"{READ_PREFIX}/v1/page": operations}
 
 
 def _origin_summary(app: Starlette) -> tuple[str, str]:
@@ -228,9 +274,9 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     if not app.state.discovery_paths or read is None:
         return "Inferrail Hosted", hosted
     return "Inferrail", (
-        f"Paid services for AI agents over {_rails(read)}. Inferrail Web Read: one public web "
-        f"page as clean markdown, ${read.price_usd} per delivered page, refusals and target-site "
-        "errors never charged, a retry never pays twice. " + hosted
+        "Inferrail Web Read: any public web page as clean, LLM-ready markdown (URL to markdown) "
+        f"for ${read.price_usd} per delivered page, paid over {_rails(read)}; failed or refused "
+        "pages are never charged and a retry never pays twice. " + hosted
     )
 
 

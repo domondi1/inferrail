@@ -660,6 +660,31 @@ def test_the_listed_operation_has_an_id_and_a_request_example_that_validates(tmp
         assert c.post("/read/v1/page", json=example).status_code == 402
 
 
+def test_catalogs_can_match_the_task_not_just_the_brand(tmp_path):
+    # Routers match a short task phrase against summary, description and tags; a long summary
+    # became one unmatched alias. Keep the summary a task phrase and the tasks tagged.
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO})
+    with TestClient(app) as c:
+        doc = c.get("/openapi.json").json()
+        op = doc["paths"]["/read/v1/page"]["post"]
+        assert op["summary"].lower().startswith("web page to markdown") and len(op["summary"]) <= 80
+        assert {"web page to markdown", "url to markdown"} <= set(op["tags"])
+        assert "$0.002 per delivered page" in op["description"] and len(op["description"]) < 400
+        assert "get" not in doc["paths"]["/read/v1/page"]  # GET off: not listed
+        assert doc["info"]["description"].startswith("Inferrail Web Read: any public web page")
+
+
+def test_an_enabled_get_is_listed_with_the_same_price_and_answers_402(tmp_path):
+    app, _ = _combined(tmp_path, {"READ_PAY_TO": PAY_TO, "READ_ALLOW_GET": "1"})
+    with TestClient(app) as c:
+        path = c.get("/openapi.json").json()["paths"]["/read/v1/page"]
+        assert path["get"]["x-payment-info"] == path["post"]["x-payment-info"]
+        assert path["get"]["operationId"] == "readPageGet"
+        url = next(p for p in path["get"]["parameters"] if p["name"] == "url")
+        assert url["required"] is True
+        assert c.get("/read/v1/page", params={"url": url["example"]}).status_code == 402
+
+
 extract = sys.modules["web_read_extract"]
 
 
