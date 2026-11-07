@@ -439,7 +439,28 @@ def test_work_outcome_and_summary_roundtrip(client):
     assert summary["work_id"] == "wid-1"
     assert summary["outcome_status"] == "resolved"
     assert summary["receipt_count"] == 1
-    assert summary["known_attributed_inference_cost_usd"] == "0.000160"
+    # A demo call's price is illustrative: reported apart, never as known (real) cost.
+    assert summary["known_attributed_inference_cost_usd"] is None
+    assert summary["simulated_receipt_count"] == 1 and summary["real_receipt_count"] == 0
+    assert summary["simulated_cost_usd"] == "0.000160"
+
+
+def test_demo_calls_never_count_as_real_spend_anywhere(client):
+    trial = _issue(client)
+    headers = {**_auth(trial["api_key"]), "X-Inferrail-Attribute-Work-Id": "wid-sim",
+               "X-Inferrail-Attribute-Task-Id": "t-sim"}  # fmt: skip
+    for _ in range(3):
+        client.post("/v1/demo/chat/completions", json=_demo_payload(), headers=headers)
+    status = client.get(f"/v1/trial/{trial['tenant_id']}", headers=_auth(trial["api_key"]))
+    assert status.json()["spent_today_usd"] == "0"  # the daily budget counts real spend only
+    receipts = client.get("/v1/receipts", headers=_auth(trial["api_key"])).json()["receipts"]
+    assert receipts and all(r["simulated"] is True for r in receipts)
+    tx = client.get("/v1/transaction/t-sim", headers=_auth(trial["api_key"])).json()
+    assert tx["known_total_cost_usd"] == "0" and tx["simulated_event_count"] == 3
+    assert tx["simulated_total_cost_usd"] == "0.000480"
+    assert all(e["simulated"] for e in tx["events"])
+    (row,) = client.get("/v1/report?by=work_id", headers=_auth(trial["api_key"])).json()["rows"]
+    assert row["known_cost_usd"] == "0" and row["simulated_receipt_count"] == 3
 
 
 def test_work_summary_404_for_unknown_work_id(client):
@@ -471,7 +492,9 @@ def test_transaction_groups_by_task_id(client):
     tx = client.get("/v1/transaction/task-1", headers=_auth(trial["api_key"])).json()
     assert tx["task_id"] == "task-1"
     assert len(tx["events"]) == 2
-    assert tx["known_total_cost_usd"] == "0.000320"
+    # Demo calls: illustrative cost reported apart, never in the real known total.
+    assert tx["known_total_cost_usd"] == "0"
+    assert tx["simulated_total_cost_usd"] == "0.000320"
     assert tx["status"] == "success"
 
 
@@ -493,7 +516,8 @@ def test_report_groups_by_arbitrary_attribute_and_labels_unattributed(client):
     report = client.get("/v1/report?by=customer", headers=_auth(trial["api_key"])).json()
     rows = {r["group"]: r for r in report["rows"]}
     assert rows["acme"]["receipt_count"] == 2
-    assert rows["acme"]["known_cost_usd"] == "0.000320"
+    assert rows["acme"]["known_cost_usd"] == "0"  # demo calls are not real spend
+    assert rows["acme"]["simulated_cost_usd"] == "0.000320"
     assert rows["(unattributed)"]["receipt_count"] == 1
 
 

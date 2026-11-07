@@ -33,6 +33,9 @@ class EconomicEventRef(BaseModel):
 
     event_type: Literal["inference"]
     event_id: str
+    # A demo call (see receipts.classification): its cost is illustrative and
+    # excluded from `TaskTransaction.known_total_cost_usd`.
+    simulated: bool = False
     cost_usd: Decimal | None
     status: str
 
@@ -58,6 +61,10 @@ class TaskTransaction(BaseModel):
     # cli.report's ReportGroup.
     known_total_cost_usd: Decimal
     unknown_cost_event_count: int
+    # Real-only totals above; simulated (demo) events are counted and totalled
+    # here instead, never mixed into real cost.
+    simulated_event_count: int = 0
+    simulated_total_cost_usd: Decimal = Decimal("0")
 
     # success: every event succeeded. error: every event failed. partial:
     # anything mixed, or any event itself partial — see

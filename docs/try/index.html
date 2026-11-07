@@ -322,6 +322,9 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
     .mode-badge { display: inline-block; padding: 3px 10px; font: 700 13px var(--display); letter-spacing: .1em; text-transform: uppercase; border: 1px solid currentColor; }
     .mode-badge.demo { color: var(--ink-2); }
     .mode-badge.real { color: var(--good); background: var(--good-tint); }
+    .sim-tag, .real-tag { display: inline-block; padding: 0 6px; font: 700 11px var(--display); letter-spacing: .08em; text-transform: uppercase; border: 1px solid currentColor; }
+    .sim-tag { color: var(--ink-2); }
+    .real-tag { color: var(--good); background: var(--good-tint); }
     .trial-notice { margin: 0 0 16px; font-size: 15px; color: var(--ink-2); }
     .budget-mini { flex: 1 1 220px; min-width: 200px; }
     .budget-track { height: 10px; background: var(--card); border: 1px solid var(--rule); margin-top: 6px; overflow: hidden; }
@@ -421,7 +424,7 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
               <span class="result-status pending hidden" id="result-status">Running</span>
             </div>
             <div class="metrics">
-              <div class="metric metric-cost"><span class="metric-value" id="m-cost">$&mdash;</span><span class="metric-label">cost of this job</span></div>
+              <div class="metric metric-cost"><span class="metric-value" id="m-cost">$&mdash;</span><span class="metric-label" id="m-cost-label">cost of this job</span></div>
               <div class="metric"><span class="metric-value" id="m-calls">&mdash;</span><span class="metric-label">model calls</span></div>
               <div class="metric"><span class="metric-value" id="m-tokens">&mdash;</span><span class="metric-label" id="m-tokens-label">tokens</span></div>
               <div class="metric"><span class="metric-value" id="m-time">&mdash;</span><span class="metric-label">total time</span></div>
@@ -464,7 +467,7 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         <span class="trial-fact"><span class="label">Deletes in</span><span class="countdown-value" id="countdown-value">--:--:--</span></span>
         <span class="mode-badge demo" id="mode-badge">Demo mode</span>
         <div class="budget-mini">
-          <span class="trial-fact"><span class="label">Spent today</span><span id="budget-spent">$0.00</span><span class="label">of</span><span id="budget-cap">$1.00</span></span>
+          <span class="trial-fact"><span class="label" title="Real provider spend only. Demo calls cost nothing and never count against this cap.">Real spend today</span><span id="budget-spent">$0.00</span><span class="label">of</span><span id="budget-cap">$1.00</span></span>
           <div class="budget-track" aria-hidden="true"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
         </div>
       </div>
@@ -552,18 +555,18 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         <summary><span>Receipts, work and budget<span class="summary-sub">Every receipt this trial made, and cost per job and per task.</span></span></summary>
         <div class="disclose-body">
           <h3 class="sub-h">Cost per job</h3>
-          <p class="body-copy">Calls tagged with the same Work add up to one job. Mark how a job turned out to see cost per successful outcome.</p>
+          <p class="body-copy">Calls tagged with the same Work add up to one job. Mark how a job turned out to see cost per successful outcome. Real cost is what your provider charged; demo calls use made-up prices and are never added to it.</p>
           <div class="work-summary" id="work-summary">No tagged work yet. Run the demo above.</div>
           <div class="table-scroll">
             <table class="work-table hidden" id="work-table">
-              <thead><tr><th scope="col">Work</th><th scope="col">Calls</th><th scope="col">Known cost</th><th scope="col">Outcome</th></tr></thead>
+              <thead><tr><th scope="col">Work</th><th scope="col">Calls</th><th scope="col">Real cost</th><th scope="col">Demo (illustrative)</th><th scope="col">Outcome</th></tr></thead>
               <tbody id="work-rows"></tbody>
             </table>
           </div>
           <h3 class="sub-h">Cost per task</h3>
           <div class="table-scroll">
             <table class="work-table hidden" id="task-table">
-              <thead><tr><th scope="col">Task</th><th scope="col">Calls</th><th scope="col">Known cost</th><th scope="col">Status</th></tr></thead>
+              <thead><tr><th scope="col">Task</th><th scope="col">Calls</th><th scope="col">Real cost</th><th scope="col">Demo (illustrative)</th><th scope="col">Status</th></tr></thead>
               <tbody id="task-rows"></tbody>
             </table>
           </div>
@@ -992,8 +995,8 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           const list = $('feed-list');
           if (!page.receipts.length) { list.innerHTML = '<div class="feed-empty">No receipts yet. Run the demo above.</div>'; return changed; }
           list.innerHTML = page.receipts.slice().reverse().map((r) => `
-            <div class="receipt-row"><span>${esc(r.provider)} / ${esc(r.model)}${r.attributes && r.attributes.work_id ? ' · ' + esc(r.attributes.work_id) : ''}</span><span>${esc(r.status)}</span></div>
-            <div class="receipt-row"><span>${esc(r.prompt_tokens ?? '?')} in / ${esc(r.completion_tokens ?? '?')} out</span><span>${esc(fmtUsd(r.estimated_cost_usd))}</span></div>
+            <div class="receipt-row"><span>${r.simulated ? '<span class="sim-tag">Demo</span> ' : '<span class="real-tag">Real</span> '}${esc(r.provider)} / ${esc(r.model)}${r.attributes && r.attributes.work_id ? ' · ' + esc(r.attributes.work_id) : ''}</span><span>${esc(r.status)}</span></div>
+            <div class="receipt-row"><span>${esc(r.prompt_tokens ?? '?')} in / ${esc(r.completion_tokens ?? '?')} out</span><span>${esc(fmtUsd(r.estimated_cost_usd))}${r.simulated ? ' (illustrative)' : ''}</span></div>
           `).join('');
           return changed;
         } catch (e) { return false; /* transient poll failure */ }
@@ -1006,24 +1009,36 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           $('work-summary').textContent = 'No tagged work yet. Run the demo above.';
           table.classList.add('hidden');
         } else {
-          let known = 0, unknown = 0, succeeded = 0;
+          // Real and demo activity are totalled apart, even inside one Work: only
+          // real provider calls are spend. Cost per outcome uses real jobs only.
+          let known = 0, unknown = 0, succeeded = 0, realJobs = 0, demoCalls = 0, demoCost = 0;
           rows.forEach((w) => {
+            const real = (w.real_receipt_count || 0) > 0;
+            if (real) realJobs += 1;
             if (w.known_attributed_inference_cost_usd !== null) known += parseFloat(w.known_attributed_inference_cost_usd);
             unknown += w.unknown_cost_count || 0;
-            if (w.outcome_status === 'succeeded') succeeded += 1;
+            demoCalls += w.simulated_receipt_count || 0;
+            if (w.simulated_cost_usd !== null && w.simulated_cost_usd !== undefined) demoCost += parseFloat(w.simulated_cost_usd);
+            if (real && w.outcome_status === 'succeeded') succeeded += 1;
           });
-          let summary = `${rows.length} job${rows.length === 1 ? '' : 's'} · $${known.toFixed(6)} known cost`;
+          let summary = `${rows.length} job${rows.length === 1 ? '' : 's'} · $${known.toFixed(6)} real cost`;
           if (unknown) summary += ` (+${unknown} call${unknown === 1 ? '' : 's'} with unknown cost)`;
-          summary += succeeded
-            ? ` · ${succeeded} succeeded → $${(known / succeeded).toFixed(6)} per successful outcome` +
-              (succeeded < rows.length ? ' (includes the cost of work that didn\'t succeed)' : '')
-            : ' · mark an outcome below to see cost per successful outcome';
+          if (realJobs) {
+            summary += succeeded
+              ? ` · ${succeeded} succeeded → $${(known / succeeded).toFixed(6)} real cost per successful outcome` +
+                (succeeded < realJobs ? ' (includes the cost of work that didn\'t succeed)' : '')
+              : ' · mark an outcome below to see real cost per successful outcome';
+          } else {
+            summary += ' · no real provider calls yet';
+          }
+          if (demoCalls) summary += ` · ${demoCalls} demo call${demoCalls === 1 ? '' : 's'} ($${demoCost.toFixed(6)} illustrative, not counted)`;
           $('work-summary').textContent = summary;
           $('work-rows').innerHTML = rows.map((w) => `
             <tr>
               <td>${esc(w.work_id)}</td>
-              <td class="num">${esc(w.receipt_count)}</td>
-              <td class="num">${esc(fmtUsd(w.known_attributed_inference_cost_usd))}</td>
+              <td class="num">${esc(w.receipt_count)}${w.simulated_receipt_count ? ' (' + esc(w.simulated_receipt_count) + ' demo)' : ''}</td>
+              <td class="num">${w.real_receipt_count ? esc(fmtUsd(w.known_attributed_inference_cost_usd)) : '&mdash;'}</td>
+              <td class="num">${w.simulated_receipt_count ? esc(fmtUsd(w.simulated_cost_usd)) : '&mdash;'}</td>
               <td>${w.outcome_status ? esc(w.outcome_status) + ' ' : ''}<span class="outcome-btns">
                 <button class="outcome-btn" type="button" data-work-id="${esc(w.work_id)}" data-outcome="succeeded">Succeeded</button>
                 <button class="outcome-btn" type="button" data-work-id="${esc(w.work_id)}" data-outcome="failed">Failed</button>
@@ -1034,7 +1049,7 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         const taskRows = (taskReport.rows || []).filter((r) => r.group !== '(unattributed)');
         $('task-table').classList.toggle('hidden', !taskRows.length);
         $('task-rows').innerHTML = taskRows.map((r) => `
-          <tr><td>${esc(r.group)}</td><td class="num">${esc(r.receipt_count)}</td><td class="num">$${esc(r.known_cost_usd)}${r.unknown_cost_count ? ' (+' + esc(r.unknown_cost_count) + ' unknown)' : ''}</td><td>${esc(r.status)}</td></tr>`).join('');
+          <tr><td>${esc(r.group)}</td><td class="num">${esc(r.receipt_count)}${r.simulated_receipt_count ? ' (' + esc(r.simulated_receipt_count) + ' demo)' : ''}</td><td class="num">${r.real_receipt_count ? '$' + esc(r.known_cost_usd) : '&mdash;'}${r.unknown_cost_count ? ' (+' + esc(r.unknown_cost_count) + ' unknown)' : ''}</td><td class="num">${r.simulated_receipt_count ? '$' + esc(r.simulated_cost_usd) : '&mdash;'}</td><td>${esc(r.status)}</td></tr>`).join('');
       }
 
       async function refreshWork() {
@@ -1479,12 +1494,19 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
       function renderJobResult(work, receipts, runErrors) {
         const card = $('result');
         card.classList.remove('is-empty');
-        const cost = work.known_attributed_inference_cost_usd;
+        // A Work can hold real and demo calls. The headline is real spend when
+        // there is any; demo calls' made-up prices are shown apart, never added.
+        const realCalls = work.real_receipt_count || 0;
+        const demoCalls = work.simulated_receipt_count || 0;
+        const cost = realCalls ? work.known_attributed_inference_cost_usd : work.simulated_cost_usd;
         const unknown = work.unknown_cost_count || 0;
         const ok = work.inference_status === 'success' && !runErrors;
         setResultStatus(ok ? 'ok' : 'warn', ok ? 'Job completed' : 'Job finished with errors');
-        $('result-eyebrow').textContent = 'Demo job · DEMO prices, no real provider called';
+        $('result-eyebrow').textContent = realCalls
+          ? 'Real job · your provider was called and charged'
+          : 'Demo job · DEMO prices, no real provider called';
         $('result-job-name').textContent = work.work_id;
+        $('m-cost-label').textContent = realCalls ? 'real cost of this job' : 'illustrative demo cost (not real spend)';
 
         $('m-cost').textContent = fmtMoney(cost);
         $('rollup-cost').textContent = fmtMoney(cost);
@@ -1509,6 +1531,11 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
         while (squares.children.length < Math.min(work.receipt_count, 60)) addCallSquare();
 
         let explain = `${work.receipt_count} model call${work.receipt_count === 1 ? '' : 's'}, all tagged with the same Work, added up to one cost.`;
+        if (realCalls && demoCalls) {
+          explain = `${realCalls} real call${realCalls === 1 ? '' : 's'} added up to the real cost. ` +
+            `${demoCalls} demo call${demoCalls === 1 ? '' : 's'} in the same Work ` +
+            `(${fmtMoney(work.simulated_cost_usd)} at made-up prices) ${demoCalls === 1 ? 'is' : 'are'} shown apart and not counted.`;
+        }
         if (unknown) explain += ` ${unknown} call${unknown === 1 ? ' has' : 's have'} an unknown cost and ${unknown === 1 ? 'is' : 'are'} not in the total.`;
         $('result-explain').innerHTML = esc(explain) +
           '<span class="result-demo-note">Inferrail kept the counts, cost and timing. Not the prompts or replies.</span>';
@@ -1520,10 +1547,12 @@ details.inline > div { margin-top: 8px; color: var(--ink-2); }
           const step = task ? (STEP_LABELS[task] || task) : '(no task)';
           return `<tr><td>${i + 1}</td><td>${esc(step)}</td><td class="col-model">${esc(r.provider)} / ${esc(r.model)}</td>` +
             `<td class="num">${esc(r.prompt_tokens ?? '?')} / ${esc(r.completion_tokens ?? '?')}</td>` +
-            `<td class="num">${esc(fmtUsd(r.estimated_cost_usd))}</td><td>${esc(r.status)}</td></tr>`;
+            `<td class="num">${esc(fmtUsd(r.estimated_cost_usd))}${r.simulated ? ' (demo)' : ''}</td><td>${esc(r.status)}</td></tr>`;
         }).join('');
         $('calls-note').textContent = complete
-          ? 'One row per receipt. Prices are DEMO prices: made-up round numbers, not real provider pricing.'
+          ? (realCalls
+            ? 'One row per receipt. Real rows are priced from the provider\'s published prices; rows marked (demo) use made-up prices.'
+            : 'One row per receipt. Prices are DEMO prices: made-up round numbers, not real provider pricing.')
           : `Showing the ${receipts.length} most recent calls for this Work.`;
         $('result-foot').classList.remove('hidden');
       }

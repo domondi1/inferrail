@@ -57,6 +57,7 @@ from inferrail.errors import (
 )
 from inferrail.pricing.resolver import PricingResolver
 from inferrail.receipts.calculator import CacheTokens, calculate_cost_with_cache_usd
+from inferrail.receipts.classification import is_simulated
 from inferrail.receipts.sqlite_store import ReceiptsStore
 
 _logger = logging.getLogger("inferrail.budgets")
@@ -199,6 +200,8 @@ def spent_so_far_usd(receipts: ReceiptsStore, budget: Budget) -> SpentSoFar:
     has_unpriced_usage = False
     for receipt in rows:
         if receipt.status not in ("success", "partial"):
+            continue
+        if is_simulated(receipt):  # a demo call spent nothing; its price is illustrative
             continue
         if window_start is not None and receipt.timestamp < window_start:
             continue

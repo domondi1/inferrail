@@ -114,6 +114,7 @@ from inferrail.pricing.resolver import PricingResolver
 from inferrail.providers.anthropic import _ANTHROPIC_API_VERSION, AnthropicProvider
 from inferrail.providers.openai import OpenAIProvider
 from inferrail.receipts.aggregation import summarize_receipts
+from inferrail.receipts.classification import is_simulated
 from inferrail.receipts.schema import InferenceReceipt
 from inferrail.routing.router import Router
 from inferrail.telemetry.sinks import NullTelemetrySink
@@ -593,6 +594,8 @@ def _receipt_json(receipt: InferenceReceipt) -> dict[str, Any]:
         "attributes": receipt.attributes,
         "total_latency_ms": receipt.total_latency_ms,
         "retry_count": receipt.retry_count,
+        # A demo call: no provider was called and its cost is illustrative, never real spend.
+        "simulated": is_simulated(receipt),
     }
 
 
@@ -613,6 +616,15 @@ def _work_summary_json(summary: WorkSummary) -> dict[str, Any]:
         ),
         "unknown_cost_count": summary.unknown_cost_count,
         "inference_status": summary.inference_status,
+        # Real-only: the known cost above covers real provider calls and is null
+        # when there were none. Demo calls are counted and totalled separately.
+        "real_receipt_count": summary.real_receipt_count,
+        "simulated_receipt_count": summary.simulated_receipt_count,
+        "simulated_cost_usd": (
+            str(summary.simulated_cost_usd) if summary.simulated_cost_usd is not None else None
+        ),
+        "prompt_tokens": summary.prompt_tokens,
+        "completion_tokens": summary.completion_tokens,
     }
 
 
@@ -1461,11 +1473,14 @@ def create_app(data_dir: Path) -> FastAPI:
                     "event_id": e.event_id,
                     "cost_usd": str(e.cost_usd) if e.cost_usd is not None else None,
                     "status": e.status,
+                    "simulated": e.simulated,
                 }
                 for e in transaction.events
             ],
             "known_total_cost_usd": str(transaction.known_total_cost_usd),
             "unknown_cost_event_count": transaction.unknown_cost_event_count,
+            "simulated_event_count": transaction.simulated_event_count,
+            "simulated_total_cost_usd": str(transaction.simulated_total_cost_usd),
             "status": transaction.status,
             "started_at": transaction.started_at.isoformat(),
             "ended_at": transaction.ended_at.isoformat(),
@@ -1496,6 +1511,9 @@ def create_app(data_dir: Path) -> FastAPI:
                     "known_cost_usd": str(economics.known_cost_usd),
                     "unknown_cost_count": economics.unknown_cost_count,
                     "status": economics.status,
+                    "real_receipt_count": economics.real_receipt_count,
+                    "simulated_receipt_count": economics.simulated_receipt_count,
+                    "simulated_cost_usd": str(economics.simulated_cost_usd),
                 }
             )
         return {"by": by, "rows": rows}

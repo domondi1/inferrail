@@ -41,3 +41,10 @@ class WorkSummary(BaseModel):
     # when no receipt did (so it reads as "unknown", never a misleading 0).
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Real vs simulated receipts (see receipts.classification). The cost and
+    # token fields above cover real receipts only, and the known cost is None
+    # when the work has no real receipt. Simulated (demo) receipts' illustrative
+    # cost is reported separately and is never part of real spend.
+    real_receipt_count: int = 0
+    simulated_receipt_count: int = 0
+    simulated_cost_usd: Decimal | None = None

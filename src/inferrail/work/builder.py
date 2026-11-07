@@ -93,11 +93,18 @@ def build_work_summary(
         started_at=economics.started_at,
         ended_at=economics.ended_at,
         receipt_count=len(matching),
-        known_attributed_inference_cost_usd=(economics.known_cost_usd if matching else None),
+        known_attributed_inference_cost_usd=(
+            economics.known_cost_usd if economics.real_receipt_count else None
+        ),
         unknown_cost_count=economics.unknown_cost_count,
         inference_status=economics.status,
         prompt_tokens=(economics.prompt_tokens if matching else None),
         completion_tokens=(economics.completion_tokens if matching else None),
+        real_receipt_count=economics.real_receipt_count,
+        simulated_receipt_count=economics.simulated_receipt_count,
+        simulated_cost_usd=(
+            economics.simulated_cost_usd if economics.simulated_receipt_count else None
+        ),
     )
 
 
