@@ -231,3 +231,36 @@ def test_web_read_that_would_not_mount_stops_the_deploy(preflight, tmp_path):
     problems = preflight.check(env, APPROVED, build=lambda s: None)
     assert any("Web Read is configured" in p for p in problems)
     assert not (tmp_path / "web-read").exists()  # the check never writes to the real disk
+
+
+SEARCH = "0x" + "5" * 40
+SEARCH_ENV = {
+    "WEB_SEARCH_PAY_TO": SEARCH,
+    "WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED": "1",
+    "WEB_SEARCH_SUPPLIER_KEY": "test-key",
+    "WEB_SEARCH_SUPPLIER_CREDIT_USD": "0.0008",
+    "WEB_SEARCH_MPP_CHAIN_ID": "42431",
+    "BG_OPERATOR_TOKEN": "op",
+}
+
+
+def test_web_search_is_built_and_its_address_must_be_stated(preflight, tmp_path, capsys):
+    pytest.importorskip("x402")
+    env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, **SEARCH_ENV)
+    ok = preflight.check(env, APPROVED, build=lambda s: None, expect_web_search_pay_to=SEARCH)
+    assert ok == []
+    out = capsys.readouterr().out
+    assert f"web search: builds; payTo {SEARCH}, price $0.002, rails MPP on Tempo" in out
+    unstated = preflight.check(env, APPROVED, build=lambda s: None)
+    assert any("--expect-web-search-pay-to" in p for p in unstated)
+    wrong = preflight.check(env, APPROVED, build=lambda s: None, expect_web_search_pay_to=APPROVED)
+    assert any("WEB_SEARCH_PAY_TO is" in p for p in wrong)
+    assert not (tmp_path / "web-search").exists()
+
+
+def test_web_search_without_supplier_rights_stops_the_deploy(preflight, tmp_path):
+    pytest.importorskip("x402")
+    env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, **SEARCH_ENV)
+    env.pop("WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED")
+    problems = preflight.check(env, APPROVED, build=lambda s: None, expect_web_search_pay_to=SEARCH)
+    assert any("Web Search is configured" in p for p in problems)

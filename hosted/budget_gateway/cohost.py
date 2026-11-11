@@ -3,6 +3,8 @@
     /          -> hosted/cost_gateway (the /try/ trial API, unchanged)
     /hosted/*  -> hosted/budget_gateway (Inferrail Hosted)
     /read/*    -> hosted/web_read (Inferrail Web Read), only when READ_PAY_TO is set
+    /search/*  -> hosted/web_read/search.py (Inferrail Web Search, a Web Read task), only when
+                  WEB_SEARCH_PAY_TO and its supplier approvals are set
     /openapi.json -> Hosted's operations, for agent catalogs (see origin_openapi)
 
 Why one process: it reuses an already-paid instance. Both apps are small (measured in this
@@ -26,6 +28,7 @@ process. Run with one worker:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import logging
 import os
@@ -44,6 +47,7 @@ HOSTED_DIR = Path(__file__).resolve().parent
 TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
 PREFIX = "/hosted"
 READ_PREFIX = "/read"
+SEARCH_PREFIX = "/search"
 SITE = "https://tryinferrail.com"
 REPO = "https://github.com/domondi1/inferrail"
 log = logging.getLogger("inferrail.cohost")
@@ -79,10 +83,13 @@ def create_combined_app(
     facilitator: Any | None = None,
     modules: tuple[ModuleType, ModuleType] | None = None,
     web_read: Any = "env",
+    web_search: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
     if web_read == "env":
         web_read = web_read_from_env(hosted_settings)
+    if web_search == "env":
+        web_search = web_search_from_env(hosted_settings)
     trial_app = trial_mod.create_app(trial_data_dir)
     hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
 
@@ -121,15 +128,20 @@ def create_combined_app(
     ]
     if web_read is not None:
         routes.append(Mount(READ_PREFIX, app=web_read[0]))
+    if web_search is not None:
+        routes.append(Mount(SEARCH_PREFIX, app=web_search[0]))
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
     app.state.web_read_settings = web_read[1] if web_read is not None else None
+    app.state.web_search_settings = web_search[1] if web_search is not None else None
     # Another app sharing this origin adds its paid operations here: callables returning
     # OpenAPI `paths` entries keyed by full origin path.
     app.state.discovery_paths = []
     if web_read is not None:
         app.state.discovery_paths.append(lambda: _web_read_paths(web_read[1]))
+    if web_search is not None:
+        app.state.discovery_paths.append(lambda: _web_search_paths(web_search[1]))
     return app
 
 
@@ -158,6 +170,67 @@ def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -
     except Exception:
         log.exception("Web Read not mounted: configuration error")
         return None
+
+
+def web_search_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+    """(app, settings) for Inferrail Web Search when WEB_SEARCH_PAY_TO is set, else None.
+
+    Sold only with written supplier permission (WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED=1), the
+    supplier key and its verified all-in cost per search (WEB_SEARCH_SUPPLIER_CREDIT_USD, from
+    the paid invoice), at a price above that cost. MPP only unless WEB_SEARCH_X402=1, which
+    needs a receiving address of its own (an EIP-3009 transfer binds a merchant and amount, not
+    an endpoint). Fail-isolated like Web Read: a configuration error leaves it unmounted.
+    """
+    e = dict(os.environ if env is None else env)
+    if not e.get("WEB_SEARCH_PAY_TO"):
+        return None
+    try:
+        if e.get("WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED") != "1":
+            raise RuntimeError("Web Search needs WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED=1")
+        mod = sys.modules.get("web_read_service") or _load(
+            "web_read_service", HOSTED_DIR.parent / "web_read" / "service.py"
+        )
+        search = _load("web_read_search", HOSTED_DIR.parent / "web_read" / "search.py")
+        suppliers, contract = search.load_suppliers()
+        if e.get("WEB_SEARCH_SUPPLIER", "serpex") != "serpex":
+            raise RuntimeError("WEB_SEARCH_SUPPLIER must be serpex")
+        credit = contract.atomic(e["WEB_SEARCH_SUPPLIER_CREDIT_USD"])
+        origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+        e.setdefault("WEB_SEARCH_RESOURCE_URL", f"{origin}{SEARCH_PREFIX}/v1/web")
+        e["WEB_SEARCH_MOUNT_PREFIX"] = SEARCH_PREFIX
+        e.setdefault("WEB_SEARCH_NETWORK", hosted_settings.x402_network)
+        e.setdefault("WEB_SEARCH_X402", "0")
+        e.setdefault(
+            "WEB_SEARCH_DATA_DIR", str(Path(hosted_settings.data_dir).parent / "web-search")
+        )
+        settings = mod.Settings.from_env(e, prefix="WEB_SEARCH_")
+        if contract.atomic(settings.price_usd) <= credit:
+            raise RuntimeError("WEB_SEARCH_PRICE_USD must exceed the supplier's cost per search")
+        if settings.x402:
+            taken = {
+                a.lower()
+                for a in (hosted_settings.x402_pay_to, e.get("READ_PAY_TO"), e.get("SEARCH_PAY_TO"))
+                if a
+            }
+            if settings.pay_to.lower() in taken:
+                raise RuntimeError("WEB_SEARCH_X402=1 needs its own WEB_SEARCH_PAY_TO")
+        supplier = suppliers.SerpexSearch(e["WEB_SEARCH_SUPPLIER_KEY"], credit)
+        task = search.search_task(mod, supplier, _search_retry_secret(e))
+        return mod.create_app(settings, task=task), settings
+    except Exception:
+        log.exception("Web Search not mounted: configuration error")
+        return None
+
+
+def _search_retry_secret(e: dict[str, str]) -> bytes:
+    """Keys the retry identity (an HMAC of the query). Stable across restarts, so a paid result
+    can still be recovered after a deploy."""
+    if e.get("WEB_SEARCH_RETRY_SECRET"):
+        return e["WEB_SEARCH_RETRY_SECRET"].encode()
+    seed = e.get("CDP_API_KEY_SECRET") or e.get("BG_OPERATOR_TOKEN")
+    if not seed:
+        raise RuntimeError("Web Search needs WEB_SEARCH_RETRY_SECRET or BG_OPERATOR_TOKEN")
+    return hashlib.sha256(f"inferrail-web-search-retry|{seed}".encode()).digest()
 
 
 def _mpp_protocols(settings: Any) -> list[dict[str, Any]]:
@@ -262,6 +335,55 @@ def _web_read_paths(settings: Any) -> dict[str, Any]:
     return {f"{READ_PREFIX}/v1/page": operations}
 
 
+def _web_search_paths(settings: Any) -> dict[str, Any]:
+    search = sys.modules["web_read_search"]
+    protocols = ([{"x402": {}}] if settings.x402 else []) + _mpp_protocols(settings)
+    return {
+        f"{SEARCH_PREFIX}/v1/web": {
+            "post": {
+                "operationId": "searchWeb",
+                "summary": search.SUMMARY,
+                "description": (
+                    "Search the web for agents: ranked title, URL and snippet results for a "
+                    f"query, with a content hash and a receipt. ${settings.price_usd} per "
+                    "delivered search; a failed or empty search costs nothing, and a retry with "
+                    "the same request_id never pays twice. The query is not stored."
+                ),
+                "tags": search.TAGS,
+                "security": [],
+                "x-payment-info": {
+                    "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
+                    "protocols": protocols,
+                },
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": search.SearchRequest.model_json_schema(),
+                            "example": {"query": "tempo machine payments protocol"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The results, delivered and paid",
+                        "content": {"application/json": {"schema": search.OUTPUT_SCHEMA}},
+                    },
+                    "402": {"description": "Payment Required"},
+                    "422": {"description": "Invalid request; nothing charged"},
+                    "502": {"description": "The search failed; may succeed later; nothing charged"},
+                },
+            }
+        }
+    }
+
+
+def _search_rails(settings: Any) -> str:
+    return " or ".join(
+        r for r, on in (("x402 on Base", settings.x402), ("MPP on Tempo", settings.mpp)) if on
+    )
+
+
 def _origin_summary(app: Starlette) -> tuple[str, str]:
     """(title, one-paragraph description) of what this origin sells, for catalogs."""
     settings = app.state.hosted_settings
@@ -271,13 +393,23 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
         "$0.001/run in x402 credits)."
     )
     read = getattr(app.state, "web_read_settings", None)
-    if not app.state.discovery_paths or read is None:
+    found = getattr(app.state, "web_search_settings", None)
+    if not app.state.discovery_paths or (read is None and found is None):
         return "Inferrail Hosted", hosted
-    return "Inferrail", (
-        "Inferrail Web Read: any public web page as clean, LLM-ready markdown (URL to markdown) "
-        f"for ${read.price_usd} per delivered page, paid over {_rails(read)}; failed or refused "
-        "pages are never charged and a retry never pays twice. " + hosted
-    )
+    parts = []
+    if read is not None:
+        parts.append(
+            "Inferrail Web Read: any public web page as clean, LLM-ready markdown (URL to "
+            f"markdown) for ${read.price_usd} per delivered page, paid over {_rails(read)}; "
+            "failed or refused pages are never charged and a retry never pays twice."
+        )
+    if found is not None:
+        parts.append(
+            "Inferrail Web Search: ranked web search results for a query for "
+            f"${found.price_usd} per delivered search, paid over {_search_rails(found)}; failed "
+            "searches are never charged."
+        )
+    return "Inferrail", " ".join(parts) + " " + hosted
 
 
 def _rails(read: Any) -> str:
@@ -317,6 +449,14 @@ def origin_llms(app: Starlette) -> str:
             f'`POST {origin}{READ_PREFIX}/v1/page` with `{{"url": "https://...", '
             f'"request_id": "..."}}` returns HTTP 402; pay ${read.price_usd} over '
             f"{_rails(read).replace(' and ', ' or ')} and repeat the request.",
+        ]
+    found = getattr(app.state, "web_search_settings", None)
+    if app.state.discovery_paths and found is not None:
+        lines += [
+            f"- [Inferrail Web Search]({origin}{SEARCH_PREFIX}/llms.txt): "
+            f'`POST {origin}{SEARCH_PREFIX}/v1/web` with `{{"query": "...", '
+            f'"request_id": "..."}}` returns HTTP 402; pay ${found.price_usd} over '
+            f"{_search_rails(found)} and repeat the request.",
         ]
     lines += [
         f"- [Inferrail Hosted]({base}/llms.txt): per-run dollar budgets shared across agents; "

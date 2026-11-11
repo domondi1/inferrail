@@ -248,3 +248,125 @@ def test_search_settings_from_env_guard_mpp_only_and_mainnet(tmp_path):
 def test_a_short_retry_secret_is_refused():
     with pytest.raises(ValueError, match="secret"):
         search.search_task(svc, FakeSupplier(), b"short")
+
+
+# -- mounted next to Web Read and Hosted on the shared origin ------------------------------------
+from _x402_fake_facilitator import FakeFacilitator  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+cohost = _load("budget_gateway_cohost_ws", ROOT / "hosted" / "budget_gateway" / "cohost.py")
+HOSTED_PAY_TO = "0x" + "9" * 40
+READ_PAY_TO = "0x" + "8" * 40
+ENV = {
+    "WEB_SEARCH_PAY_TO": PAY_TO,
+    "WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED": "1",
+    "WEB_SEARCH_SUPPLIER_KEY": "test-key",
+    "WEB_SEARCH_SUPPLIER_CREDIT_USD": "0.0008",
+    "WEB_SEARCH_MPP_CHAIN_ID": "42431",
+    "BG_OPERATOR_TOKEN": "op",
+}
+
+
+def _hosted(tmp_path: Path):
+    trial_mod, hosted_mod = cohost.load_modules()
+    settings = hosted_mod.Settings.from_env(
+        {"BG_DATA_DIR": str(tmp_path / "hosted"), "BG_MOUNT_PREFIX": "/hosted",
+         "BG_PUBLIC_BASE_URL": "http://testserver/hosted", "BG_X402_PAY_TO": HOSTED_PAY_TO}
+    )  # fmt: skip
+    return trial_mod, hosted_mod, settings
+
+
+def _origin(tmp_path: Path, env: dict[str, str], read_env: dict[str, str] | None = None):
+    trial_mod, hosted_mod, settings = _hosted(tmp_path)
+    web_read = cohost.web_read_from_env(settings, read_env) if read_env else None
+    web_search = cohost.web_search_from_env(
+        settings, {**env, "WEB_SEARCH_DATA_DIR": str(tmp_path / "ws")}
+    )
+    app = cohost.create_combined_app(
+        tmp_path / "trial", settings, facilitator=FakeFacilitator(),
+        modules=(trial_mod, hosted_mod), web_read=web_read, web_search=web_search,
+    )  # fmt: skip
+    return app, web_search
+
+
+def test_not_mounted_without_its_payto():
+    assert cohost.web_search_from_env(SimpleNamespace(), {}) is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED": None},  # no written supplier permission
+        {"WEB_SEARCH_SUPPLIER_KEY": None},
+        {"WEB_SEARCH_SUPPLIER_CREDIT_USD": None},  # cost per search must be known
+        {"WEB_SEARCH_PRICE_USD": "0.001", "WEB_SEARCH_SUPPLIER_CREDIT_USD": "0.001"},  # no margin
+        {"WEB_SEARCH_SUPPLIER": "exa"},
+        {"WEB_SEARCH_MPP_CHAIN_ID": None},  # MPP only by default: needs MPP
+        {"WEB_SEARCH_MPP_CHAIN_ID": "4217"},  # Tempo mainnet needs its own approval
+        {"WEB_SEARCH_X402": "1", "WEB_SEARCH_PAY_TO": HOSTED_PAY_TO},  # x402 needs its own payee
+        {"WEB_SEARCH_X402": "1", "WEB_SEARCH_PAY_TO": READ_PAY_TO, "READ_PAY_TO": READ_PAY_TO},
+        {"BG_OPERATOR_TOKEN": None},  # no stable retry secret
+    ],
+)
+def test_misconfiguration_leaves_it_unmounted(tmp_path, change):
+    _, _, settings = _hosted(tmp_path)
+    env = {**ENV, "WEB_SEARCH_DATA_DIR": str(tmp_path / "ws")}
+    for k, v in change.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    assert cohost.web_search_from_env(settings, env) is None
+
+
+def test_mpp_only_may_share_web_reads_payee_because_payments_are_route_bound(tmp_path):
+    _, _, settings = _hosted(tmp_path)
+    env = {**ENV, "WEB_SEARCH_PAY_TO": READ_PAY_TO, "READ_PAY_TO": READ_PAY_TO,
+           "WEB_SEARCH_DATA_DIR": str(tmp_path / "ws")}  # fmt: skip
+    mounted = cohost.web_search_from_env(settings, env)
+    assert mounted is not None and mounted[1].x402 is False
+
+
+def test_mounted_and_listed_with_one_price_everywhere(tmp_path):
+    app, web_search = _origin(tmp_path, ENV)
+    assert web_search is not None
+    settings = web_search[1]
+    c = TestClient(app)
+    unpaid = c.post("/search/v1/web", json={"query": "q"})
+    assert unpaid.status_code == 402 and unpaid.headers["www-authenticate"].startswith("Payment ")
+    from mpp import Challenge
+
+    offers = unpaid.headers.get_list("www-authenticate")
+    challenges = [Challenge.from_www_authenticate(h) for h in offers]
+    assert challenges
+    for each in challenges:  # every offer: one price, scoped to this route
+        assert each.request["amount"] == "2000"  # $0.002 in 6-decimal units
+        assert each.request["_mppx_scope"]["resource"] == "/search/v1/web"
+    op = c.get("/openapi.json").json()["paths"]["/search/v1/web"]["post"]
+    assert op["x-payment-info"]["price"]["amount"] == settings.price_usd == "0.002"
+    assert op["x-payment-info"]["protocols"] == [
+        {
+            "mpp": {
+                "method": "tempo",
+                "intent": "charge",
+                "currency": op["x-payment-info"]["protocols"][0]["mpp"]["currency"],
+            }
+        }
+    ]  # MPP only: no x402 listed
+    assert "$0.002 per delivered search" in op["description"]
+    assert "$0.002 per delivered search" in c.get("/search/llms.txt").text
+    origin_llms = c.get("/llms.txt").text
+    assert "/search/v1/web" in origin_llms and "pay $0.002 over MPP on Tempo" in origin_llms
+    assert "Inferrail Web Search" in c.get("/openapi.json").json()["info"]["description"]
+
+
+def test_web_reads_listing_is_unchanged_when_search_is_mounted(tmp_path):
+    read_env = {"READ_PAY_TO": READ_PAY_TO, "READ_DATA_DIR": str(tmp_path / "wr")}
+    alone, _ = _origin(tmp_path / "a", {}, read_env)
+    both, _ = _origin(tmp_path / "b", ENV, read_env)
+    a, b = (
+        TestClient(alone).get("/openapi.json").json(),
+        TestClient(both).get("/openapi.json").json(),
+    )
+    assert a["paths"]["/read/v1/page"] == b["paths"]["/read/v1/page"]
+    assert set(b["paths"]) - set(a["paths"]) == {"/search/v1/web"}
