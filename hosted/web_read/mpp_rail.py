@@ -15,6 +15,7 @@ own `READ_PAY_TO`; it's an EVM address, valid on Tempo too.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 MAINNET, TESTNET = 4217, 42431
 
@@ -161,10 +163,18 @@ class TempoRail:
             (k, v) for k, v in challenge.headers.multi_items() if k.lower() == "www-authenticate"
         ]
 
-    async def validate(self, authorization: str) -> tuple[Any, str, str] | str:
+    async def validate(self, authorization: str, url: str) -> tuple[Any, str, str] | str:
         """(credential, payer, credential type) when the credential is a valid, unspent payment
         for this route's price; otherwise the reason, as the error's class name (never its
-        message, which can quote the credential). Nothing is broadcast."""
+        message, which can quote the credential). Nothing is broadcast.
+
+        `url` is the paid request's URL. The SDK binds a challenge to our secret, realm, method,
+        intent, amount and expiry but ignores its `_mppx_scope`, so a challenge issued for one
+        route would also validate on any other route with the same secret and price. The scope
+        is part of the challenge's HMAC, so checking it binds the payment to the route that
+        issued it. Method and query aren't compared: one resource is sold over GET and POST."""
+        if not _issued_for(authorization, urlsplit(url).path):
+            return "RouteMismatch"
         try:
             v = await self.server.validate_credential(
                 authorization, intent="charge", request={"amount": self.price}
@@ -180,6 +190,21 @@ class TempoRail:
         return await self.server.broadcast_credential(
             credential, intent="charge", request={"amount": self.price}
         )
+
+
+def _issued_for(authorization: str, path: str) -> bool:
+    """Whether the credential echoes a challenge scoped to `path`. Unparseable or unscoped
+    credentials fail closed; the HMAC check that follows rejects any altered scope."""
+    from mpp import Credential
+
+    try:
+        echo = Credential.from_authorization(authorization).challenge
+        padded = echo.request + "=" * (-len(echo.request) % 4)
+        request = json.loads(base64.urlsafe_b64decode(padded))
+        scope = request.get("_mppx_scope") if isinstance(request, dict) else None
+        return isinstance(scope, dict) and scope.get("resource") == path
+    except Exception:
+        return False
 
 
 def is_mpp_authorization(value: str | None) -> bool:

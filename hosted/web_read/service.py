@@ -517,7 +517,7 @@ def create_app(
         except Exception:
             ledger.event("attempt_failed", _reason("mpp", "invalid_request"))
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
-        valid = await rail.validate(request.headers["authorization"])
+        valid = await rail.validate(request.headers["authorization"], str(request.url))
         if valid is None or isinstance(valid, str):  # a str is the rail's reason for refusing
             ledger.event("payment_rejected", client)
             ledger.event("attempt_failed", _reason("mpp", valid))

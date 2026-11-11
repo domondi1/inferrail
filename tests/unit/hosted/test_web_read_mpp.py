@@ -53,7 +53,7 @@ class StubRail:
         self.challenged.append(method)
         return [("WWW-Authenticate", 'Payment id="x", method="tempo", intent="charge"')]
 
-    async def validate(self, authorization: str):
+    async def validate(self, authorization: str, url: str | None = None):
         self.validated += 1
         return (object(), PAYER, self.kind) if self.valid else self.reason
 
@@ -338,3 +338,99 @@ def test_every_paid_attempt_ends_delivered_recovered_or_failed(tmp_path):
     f = _stats(c)["funnel"]
     assert f["attempt_failed"] == {"mpp:http_422": 1}
     assert f["payment_attempt"] == f["settled_reads"] + f["recovered"] + 1
+
+
+# --- Route binding (a credential pays for the route that issued its challenge, and no other) ---
+
+
+def _real_rail():
+    cfg = rail_mod.MppSettings(chain_id=rail_mod.TESTNET, secret_key="shared-secret", realm="r")
+    return rail_mod.TempoRail(cfg, PAY_TO, "0.002")
+
+
+async def _credential_for(rail, url: str, method: str = "POST") -> str:
+    """A credential echoing a genuine challenge this server issued for `url`."""
+    from mpp import Challenge, Credential
+
+    header = (await rail.challenge_headers(url, method))[0][1]
+    challenge = Challenge.from_www_authenticate(header)
+    payload = {"type": "hash", "hash": "0x" + "c" * 64}
+    return Credential(challenge=challenge.to_echo(), payload=payload).to_authorization()
+
+
+def test_a_challenge_for_one_route_authenticates_on_any_same_secret_route():
+    """The condition the route check exists for: the SDK's HMAC binds secret, realm, method,
+    intent, amount and expiry, and its validators ignore `_mppx_scope`, so a second route
+    sharing the secret and price would accept another route's challenge."""
+    import asyncio
+
+    from mpp import Challenge
+
+    rail = _real_rail()
+    header = asyncio.run(rail.challenge_headers("https://h/read/v1/page"))[0][1]
+    challenge = Challenge.from_www_authenticate(header)
+    assert challenge.verify("shared-secret", "r")  # authentic for any route on this server
+    assert challenge.request["_mppx_scope"]["resource"] == "/read/v1/page"
+
+
+def test_a_credential_issued_for_another_route_is_refused_before_validation(monkeypatch):
+    import asyncio
+
+    rail = _real_rail()
+    calls = []
+
+    async def spy(*a, **k):
+        calls.append(1)
+        raise AssertionError("must not reach payment validation")
+
+    monkeypatch.setattr(rail.server, "validate_credential", spy)
+    auth = asyncio.run(_credential_for(rail, "https://h/read/v1/page"))
+    assert asyncio.run(rail.validate(auth, "https://h/search/v1/web")) == "RouteMismatch"
+    assert calls == []
+
+
+def test_a_credential_for_this_route_reaches_validation_for_get_and_post(monkeypatch):
+    import asyncio
+
+    rail = _real_rail()
+    seen = []
+
+    async def ok(authorization, **k):
+        seen.append(k.get("request"))
+        return SimpleNamespace(credential=SimpleNamespace(payload={"type": "hash"}), payer=PAYER)
+
+    monkeypatch.setattr(rail.server, "validate_credential", ok)
+    get_url = "https://h/read/v1/page?url=https%3A%2F%2Fexample.com%2F"
+    for method, url in (("POST", "https://h/read/v1/page"), ("GET", get_url)):
+        auth = asyncio.run(_credential_for(rail, url, method))
+        result = asyncio.run(rail.validate(auth, url))
+        assert result[1:] == (PAYER, "hash")
+    assert seen == [{"amount": "0.002"}, {"amount": "0.002"}]
+
+
+def test_a_credential_without_a_route_scope_is_refused(monkeypatch):
+    import asyncio
+
+    from mpp import Challenge, Credential
+
+    rail = _real_rail()
+    monkeypatch.setattr(rail.server, "validate_credential", None)
+    challenge = Challenge.create(secret_key="shared-secret", realm="r", method="tempo",
+                                 intent="charge", request={"amount": "2000"})  # fmt: skip
+    auth = Credential(challenge=challenge.to_echo(), payload={"type": "hash"}).to_authorization()
+    assert asyncio.run(rail.validate(auth, "https://h/read/v1/page")) == "RouteMismatch"
+
+
+def test_the_service_checks_the_route_of_the_paid_request(tmp_path):
+    rail = StubRail()
+    seen = []
+    original = rail.validate
+
+    async def validate(authorization, url=None):
+        seen.append(url)
+        return await original(authorization)
+
+    rail.validate = validate
+    c = _client(tmp_path, rail)
+    c.post("/v1/page", json={"url": "https://example.com/"}, headers=PAY)
+    assert seen and seen[0].endswith("/v1/page")
