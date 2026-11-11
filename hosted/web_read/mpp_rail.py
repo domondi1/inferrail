@@ -15,6 +15,7 @@ own `READ_PAY_TO`; it's an EVM address, valid on Tempo too.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 MAINNET, TESTNET = 4217, 42431
 
@@ -37,26 +39,30 @@ class MppSettings:
     realm: str
 
     @classmethod
-    def from_env(cls, env: dict[str, str], realm: str) -> MppSettings | None:
-        raw = env.get("READ_MPP_CHAIN_ID", "").strip()
+    def from_env(cls, env: dict[str, str], realm: str, prefix: str = "READ_") -> MppSettings | None:
+        raw = env.get(f"{prefix}MPP_CHAIN_ID", "").strip()
         if not raw:
             return None
         chain_id = int(raw)
         if chain_id not in (MAINNET, TESTNET):
-            raise RuntimeError(f"READ_MPP_CHAIN_ID must be {MAINNET} or {TESTNET}")
-        if chain_id == MAINNET and env.get("READ_MPP_MAINNET_APPROVED") != "1":
-            raise RuntimeError("Tempo mainnet sales require READ_MPP_MAINNET_APPROVED=1")
-        return cls(chain_id=chain_id, secret_key=_secret(env), realm=realm)
+            raise RuntimeError(f"{prefix}MPP_CHAIN_ID must be {MAINNET} or {TESTNET}")
+        if chain_id == MAINNET and env.get(f"{prefix}MPP_MAINNET_APPROVED") != "1":
+            raise RuntimeError(f"Tempo mainnet sales require {prefix}MPP_MAINNET_APPROVED=1")
+        return cls(chain_id=chain_id, secret_key=_secret(env, prefix), realm=realm)
 
 
-def _secret(env: dict[str, str]) -> str:
+def _secret(env: dict[str, str], prefix: str = "READ_") -> str:
     """HMAC key for challenge ids. Stable across restarts when derived from a secret the
-    service already has, so a challenge issued before a deploy still validates after it."""
-    if env.get("MPP_SECRET_KEY"):
-        return env["MPP_SECRET_KEY"]
+    service already has, so a challenge issued before a deploy still validates after it.
+    Each service gets its own key (Web Read's is unchanged), so one service's challenges never
+    authenticate on another's route even before the route check."""
+    own = "MPP_SECRET_KEY" if prefix == "READ_" else f"{prefix}MPP_SECRET_KEY"
+    if env.get(own):
+        return env[own]
+    label = "inferrail-web-read-mpp" if prefix == "READ_" else f"inferrail-{prefix.lower()}mpp"
     seed = env.get("CDP_API_KEY_SECRET") or env.get("BG_OPERATOR_TOKEN")
     if seed:
-        return hashlib.sha256(f"inferrail-web-read-mpp|{seed}".encode()).hexdigest()
+        return hashlib.sha256(f"{label}|{seed}".encode()).hexdigest()
     return secrets.token_hex(32)  # challenges then expire with the process
 
 
@@ -161,10 +167,18 @@ class TempoRail:
             (k, v) for k, v in challenge.headers.multi_items() if k.lower() == "www-authenticate"
         ]
 
-    async def validate(self, authorization: str) -> tuple[Any, str, str] | str:
+    async def validate(self, authorization: str, url: str) -> tuple[Any, str, str] | str:
         """(credential, payer, credential type) when the credential is a valid, unspent payment
         for this route's price; otherwise the reason, as the error's class name (never its
-        message, which can quote the credential). Nothing is broadcast."""
+        message, which can quote the credential). Nothing is broadcast.
+
+        `url` is the paid request's URL. The SDK binds a challenge to our secret, realm, method,
+        intent, amount and expiry but ignores its `_mppx_scope`, so a challenge issued for one
+        route would also validate on any other route with the same secret and price. The scope
+        is part of the challenge's HMAC, so checking it binds the payment to the route that
+        issued it. Method and query aren't compared: one resource is sold over GET and POST."""
+        if not _issued_for(authorization, urlsplit(url).path):
+            return "RouteMismatch"
         try:
             v = await self.server.validate_credential(
                 authorization, intent="charge", request={"amount": self.price}
@@ -176,10 +190,70 @@ class TempoRail:
         return v.credential, (v.payer or "").lower(), str(kind)
 
     async def settle(self, credential: Any) -> Any:
-        """Broadcast the transfer (or confirm an already-broadcast one). Returns the receipt."""
-        return await self.server.broadcast_credential(
-            credential, intent="charge", request={"amount": self.price}
-        )
+        """Broadcast the transfer (or confirm an already-broadcast one). Returns the receipt.
+
+        Raises `Unsettled` when the transfer definitely didn't happen (the buyer wasn't
+        charged), and `OutcomeUnknown` when it may have landed (an unreachable node, a timeout
+        after sending): that must never be answered with a fresh 402, which invites a second
+        payment. Retrying the same credential settles it or confirms the earlier transfer."""
+        from mpp.errors import InternalPaymentError, PaymentOutcomeUnknownError
+
+        try:
+            return await self.server.broadcast_credential(
+                credential, intent="charge", request={"amount": self.price}
+            )
+        except (InternalPaymentError, PaymentOutcomeUnknownError) as exc:
+            raise OutcomeUnknown(type(exc).__name__) from exc
+        except Exception as exc:
+            raise Unsettled(type(exc).__name__) from exc
+
+    async def funded(self, credential: Any, payer: str) -> bool:
+        """Whether a signed, not yet broadcast transfer can be paid: the payer holds at least the
+        price in the offered currency. The SDK checks funds only when it broadcasts, which for
+        a pay-on-delivery sale is after the work is done. An already broadcast (`hash`)
+        credential is paid by definition. Raises on an RPC failure (callers fail closed)."""
+        payload = credential.payload
+        kind = payload.get("type") if isinstance(payload, dict) else getattr(payload, "type", "")
+        if kind == "hash":
+            return True
+        padded = credential.challenge.request + "=" * (-len(credential.challenge.request) % 4)
+        offer = json.loads(base64.urlsafe_b64decode(padded))
+        return await self.balance(offer["currency"], payer) >= int(offer["amount"])
+
+    async def balance(self, token: str, owner: str) -> int:
+        """TIP-20 `balanceOf(owner)` on this rail's chain (a plain `eth_call`)."""
+        import httpx
+        from mpp.methods.tempo._defaults import rpc_url_for_chain
+
+        data = "0x70a08231" + owner.removeprefix("0x").lower().zfill(64)
+        body = {"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                "params": [{"to": token, "data": data}, "latest"]}  # fmt: skip
+        async with httpx.AsyncClient(timeout=10) as client:
+            reply = (await client.post(rpc_url_for_chain(self.cfg.chain_id), json=body)).json()
+        return int(reply["result"], 16)
+
+
+class Unsettled(Exception):
+    """The transfer definitely did not settle: the buyer was not charged."""
+
+
+class OutcomeUnknown(Exception):
+    """The transfer may or may not have landed: don't ask the buyer to pay again."""
+
+
+def _issued_for(authorization: str, path: str) -> bool:
+    """Whether the credential echoes a challenge scoped to `path`. Unparseable or unscoped
+    credentials fail closed; the HMAC check that follows rejects any altered scope."""
+    from mpp import Credential
+
+    try:
+        echo = Credential.from_authorization(authorization).challenge
+        padded = echo.request + "=" * (-len(echo.request) % 4)
+        request = json.loads(base64.urlsafe_b64decode(padded))
+        scope = request.get("_mppx_scope") if isinstance(request, dict) else None
+        return isinstance(scope, dict) and scope.get("resource") == path
+    except Exception:
+        return False
 
 
 def is_mpp_authorization(value: str | None) -> bool:

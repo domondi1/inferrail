@@ -122,6 +122,7 @@ def check(
     build_search: Callable[[Any, dict[str, str]], None] = build_search_app,
     expect_search_pay_to: str | None = None,
     expect_read_pay_to: str | None = None,
+    expect_web_search_pay_to: str | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -166,6 +167,27 @@ def check(
             print(f"web read: builds; network {w.network}, payTo {w.pay_to}, price ${w.price_usd}")
             if expect_read_pay_to and w.pay_to.lower() != expect_read_pay_to.lower():
                 problems.append(f"READ_PAY_TO is {w.pay_to}, not the approved {expect_read_pay_to}")
+    if env.get("WEB_SEARCH_PAY_TO"):
+        with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+            web_search = cohost.web_search_from_env(settings, {**env, "WEB_SEARCH_DATA_DIR": tmp})
+        if web_search is None:
+            problems.append(
+                "Web Search is configured (WEB_SEARCH_PAY_TO) but would not mount; the "
+                "configuration error is logged above"
+            )
+        else:
+            s = web_search[1]
+            print(
+                f"web search: builds; payTo {s.pay_to}, price ${s.price_usd}, rails "
+                f"{cohost._search_rails(s)}"
+            )
+            # A new receiving route: its address must be stated and checked, not optional.
+            if not expect_web_search_pay_to:
+                problems.append("Web Search is on but no --expect-web-search-pay-to was given")
+            elif s.pay_to.lower() != expect_web_search_pay_to.lower():
+                problems.append(
+                    f"WEB_SEARCH_PAY_TO is {s.pay_to}, not the approved {expect_web_search_pay_to}"
+                )
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -210,12 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expect-pay-to", help="the approved receiving address (EIP-55)")
     ap.add_argument("--expect-search-pay-to", help="Job-Safe Search's approved receiving address")
     ap.add_argument("--expect-read-pay-to", help="Web Read's approved receiving address")
+    ap.add_argument(
+        "--expect-web-search-pay-to", help="Web Search's approved receiving address (required)"
+    )
     args = ap.parse_args(argv)
     problems = check(
         dict(os.environ),
         args.expect_pay_to,
         expect_search_pay_to=args.expect_search_pay_to,
         expect_read_pay_to=args.expect_read_pay_to,
+        expect_web_search_pay_to=args.expect_web_search_pay_to,
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
