@@ -39,26 +39,30 @@ class MppSettings:
     realm: str
 
     @classmethod
-    def from_env(cls, env: dict[str, str], realm: str) -> MppSettings | None:
-        raw = env.get("READ_MPP_CHAIN_ID", "").strip()
+    def from_env(cls, env: dict[str, str], realm: str, prefix: str = "READ_") -> MppSettings | None:
+        raw = env.get(f"{prefix}MPP_CHAIN_ID", "").strip()
         if not raw:
             return None
         chain_id = int(raw)
         if chain_id not in (MAINNET, TESTNET):
-            raise RuntimeError(f"READ_MPP_CHAIN_ID must be {MAINNET} or {TESTNET}")
-        if chain_id == MAINNET and env.get("READ_MPP_MAINNET_APPROVED") != "1":
-            raise RuntimeError("Tempo mainnet sales require READ_MPP_MAINNET_APPROVED=1")
-        return cls(chain_id=chain_id, secret_key=_secret(env), realm=realm)
+            raise RuntimeError(f"{prefix}MPP_CHAIN_ID must be {MAINNET} or {TESTNET}")
+        if chain_id == MAINNET and env.get(f"{prefix}MPP_MAINNET_APPROVED") != "1":
+            raise RuntimeError(f"Tempo mainnet sales require {prefix}MPP_MAINNET_APPROVED=1")
+        return cls(chain_id=chain_id, secret_key=_secret(env, prefix), realm=realm)
 
 
-def _secret(env: dict[str, str]) -> str:
+def _secret(env: dict[str, str], prefix: str = "READ_") -> str:
     """HMAC key for challenge ids. Stable across restarts when derived from a secret the
-    service already has, so a challenge issued before a deploy still validates after it."""
-    if env.get("MPP_SECRET_KEY"):
-        return env["MPP_SECRET_KEY"]
+    service already has, so a challenge issued before a deploy still validates after it.
+    Each service gets its own key (Web Read's is unchanged), so one service's challenges never
+    authenticate on another's route even before the route check."""
+    own = "MPP_SECRET_KEY" if prefix == "READ_" else f"{prefix}MPP_SECRET_KEY"
+    if env.get(own):
+        return env[own]
+    label = "inferrail-web-read-mpp" if prefix == "READ_" else f"inferrail-{prefix.lower()}mpp"
     seed = env.get("CDP_API_KEY_SECRET") or env.get("BG_OPERATOR_TOKEN")
     if seed:
-        return hashlib.sha256(f"inferrail-web-read-mpp|{seed}".encode()).hexdigest()
+        return hashlib.sha256(f"{label}|{seed}".encode()).hexdigest()
     return secrets.token_hex(32)  # challenges then expire with the process
 
 

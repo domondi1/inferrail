@@ -145,35 +145,46 @@ class Settings:
     recovery_s: int = 600  # how long a delivered page can be recovered without paying again
     mpp: Any = None  # mpp_rail.MppSettings when MPP (Tempo) payments are also accepted
     allow_get: bool = False  # also sell GET /v1/page?url=... (for clients and indexes that GET)
+    # Also sell over x402. Off means MPP only: an EIP-3009 transfer binds a merchant and amount,
+    # not an endpoint, so a second x402 service needs its own receiving address.
+    x402: bool = True
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> Settings:
+    def from_env(cls, env: dict[str, str] | None = None, prefix: str = "READ_") -> Settings:
+        """Settings from `<prefix>*` variables (Web Read: READ_*). x402 is on unless
+        `<prefix>X402=0`."""
         e = dict(os.environ if env is None else env)
-        pay_to = e.get("READ_PAY_TO", "").strip()
+        pay_to = e.get(f"{prefix}PAY_TO", "").strip()
         if not pay_to:
-            raise RuntimeError("READ_PAY_TO is required")
-        network = e.get("READ_NETWORK", TESTNET)
+            raise RuntimeError(f"{prefix}PAY_TO is required")
+        network = e.get(f"{prefix}NETWORK", TESTNET)
         if network not in (MAINNET, TESTNET):
-            raise RuntimeError(f"READ_NETWORK must be {MAINNET} or {TESTNET}")
-        if network == MAINNET and e.get("READ_MAINNET_APPROVED") != "1":
-            raise RuntimeError("mainnet sales require READ_MAINNET_APPROVED=1")
-        price = e.get("READ_PRICE_USD", "0.002")
-        recovery_s = int(e.get("READ_RECOVERY_S", "600"))
+            raise RuntimeError(f"{prefix}NETWORK must be {MAINNET} or {TESTNET}")
+        if network == MAINNET and e.get(f"{prefix}MAINNET_APPROVED") != "1":
+            raise RuntimeError(f"mainnet sales require {prefix}MAINNET_APPROVED=1")
+        price = e.get(f"{prefix}PRICE_USD", "0.002")
+        recovery_s = int(e.get(f"{prefix}RECOVERY_S", "600"))
         if not 0 <= recovery_s <= 3600:
-            raise RuntimeError("READ_RECOVERY_S must be between 0 and 3600")
+            raise RuntimeError(f"{prefix}RECOVERY_S must be between 0 and 3600")
         if not Decimal("0.001") <= Decimal(price) <= Decimal("1"):
-            raise RuntimeError("READ_PRICE_USD must be between 0.001 and 1")
+            raise RuntimeError(f"{prefix}PRICE_USD must be between 0.001 and 1")
+        resource_url = e[f"{prefix}RESOURCE_URL"]
+        mpp = mpp_rail.MppSettings.from_env(e, realm=urlsplit(resource_url).netloc, prefix=prefix)
+        x402 = e.get(f"{prefix}X402", "1") != "0"
+        if not x402 and mpp is None:
+            raise RuntimeError(f"{prefix}X402=0 needs {prefix}MPP_CHAIN_ID: nothing to sell")
         return cls(
             pay_to=pay_to,
             network=network,
             price_usd=price,
-            resource_url=e["READ_RESOURCE_URL"],
-            data_dir=Path(e.get("READ_DATA_DIR", "/tmp/inferrail_web_read")),
+            resource_url=resource_url,
+            data_dir=Path(e.get(f"{prefix}DATA_DIR", "/tmp/inferrail_web_read")),
             operator_token=e.get("BG_OPERATOR_TOKEN") or None,
-            mount_prefix=e.get("READ_MOUNT_PREFIX", "").rstrip("/"),
+            mount_prefix=e.get(f"{prefix}MOUNT_PREFIX", "").rstrip("/"),
             recovery_s=recovery_s,
-            mpp=mpp_rail.MppSettings.from_env(e, realm=urlsplit(e["READ_RESOURCE_URL"]).netloc),
-            allow_get=e.get("READ_ALLOW_GET") == "1",
+            mpp=mpp,
+            allow_get=e.get(f"{prefix}ALLOW_GET") == "1",
+            x402=x402,
         )
 
 
@@ -511,6 +522,8 @@ def create_app(
     ledger = Ledger(settings.data_dir / "web_read.sqlite3")
     reader = fetcher or fetch.Fetcher(settings.user_agent)
     task = task or page_task(reader)
+    if not settings.x402 and settings.mpp is None and tempo_rail is None:
+        raise ValueError("x402 is off and MPP isn't configured: nothing to sell")
     rail = tempo_rail or (
         mpp_rail.TempoRail(
             settings.mpp,
@@ -522,7 +535,7 @@ def create_app(
         if settings.mpp
         else None
     )
-    if facilitator is None:
+    if facilitator is None and settings.x402:
         if settings.network == MAINNET:
             from cdp.x402 import create_facilitator_config
 
@@ -534,15 +547,16 @@ def create_app(
             )
         else:
             facilitator = HTTPFacilitatorClient()
-    server = x402ResourceServer(facilitator)
-    register_exact_evm_server(server, networks=settings.network)
 
     async def after_settle(context: Any) -> None:
         ref = _payment_ref(context.payment_payload)
         if ref and getattr(context.result, "success", False):
             ledger.settled(ref[0])
 
-    server.on_after_settle(after_settle)
+    if settings.x402:
+        server = x402ResourceServer(facilitator)
+        register_exact_evm_server(server, networks=settings.network)
+        server.on_after_settle(after_settle)
     example = task.output_example(settings.price_usd)
 
     def offer(method: str) -> Any:
@@ -568,8 +582,12 @@ def create_app(
         )
 
     methods = ("POST", "GET") if settings.allow_get else ("POST",)
-    gate = payment_middleware(
-        {f"{m} {settings.mount_prefix}{task.path}": offer(m) for m in methods}, server
+    gate = (
+        payment_middleware(
+            {f"{m} {settings.mount_prefix}{task.path}": offer(m) for m in methods}, server
+        )
+        if settings.x402
+        else None
     )
     app = FastAPI(title=task.service_name)
     in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
@@ -690,6 +708,16 @@ def create_app(
         if rail and page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
             ledger.expire(settings.recovery_s)
             return await mpp_purchase(request, client)
+        if gate is None:  # MPP only: every unpaid request for the task gets the MPP challenge
+            if not page:
+                return await call_next(request)
+            if signed:  # an x402 payment this service doesn't accept: nothing is settled
+                ledger.event("payment_attempt", client)
+                ledger.event("attempt_failed", _reason("x402", "x402_not_accepted"))
+                ledger.event("payment_rejected", client)
+                return await mpp_challenge(request, "x402_not_accepted")
+            ledger.event("challenge", client)
+            return await mpp_challenge(request)
         if request.method == "POST" or page:
             ledger.expire(settings.recovery_s)
             if signed and page:
