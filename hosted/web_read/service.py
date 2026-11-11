@@ -30,6 +30,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -110,6 +111,28 @@ class PageRequest(BaseModel):
 
 
 @dataclass(frozen=True)
+class Task:
+    """What one paid request buys. The payment flow around it is the same for every task: x402
+    and MPP offers, validate then deliver then settle, recovery of a paid result without a second
+    charge, and the funnel. Only these parts differ (Web Read's page is the default task)."""
+
+    path: str  # route under the mount prefix, e.g. "/v1/page"
+    request_model: type[BaseModel]
+    service_name: str
+    description: str  # x402 offer and discovery text
+    mpp_description: str  # short form for the MPP challenge header
+    tags: list[str]
+    input_example: dict[str, Any]
+    output_example: Callable[[str], dict[str, Any]]  # price_usd -> example response
+    output_schema: dict[str, Any]
+    idem: Callable[[Any], str]  # retry identity of a request (never stores its content)
+    deliver: Callable[[Any, Callable[[str, str], None]], Awaitable[tuple[int, dict[str, Any]]]]
+    # (url, final_url, bytes, words, sha256) recorded per sale; never a request's private content
+    ledger_fields: Callable[[dict[str, Any]], tuple[Any, ...]]
+    guide: Callable[[Settings], str]  # /llms.txt
+
+
+@dataclass(frozen=True)
 class Settings:
     pay_to: str
     network: str = TESTNET
@@ -183,15 +206,15 @@ class Ledger:
             self._db.execute("INSERT INTO events VALUES (?,?,?)", (kind, code, time.time()))
 
     def delivered(
-        self, ref: str, payer: str, row: dict[str, Any], price: str, idem: str, result: str | None
-    ) -> None:
+        self, ref: str, payer: str, fields: tuple[Any, ...], price: str, idem: str,
+        result: str | None,
+    ) -> None:  # fmt: skip
         with self._lock:
             self._db.execute(
                 "INSERT OR IGNORE INTO reads (payment_ref, payer, url, final_url, bytes, words, "
                 "sha256, price_usd, created_at, settled, idem, result) "
                 "VALUES (?,?,?,?,?,?,?,?,?,0,?,?)",
-                (ref, payer, row["url"], row["final_url"], row["bytes"], row["word_count"],
-                 row["content_sha256"], price, time.time(), idem, result),
+                (ref, payer, *fields, price, time.time(), idem, result),
             )  # fmt: skip
 
     def expire(self, window_s: int) -> None:
@@ -372,8 +395,110 @@ def _payment_ref(payload: Any) -> tuple[str, str] | None:
     return f"{payer}:{str(auth['nonce']).lower()}", payer
 
 
+def _page_guide(settings: Settings) -> str:
+    return (
+        "# Inferrail Web Read\n\n"
+        f"> {DESCRIPTION}\n\n"
+        f'POST {settings.resource_url} with JSON {{"url": "https://..."}}.\n'
+        + (
+            f"Or GET {settings.resource_url}?url=...&request_id=... (same price and terms; "
+            "use POST for URLs that carry secrets, since query strings can end up in logs).\n"
+            if settings.allow_get
+            else ""
+        )
+        + f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
+        f"{settings.network} to {settings.pay_to}). Sign it and repeat the request with the "
+        "PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
+        f"Lost the response? Send the same url and request_id again from the same wallet "
+        f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
+        "signature is not settled (no second charge).\n"
+        + (
+            f"Also payable with MPP on Tempo (chain {settings.mpp.chain_id}): the same 402 "
+            "carries a WWW-Authenticate Payment challenge; repeat the request with "
+            "Authorization: Payment <credential>. The transfer is broadcast only after the "
+            "page is delivered.\n"
+            if settings.mpp
+            else ""
+        )
+        + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
+        "dns_failed | disallowed_by_robots_txt | unsupported_content_type | too_large | "
+        "too_many_redirects | upstream_status (the site answered 4xx: missing, gone or "
+        "forbidden; detail is its status)} means retrying the same URL won't help; "
+        "502 {error: upstream_status (the site answered 5xx, 408 or 429) | fetch_failed} "
+        "and 504 {error: timeout} may succeed later.\n"
+    )
+
+
+def page_task(reader: Any) -> Task:
+    """Web Read's task: fetch one public page and return it as markdown."""
+
+    async def deliver(body: Any, event: Callable[[str, str], None]) -> tuple[int, dict[str, Any]]:
+        """Fetch and convert the page: (200, row) or (422/502/504, error). Payment-agnostic."""
+        try:
+            got = await reader.fetch(body.url.strip())
+        except fetch.Refused as exc:
+            event("refused", exc.code)
+            status = refusal_status(exc)
+            return status, {"error": exc.code, "detail": exc.detail, "charged": False}
+        text = got.body.decode(got.encoding, "replace")
+        if got.content_type in ("text/html", "application/xhtml+xml"):
+            title, content = extract.html_to_markdown(text, got.final_url)
+        else:
+            title, content = "", text.strip()
+        row = {
+            "url": body.url,
+            "final_url": got.final_url,
+            "title": title,
+            "content_markdown": content,
+            "word_count": len(content.split()),
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "bytes": len(got.body),
+        }
+        return 200, row
+
+    def example(price_usd: str) -> dict[str, Any]:
+        return {
+            "url": "https://example.com/",
+            "final_url": "https://example.com/",
+            "title": "Example Domain",
+            "content_markdown": "# Example Domain\n\nThis domain is for use in examples...",
+            "word_count": 28,
+            "content_sha256": "3f1c…",
+            "fetched_at": "2026-10-16T12:00:00Z",
+            "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": price_usd},
+        }
+
+    return Task(
+        path="/v1/page",
+        request_model=PageRequest,
+        service_name="Inferrail Web Read",
+        description=DESCRIPTION,
+        mpp_description=MPP_DESCRIPTION,
+        tags=["web-read", "scrape", "markdown", "fetch"],
+        input_example={"url": "https://example.com/"},
+        output_example=example,
+        output_schema=OUTPUT_SCHEMA,
+        idem=lambda body: _idem(body.url, body.request_id),
+        deliver=deliver,
+        ledger_fields=lambda row: (
+            row["url"],
+            row["final_url"],
+            row["bytes"],
+            row["word_count"],
+            row["content_sha256"],
+        ),
+        guide=_page_guide,
+    )
+
+
 def create_app(
-    settings: Settings, *, facilitator: Any = None, fetcher: Any = None, tempo_rail: Any = None
+    settings: Settings,
+    *,
+    facilitator: Any = None,
+    fetcher: Any = None,
+    tempo_rail: Any = None,
+    task: Task | None = None,
 ) -> FastAPI:
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
@@ -384,18 +509,19 @@ def create_app(
     from x402.server import x402ResourceServer
 
     ledger = Ledger(settings.data_dir / "web_read.sqlite3")
+    reader = fetcher or fetch.Fetcher(settings.user_agent)
+    task = task or page_task(reader)
     rail = tempo_rail or (
         mpp_rail.TempoRail(
             settings.mpp,
             settings.pay_to,
             settings.price_usd,
             mpp_rail.ReplayStore(settings.data_dir / "mpp_replay.sqlite3"),
-            MPP_DESCRIPTION,
+            task.mpp_description,
         )
         if settings.mpp
         else None
     )
-    reader = fetcher or fetch.Fetcher(settings.user_agent)
     if facilitator is None:
         if settings.network == MAINNET:
             from cdp.x402 import create_facilitator_config
@@ -417,16 +543,7 @@ def create_app(
             ledger.settled(ref[0])
 
     server.on_after_settle(after_settle)
-    example = {
-        "url": "https://example.com/",
-        "final_url": "https://example.com/",
-        "title": "Example Domain",
-        "content_markdown": "# Example Domain\n\nThis domain is for use in examples...",
-        "word_count": 28,
-        "content_sha256": "3f1c…",
-        "fetched_at": "2026-10-16T12:00:00Z",
-        "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": settings.price_usd},
-    }
+    example = task.output_example(settings.price_usd)
 
     def offer(method: str) -> Any:
         body = {"body_type": "json"} if method == "POST" else {}  # GET takes the query string
@@ -438,33 +555,33 @@ def create_app(
                 network=settings.network,
             ),
             resource=settings.resource_url,
-            description=DESCRIPTION,
+            description=task.description,
             mime_type="application/json",
-            service_name="Inferrail Web Read",
-            tags=["web-read", "scrape", "markdown", "fetch"],
+            service_name=task.service_name,
+            tags=task.tags,
             extensions=declare_discovery_extension(
-                input={"url": "https://example.com/"},
-                input_schema=PageRequest.model_json_schema(),
-                output=OutputConfig(example=example, schema=OUTPUT_SCHEMA),
+                input=task.input_example,
+                input_schema=task.request_model.model_json_schema(),
+                output=OutputConfig(example=example, schema=task.output_schema),
                 **body,
             ),
         )
 
     methods = ("POST", "GET") if settings.allow_get else ("POST",)
     gate = payment_middleware(
-        {f"{m} {settings.mount_prefix}/v1/page": offer(m) for m in methods}, server
+        {f"{m} {settings.mount_prefix}{task.path}": offer(m) for m in methods}, server
     )
-    app = FastAPI(title="Inferrail Web Read")
+    app = FastAPI(title=task.service_name)
     in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
 
     def is_page(request: Request) -> bool:
-        return request.method in methods and request.url.path.endswith("/v1/page")
+        return request.method in methods and request.url.path.endswith(task.path)
 
-    async def page_request(request: Request) -> PageRequest:
-        """The page request: a POST's JSON body, or a GET's query string."""
+    async def page_request(request: Request) -> Any:
+        """The task's request: a POST's JSON body, or a GET's query string."""
         if request.method == "GET":
-            return PageRequest.model_validate(dict(request.query_params))
-        return PageRequest.model_validate_json(await request.body())
+            return task.request_model.model_validate(dict(request.query_params))
+        return task.request_model.model_validate_json(await request.body())
 
     async def _recover(request: Request) -> tuple[str, str] | None:
         """(payer, idem) for a signed page request from a valid payer; None otherwise."""
@@ -476,7 +593,7 @@ def create_app(
             payer = _signed_by_payer(decode_payment_signature_header(header), settings)
         except Exception:
             return None
-        return (payer, _idem(body.url, body.request_id)) if payer else None
+        return (payer, task.idem(body)) if payer else None
 
     @contextlib.asynccontextmanager
     async def exclusive(key: tuple[str, str]) -> Any:
@@ -523,13 +640,13 @@ def create_app(
             ledger.event("attempt_failed", _reason("mpp", valid))
             return await mpp_challenge(request, "payment_invalid")
         credential, payer, kind = valid
-        idem = _idem(body.url, body.request_id)
+        idem = task.idem(body)
         async with exclusive((payer, idem)):
             if kind == "transaction" and settings.recovery_s:
                 stored = ledger.recoverable(payer, idem, settings.recovery_s)
                 if stored is not None:  # the new transfer is never broadcast: no second charge
                     return recovered(stored, client)
-            status, row = await deliver(body)
+            status, row = await task.deliver(body, ledger.event)
             if status != 200:
                 ledger.event("attempt_failed", _reason("mpp", f"http_{status}"))
                 if kind == "hash":  # the client already paid on chain; we owe it back
@@ -553,7 +670,7 @@ def create_app(
                 "rail": "mpp-tempo",
             }
             ledger.delivered(
-                ref, payer, row, settings.price_usd, idem,
+                ref, payer, task.ledger_fields(row), settings.price_usd, idem,
                 json.dumps(row) if settings.recovery_s else None,
             )  # fmt: skip
             ledger.settled(ref)
@@ -603,70 +720,17 @@ def create_app(
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
     async def guide() -> str:
-        return (
-            "# Inferrail Web Read\n\n"
-            f"> {DESCRIPTION}\n\n"
-            f'POST {settings.resource_url} with JSON {{"url": "https://..."}}.\n'
-            + (
-                f"Or GET {settings.resource_url}?url=...&request_id=... (same price and terms; "
-                "use POST for URLs that carry secrets, since query strings can end up in logs).\n"
-                if settings.allow_get
-                else ""
-            )
-            + f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
-            f"{settings.network} to {settings.pay_to}). Sign it and repeat the request with the "
-            "PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
-            f"Lost the response? Send the same url and request_id again from the same wallet "
-            f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
-            "signature is not settled (no second charge).\n"
-            + (
-                f"Also payable with MPP on Tempo (chain {settings.mpp.chain_id}): the same 402 "
-                "carries a WWW-Authenticate Payment challenge; repeat the request with "
-                "Authorization: Payment <credential>. The transfer is broadcast only after the "
-                "page is delivered.\n"
-                if settings.mpp
-                else ""
-            )
-            + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
-            "dns_failed | disallowed_by_robots_txt | unsupported_content_type | too_large | "
-            "too_many_redirects | upstream_status (the site answered 4xx: missing, gone or "
-            "forbidden; detail is its status)} means retrying the same URL won't help; "
-            "502 {error: upstream_status (the site answered 5xx, 408 or 429) | fetch_failed} "
-            "and 504 {error: timeout} may succeed later.\n"
-        )
+        return task.guide(settings)
 
-    async def deliver(body: PageRequest) -> tuple[int, dict[str, Any]]:
-        """Fetch and convert the page: (200, row) or (422/502/504, error). Payment-agnostic."""
-        try:
-            got = await reader.fetch(body.url.strip())
-        except fetch.Refused as exc:
-            ledger.event("refused", exc.code)
-            status = refusal_status(exc)
-            return status, {"error": exc.code, "detail": exc.detail, "charged": False}
-        text = got.body.decode(got.encoding, "replace")
-        if got.content_type in ("text/html", "application/xhtml+xml"):
-            title, content = extract.html_to_markdown(text, got.final_url)
-        else:
-            title, content = "", text.strip()
-        row = {
-            "url": body.url,
-            "final_url": got.final_url,
-            "title": title,
-            "content_markdown": content,
-            "word_count": len(content.split()),
-            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "bytes": len(got.body),
-        }
-        return 200, row
-
-    @app.post("/v1/page")
-    async def page_post(body: PageRequest, request: Request) -> JSONResponse:
+    async def page_post(body: Any, request: Request) -> JSONResponse:
         return await sell(body, request)
+
+    page_post.__annotations__["body"] = task.request_model  # FastAPI validates the JSON body
+    app.post(task.path)(page_post)
 
     if settings.allow_get:
 
-        @app.get("/v1/page", include_in_schema=False)
+        @app.get(task.path, include_in_schema=False)
         async def page_get(request: Request) -> JSONResponse:
             try:
                 body = await page_request(request)
@@ -674,11 +738,11 @@ def create_app(
                 return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
             return await sell(body, request)
 
-    async def sell(body: PageRequest, request: Request) -> JSONResponse:
+    async def sell(body: Any, request: Request) -> JSONResponse:
         """Deliver a page the x402 gate has already verified payment for (settled after)."""
         header = request.headers.get("payment-signature")
         ref = _payment_ref(decode_payment_signature_header(header)) if header else None
-        status, row = await deliver(body)
+        status, row = await task.deliver(body, ledger.event)
         if status != 200:
             return JSONResponse(row, status_code=status)
         row["receipt"] = {
@@ -688,7 +752,7 @@ def create_app(
         }
         if ref:
             ledger.delivered(
-                ref[0], ref[1], row, settings.price_usd, _idem(body.url, body.request_id),
+                ref[0], ref[1], task.ledger_fields(row), settings.price_usd, task.idem(body),
                 json.dumps(row) if settings.recovery_s else None,
             )  # fmt: skip
         return JSONResponse(row)
