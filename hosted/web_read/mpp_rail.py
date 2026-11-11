@@ -190,10 +190,55 @@ class TempoRail:
         return v.credential, (v.payer or "").lower(), str(kind)
 
     async def settle(self, credential: Any) -> Any:
-        """Broadcast the transfer (or confirm an already-broadcast one). Returns the receipt."""
-        return await self.server.broadcast_credential(
-            credential, intent="charge", request={"amount": self.price}
-        )
+        """Broadcast the transfer (or confirm an already-broadcast one). Returns the receipt.
+
+        Raises `Unsettled` when the transfer definitely didn't happen (the buyer wasn't
+        charged), and `OutcomeUnknown` when it may have landed (an unreachable node, a timeout
+        after sending): that must never be answered with a fresh 402, which invites a second
+        payment. Retrying the same credential settles it or confirms the earlier transfer."""
+        from mpp.errors import InternalPaymentError, PaymentOutcomeUnknownError
+
+        try:
+            return await self.server.broadcast_credential(
+                credential, intent="charge", request={"amount": self.price}
+            )
+        except (InternalPaymentError, PaymentOutcomeUnknownError) as exc:
+            raise OutcomeUnknown(type(exc).__name__) from exc
+        except Exception as exc:
+            raise Unsettled(type(exc).__name__) from exc
+
+    async def funded(self, credential: Any, payer: str) -> bool:
+        """Whether a signed, not yet broadcast transfer can be paid: the payer holds at least the
+        price in the offered currency. The SDK checks funds only when it broadcasts, which for
+        a pay-on-delivery sale is after the work is done. An already broadcast (`hash`)
+        credential is paid by definition. Raises on an RPC failure (callers fail closed)."""
+        payload = credential.payload
+        kind = payload.get("type") if isinstance(payload, dict) else getattr(payload, "type", "")
+        if kind == "hash":
+            return True
+        padded = credential.challenge.request + "=" * (-len(credential.challenge.request) % 4)
+        offer = json.loads(base64.urlsafe_b64decode(padded))
+        return await self.balance(offer["currency"], payer) >= int(offer["amount"])
+
+    async def balance(self, token: str, owner: str) -> int:
+        """TIP-20 `balanceOf(owner)` on this rail's chain (a plain `eth_call`)."""
+        import httpx
+        from mpp.methods.tempo._defaults import rpc_url_for_chain
+
+        data = "0x70a08231" + owner.removeprefix("0x").lower().zfill(64)
+        body = {"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                "params": [{"to": token, "data": data}, "latest"]}  # fmt: skip
+        async with httpx.AsyncClient(timeout=10) as client:
+            reply = (await client.post(rpc_url_for_chain(self.cfg.chain_id), json=body)).json()
+        return int(reply["result"], 16)
+
+
+class Unsettled(Exception):
+    """The transfer definitely did not settle: the buyer was not charged."""
+
+
+class OutcomeUnknown(Exception):
+    """The transfer may or may not have landed: don't ask the buyer to pay again."""
 
 
 def _issued_for(authorization: str, path: str) -> bool:

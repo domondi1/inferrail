@@ -49,32 +49,52 @@ HITS = [
 
 
 class FakeSupplier:
-    def __init__(self, fail: bool = False, cogs: int = 800):
-        self.fail, self.cogs, self.calls = fail, cogs, []
+    max_cost = 800  # $0.0008 per search, in 6-decimal units
+
+    def __init__(self, fail: bool = False, cogs: int = 800, delay: float = 0):
+        self.fail, self.cogs, self.delay, self.calls = fail, cogs, delay, []
 
     async def search(self, request):
         self.calls.append(request)
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if self.fail:
             raise suppliers.SupplierFailure(0)
         return SimpleNamespace(hits=HITS[: request.num_results], cogs=self.cogs)
 
 
 class StubRail:
-    def __init__(self, valid: bool = True, settle_ok: bool = True):
-        self.valid, self.settle_ok = valid, settle_ok
+    def __init__(self, valid: bool = True, settle_ok: bool = True, reuse: bool = False,
+                 settle: str = "ok", funds: object = True, kind: str = "transaction"):  # fmt: skip
+        self.valid, self.reuse, self.funds, self.kind = valid, reuse, funds, kind
+        self.settle_mode = settle if settle_ok else "unsettled"
         self.validated: list[str | None] = []
-        self.settled = 0
+        self.settled = self.broadcasts = self.funding_checks = 0
+        self.payer = PAYER
 
     async def challenge_headers(self, url: str, method: str = "POST"):
         return [("WWW-Authenticate", 'Payment id="x", method="tempo", intent="charge"')]
 
     async def validate(self, authorization: str, url: str | None = None):
         self.validated.append(url)
-        return (object(), PAYER, "transaction") if self.valid else "VerificationFailedError"
+        # A fresh credential per request (like a real client), unless one is being reused.
+        n = 0 if self.reuse else len(self.validated)
+        credential = SimpleNamespace(payload={"type": self.kind, "n": n})
+        return (credential, self.payer, self.kind) if self.valid else "VerificationFailedError"
+
+    async def funded(self, credential, payer):
+        self.funding_checks += 1
+        if isinstance(self.funds, Exception):
+            raise self.funds
+        return self.funds
 
     async def settle(self, credential):
-        if not self.settle_ok:
-            raise RuntimeError("broadcast failed")
+        self.broadcasts += 1
+        if self.settle_mode == "unsettled":
+            raise rail_mod.Unsettled("VerificationFailedError")
+        if self.settle_mode == "unknown":
+            self.settle_mode = "ok"  # the transfer lands; a retry confirms it
+            raise rail_mod.OutcomeUnknown("InternalPaymentError")
         self.settled += 1
         return SimpleNamespace(
             reference=f"0x{self.settled:064x}", payer=PAYER, to_payment_receipt=lambda: "r"
@@ -370,3 +390,215 @@ def test_web_reads_listing_is_unchanged_when_search_is_mounted(tmp_path):
     )
     assert a["paths"]["/read/v1/page"] == b["paths"]["/read/v1/page"]
     assert set(b["paths"]) - set(a["paths"]) == {"/search/v1/web"}
+
+
+# -- adversarial: settlement, supplier spend, concurrency, privacy --------------------------------
+
+
+def _app(tmp_path: Path, supplier: FakeSupplier, rail: StubRail, **kw):
+    task = search.search_task(svc, supplier, SECRET)
+    return svc.create_app(_settings(tmp_path, **kw), tempo_rail=rail, task=task)
+
+
+def test_an_unfunded_transfer_never_reaches_the_supplier(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(funds=False)
+    c = TestClient(_app(tmp_path, supplier, rail))
+    r = c.post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 402 and r.json() == {"error": "insufficient_funds", "charged": False}
+    assert supplier.calls == [] and rail.broadcasts == 0
+
+
+def test_unverifiable_funds_fail_closed_before_the_supplier(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(funds=RuntimeError("rpc down"))
+    r = TestClient(_app(tmp_path, supplier, rail)).post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 402 and r.json()["error"] == "funds_unverifiable"
+    assert supplier.calls == []
+
+
+def test_an_already_broadcast_payment_needs_no_funding_check(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(kind="hash", funds=False)
+    r = TestClient(_app(tmp_path, supplier, rail)).post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 200 and rail.funding_checks == 0 and len(supplier.calls) == 1
+
+
+def test_a_payer_who_left_a_search_unpaid_is_refused_before_more_supplier_spend(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(settle="unsettled")
+    c = TestClient(_app(tmp_path, supplier, rail))
+    first = c.post("/v1/web", json=BODY, headers=PAY)
+    assert first.status_code == 402 and first.json()["error"] == "settlement_failed"
+    rail.settle_mode = "ok"
+    again = c.post("/v1/web", json={**BODY, "request_id": "r2"}, headers=PAY)
+    assert again.status_code == 402 and again.json()["error"] == "payer_left_a_delivery_unpaid"
+    assert len(supplier.calls) == 1  # the unpaid search is the only supplier spend
+
+
+def test_unpaid_supplier_spend_is_capped_across_payers(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(settle="unsettled")
+    c = TestClient(_app(tmp_path, supplier, rail, unpaid_cap_usd=svc.Decimal("0.0015")))
+    for n in range(4):
+        rail.payer = f"0x{n + 1:040x}"  # fresh wallets, each failing to pay
+        c.post("/v1/web", json={**BODY, "request_id": f"r{n}"}, headers=PAY)
+    # $0.0008 + $0.0008 would exceed $0.0015: only the first unpaid search was ever run
+    assert len(supplier.calls) == 1
+    rail.payer, rail.settle_mode = "0x" + "e" * 40, "ok"
+    r = c.post("/v1/web", json={**BODY, "request_id": "honest"}, headers=PAY)
+    assert r.status_code == 503 and r.json() == {
+        "error": "unpaid_ceiling_reached",
+        "charged": False,
+    }
+    paid_upfront = StubRail(kind="hash")  # an already broadcast payment is unaffected
+    ok = TestClient(_app(tmp_path / "h", supplier, paid_upfront, unpaid_cap_usd=svc.Decimal(0)))
+    assert ok.post("/v1/web", json=BODY, headers=PAY).status_code == 200
+
+
+def test_an_unknown_settlement_outcome_never_invites_a_second_payment(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(settle="unknown", reuse=True)
+    c = TestClient(_app(tmp_path, supplier, rail))
+    r = c.post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 503
+    assert r.json()["error"] == "payment_outcome_unknown" and r.json()["charged"] == "unknown"
+    assert "www-authenticate" not in r.headers  # no fresh challenge: don't pay again
+    retry = c.post("/v1/web", json=BODY, headers=PAY)  # the same credential, as instructed
+    assert retry.status_code == 200 and retry.json()["results"] == HITS[:2]
+    assert retry.json()["receipt"]["payment_ref"].startswith("tempo:0x")
+    assert len(supplier.calls) == 1 and rail.settled == 1
+    assert _stats(c)["settled_reads"] == 1
+
+
+def test_a_settled_credential_returns_its_own_result_and_never_buys_another(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(reuse=True)
+    c = TestClient(_app(tmp_path, supplier, rail))
+    first = c.post("/v1/web", json=BODY, headers=PAY)
+    same = c.post("/v1/web", json=BODY, headers=PAY)
+    other = c.post("/v1/web", json={**BODY, "query": "something else"}, headers=PAY)
+    assert same.status_code == 200 and same.json()["results"] == first.json()["results"]
+    assert other.status_code == 409 and other.json() == {
+        "error": "credential_already_used",
+        "charged": False,
+    }
+    assert len(supplier.calls) == 1 and rail.broadcasts == 1
+
+
+def test_concurrent_requests_with_one_credential_run_one_search(tmp_path):
+    import httpx
+
+    supplier, rail = FakeSupplier(delay=0.05), StubRail(reuse=True)
+    app = _app(tmp_path, supplier, rail)
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+            return await asyncio.gather(
+                *[c.post("/v1/web", json=BODY, headers=PAY) for _ in range(5)]
+            )
+
+    responses = asyncio.run(go())
+    assert all(r.status_code == 200 for r in responses)
+    assert len(supplier.calls) == 1 and rail.broadcasts == 1
+
+
+def test_a_delivery_interrupted_by_a_restart_is_never_rerun_on_that_credential(tmp_path):
+    supplier, rail = FakeSupplier(), StubRail(reuse=True)
+    app = _app(tmp_path, supplier, rail)
+    key = hashlib.sha256(b'{"n":0,"type":"transaction"}').hexdigest()
+    svc.Ledger(tmp_path / "web_read.sqlite3").set_claim(key, "delivering")  # crashed mid-search
+    r = TestClient(app).post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 402 and supplier.calls == [] and rail.broadcasts == 0
+
+
+def test_a_ledger_failure_after_payment_still_delivers(tmp_path, monkeypatch):
+    def broken(*a, **k):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(svc.Ledger, "delivered", broken)
+    supplier, rail = FakeSupplier(), StubRail()
+    r = TestClient(_app(tmp_path, supplier, rail)).post("/v1/web", json=BODY, headers=PAY)
+    assert r.status_code == 200 and r.json()["results"] == HITS[:2] and rail.settled == 1
+
+
+def test_the_query_never_reaches_logs_errors_or_records(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    for supplier, rail in (
+        (FakeSupplier(fail=True), StubRail()),
+        (FakeSupplier(), StubRail(settle="unsettled")),
+        (FakeSupplier(), StubRail(settle="unknown")),
+        (FakeSupplier(), StubRail(funds=False)),
+    ):
+        here = tmp_path / str(id(rail))
+        r = TestClient(_app(here, supplier, rail)).post("/v1/web", json=BODY, headers=PAY)
+        assert "zqxv" not in r.text
+        dump = "\n".join(sqlite3.connect(here / "web_read.sqlite3").iterdump())
+        assert "zqxv" not in dump
+    assert "zqxv" not in caplog.text
+
+
+def test_a_search_credential_cannot_buy_a_web_read():
+    from mpp import Challenge, Credential
+
+    env = {
+        "READ_MPP_CHAIN_ID": "42431",
+        "WEB_SEARCH_MPP_CHAIN_ID": "42431",
+        "BG_OPERATOR_TOKEN": "t",
+    }
+    read = rail_mod.TempoRail(rail_mod.MppSettings.from_env(env, "h", "READ_"), PAY_TO, "0.002")
+    web = rail_mod.TempoRail(
+        rail_mod.MppSettings.from_env(env, "h", "WEB_SEARCH_"), PAY_TO, "0.002"
+    )
+    header = asyncio.run(web.challenge_headers("https://h/search/v1/web"))[0][1]
+    echo = Challenge.from_www_authenticate(header).to_echo()
+    auth = Credential(challenge=echo, payload={"type": "hash", "hash": "0x" + "c" * 64})
+    assert asyncio.run(read.validate(auth.to_authorization(), "https://h/read/v1/page")) == (
+        "RouteMismatch"
+    )
+
+
+def test_an_altered_scope_fails_the_challenge_signature():
+    from dataclasses import replace
+
+    from mpp import Challenge, Credential
+
+    env = {"WEB_SEARCH_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "t"}
+    cfg = rail_mod.MppSettings.from_env(env, "h", "WEB_SEARCH_")
+    rail = rail_mod.TempoRail(cfg, PAY_TO, "0.002")
+    header = asyncio.run(rail.challenge_headers("https://h/read/v1/page"))[0][1]  # other route
+    challenge = Challenge.from_www_authenticate(header)
+    forged = {
+        **challenge.request,
+        "_mppx_scope": {"http_method": "POST", "resource": "/search/v1/web"},
+    }
+    echo = replace(challenge.to_echo(), request=search._b64(forged))
+    auth = Credential(challenge=echo, payload={"type": "hash", "hash": "0x" + "c" * 64})
+    reason = asyncio.run(rail.validate(auth.to_authorization(), "https://h/search/v1/web"))
+    assert reason == "InvalidChallengeError"  # the scope passes our check; the HMAC doesn't
+
+
+def test_an_expired_challenge_is_refused():
+    from mpp import Challenge, Credential
+
+    env = {"WEB_SEARCH_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "t"}
+    cfg = rail_mod.MppSettings.from_env(env, "h", "WEB_SEARCH_")
+    rail = rail_mod.TempoRail(cfg, PAY_TO, "0.002")
+    header = asyncio.run(rail.challenge_headers("https://h/search/v1/web"))[0][1]
+    live = Challenge.from_www_authenticate(header)
+    expired = Challenge.create(
+        secret_key=cfg.secret_key, realm=cfg.realm, method=live.method, intent=live.intent,
+        request=live.request, expires="2020-01-01T00:00:00Z",
+    )  # fmt: skip
+    auth = Credential(
+        challenge=expired.to_echo(), payload={"type": "hash", "hash": "0x" + "c" * 64}
+    )
+    assert asyncio.run(rail.validate(auth.to_authorization(), "https://h/search/v1/web")) in (
+        "PaymentExpiredError",
+        "VerificationError",
+    )
+
+
+@pytest.mark.parametrize("header", ["Payment", "Payment !!!", "Payment eyJ9", "Bearer x"])
+def test_malformed_credentials_are_refused_safely(header):
+    env = {"WEB_SEARCH_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "t"}
+    rail = rail_mod.TempoRail(
+        rail_mod.MppSettings.from_env(env, "h", "WEB_SEARCH_"), PAY_TO, "0.002"
+    )
+    assert asyncio.run(rail.validate(header, "https://h/search/v1/web")) == "RouteMismatch"

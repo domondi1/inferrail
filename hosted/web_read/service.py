@@ -130,6 +130,9 @@ class Task:
     # (url, final_url, bytes, words, sha256) recorded per sale; never a request's private content
     ledger_fields: Callable[[dict[str, Any]], tuple[Any, ...]]
     guide: Callable[[Settings], str]  # /llms.txt
+    # What one delivery costs us before the buyer's transfer is broadcast (a paid supplier call).
+    # Above zero, a sale is held to the unpaid-cost controls in `mpp_purchase`.
+    unit_cost_usd: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,9 @@ class Settings:
     # Also sell over x402. Off means MPP only: an EIP-3009 transfer binds a merchant and amount,
     # not an endpoint, so a second x402 service needs its own receiving address.
     x402: bool = True
+    # Ceiling on supplier cost spent for transfers that then didn't settle, per 24 hours. Past it,
+    # sales paid by a not-yet-broadcast transfer are refused (uncharged) until the window clears.
+    unpaid_cap_usd: Decimal = Decimal("0.05")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None, prefix: str = "READ_") -> Settings:
@@ -185,6 +191,7 @@ class Settings:
             mpp=mpp,
             allow_get=e.get(f"{prefix}ALLOW_GET") == "1",
             x402=x402,
+            unpaid_cap_usd=Decimal(e.get(f"{prefix}UNPAID_CAP_USD", "0.05")),
         )
 
 
@@ -204,6 +211,14 @@ class Ledger:
               bytes INTEGER, words INTEGER, sha256 TEXT, price_usd TEXT,
               created_at REAL, settled INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS events (kind TEXT, code TEXT, at REAL);
+            -- One row per MPP credential that reached delivery: at most one delivery (and one
+            -- supplier call) per credential, and the result kept for a retry of that credential.
+            CREATE TABLE IF NOT EXISTS claims (
+              key TEXT PRIMARY KEY, state TEXT NOT NULL, result TEXT, at REAL NOT NULL,
+              idem TEXT);
+            -- Delivery cost spent on a transfer that failed (or may have failed) to settle.
+            CREATE TABLE IF NOT EXISTS unpaid (
+              key TEXT PRIMARY KEY, payer TEXT, cost_usd TEXT NOT NULL, state TEXT, at REAL);
             """
         )
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(reads)")}
@@ -211,6 +226,47 @@ class Ledger:
             if column not in columns:
                 self._db.execute(f"ALTER TABLE reads ADD COLUMN {column} TEXT")
         self._db.execute("CREATE INDEX IF NOT EXISTS reads_idem ON reads (payer, idem)")
+
+    def claim(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT state, result, idem FROM claims WHERE key=?", (key,)
+            ).fetchone()
+        return {"state": row[0], "result": row[1], "idem": row[2]} if row else None
+
+    def set_claim(
+        self, key: str, state: str, result: str | None = None, idem: str | None = None
+    ) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO claims (key, state, result, at, idem) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET state=excluded.state, "
+                "result=COALESCE(excluded.result, claims.result), "
+                "idem=COALESCE(excluded.idem, claims.idem)",
+                (key, state, result, time.time(), idem),
+            )
+
+    def release_claim(self, key: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM claims WHERE key=?", (key,))
+
+    def record_unpaid(self, key: str, payer: str, cost: Decimal, state: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO unpaid VALUES (?,?,?,?,?)",
+                (key, payer, str(cost), state, time.time()),
+            )
+
+    def clear_unpaid(self, key: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM unpaid WHERE key=?", (key,))
+
+    def unpaid_since(self, since: float, payer: str | None = None) -> tuple[Decimal, int]:
+        """(total cost, count) of unpaid deliveries since `since`, optionally for one payer."""
+        q = "SELECT cost_usd FROM unpaid WHERE at >= ?" + (" AND payer=?" if payer else "")
+        with self._lock:
+            rows = self._db.execute(q, (since, payer) if payer else (since,)).fetchall()
+        return sum((Decimal(c) for (c,) in rows), Decimal(0)), len(rows)
 
     def event(self, kind: str, code: str = "") -> None:
         with self._lock:
@@ -643,8 +699,66 @@ def create_app(
             response.headers.append(k, v)
         return response
 
+    def credential_key(credential: Any, authorization: str) -> str:
+        """One key per payment: the signed transfer (or its hash), not its encoding."""
+        payload = getattr(credential, "payload", None)
+        if isinstance(payload, dict) and payload:
+            raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        else:
+            raw = authorization
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def unpaid_exposure(payer: str) -> str | None:
+        """Why a sale paid by a not-yet-broadcast transfer must be refused before any supplier
+        spend, if it must: this payer recently left a delivery unpaid, or unpaid deliveries hit
+        the 24-hour ceiling."""
+        day = time.time() - 86400
+        if ledger.unpaid_since(day, payer)[1]:
+            return "payer_left_a_delivery_unpaid"
+        spent, _ = ledger.unpaid_since(day)
+        if spent + task.unit_cost_usd > settings.unpaid_cap_usd:
+            return "unpaid_ceiling_reached"
+        return None
+
+    def paid(row: dict[str, Any], receipt: Any, payer: str, idem: str, client: str) -> Any:
+        """Record a settled sale and answer with it. The buyer has paid: a ledger failure is
+        recorded as an event and never withholds the result."""
+        ref = f"tempo:{receipt.reference}"
+        try:
+            ledger.delivered(
+                ref, (receipt.payer or payer).lower(), task.ledger_fields(row),
+                settings.price_usd, idem, json.dumps(row) if settings.recovery_s else None,
+            )  # fmt: skip
+            ledger.settled(ref)
+        except Exception:
+            log.exception("settled sale not recorded")
+            with contextlib.suppress(Exception):
+                ledger.event("attempt_failed", _reason("mpp", "ledger_write_failed"))
+        return JSONResponse(row, headers={"Payment-Receipt": receipt.to_payment_receipt()})
+
+    def outcome_unknown(client: str) -> JSONResponse:
+        ledger.event("attempt_failed", _reason("mpp", "settle_outcome_unknown"))
+        ledger.event("payment_pending", client)
+        return JSONResponse(
+            {
+                "error": "payment_outcome_unknown",
+                "charged": "unknown",
+                "detail": "Your transfer may have been sent. Do not pay again: repeat this "
+                "request with the same Authorization credential to get the result.",
+            },
+            status_code=503,
+            headers={"Retry-After": "5"},
+        )
+
     async def mpp_purchase(request: Request, client: str) -> JSONResponse:
-        """MPP (Tempo) purchase: validate the credential, deliver, then broadcast."""
+        """MPP (Tempo) purchase: validate the credential, deliver, then broadcast.
+
+        One credential buys at most one delivery: it is claimed before delivery, and the result
+        is stored under the claim before the transfer is broadcast, so a retry of the same
+        credential (after a lost response, an unknown settlement outcome or a restart) settles
+        it and returns that result without delivering twice. For a task with a delivery cost
+        (a paid supplier call), a not-yet-broadcast transfer is checked for funds first, and
+        payers or 24-hour totals that left deliveries unpaid are refused before any spend."""
         assert rail is not None
         ledger.event("payment_attempt", client)
         try:
@@ -652,47 +766,93 @@ def create_app(
         except Exception:
             ledger.event("attempt_failed", _reason("mpp", "invalid_request"))
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
-        valid = await rail.validate(request.headers["authorization"], str(request.url))
+        authorization = request.headers["authorization"]
+        valid = await rail.validate(authorization, str(request.url))
         if valid is None or isinstance(valid, str):  # a str is the rail's reason for refusing
             ledger.event("payment_rejected", client)
             ledger.event("attempt_failed", _reason("mpp", valid))
             return await mpp_challenge(request, "payment_invalid")
         credential, payer, kind = valid
         idem = task.idem(body)
-        async with exclusive((payer, idem)):
-            if kind == "transaction" and settings.recovery_s:
-                stored = ledger.recoverable(payer, idem, settings.recovery_s)
-                if stored is not None:  # the new transfer is never broadcast: no second charge
-                    return recovered(stored, client)
-            status, row = await task.deliver(body, ledger.event)
-            if status != 200:
-                ledger.event("attempt_failed", _reason("mpp", f"http_{status}"))
-                if kind == "hash":  # the client already paid on chain; we owe it back
-                    with contextlib.suppress(Exception):
-                        await rail.settle(credential)
-                    ledger.event("refund_owed", client)
-                    row.update(charged=True, refund="owed")
-                return JSONResponse(row, status_code=status)
+        key = credential_key(credential, authorization)
+        async with exclusive(("credential", key)), exclusive((payer, idem)):
+            claim = ledger.claim(key)
+            if claim and claim["idem"] and claim["idem"] != idem:  # one payment, one request
+                ledger.event("attempt_failed", _reason("mpp", "credential_already_used"))
+                return JSONResponse(
+                    {"error": "credential_already_used", "charged": False}, status_code=409
+                )
+            if claim and claim["state"] == "settled":
+                if claim["result"]:  # the same payment, asked again: its result, no new charge
+                    return recovered(claim["result"], client)
+                ledger.event("attempt_failed", _reason("mpp", "credential_already_used"))
+                return JSONResponse(
+                    {"error": "credential_already_used", "charged": False}, status_code=409
+                )
+            if claim and claim["state"] in ("failed", "delivering"):
+                # Already refused, or interrupted mid-delivery: never deliver on it again.
+                ledger.event("attempt_failed", _reason("mpp", f"credential_{claim['state']}"))
+                return await mpp_challenge(request, "payment_invalid")
+            if claim and claim["state"] == "delivered":  # delivered, settlement pending
+                row = json.loads(claim["result"])
+            else:
+                if kind == "transaction" and settings.recovery_s:
+                    stored = ledger.recoverable(payer, idem, settings.recovery_s)
+                    if stored is not None:  # the new transfer is never broadcast: no 2nd charge
+                        return recovered(stored, client)
+                if task.unit_cost_usd and kind != "hash":
+                    refusal = unpaid_exposure(payer)
+                    if refusal is None:
+                        try:
+                            if not await rail.funded(credential, payer):
+                                refusal = "insufficient_funds"
+                        except Exception:
+                            refusal = "funds_unverifiable"
+                    if refusal:
+                        ledger.event("payment_rejected", client)
+                        ledger.event("attempt_failed", _reason("mpp", refusal))
+                        status = 503 if refusal == "unpaid_ceiling_reached" else 402
+                        if status == 402:
+                            return await mpp_challenge(request, refusal)
+                        return JSONResponse({"error": refusal, "charged": False}, status_code=503)
+                ledger.set_claim(key, "delivering", idem=idem)
+                status, row = await task.deliver(body, ledger.event)
+                if status != 200:
+                    ledger.event("attempt_failed", _reason("mpp", f"http_{status}"))
+                    if kind == "hash":  # the client already paid on chain; we owe it back
+                        ledger.set_claim(key, "failed")
+                        with contextlib.suppress(Exception):
+                            await rail.settle(credential)
+                        ledger.event("refund_owed", client)
+                        row.update(charged=True, refund="owed")
+                    else:  # nothing was broadcast: the buyer may use this credential again
+                        ledger.release_claim(key)
+                    return JSONResponse(row, status_code=status)
+                row["receipt"] = {
+                    "payment_ref": None,  # set once the transfer settles
+                    "price_usd": settings.price_usd,
+                    "request_id": body.request_id,
+                    "rail": "mpp-tempo",
+                }
+                ledger.set_claim(key, "delivered", json.dumps(row))  # before the broadcast
             try:
                 receipt = await rail.settle(credential)
-            except Exception as exc:
+            except mpp_rail.OutcomeUnknown:
+                if task.unit_cost_usd:
+                    ledger.record_unpaid(key, payer, task.unit_cost_usd, "unknown")
+                return outcome_unknown(client)
+            except Exception as exc:  # definitely not settled: the buyer wasn't charged
+                ledger.set_claim(key, "failed")
+                if task.unit_cost_usd:
+                    ledger.record_unpaid(key, payer, task.unit_cost_usd, "unsettled")
+                cause = exc.__cause__ if isinstance(exc, mpp_rail.Unsettled) else exc
                 ledger.event("payment_rejected", client)
-                ledger.event("attempt_failed", _reason("mpp", f"settle_{type(exc).__name__}"))
+                ledger.event("attempt_failed", _reason("mpp", f"settle_{type(cause).__name__}"))
                 return await mpp_challenge(request, "settlement_failed")
-            ref = f"tempo:{receipt.reference}"
-            payer = (receipt.payer or payer).lower()
-            row["receipt"] = {
-                "payment_ref": ref,
-                "price_usd": settings.price_usd,
-                "request_id": body.request_id,
-                "rail": "mpp-tempo",
-            }
-            ledger.delivered(
-                ref, payer, task.ledger_fields(row), settings.price_usd, idem,
-                json.dumps(row) if settings.recovery_s else None,
-            )  # fmt: skip
-            ledger.settled(ref)
-            return JSONResponse(row, headers={"Payment-Receipt": receipt.to_payment_receipt()})
+            ledger.clear_unpaid(key)
+            row["receipt"]["payment_ref"] = f"tempo:{receipt.reference}"
+            ledger.set_claim(key, "settled", json.dumps(row) if settings.recovery_s else "")
+            return paid(row, receipt, payer, idem, client)
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:

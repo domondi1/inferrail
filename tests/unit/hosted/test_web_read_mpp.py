@@ -54,8 +54,9 @@ class StubRail:
         return [("WWW-Authenticate", 'Payment id="x", method="tempo", intent="charge"')]
 
     async def validate(self, authorization: str, url: str | None = None):
-        self.validated += 1
-        return (object(), PAYER, self.kind) if self.valid else self.reason
+        self.validated += 1  # each request carries a fresh credential, like a real client's
+        credential = SimpleNamespace(payload={"type": self.kind, "n": self.validated})
+        return (credential, PAYER, self.kind) if self.valid else self.reason
 
     async def settle(self, credential):
         if not self.settle_ok:
@@ -434,3 +435,55 @@ def test_the_service_checks_the_route_of_the_paid_request(tmp_path):
     c = _client(tmp_path, rail)
     c.post("/v1/page", json={"url": "https://example.com/"}, headers=PAY)
     assert seen and seen[0].endswith("/v1/page")
+
+
+def test_an_unknown_settlement_outcome_is_not_answered_with_a_new_challenge(tmp_path):
+    """The SDK: a payment that may have landed must never get a retryable 402 (it invites a
+    second payment). Web Read says so and settles on a retry of the same credential."""
+
+    class Unsure(StubRail):
+        def __init__(self):
+            super().__init__()
+            self.unsure = True
+
+        async def validate(self, authorization, url=None):
+            self.validated += 1
+            return SimpleNamespace(payload={"type": "transaction", "n": 1}), PAYER, "transaction"
+
+        async def settle(self, credential):
+            if self.unsure:
+                self.unsure = False
+                raise rail_mod.OutcomeUnknown("InternalPaymentError")
+            return await super().settle(credential)
+
+    rail = Unsure()
+    c = _client(tmp_path, rail)
+    r = c.post("/v1/page", json={"url": "https://example.com/"}, headers=PAY)
+    assert r.status_code == 503 and r.json()["charged"] == "unknown"
+    assert "www-authenticate" not in r.headers
+    again = c.post("/v1/page", json={"url": "https://example.com/"}, headers=PAY)
+    assert again.status_code == 200 and "Hello agents" in again.json()["content_markdown"]
+    assert rail.settled == 1
+
+
+def test_a_ledger_from_the_previous_release_opens_and_keeps_its_sales(tmp_path):
+    import sqlite3
+
+    old = sqlite3.connect(tmp_path / "web_read.sqlite3")
+    old.executescript(
+        """
+        CREATE TABLE reads (
+          payment_ref TEXT PRIMARY KEY, payer TEXT, url TEXT, final_url TEXT,
+          bytes INTEGER, words INTEGER, sha256 TEXT, price_usd TEXT,
+          created_at REAL, settled INTEGER NOT NULL DEFAULT 0, idem TEXT, result TEXT);
+        CREATE TABLE events (kind TEXT, code TEXT, at REAL);
+        INSERT INTO reads VALUES ('tempo:0xold', '0xp', 'https://a/', 'https://a/', 1, 1, 'h',
+          '0.002', 1.0, 1, 'i', NULL);
+        """
+    )
+    old.close()
+    ledger = svc.Ledger(tmp_path / "web_read.sqlite3")
+    stats = ledger.stats()
+    assert stats["settled_reads"] == 1 and stats["revenue_usd"] == "0.002"
+    ledger.set_claim("k", "delivering", idem="i")
+    assert ledger.claim("k")["state"] == "delivering"

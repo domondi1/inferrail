@@ -25,6 +25,7 @@ import json
 import sys
 import time
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -112,6 +113,14 @@ def load_suppliers() -> tuple[Any, Any]:
     )
 
 
+def _b64(value: dict[str, Any]) -> str:
+    """Unpadded base64url JSON, as MPP encodes a challenge request (used by tests)."""
+    import base64
+
+    raw = json.dumps(value, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
 def _sha256(results: list[dict[str, Any]]) -> str:
     canonical = json.dumps(results, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -123,6 +132,9 @@ def search_task(service: Any, supplier: Any, secret: bytes) -> Any:
     `secret` keys the retry identity."""
     if len(secret) < 16:
         raise ValueError("search_retry_secret_too_short")
+    cost = getattr(supplier, "max_cost", None)  # the verified cost per search, 6-decimal USD
+    if type(cost) is not int or cost <= 0:
+        raise ValueError("supplier_cost_per_search_required")
     suppliers, contract = load_suppliers()
 
     def idem(body: SearchRequest) -> str:
@@ -223,4 +235,5 @@ def search_task(service: Any, supplier: Any, secret: bytes) -> Any:
             row["results_sha256"],
         ),
         guide=guide,
+        unit_cost_usd=Decimal(cost) / Decimal(10**6),
     )
