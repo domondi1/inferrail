@@ -26,6 +26,7 @@ Optional, each off unless set:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import datetime as dt
@@ -33,6 +34,7 @@ import hashlib
 import hmac
 import html
 import json
+import os
 import secrets
 import shutil
 import sqlite3
@@ -51,10 +53,22 @@ from starlette.responses import JSONResponse, PlainTextResponse, RedirectRespons
 from starlette.routing import Route
 
 COOKIE, CSRF_COOKIE = "gm_session", "gm_csrf"
+
+
+def request_key_of(request_id: str) -> str:
+    """Same hash as commerce_events.request_key (the recorder never keeps the raw id)."""
+    return hashlib.sha256(f"request|{request_id}".encode()).hexdigest()[:24]
+
+
 PREFIX = "/ops"
 MIN_SECRET = 32
+# Failed sign-ins per source before further failures are slowed and answered 429. There is no
+# lockout: the correct secret is always accepted, so nobody can deny the operator access by
+# failing on purpose. Guessing is not a threat model here: the secret is 32+ random bytes.
 FAILS_PER_SOURCE, SOURCE_WINDOW_S = 5, 900
-FAILS_TOTAL, TOTAL_WINDOW_S = 50, 3600
+THROTTLE_DELAY_S = 1.0
+# Storage health: warn below either threshold, critical below the hard floor.
+DISK_WARN_BYTES, DISK_WARN_RATIO, DISK_CRITICAL_BYTES = 100 * 2**20, 0.10, 25 * 2**20
 CHAIN_INTERVAL_S, CHAIN_BATCH = 600, 5
 TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 AUTHORIZATION_USED = "0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5"
@@ -299,6 +313,8 @@ class Evidence:
                     else None,
                     "chain": chain.get(pid),
                     "codes": sorted({e["code"] for e in evs if e["code"]}),
+                    "request_keys": sorted({e["request_key"] for e in evs if e["request_key"]}),
+                    "asset": pick("asset"),
                     "events": len(evs),
                 }
             )
@@ -333,6 +349,7 @@ class Evidence:
             by_product[p["product"] or "unknown"] += p["amount_atomic"] or 0
             by_rail[f"{p['rail']} · {p['network']}"] += p["amount_atomic"] or 0
             days[iso(p["settled_at"])[:10]]["settled"] += 1
+            days[iso(p["settled_at"])[:10]]["revenue_atomic"] += p["amount_atomic"] or 0
         for p in purchases:
             days[iso(p["first_at"])[:10]]["purchases"] += 1
         for row in self.store.rows(
@@ -346,6 +363,7 @@ class Evidence:
         legacy = self.ledger_rows(
             "SELECT kind, code, COUNT(*) AS n FROM events GROUP BY kind, code"
         )
+        storage = self.storage()
         head = self.store.head()
         return {
             "generated_at": time.time(),
@@ -389,7 +407,9 @@ class Evidence:
                 "chain_check": "on" if self.gm.chain_check else "off",
                 "last_chain_check_at": self.last_chain_run or None,
                 **self.store.health(),
-                "storage": self.storage(),
+                "storage": storage,
+                "recorder": self.recorder_health(storage),
+                "release": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:12],
             },
         }
 
@@ -420,14 +440,57 @@ class Evidence:
         }
 
     def storage(self) -> dict[str, Any]:
-        out: dict[str, Any] = {}
+        """Free space on the volume holding the event file, and what uses it (like `df` and
+        `du` on the data root: the parent of the service's data directory)."""
+        out: dict[str, Any] = {"path": str(self.store.path.parent)}
         with contextlib.suppress(OSError):
             du = shutil.disk_usage(self.store.path.parent)
-            out = {"disk_total_bytes": du.total, "disk_free_bytes": du.free}
+            out.update(disk_total_bytes=du.total, disk_free_bytes=du.free)
+        root = self.store.path.parent.parent
+        usage: dict[str, int] = {}
+        seen = 0
+        for top in sorted(root.iterdir()) if root.is_dir() else []:
+            size = 0
+            with contextlib.suppress(OSError):
+                files = [top] if top.is_file() else top.rglob("*")
+                for f in files:
+                    seen += 1
+                    if seen > 5000:  # bounded walk
+                        break
+                    if f.is_file():
+                        size += f.stat().st_size
+            usage[top.name] = size
+        out["usage_by_entry"] = usage
         for f in (self.store.path, self.ledger_path):
             with contextlib.suppress(OSError):
                 out[f"{f.name}_bytes"] = f.stat().st_size
         return out
+
+    def recorder_health(self, storage: dict[str, Any]) -> dict[str, Any]:
+        """ok / warning / critical, with reasons. Visible even when no write has succeeded since
+        a failure (the counter lives in the running process and is also logged)."""
+        problems: list[tuple[str, str]] = []
+        lost = getattr(self.store, "lost", 0)
+        if lost:
+            problems.append(("critical", f"{lost} event(s) not recorded since the last good write "
+                             f"({self.store.last_error})"))  # fmt: skip
+        gaps = self.store.health()["gaps_recorded"]
+        if gaps["n"]:
+            problems.append(("warning", f"{int(gaps['lost'] or 0)} event(s) lost earlier "
+                             f"({gaps['n']} recorded gap(s))"))  # fmt: skip
+        free, total = storage.get("disk_free_bytes"), storage.get("disk_total_bytes")
+        if free is None:
+            problems.append(("warning", "disk usage unavailable"))
+        elif free < DISK_CRITICAL_BYTES:
+            problems.append(("critical", f"disk almost full: {free} bytes free"))
+        elif free < DISK_WARN_BYTES or (total and free / total < DISK_WARN_RATIO):
+            problems.append(("warning", f"disk low: {free} bytes free"))
+        if not os.access(self.store.path, os.W_OK):
+            problems.append(("critical", "event file is not writable"))
+        level = "ok"
+        if problems:
+            level = "critical" if any(p[0] == "critical" for p in problems) else "warning"
+        return {"level": level, "problems": [p[1] for p in problems]}
 
     async def chain_check(self, client: Any) -> int:
         """Confirm up to CHAIN_BATCH settled purchases on chain (not yet confirmed or refuted)."""
@@ -583,16 +646,21 @@ class Auth:
         return self._sign(f"csrf|{session['n']}".encode())
 
     def source(self, request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        raw = forwarded or (request.client.host if request.client else "unknown")
+        """A keyed hash of the client address (never stored raw). Prefers the edge's
+        CF-Connecting-IP, then the last X-Forwarded-For hop (added by the proxy, unlike the
+        first, which the client controls)."""
+        hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",")]
+        raw = (
+            request.headers.get("cf-connecting-ip", "").strip()
+            or next((h for h in reversed(hops) if h), "")
+            or (request.client.host if request.client else "unknown")
+        )
         return self._sign(f"source|{raw}".encode())[:16]
 
     def throttled(self, source: str) -> bool:
-        now = time.time()
-        return (
-            self.store.access_failures_since(now - SOURCE_WINDOW_S, source) >= FAILS_PER_SOURCE
-            or self.store.access_failures_since(now - TOTAL_WINDOW_S) >= FAILS_TOTAL
-        )
+        """Too many recent failures from this source: further failures wait and get 429."""
+        since = time.time() - SOURCE_WINDOW_S
+        return self.store.access_failures_since(since, source) >= FAILS_PER_SOURCE
 
     def check_secret(self, given: str) -> bool:
         return hmac.compare_digest(
@@ -680,13 +748,16 @@ def overview_html(s: dict[str, Any], purchases: list[dict[str, Any]], csrf: str)
             f"Event history failed verification at seq {rec['chain_verified']['first_bad_seq']}."
         )
     health += [f"Reconciliation: {x['kind'].replace('_', ' ')}" for x in rec["issues"]]
+    recorder = f["recorder"]
+    health += [f"Recorder {recorder['level']}: {p}" for p in recorder["problems"]]
     health_html = "".join(f'<p class="alert">{_e(h)}</p>' for h in health)
     recent = (
         "".join(_row(p) for p in purchases[:10])
         or '<tr><td colspan="7">No purchases yet.</td></tr>'
     )
     history = "".join(
-        f"<tr><td>{_e(h['day'])}</td><td>{h.get('settled', 0)}</td><td>{h.get('purchases', 0)}</td>"
+        f"<tr><td>{_e(h['day'])}</td><td>${usd(h.get('revenue_atomic', 0))}</td>"
+        f"<td>{h.get('settled', 0)}</td><td>{h.get('purchases', 0)}</td>"
         f"<td>{h.get('price_checks', 0)}</td></tr>"
         for h in reversed(s["history"][-30:])
     )  # fmt: skip
@@ -729,7 +800,8 @@ def overview_html(s: dict[str, Any], purchases: list[dict[str, Any]], csrf: str)
         '<div class="grid2">'
         "<section><h2>Revenue by product and rail</h2><table><tbody>"
         f"{breakdown or '<tr><td>No revenue yet.</td></tr>'}</tbody></table>"
-        "</section><section><h2>Activity by day</h2><table><thead><tr><th>Day</th><th>Settled</th>"
+        "</section><section><h2>Activity by day</h2><table><thead><tr><th>Day</th><th>Revenue</th>"
+        "<th>Settled</th>"
         f"<th>Purchases</th><th>Price checks</th></tr></thead><tbody>{history}</tbody></table>"
         "</section></div>"
         "<h2>Freshness and integrity</h2>"
@@ -739,7 +811,9 @@ def overview_html(s: dict[str, Any], purchases: list[dict[str, Any]], csrf: str)
             ("History verified", "yes" if rec["chain_verified"]["ok"] else "NO",
              f"{rec['chain_verified']['checked']} events"),
             ("Disk free", _bytes(f["storage"].get("disk_free_bytes")),
-             f"of {_bytes(f['storage'].get('disk_total_bytes'))}"),
+             f"of {_bytes(f['storage'].get('disk_total_bytes'))} at {f['storage'].get('path')}"),
+            ("Recorder", f["recorder"]["level"], f"{f['lost_since_last_write']} unrecorded now"),
+            ("Release", f["release"], "RENDER_GIT_COMMIT"),
         ])
         + "<h3>Before the recorder (aggregate counts from the ledger)</h3>"
         + '<p class="muted">These counts carry no purchase identity, so they cannot be linked to '
@@ -747,8 +821,63 @@ def overview_html(s: dict[str, Any], purchases: list[dict[str, Any]], csrf: str)
         + "<table><tbody>"
         + "".join(f"<tr><td>{_e(k)}</td><td>{v}</td></tr>" for k, v in sorted(d["legacy_funnel"].items()))  # noqa: E501
         + "</tbody></table>"
+        + "<h2>Definitions</h2><dl>"
+        + "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in DEFINITIONS)
+        + "</dl>"
     )  # fmt: skip
     return _page("Overview", body, f["head_seq"], csrf)
+
+
+DEFINITIONS = (
+    (
+        "Settled revenue",
+        "Sum of the amounts of purchases with a settled event (the transfer settled; "
+        "for x402 the facilitator reported success, for MPP the transfer was confirmed). "
+        "Attempts, retries, recoveries and failed settlements never add to it.",
+    ),
+    (
+        "Settled purchases",
+        "Distinct purchases (one payment: x402 payer and nonce, or one MPP "
+        "credential) with a settled event. A purchase can settle once.",
+    ),
+    ("Delivered paid requests", "Settled purchases whose result was delivered."),
+    (
+        "Confirmed on chain",
+        "Settled purchases whose transaction receipt shows success and a transfer "
+        "of the amount from the payer to the receiving wallet (x402: also the nonce).",
+    ),
+    (
+        "Paying wallets",
+        "Distinct payer addresses with a settled purchase. A wallet is not a customer.",
+    ),
+    (
+        "Independent buyers",
+        "Paying wallets the operator classified as independent "
+        "(GODMODE_PAYER_CLASSES). Never inferred from an unfamiliar address.",
+    ),
+    ("Repeat buyers", "Paying wallets with two or more settled purchases."),
+    (
+        "Payment attempts",
+        "Requests that reached the service carrying a payment; a retry of the same "
+        "payment is counted again and marked as a retry.",
+    ),
+    (
+        "Rejected",
+        "Payments refused before delivery (invalid, unfunded, wrong route, not accepted).",
+    ),
+    ("Delivery failures", "Paid requests the service couldn't deliver; nothing was charged."),
+    (
+        "Settlement failures",
+        "Delivered requests whose transfer did not settle (or whose outcome is unknown).",
+    ),
+    ("Recoveries", "A paid result returned again to its payer without a second charge."),
+    ("Price checks", "Unpaid HTTP 402 answers, counted per hour; they are not purchases."),
+    (
+        "Recorder",
+        "ok, warning or critical: unrecorded events, recorded gaps, disk below 100 MB or "
+        "10% free (critical below 25 MB), or an unwritable event file.",
+    ),
+)
 
 
 def _bytes(n: int | None) -> str:
@@ -776,7 +905,10 @@ def _row(p: dict[str, Any]) -> str:
     )  # fmt: skip
 
 
-FILTERS = ("status", "rail", "network", "product", "wallet", "q", "from", "to", "reason")
+FILTERS = (
+    "status", "rail", "network", "product", "wallet", "q", "from", "to", "reason", "request",
+    "lifecycle",
+)  # fmt: skip
 
 
 def filter_purchases(purchases: list[dict[str, Any]], f: dict[str, str]) -> list[dict[str, Any]]:
@@ -797,6 +929,13 @@ def filter_purchases(purchases: list[dict[str, Any]], f: dict[str, str]) -> list
             if q in (p["tx_hash"] or "").lower() or q in (p["ledger_key"] or "").lower()
             or q in p["purchase_id"]
         ]  # fmt: skip
+    if f.get("request"):
+        key = request_key_of(f["request"])
+        out = [p for p in out if key in p["request_keys"]]
+    if f.get("lifecycle") == "retried":
+        out = [p for p in out if p["retries"]]
+    elif f.get("lifecycle") == "recovered":
+        out = [p for p in out if p["recoveries"]]
     if f.get("from"):
         out = [p for p in out if iso(p["first_at"])[:10] >= f["from"]]
     if f.get("to"):
@@ -827,6 +966,8 @@ def transactions_html(
         + f'<label>Wallet<input name="wallet" value="{_e(f.get("wallet", ""))}" placeholder="0x…"></label>'  # noqa: E501
         + f'<label>Hash or id<input name="q" value="{_e(f.get("q", ""))}"></label>'
         + f'<label>Reason<input name="reason" value="{_e(f.get("reason", ""))}" placeholder="x402:…"></label>'  # noqa: E501
+        + f'<label>Request id<input name="request" value="{_e(f.get("request", ""))}"></label>'  # noqa: E501
+        + select("lifecycle", ["retried", "recovered"])
         + f'<label>From<input type="date" name="from" value="{_e(f.get("from", ""))}"></label>'
         + f'<label>To<input type="date" name="to" value="{_e(f.get("to", ""))}"></label>'
         + f'<button type="submit">Filter</button><a class="link" href="{PREFIX}/transactions">Clear</a>'  # noqa: E501
@@ -877,7 +1018,8 @@ def detail_html(p: dict[str, Any], timeline: list[dict[str, Any]], seq: int, csr
               ("Payer", _e(p["payer"])), ("Receiving wallet", _e(p["pay_to"]))])
         + "<h2>Payment</h2>"
         + dl([("Rail · network", f"{_e(p['rail'])} · {_e(p['network'])}"),
-              ("Amount", f"${_e(usd(p['amount_atomic']))} ({_e(p['amount_atomic'])} atomic)"),
+              ("Amount", f"${_e(usd(p['amount_atomic']))} ({_e(p['amount_atomic'])} atomic "
+               f"{_e(p['asset'] or 'USD stablecoin')})"),
               ("Transaction", tx + _e(tx_note) if p["tx_hash"] else "—"),
               ("Settled at", _e(iso(p["settled_at"]))),
               ("On-chain check", _e(chain.get("outcome", "not checked"))
@@ -886,6 +1028,7 @@ def detail_html(p: dict[str, Any], timeline: list[dict[str, Any]], seq: int, csr
         + dl([("Delivered", "yes" if p["delivered"] else "no"), ("Attempts", p["attempts"]),
               ("Retries", p["retries"]), ("Recoveries", p["recoveries"]),
               ("Reasons", _e(", ".join(p["codes"]) or "—")),
+              ("Request id (hashed)", _e(", ".join(p["request_keys"]) or "—")),
               ("Record", "reconstructed from the ledger (earlier attempts unknown)"
                if p["provenance"] == "ledger_backfill" else "recorded live"),
               ("Buyer classification", _e(p["classification"] or "—")
@@ -1014,9 +1157,7 @@ def create_app(
 
     async def login(request: Request) -> Response:
         source = auth.source(request)
-        if auth.throttled(source):
-            store.log_access("login", False, source)
-            return page(login_html(secrets.token_urlsafe(24), "Too many attempts. Try later."), 429)
+        throttled = auth.throttled(source)
         form = await request.form()
         token = str(form.get("csrf") or "")
         cookie = request.cookies.get(CSRF_COOKIE, "")
@@ -1024,7 +1165,11 @@ def create_app(
         if not csrf_ok or not auth.check_secret(str(form.get("secret") or "")):
             store.log_access("login", False, source)
             fresh = secrets.token_urlsafe(24)
-            response = page(login_html(fresh, "Sign-in failed."), 401)
+            if throttled:  # slow repeated failures down; the right secret still works
+                await asyncio.sleep(THROTTLE_DELAY_S)
+                response = page(login_html(fresh, "Too many failed attempts. Slow down."), 429)
+            else:
+                response = page(login_html(fresh, "Sign-in failed."), 401)
             response.set_cookie(CSRF_COOKIE, fresh, httponly=True, secure=True,
                                 samesite="strict", path=PREFIX, max_age=900)  # fmt: skip
             return response
@@ -1108,6 +1253,22 @@ def create_app(
         response.headers["content-disposition"] = 'attachment; filename="inferrail-evidence.json"'
         return response
 
+    async def api_health(request: Request) -> Response:
+        """Operator health for post-deploy checks: no wallets, amounts or transactions."""
+        session = require(request, api=True)
+        if isinstance(session, Response):
+            return session
+        await prepare()
+        s = evidence.summary()
+        f = s["freshness"]
+        return secure(JSONResponse({
+            "release": f["release"], "recorder": f["recorder"], "storage": f["storage"],
+            "head_seq": f["head_seq"], "chain_check": f["chain_check"],
+            "history_verified": s["reconciliation"]["chain_verified"],
+            "reconciliation_issues": len(s["reconciliation"]["issues"]),
+            "backfill_error": evidence.prepare_error,
+        }))  # fmt: skip
+
     async def api_summary(request: Request) -> Response:
         session = require(request, api=True)
         if isinstance(session, Response):
@@ -1165,6 +1326,7 @@ def create_app(
             Route("/export", export_page),
             Route("/export.json", export_json),
             Route("/api/summary", api_summary),
+            Route("/api/health", api_health),
             Route("/api/archive", archive),
             Route("/static/{name:str}", asset),
         ],

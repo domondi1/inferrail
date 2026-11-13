@@ -848,8 +848,9 @@ def create_app(
         idem = task.idem(body)
         key = credential_key(credential, authorization)
         pid = commerce_events.purchase_id("mpp", key)
+        rkey = commerce_events.request_key(getattr(body, "request_id", None))
         mine = {"purchase_id": pid, "payer": str(payer).lower(), "network": mpp_network,
-                "client": client}  # fmt: skip
+                "client": client, "request_key": rkey}  # fmt: skip
         rec("payment_attempt", "mpp", amount_atomic=price_atomic, **mine)
         async with exclusive(("credential", key)), exclusive((payer, idem)):
             claim = ledger.claim(key)
@@ -1042,7 +1043,10 @@ def create_app(
         """Deliver a page the x402 gate has already verified payment for (settled after)."""
         header = request.headers.get("payment-signature")
         ref = _payment_ref(decode_payment_signature_header(header)) if header else None
-        mine: dict[str, Any] = {"network": settings.network}
+        mine: dict[str, Any] = {
+            "network": settings.network,
+            "request_key": commerce_events.request_key(getattr(body, "request_id", None)),
+        }
         if ref:
             mine.update(purchase_id=commerce_events.purchase_id("ledger", ref[0]),
                         ledger_key=ref[0], payer=ref[1])  # fmt: skip

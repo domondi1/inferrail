@@ -513,12 +513,33 @@ def test_bad_secrets_forged_cookies_and_missing_csrf_are_refused(tmp_path):
     assert c.get("/ops/", follow_redirects=False).status_code == 303
 
 
-def test_failed_sign_ins_are_throttled(tmp_path):
+def test_failed_sign_ins_are_slowed_but_can_never_lock_the_operator_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(gmod, "THROTTLE_DELAY_S", 0)
     c, store = _ops(tmp_path)
     for _ in range(gmod.FAILS_PER_SOURCE):
         assert _login(c, "x" * 40).status_code == 401
-    assert _login(c).status_code == 429  # even the right secret waits out the window
-    assert store.access_failures_since(time.time() - 60) == gmod.FAILS_PER_SOURCE + 1
+    assert _login(c, "x" * 40).status_code == 429  # further failures from this source: 429
+    for _ in range(60):  # far past any global ceiling: there is none to exhaust
+        _login(c, "y" * 40)
+    assert _login(c).status_code == 303  # the right secret always works
+    assert store.access_failures_since(time.time() - 60) == gmod.FAILS_PER_SOURCE + 61
+
+
+def test_the_throttle_source_comes_from_the_proxy_not_the_client(tmp_path):
+    _, store = _ops(tmp_path)
+    auth = gmod.Auth(gmod.GodModeSettings(login_secret=SECRET), store)
+
+    def req(headers):
+        scope = {"type": "http", "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+                 "client": ("10.0.0.1", 1)}  # fmt: skip
+        return gmod.Request(scope)
+
+    edge = auth.source(req({"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "6.6.6.6"}))
+    assert edge == auth.source(req({"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "7.7.7.7"}))
+    # Without the edge header the proxy-added last hop counts; a forged first hop changes nothing.
+    a = auth.source(req({"x-forwarded-for": "6.6.6.6, 2.2.2.2"}))
+    assert a == auth.source(req({"x-forwarded-for": "9.9.9.9, 2.2.2.2"}))
+    assert a != auth.source(req({"x-forwarded-for": "6.6.6.6, 3.3.3.3"}))
 
 
 def test_an_expired_session_is_refused_and_logout_needs_its_token(tmp_path):
@@ -661,3 +682,44 @@ def test_a_malformed_settlement_receipt_never_withholds_a_paid_result(tmp_path):
     c, store, _ = _mpp_app(tmp_path, OddRail())
     r = c.post("/v1/page", json={"url": "https://news.test/a"}, headers=PAY)
     assert r.status_code == 200 and r.json()["content_markdown"]
+
+
+def test_request_ids_are_searchable_but_never_stored(tmp_path):
+    c, store, settings = _x402_app(tmp_path)
+    h = _sign(c, "https://news.test/a")
+    body = {"url": "https://news.test/a", "request_id": "order-4711"}
+    assert c.post("/v1/page", json=body, headers={"PAYMENT-SIGNATURE": h}).status_code == 200
+    assert b"order-4711" not in (tmp_path / "commerce_events.sqlite3").read_bytes()
+    purchases = _evidence(store, settings).purchases()
+    assert gmod.filter_purchases(purchases, {"request": "order-4711"}) == purchases
+    assert gmod.filter_purchases(purchases, {"request": "order-0000"}) == []
+    assert gmod.filter_purchases(purchases, {"lifecycle": "retried"}) == []
+
+
+def test_recorder_health_shows_unrecorded_events_and_low_disk(tmp_path, monkeypatch):
+    settings = _historical_ledger(tmp_path)
+    store = ce.EventStore(tmp_path / "commerce_events.sqlite3")
+    ev = _evidence(store, settings)
+    storage = ev.storage()
+    assert storage["path"] == str(tmp_path) and "disk_free_bytes" in storage
+    assert ev.recorder_health(storage)["level"] == "ok"
+    store.lost, store.last_error = 3, "OperationalError"  # writes are failing right now
+    assert ev.recorder_health(storage)["level"] == "critical"
+    store.lost = 0
+    low = {**storage, "disk_free_bytes": 50 * 2**20, "disk_total_bytes": 2**30}
+    assert ev.recorder_health(low)["level"] == "warning"
+    full = {**storage, "disk_free_bytes": 2**20}
+    assert ev.recorder_health(full)["level"] == "critical"
+
+
+def test_the_health_api_reports_release_storage_and_recorder(tmp_path, monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef1234567890")
+    c, _ = _ops(tmp_path)
+    assert c.get("/ops/api/health").status_code == 401
+    _login(c)
+    h = c.get("/ops/api/health").json()
+    assert h["release"] == "abcdef123456" and h["recorder"]["level"] == "ok"
+    assert h["history_verified"]["ok"] and h["reconciliation_issues"] == 0
+    assert h["backfill_error"] is None and "0x" not in json.dumps(h)
+    page = c.get("/ops/").text
+    assert "Definitions" in page and "abcdef123456" in page and "$0.004" in page

@@ -67,6 +67,7 @@ PROVENANCE = frozenset({"live", "ledger_backfill", "reconcile", "annotation"})
 FIELDS = (
     "purchase_id", "ledger_key", "product", "route", "rail", "network", "payer", "pay_to",
     "amount_atomic", "asset", "tx_hash", "outcome", "code", "client", "receipt_ref", "attempt",
+    "request_key",
 )  # fmt: skip
 
 _SCHEMA = """
@@ -78,12 +79,13 @@ CREATE TABLE IF NOT EXISTS events (
   source TEXT NOT NULL, dedup_key TEXT UNIQUE,
   purchase_id TEXT, ledger_key TEXT, product TEXT, route TEXT, rail TEXT, network TEXT,
   payer TEXT, pay_to TEXT, amount_atomic INTEGER, asset TEXT, tx_hash TEXT, outcome TEXT,
-  code TEXT, client TEXT, receipt_ref TEXT, attempt INTEGER, detail TEXT,
+  code TEXT, client TEXT, receipt_ref TEXT, attempt INTEGER, request_key TEXT, detail TEXT,
   prev_hash TEXT NOT NULL, hash TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_purchase ON events (purchase_id, seq);
 CREATE INDEX IF NOT EXISTS events_type_at ON events (type, at);
 CREATE INDEX IF NOT EXISTS events_ledger_key ON events (ledger_key);
+CREATE INDEX IF NOT EXISTS events_request_key ON events (request_key);
 CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
   BEGIN SELECT RAISE(ABORT, 'commerce events are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
@@ -105,6 +107,14 @@ def purchase_id(kind: str, key: str) -> str:
     """A stable id for one purchase: `ledger` + the ledger's payment_ref (x402 `payer:nonce`), or
     `mpp` + the credential key. The same payment always maps to the same id."""
     return hashlib.sha256(f"{kind}|{key}".encode()).hexdigest()[:32]
+
+
+def request_key(request_id: str | None) -> str | None:
+    """A searchable stand-in for the buyer's request_id: a hash, so the id itself is not kept
+    (it is chosen by the client and could carry anything)."""
+    if not request_id:
+        return None
+    return hashlib.sha256(f"request|{request_id}".encode()).hexdigest()[:24]
 
 
 def canonical(row: dict[str, Any]) -> str:
