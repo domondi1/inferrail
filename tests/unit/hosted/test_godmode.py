@@ -484,6 +484,8 @@ def test_sign_in_sets_a_strict_session_and_every_page_is_private(tmp_path):
     assert "noindex" in page.headers["x-robots-tag"]
     assert "default-src 'self'" in page.headers["content-security-policy"]
     assert page.headers["x-frame-options"] == "DENY"
+    # Browsers send `Origin: null` on form posts under no-referrer; sign-in would always fail.
+    assert page.headers["referrer-policy"] == "same-origin"
     assert "<script>" not in page.text and SECRET not in page.text
     text = page.text
     assert "$0.004" in text and "Independence unconfirmed" in text
@@ -497,6 +499,13 @@ def test_bad_secrets_forged_cookies_and_missing_csrf_are_refused(tmp_path):
     token = c.cookies.get("gm_csrf")
     no_csrf = c.post("/ops/login", data={"secret": SECRET}, follow_redirects=False)
     assert no_csrf.status_code == 401
+    null = c.post(
+        "/ops/login",
+        data={"secret": SECRET, "csrf": token},
+        headers={"origin": "null"},
+        follow_redirects=False,
+    )
+    assert null.status_code == 401
     cross = c.post("/ops/login", data={"secret": SECRET, "csrf": token},
                    headers={"origin": "https://evil.test"}, follow_redirects=False)  # fmt: skip
     assert cross.status_code == 401

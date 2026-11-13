@@ -27,15 +27,16 @@ h1 { font-size: 24px; margin: 4px 0 16px; }
 h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 28px 0 10px; }
 h3 { font-size: 14px; margin: 24px 0 6px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.tiles + .tw, .tiles + table { margin-top: 16px; }
 .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .tile .label { color: var(--muted); font-size: 13px; }
 .tile .value { font-size: 24px; font-weight: 650; margin: 2px 0; font-variant-numeric: tabular-nums; }
 .tile .note { color: var(--muted); font-size: 12px; }
-.grid2 { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
 section { min-width: 0; }
-table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: block; overflow-x: auto; }
-thead, tbody { display: table; width: 100%; }
+.tw { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
 tr:last-child td { border-bottom: 0; }

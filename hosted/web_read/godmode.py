@@ -85,7 +85,9 @@ SECURITY_HEADERS = {
     "content-security-policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
     "base-uri 'none'; form-action 'self'; object-src 'none'",
     "x-frame-options": "DENY",
-    "referrer-policy": "no-referrer",
+    # same-origin, not no-referrer: with no-referrer browsers send `Origin: null` on our own
+    # form posts, which the origin check (rightly) refuses. Nothing is sent to other sites.
+    "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     "permissions-policy": "camera=(), microphone=(), geolocation=()",
 }
@@ -624,6 +626,7 @@ def _page(title: str, body: str, seq: int | None = None, csrf: str | None = None
             '<button type="submit" class="link">Sign out</button></form></nav>'
         )
     seq_attr = f' data-seq="{seq}"' if seq is not None else ""
+    body = body.replace("<table>", '<div class="tw"><table>').replace("</table>", "</table></div>")
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -643,7 +646,7 @@ def _e(value: Any) -> str:
 def _tiles(items: list[tuple[str, Any, str]]) -> str:
     return '<div class="tiles">' + "".join(
         f'<div class="tile"><div class="label">{_e(k)}</div><div class="value">{_e(v)}</div>'
-        f'<div class="note">{_e(n)}</div></div>'
+        f'<div class="note">{html.escape(str(n)) if n else ""}</div></div>'
         for k, v, n in items
     ) + "</div>"  # fmt: skip
 
@@ -719,13 +722,14 @@ def overview_html(s: dict[str, Any], purchases: list[dict[str, Any]], csrf: str)
         + "<h2>Demand</h2>"
         + _tiles([("Price checks (402)", d["price_checks_since_recorder"],
                    "since the recorder started; not purchases")])
-        + '<div class="grid2"><section><h2>Recent purchases</h2>'
+        + "<section><h2>Recent purchases</h2>"
         '<table><thead><tr><th>Time</th><th>Product</th><th>Rail</th><th>Amount</th>'
         f"<th>Status</th><th>Buyer</th><th>Tx</th></tr></thead><tbody>{recent}</tbody></table>"
         f'<p><a href="{PREFIX}/transactions">All transactions →</a></p></section>'
+        '<div class="grid2">'
         "<section><h2>Revenue by product and rail</h2><table><tbody>"
         f"{breakdown or '<tr><td>No revenue yet.</td></tr>'}</tbody></table>"
-        "<h2>Activity by day</h2><table><thead><tr><th>Day</th><th>Settled</th>"
+        "</section><section><h2>Activity by day</h2><table><thead><tr><th>Day</th><th>Settled</th>"
         f"<th>Purchases</th><th>Price checks</th></tr></thead><tbody>{history}</tbody></table>"
         "</section></div>"
         "<h2>Freshness and integrity</h2>"
