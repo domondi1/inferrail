@@ -784,11 +784,12 @@ def create_app(
         """Record a settled sale and answer with it. The buyer has paid: a ledger failure is
         recorded as an event and never withholds the result."""
         ref = f"tempo:{receipt.reference}"
-        who = (receipt.payer or payer).lower()
-        fields = {"purchase_id": pid, "ledger_key": ref, "payer": who, "network": mpp_network,
-                  "amount_atomic": price_atomic, "client": client}  # fmt: skip
-        rec("settled", "mpp", tx_hash=receipt.reference, outcome="settled", **fields)
-        rec("receipt_issued", "mpp", receipt_ref=ref, **fields)
+        with contextlib.suppress(Exception):  # telemetry never withholds a paid result
+            who = str(receipt.payer or payer).lower()
+            fields = {"purchase_id": pid, "ledger_key": ref, "payer": who, "network": mpp_network,
+                      "amount_atomic": price_atomic, "client": client}  # fmt: skip
+            rec("settled", "mpp", tx_hash=receipt.reference, outcome="settled", **fields)
+            rec("receipt_issued", "mpp", receipt_ref=ref, **fields)
         try:
             ledger.delivered(
                 ref, (receipt.payer or payer).lower(), task.ledger_fields(row),

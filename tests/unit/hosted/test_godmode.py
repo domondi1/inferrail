@@ -640,3 +640,15 @@ def test_recording_is_off_by_default():
     env = {"READ_PAY_TO": PAY_TO, "READ_RESOURCE_URL": "http://testserver/v1/page"}
     assert svc.Settings.from_env(env).commerce_events is False
     assert svc.Settings.from_env({**env, "READ_COMMERCE_EVENTS": "1"}).commerce_events is True
+
+
+def test_a_malformed_settlement_receipt_never_withholds_a_paid_result(tmp_path):
+    class OddRail(Rail):
+        async def settle(self, credential):
+            return SimpleNamespace(
+                reference="0x" + "d" * 64, payer=12345, to_payment_receipt=lambda: "receipt"
+            )
+
+    c, store, _ = _mpp_app(tmp_path, OddRail())
+    r = c.post("/v1/page", json={"url": "https://news.test/a"}, headers=PAY)
+    assert r.status_code == 200 and r.json()["content_markdown"]
