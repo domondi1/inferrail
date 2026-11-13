@@ -5,6 +5,8 @@
     /read/*    -> hosted/web_read (Inferrail Web Read), only when READ_PAY_TO is set
     /search/*  -> hosted/web_read/search.py (Inferrail Web Search, a Web Read task), only when
                   WEB_SEARCH_PAY_TO and its supplier approvals are set
+    /ops/*     -> hosted/web_read/godmode.py (the operator's private commercial view), only when
+                  GODMODE_LOGIN_SECRET and READ_COMMERCE_EVENTS=1 are set; never listed
     /openapi.json -> Hosted's operations, for agent catalogs (see origin_openapi)
 
 Why one process: it reuses an already-paid instance. Both apps are small (measured in this
@@ -48,6 +50,7 @@ TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
 PREFIX = "/hosted"
 READ_PREFIX = "/read"
 SEARCH_PREFIX = "/search"
+OPS_PREFIX = "/ops"
 SITE = "https://tryinferrail.com"
 REPO = "https://github.com/domondi1/inferrail"
 log = logging.getLogger("inferrail.cohost")
@@ -84,12 +87,15 @@ def create_combined_app(
     modules: tuple[ModuleType, ModuleType] | None = None,
     web_read: Any = "env",
     web_search: Any = "env",
+    godmode: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
     if web_read == "env":
         web_read = web_read_from_env(hosted_settings)
     if web_search == "env":
         web_search = web_search_from_env(hosted_settings)
+    if godmode == "env":
+        godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
     hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
 
@@ -130,6 +136,8 @@ def create_combined_app(
         routes.append(Mount(READ_PREFIX, app=web_read[0]))
     if web_search is not None:
         routes.append(Mount(SEARCH_PREFIX, app=web_search[0]))
+    if godmode is not None:
+        routes.append(Mount(OPS_PREFIX, app=godmode))
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
@@ -169,6 +177,26 @@ def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -
         return mod.create_app(settings), settings
     except Exception:
         log.exception("Web Read not mounted: configuration error")
+        return None
+
+
+def godmode_from_env(web_read: Any, env: dict[str, str] | None = None) -> Any:
+    """The private operator view (hosted/web_read/godmode.py) when GODMODE_LOGIN_SECRET is set,
+    else None. It needs Web Read mounted with READ_COMMERCE_EVENTS=1 (the event history it
+    shows). Fail-isolated like Web Read: a configuration error leaves it unmounted."""
+    e = dict(os.environ if env is None else env)
+    if not e.get("GODMODE_LOGIN_SECRET") or web_read is None:
+        return None
+    try:
+        mod = _load("web_read_godmode", HOSTED_DIR.parent / "web_read" / "godmode.py")
+        settings = mod.GodModeSettings.from_env(e)
+        app, read_settings = web_read
+        store = app.state.commerce_events
+        if not hasattr(store, "append"):
+            raise RuntimeError("God Mode needs READ_COMMERCE_EVENTS=1")
+        return mod.create_app(store, app.state.ledger_path, read_settings, settings)
+    except Exception:
+        log.exception("God Mode not mounted: configuration error")
         return None
 
 

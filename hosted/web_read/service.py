@@ -60,6 +60,7 @@ def _sibling(name: str) -> Any:
 extract = _sibling("extract")
 fetch = _sibling("fetch")
 mpp_rail = _sibling("mpp_rail")
+commerce_events = _sibling("commerce_events")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -154,6 +155,8 @@ class Settings:
     # Ceiling on supplier cost spent for transfers that then didn't settle, per 24 hours. Past it,
     # sales paid by a not-yet-broadcast transfer are refused (uncharged) until the window clears.
     unpaid_cap_usd: Decimal = Decimal("0.05")
+    # Record each paid request's lifecycle in commerce_events.sqlite3 (off unless enabled).
+    commerce_events: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None, prefix: str = "READ_") -> Settings:
@@ -192,6 +195,7 @@ class Settings:
             allow_get=e.get(f"{prefix}ALLOW_GET") == "1",
             x402=x402,
             unpaid_cap_usd=Decimal(e.get(f"{prefix}UNPAID_CAP_USD", "0.05")),
+            commerce_events=e.get(f"{prefix}COMMERCE_EVENTS") == "1",
         )
 
 
@@ -566,6 +570,7 @@ def create_app(
     fetcher: Any = None,
     tempo_rail: Any = None,
     task: Task | None = None,
+    recorder: Any = None,
 ) -> FastAPI:
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
@@ -591,6 +596,43 @@ def create_app(
         if settings.mpp
         else None
     )
+    # Commerce events: written next to the ledger, never in its way (see commerce_events.py).
+    events = (
+        recorder
+        if recorder is not None
+        else (
+            commerce_events.EventStore(settings.data_dir / "commerce_events.sqlite3")
+            if settings.commerce_events
+            else commerce_events.NullRecorder()
+        )
+    )
+    product, route = task.service_name, f"{settings.mount_prefix}{task.path}"
+    price_atomic = int(Decimal(settings.price_usd) * 1_000_000)
+    mpp_network = f"tempo:{getattr(settings.mpp, 'chain_id', '')}".rstrip(":")
+
+    def rec(type_: str, rail_name: str, **fields: Any) -> None:
+        events.record(
+            type_, product=product, route=route, rail=rail_name, pay_to=settings.pay_to.lower(),
+            **fields,
+        )  # fmt: skip
+
+    def purchase_of(ref: str | None) -> str | None:
+        """The purchase a ledger payment_ref belongs to (MPP refs map to their credential)."""
+        if not ref:
+            return None
+        known = getattr(events, "purchase_for", lambda _: None)(ref)
+        return known or commerce_events.purchase_id("ledger", ref)
+
+    def x402_ref(request: Request) -> tuple[str, str] | None:
+        """(payer:nonce, payer) of a signed x402 request, or None."""
+        header = request.headers.get("payment-signature")
+        if not header:
+            return None
+        try:
+            return _payment_ref(decode_payment_signature_header(header))
+        except Exception:
+            return None
+
     if facilitator is None and settings.x402:
         if settings.network == MAINNET:
             from cdp.x402 import create_facilitator_config
@@ -608,6 +650,17 @@ def create_app(
         ref = _payment_ref(context.payment_payload)
         if ref and getattr(context.result, "success", False):
             ledger.settled(ref[0])
+            try:
+                amount = int(getattr(context.result, "amount", None) or price_atomic)
+            except (TypeError, ValueError):
+                amount = price_atomic
+            rec(
+                "settled", "x402", purchase_id=commerce_events.purchase_id("ledger", ref[0]),
+                ledger_key=ref[0], payer=ref[1], amount_atomic=amount, asset="USDC",
+                tx_hash=getattr(context.result, "transaction", None) or None,
+                network=getattr(context.result, "network", None) or settings.network,
+                outcome="settled",
+            )  # fmt: skip
 
     if settings.x402:
         server = x402ResourceServer(facilitator)
@@ -646,6 +699,8 @@ def create_app(
         else None
     )
     app = FastAPI(title=task.service_name)
+    app.state.commerce_events = events
+    app.state.ledger_path = settings.data_dir / "web_read.sqlite3"
     in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
 
     def is_page(request: Request) -> bool:
@@ -685,9 +740,12 @@ def create_app(
             else:
                 in_flight[key] = (lock, users - 1)
 
-    def recovered(stored: str, client: str) -> JSONResponse:
+    def recovered(stored: str, client: str, rail_name: str) -> JSONResponse:
         ledger.event("recovered", client)
         body = json.loads(stored)
+        ref = (body.get("receipt") or {}).get("payment_ref")
+        rec("recovered", rail_name, purchase_id=purchase_of(ref), ledger_key=ref, client=client,
+            outcome="returned_without_charge")  # fmt: skip
         body["receipt"]["recovered"] = True
         return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
 
@@ -720,10 +778,18 @@ def create_app(
             return "unpaid_ceiling_reached"
         return None
 
-    def paid(row: dict[str, Any], receipt: Any, payer: str, idem: str, client: str) -> Any:
+    def paid(
+        row: dict[str, Any], receipt: Any, payer: str, idem: str, client: str, pid: str
+    ) -> Any:
         """Record a settled sale and answer with it. The buyer has paid: a ledger failure is
         recorded as an event and never withholds the result."""
         ref = f"tempo:{receipt.reference}"
+        with contextlib.suppress(Exception):  # telemetry never withholds a paid result
+            who = str(receipt.payer or payer).lower()
+            fields = {"purchase_id": pid, "ledger_key": ref, "payer": who, "network": mpp_network,
+                      "amount_atomic": price_atomic, "client": client}  # fmt: skip
+            rec("settled", "mpp", tx_hash=receipt.reference, outcome="settled", **fields)
+            rec("receipt_issued", "mpp", receipt_ref=ref, **fields)
         try:
             ledger.delivered(
                 ref, (receipt.payer or payer).lower(), task.ledger_fields(row),
@@ -736,7 +802,9 @@ def create_app(
                 ledger.event("attempt_failed", _reason("mpp", "ledger_write_failed"))
         return JSONResponse(row, headers={"Payment-Receipt": receipt.to_payment_receipt()})
 
-    def outcome_unknown(client: str) -> JSONResponse:
+    def outcome_unknown(client: str, pid: str) -> JSONResponse:
+        rec("settlement_unknown", "mpp", purchase_id=pid, client=client, network=mpp_network,
+            code="mpp:settle_outcome_unknown")  # fmt: skip
         ledger.event("attempt_failed", _reason("mpp", "settle_outcome_unknown"))
         ledger.event("payment_pending", client)
         return JSONResponse(
@@ -764,33 +832,45 @@ def create_app(
         try:
             body = await page_request(request)
         except Exception:
+            rec("payment_rejected", "mpp", client=client, network=mpp_network,
+                code=_reason("mpp", "invalid_request"))  # fmt: skip
             ledger.event("attempt_failed", _reason("mpp", "invalid_request"))
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
         authorization = request.headers["authorization"]
         valid = await rail.validate(authorization, str(request.url))
         if valid is None or isinstance(valid, str):  # a str is the rail's reason for refusing
+            rec("payment_rejected", "mpp", client=client, network=mpp_network,
+                code=_reason("mpp", valid))  # fmt: skip
             ledger.event("payment_rejected", client)
             ledger.event("attempt_failed", _reason("mpp", valid))
             return await mpp_challenge(request, "payment_invalid")
         credential, payer, kind = valid
         idem = task.idem(body)
         key = credential_key(credential, authorization)
+        pid = commerce_events.purchase_id("mpp", key)
+        rkey = commerce_events.request_key(getattr(body, "request_id", None))
+        mine = {"purchase_id": pid, "payer": str(payer).lower(), "network": mpp_network,
+                "client": client, "request_key": rkey}  # fmt: skip
+        rec("payment_attempt", "mpp", amount_atomic=price_atomic, **mine)
         async with exclusive(("credential", key)), exclusive((payer, idem)):
             claim = ledger.claim(key)
             if claim and claim["idem"] and claim["idem"] != idem:  # one payment, one request
+                rec("duplicate_credential", "mpp", code="mpp:credential_already_used", **mine)
                 ledger.event("attempt_failed", _reason("mpp", "credential_already_used"))
                 return JSONResponse(
                     {"error": "credential_already_used", "charged": False}, status_code=409
                 )
             if claim and claim["state"] == "settled":
                 if claim["result"]:  # the same payment, asked again: its result, no new charge
-                    return recovered(claim["result"], client)
+                    return recovered(claim["result"], client, "mpp")
+                rec("duplicate_credential", "mpp", code="mpp:credential_already_used", **mine)
                 ledger.event("attempt_failed", _reason("mpp", "credential_already_used"))
                 return JSONResponse(
                     {"error": "credential_already_used", "charged": False}, status_code=409
                 )
             if claim and claim["state"] in ("failed", "delivering"):
                 # Already refused, or interrupted mid-delivery: never deliver on it again.
+                rec("duplicate_credential", "mpp", code=f"mpp:credential_{claim['state']}", **mine)
                 ledger.event("attempt_failed", _reason("mpp", f"credential_{claim['state']}"))
                 return await mpp_challenge(request, "payment_invalid")
             if claim and claim["state"] == "delivered":  # delivered, settlement pending
@@ -799,7 +879,7 @@ def create_app(
                 if kind == "transaction" and settings.recovery_s:
                     stored = ledger.recoverable(payer, idem, settings.recovery_s)
                     if stored is not None:  # the new transfer is never broadcast: no 2nd charge
-                        return recovered(stored, client)
+                        return recovered(stored, client, "mpp")
                 if task.unit_cost_usd and kind != "hash":
                     refusal = unpaid_exposure(payer)
                     if refusal is None:
@@ -809,21 +889,26 @@ def create_app(
                         except Exception:
                             refusal = "funds_unverifiable"
                     if refusal:
+                        rec("payment_rejected", "mpp", code=_reason("mpp", refusal), **mine)
                         ledger.event("payment_rejected", client)
                         ledger.event("attempt_failed", _reason("mpp", refusal))
                         status = 503 if refusal == "unpaid_ceiling_reached" else 402
                         if status == 402:
                             return await mpp_challenge(request, refusal)
                         return JSONResponse({"error": refusal, "charged": False}, status_code=503)
+                rec("payment_verified", "mpp", **mine)
+                rec("delivery_started", "mpp", **mine)
                 ledger.set_claim(key, "delivering", idem=idem)
                 status, row = await task.deliver(body, ledger.event)
                 if status != 200:
+                    rec("delivery_failed", "mpp", code=_reason("mpp", f"http_{status}"), **mine)
                     ledger.event("attempt_failed", _reason("mpp", f"http_{status}"))
                     if kind == "hash":  # the client already paid on chain; we owe it back
                         ledger.set_claim(key, "failed")
                         with contextlib.suppress(Exception):
                             await rail.settle(credential)
                         ledger.event("refund_owed", client)
+                        rec("refund_owed", "mpp", **mine)
                         row.update(charged=True, refund="owed")
                     else:  # nothing was broadcast: the buyer may use this credential again
                         ledger.release_claim(key)
@@ -835,24 +920,27 @@ def create_app(
                     "rail": "mpp-tempo",
                 }
                 ledger.set_claim(key, "delivered", json.dumps(row))  # before the broadcast
+                rec("delivered", "mpp", **mine)
             try:
                 receipt = await rail.settle(credential)
             except mpp_rail.OutcomeUnknown:
                 if task.unit_cost_usd:
                     ledger.record_unpaid(key, payer, task.unit_cost_usd, "unknown")
-                return outcome_unknown(client)
+                return outcome_unknown(client, pid)
             except Exception as exc:  # definitely not settled: the buyer wasn't charged
                 ledger.set_claim(key, "failed")
                 if task.unit_cost_usd:
                     ledger.record_unpaid(key, payer, task.unit_cost_usd, "unsettled")
                 cause = exc.__cause__ if isinstance(exc, mpp_rail.Unsettled) else exc
+                failure = _reason("mpp", f"settle_{type(cause).__name__}")
+                rec("settlement_failed", "mpp", code=failure, **mine)
                 ledger.event("payment_rejected", client)
                 ledger.event("attempt_failed", _reason("mpp", f"settle_{type(cause).__name__}"))
                 return await mpp_challenge(request, "settlement_failed")
             ledger.clear_unpaid(key)
             row["receipt"]["payment_ref"] = f"tempo:{receipt.reference}"
             ledger.set_claim(key, "settled", json.dumps(row) if settings.recovery_s else "")
-            return paid(row, receipt, payer, idem, client)
+            return paid(row, receipt, payer, idem, client, pid)
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
@@ -872,15 +960,27 @@ def create_app(
             if not page:
                 return await call_next(request)
             if signed:  # an x402 payment this service doesn't accept: nothing is settled
+                rec("payment_rejected", "x402", client=client, network=settings.network,
+                    code=_reason("x402", "x402_not_accepted"))  # fmt: skip
                 ledger.event("payment_attempt", client)
                 ledger.event("attempt_failed", _reason("x402", "x402_not_accepted"))
                 ledger.event("payment_rejected", client)
                 return await mpp_challenge(request, "x402_not_accepted")
             ledger.event("challenge", client)
+            events.count_challenge(product, client)
             return await mpp_challenge(request)
+        paying = x402_ref(request) if signed and page else None
+        x402_fields: dict[str, Any] = {"client": client, "network": settings.network}
+        if paying:
+            x402_fields.update(
+                purchase_id=commerce_events.purchase_id("ledger", paying[0]),
+                ledger_key=paying[0], payer=paying[1],
+            )  # fmt: skip
         if request.method == "POST" or page:
             ledger.expire(settings.recovery_s)
             if signed and page:
+                rec("payment_attempt", "x402", amount_atomic=price_atomic, asset="USDC",
+                    **x402_fields)  # fmt: skip
                 ledger.event("payment_attempt", client)
         key = await _recover(request) if settings.recovery_s else None
         if key is None:
@@ -889,13 +989,26 @@ def create_app(
             async with exclusive(key):
                 stored = ledger.recoverable(*key, settings.recovery_s)
                 if stored is not None:
-                    return recovered(stored, client)
+                    return recovered(stored, client, "x402")
                 response = await gate(request, call_next)
         if signed and page and response.status_code == 402:
             ledger.event("attempt_failed", _x402_rejection(response))
         elif signed and page and response.status_code >= 400:  # a refused page or a bad body
             ledger.event("attempt_failed", _reason("x402", f"http_{response.status_code}"))
+        if signed and page:
+            delivered = request.scope.get("inferrail_delivered")
+            if response.status_code == 200:
+                rec("receipt_issued", "x402", receipt_ref=x402_fields.get("ledger_key"),
+                    **x402_fields)  # fmt: skip
+            elif response.status_code == 402:
+                rec("settlement_failed" if delivered else "payment_rejected", "x402",
+                    code=_x402_rejection(response), **x402_fields)  # fmt: skip
+            else:  # the payment was verified, but nothing was delivered: not charged
+                rec("delivery_failed", "x402", code=_reason("x402", f"http_{response.status_code}"),
+                    **x402_fields)  # fmt: skip
         if response.status_code == 402:
+            if not signed:
+                events.count_challenge(product, client)
             ledger.event("payment_rejected" if signed else "challenge", client)
             if rail and page and not signed:  # offer MPP (Tempo) next to x402
                 for k, v in await rail.challenge_headers(str(request.url), request.method):
@@ -930,9 +1043,20 @@ def create_app(
         """Deliver a page the x402 gate has already verified payment for (settled after)."""
         header = request.headers.get("payment-signature")
         ref = _payment_ref(decode_payment_signature_header(header)) if header else None
+        mine: dict[str, Any] = {
+            "network": settings.network,
+            "request_key": commerce_events.request_key(getattr(body, "request_id", None)),
+        }
+        if ref:
+            mine.update(purchase_id=commerce_events.purchase_id("ledger", ref[0]),
+                        ledger_key=ref[0], payer=ref[1])  # fmt: skip
+        rec("payment_verified", "x402", **mine)
+        rec("delivery_started", "x402", **mine)
         status, row = await task.deliver(body, ledger.event)
         if status != 200:
             return JSONResponse(row, status_code=status)
+        request.scope["inferrail_delivered"] = True
+        rec("delivered", "x402", amount_atomic=price_atomic, asset="USDC", **mine)
         row["receipt"] = {
             "payment_ref": ref[0] if ref else None,
             "price_usd": settings.price_usd,
