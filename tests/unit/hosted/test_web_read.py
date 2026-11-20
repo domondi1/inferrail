@@ -863,3 +863,30 @@ def test_icon_url_from_env_can_be_removed_or_replaced_but_not_svg_or_http():
     for bad in ("http://cdn.test/icon.png", "https://cdn.test/icon.svg", "icon.png"):
         with pytest.raises(RuntimeError):
             svc.Settings.from_env({**base, "READ_ICON_URL": bad})
+
+
+@pytest.mark.parametrize("mcp", [False, True])
+def test_the_guides_name_the_mcp_tool_only_when_it_is_mounted(tmp_path, mcp):
+    pytest.importorskip("mcp")
+    env = {"READ_PAY_TO": PAY_TO, **({"READ_MCP": "1"} if mcp else {})}
+    app, _ = _combined(tmp_path, env)
+    with TestClient(app) as c:  # runs the co-host lifespan (which starts the MCP sessions)
+        guide, origin = c.get("/read/llms.txt").text, c.get("/llms.txt").text
+        assert ("http://testserver/read/mcp/" in guide) is mcp
+        assert ("read_page" in guide) is mcp
+        assert ("`read_page` at `http://testserver/read/mcp/`" in origin) is mcp
+        x_guidance = c.get("/openapi.json").json()["info"]["x-guidance"]
+        assert ("read_page at http://testserver/read/mcp/" in x_guidance) is mcp
+        init = c.post(
+            "/read/mcp/",
+            headers={"accept": "application/json, text/event-stream",
+                     "content-type": "application/json"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "t", "version": "1"}}},
+        )  # fmt: skip
+        if mcp:
+            assert init.status_code == 200
+            assert init.json()["result"]["serverInfo"]["name"] == "inferrail-web-read"
+        else:
+            assert init.status_code == 404
