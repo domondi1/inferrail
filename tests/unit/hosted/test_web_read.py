@@ -843,3 +843,23 @@ def test_bazaar_status_parsing_is_bounded():
     assert svc._bazaar_status(long) == ("rejected", "x" * 200)
     assert svc._bazaar_status({"bazaar": {"status": "teleported"}}) == ("unknown", None)
     assert svc._bazaar_status({"bazaar": {"status": "processing"}}) == ("processing", None)
+
+
+def test_the_offer_carries_a_raster_service_icon_for_discovery_indexes(tmp_path):
+    """The CDP Bazaar shows `resource.iconUrl` and counts it toward listing quality (PNG, JPEG,
+    WebP or GIF; SVG is rejected)."""
+    c = _client(tmp_path, {}, FakeFacilitator())
+    req = decode_payment_required(c.post("/v1/page", json={"url": "https://news.test/a"}))
+    assert req.resource.icon_url == svc.DEFAULT_ICON_URL
+    assert req.resource.icon_url.startswith("https://") and req.resource.icon_url.endswith(".png")
+
+
+def test_icon_url_from_env_can_be_removed_or_replaced_but_not_svg_or_http():
+    base = {"READ_PAY_TO": PAY_TO, "READ_RESOURCE_URL": "https://x.test/v1/page"}
+    assert svc.Settings.from_env(base).icon_url == svc.DEFAULT_ICON_URL
+    assert svc.Settings.from_env({**base, "READ_ICON_URL": ""}).icon_url is None
+    other = "https://cdn.test/icon.webp"
+    assert svc.Settings.from_env({**base, "READ_ICON_URL": other}).icon_url == other
+    for bad in ("http://cdn.test/icon.png", "https://cdn.test/icon.svg", "icon.png"):
+        with pytest.raises(RuntimeError):
+            svc.Settings.from_env({**base, "READ_ICON_URL": bad})

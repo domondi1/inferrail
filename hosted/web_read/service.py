@@ -136,6 +136,22 @@ class Task:
     unit_cost_usd: Decimal = Decimal(0)
 
 
+DEFAULT_ICON_URL = "https://tryinferrail.com/favicon-192x192.png"
+
+
+def _icon_url(value: str, prefix: str) -> str | None:
+    """An absolute https icon URL, or None when set empty (no icon in the offer)."""
+    value = value.strip()
+    if not value:
+        return None
+    parts = urlsplit(value)
+    if parts.scheme != "https" or not parts.netloc or len(value) > 2048:
+        raise RuntimeError(f"{prefix}ICON_URL must be an absolute https URL (or empty)")
+    if parts.path.lower().endswith(".svg"):
+        raise RuntimeError(f"{prefix}ICON_URL can't be an SVG (discovery indexes reject it)")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     pay_to: str
@@ -157,6 +173,9 @@ class Settings:
     unpaid_cap_usd: Decimal = Decimal("0.05")
     # Record each paid request's lifecycle in commerce_events.sqlite3 (off unless enabled).
     commerce_events: bool = False
+    # Service icon in the x402 offer (`resource.iconUrl`). Discovery indexes such as the CDP
+    # Bazaar show it and count it toward listing quality; they accept PNG/JPEG/WebP/GIF, not SVG.
+    icon_url: str | None = DEFAULT_ICON_URL
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None, prefix: str = "READ_") -> Settings:
@@ -196,6 +215,7 @@ class Settings:
             x402=x402,
             unpaid_cap_usd=Decimal(e.get(f"{prefix}UNPAID_CAP_USD", "0.05")),
             commerce_events=e.get(f"{prefix}COMMERCE_EVENTS") == "1",
+            icon_url=_icon_url(e.get(f"{prefix}ICON_URL", DEFAULT_ICON_URL), prefix),
         )
 
 
@@ -714,6 +734,7 @@ def create_app(
             mime_type="application/json",
             service_name=task.service_name,
             tags=task.tags,
+            icon_url=settings.icon_url,
             extensions=declare_discovery_extension(
                 input=task.input_example,
                 input_schema=task.request_model.model_json_schema(),
