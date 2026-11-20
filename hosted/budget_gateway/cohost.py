@@ -479,7 +479,13 @@ def origin_llms(app: Starlette) -> str:
             f"- [Inferrail Web Read]({origin}{READ_PREFIX}/llms.txt): "
             f'`POST {origin}{READ_PREFIX}/v1/page` with `{{"url": "https://...", '
             f'"request_id": "..."}}` returns HTTP 402; pay ${read.price_usd} over '
-            f"{_rails(read).replace(' and ', ' or ')} and repeat the request.",
+            f"{_rails(read).replace(' and ', ' or ')} and repeat the request."
+            + (
+                f" Also an MCP tool: `read_page` at `{origin}{READ_PREFIX}/mcp/` "
+                "(streamable HTTP, paid with x402 in the tool call's `_meta`)."
+                if getattr(read, "mcp", False)
+                else ""
+            ),
         ]
     found = getattr(app.state, "web_search_settings", None)
     if app.state.discovery_paths and found is not None:

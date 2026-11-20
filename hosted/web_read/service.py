@@ -658,6 +658,11 @@ def _paid_network(payload: Any, default: str) -> str:
     return str(getattr(accepted, "network", None) or default)
 
 
+def _mcp_url(settings: Settings) -> str:
+    """Where the paid MCP tool is mounted: next to the page route, at <prefix>/mcp/."""
+    return settings.resource_url.rsplit("/v1/", 1)[0] + "/mcp/"
+
+
 def _page_guide(settings: Settings) -> str:
     return (
         "# Inferrail Web Read\n\n"
@@ -681,6 +686,14 @@ def _page_guide(settings: Settings) -> str:
             "Authorization: Payment <credential>. The transfer is broadcast only after the "
             "page is delivered.\n"
             if settings.mpp
+            else ""
+        )
+        + (
+            f"Also an MCP tool: {_mcp_url(settings)} (MCP streamable HTTP) has the tool "
+            "read_page(url, request_id?). Call it unpaid to get the x402 PaymentRequired (same "
+            'price, network and address); pay by repeating the call with _meta["x402/payment"] '
+            "(x402 MCP transport). Settled only after the page is delivered.\n"
+            if settings.mcp
             else ""
         )
         + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
