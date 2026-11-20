@@ -458,6 +458,30 @@ def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
     return None
 
 
+_BAZAAR_STATUSES = frozenset({"success", "processing", "rejected"})
+
+
+def _bazaar_status(extension_responses: Any) -> tuple[str, str | None]:
+    """(status, reason) of the facilitator's `bazaar` extension response for a settlement.
+
+    status is one of success | processing | rejected (as the facilitator reports it),
+    `not_submitted` (the response carries no `bazaar` key: discovery wasn't submitted with this
+    payment), `absent` (no extension responses at all) or `unknown` (unexpected shape). The
+    reason is the facilitator's own rejection text, shortened; it never contains buyer data.
+    """
+    if not isinstance(extension_responses, dict):
+        return "absent", None
+    entry = extension_responses.get("bazaar")
+    if entry is None:
+        return "not_submitted", None
+    if not isinstance(entry, dict):
+        return "unknown", None
+    status = str(entry.get("status") or "").lower()
+    reason = entry.get("rejectedReason") or entry.get("reason")
+    reason = str(reason)[:200] if reason else None
+    return (status if status in _BAZAAR_STATUSES else "unknown"), reason
+
+
 def _payment_ref(payload: Any) -> tuple[str, str] | None:
     auth = (getattr(payload, "payload", None) or {}).get("authorization") or {}
     if not isinstance(auth, dict) or not auth.get("nonce") or not auth.get("from"):
@@ -654,12 +678,20 @@ def create_app(
                 amount = int(getattr(context.result, "amount", None) or price_atomic)
             except (TypeError, ValueError):
                 amount = price_atomic
+            # What the facilitator said about cataloguing this resource in its discovery index
+            # (CDP Bazaar), from its EXTENSION-RESPONSES header. Observability only.
+            status, reason = _bazaar_status(getattr(context.result, "extension_responses", None))
+            try:
+                ledger.event("bazaar_index", status)
+            except Exception:  # noqa: BLE001 - never in the way of a settled sale
+                pass
             rec(
                 "settled", "x402", purchase_id=commerce_events.purchase_id("ledger", ref[0]),
                 ledger_key=ref[0], payer=ref[1], amount_atomic=amount, asset="USDC",
                 tx_hash=getattr(context.result, "transaction", None) or None,
                 network=getattr(context.result, "network", None) or settings.network,
                 outcome="settled",
+                detail={"bazaar": {"status": status, "reason": reason}},
             )  # fmt: skip
 
     if settings.x402:
