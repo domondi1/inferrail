@@ -226,6 +226,8 @@ class Settings:
     # Service icon in the x402 offer (`resource.iconUrl`). Discovery indexes such as the CDP
     # Bazaar show it and count it toward listing quality; they accept PNG/JPEG/WebP/GIF, not SVG.
     icon_url: str | None = DEFAULT_ICON_URL
+    # Also sell the page as a paid MCP tool (`read_page`) at <mount_prefix>/mcp. Off by default.
+    mcp: bool = False
     # Other networks accepted next to `network`, as (network, pay_to) pairs. Empty by default.
     extra_networks: tuple[tuple[str, str], ...] = ()
 
@@ -276,6 +278,7 @@ class Settings:
             commerce_events=e.get(f"{prefix}COMMERCE_EVENTS") == "1",
             icon_url=_icon_url(e.get(f"{prefix}ICON_URL", DEFAULT_ICON_URL), prefix),
             extra_networks=_extra_networks(e, prefix, network) if x402 else (),
+            mcp=e.get(f"{prefix}MCP") == "1" and x402,
         )
 
 
@@ -375,6 +378,14 @@ class Ledger:
                 "UPDATE reads SET result=NULL WHERE result IS NOT NULL AND created_at < ?",
                 (time.time() - window_s,),
             )
+
+    def result_for(self, ref: str) -> tuple[bool, str | None]:
+        """(this payment already reached delivery, its stored result if still kept)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT result FROM reads WHERE payment_ref=?", (ref,)
+            ).fetchone()
+        return (row is not None, row[0] if row else None)
 
     def recoverable(self, payer: str, idem: str, window_s: int) -> str | None:
         """The stored result of a settled read of this request by this payer, if still kept."""
@@ -904,6 +915,27 @@ def create_app(
     )
     app = FastAPI(title=task.service_name)
     app.state.commerce_events = events
+    app.state.mcp = None
+    if settings.mcp and settings.x402:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        mcp_server = _sibling("mcp_tool").build(
+            settings=settings, server=server, task=task, ledger=ledger, rec=rec,
+            payment_ref=_payment_ref, paid_network=_paid_network,
+            commerce_events=commerce_events,
+        )  # fmt: skip
+        host = urlsplit(settings.resource_url).netloc
+        app.mount(
+            "/mcp",
+            mcp_server.streamable_http_app(
+                streamable_http_path="/", stateless_http=True, json_response=True,
+                transport_security=TransportSecuritySettings(
+                    enable_dns_rebinding_protection=True, allowed_hosts=[host],
+                    allowed_origins=[f"https://{host}", f"http://{host}"],
+                ),
+            ),  # fmt: skip
+        )
+        app.state.mcp = mcp_server
     app.state.ledger_path = settings.data_dir / "web_read.sqlite3"
     in_flight: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
 

@@ -105,6 +105,9 @@ def create_combined_app(
             async with contextlib.AsyncExitStack() as stack:
                 await stack.enter_async_context(trial_app.router.lifespan_context(trial_app))
                 await stack.enter_async_context(hosted_app.router.lifespan_context(hosted_app))
+                mcp_server = getattr(web_read[0].state, "mcp", None) if web_read else None
+                if mcp_server is not None:  # Web Read's paid MCP tool (READ_MCP=1)
+                    await stack.enter_async_context(mcp_server.session_manager.run())
                 yield
         finally:
             hosted_app.state.release_instance_lock()
