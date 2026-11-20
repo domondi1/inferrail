@@ -7,6 +7,8 @@ httpx==0.28.1
 # required: the credit route declares Bazaar discovery metadata, whose validation needs jsonschema.
 # Keep in step with the `hosted` extra in pyproject.toml (CI checks this install path).
 x402[evm,fastapi,httpx,extensions]==2.22.0
+# Web Read's paid MCP tool (READ_MCP=1): MCP streamable HTTP server.
+mcp==2.1.1
 cdp-sdk==1.48.1
 # Web Read's MPP (Tempo) rail; only used when READ_MPP_CHAIN_ID is set. `tempo` brings the
 # transaction codec the server needs to validate a signed transfer before broadcasting it.
