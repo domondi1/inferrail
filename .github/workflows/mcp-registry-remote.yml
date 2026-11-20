@@ -1,0 +1,49 @@
+name: MCP Registry (remote Web Read tool)
+
+# Publishes mcp/web-read/server.json (the hosted, paid `read_page` MCP tool) to the official MCP
+# Registry. Manual only. Before publishing it checks that the remote really answers MCP
+# `initialize` and lists `read_page`, so the registry never gets an entry that doesn't work.
+# Authenticates with GitHub OIDC (the registry's documented CI method for io.github.domondi1/*
+# names); no stored secret. Same pinned, checksum-verified mcp-publisher as publish.yml.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The remote answers MCP and lists read_page
+        run: |
+          url=$(python3 -c "import json;print(json.load(open('mcp/web-read/server.json'))['remotes'][0]['url'])")
+          hdr=(-H 'accept: application/json, text/event-stream' -H 'content-type: application/json')
+          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"registry-preflight","version":"1"}}}'
+          curl -fsS "${hdr[@]}" -d "$init" "$url" | python3 -c "import json,sys;r=json.load(sys.stdin)['result'];print('ok: initialize', r['protocolVersion'], r['serverInfo']['name'])"
+          curl -fsS "${hdr[@]}" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' "$url" \
+            | python3 -c "import json,sys;t=[x['name'] for x in json.load(sys.stdin)['result']['tools']];assert 'read_page' in t, t;print('ok: tools', t)"
+
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Validate, authenticate (GitHub OIDC) and publish
+        working-directory: mcp/web-read
+        run: |
+          ../../mcp-publisher validate
+          ../../mcp-publisher login github-oidc
+          ../../mcp-publisher publish

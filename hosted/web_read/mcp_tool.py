@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
 TOOL_NAME = "read_page"
+# Matches mcp/web-read/server.json (the MCP Registry entry for this remote server).
+SERVER_VERSION = "1.0.0"
 TOOL_DESCRIPTION = (
     "Read one public web page as clean, LLM-ready markdown (title, main text, headings, lists, "
     "links, tables) with word count and a content hash. Paid per delivered page over x402; a "
@@ -30,7 +33,8 @@ TOOL_DESCRIPTION = (
 def build(
     *,
     settings: Any,
-    server: Any,
+    facilitator: Any,
+    make_server: Callable[[Any], Any],
     task: Any,
     ledger: Any,
     rec: Callable[..., None],
@@ -52,6 +56,10 @@ def build(
     from x402.mcp.utils import extract_payment_from_meta
     from x402.schemas import ResourceInfo
 
+    # Its own resource server (same schemes and settle accounting as the HTTP route) over a
+    # facilitator adapter: the MCP payment wrapper turns any facilitator exception into an opaque
+    # "Internal Server Error", while the CDP facilitator answers an invalid payment with HTTP 400.
+    server = make_server(McpFacilitator(facilitator, ledger))
     schema = task.request_model.model_json_schema()
     example = task.output_example(settings.price_usd)
     resource = ResourceInfo(
@@ -150,6 +158,7 @@ def build(
         title="Inferrail Web Read",
         description=TOOL_DESCRIPTION,
         website_url="https://tryinferrail.com",
+        version=SERVER_VERSION,
     )
 
     async def read_page(url: str, ctx: Context, request_id: str | None = None) -> CallToolResult:
@@ -176,3 +185,81 @@ def build(
     }  # fmt: skip
     mcp.add_tool(read_page, name=TOOL_NAME, description=TOOL_DESCRIPTION)
     return mcp
+
+
+_FACILITATOR_ERROR = re.compile(r"Facilitator (verify|settle) failed \((\d{3})\): (.*)", re.S)
+
+
+def _facilitator_answer(error: Exception) -> tuple[int, dict[str, Any]] | None:
+    """(HTTP status, JSON body) from the SDK's facilitator-error message, or None."""
+    m = _FACILITATOR_ERROR.match(str(error))
+    if not m:
+        return None
+    try:
+        body = json.loads(m.group(3))
+    except ValueError:
+        body = {}
+    return int(m.group(2)), body if isinstance(body, dict) else {}
+
+
+class McpFacilitator:
+    """The configured facilitator, with its error answers returned as results (MCP only).
+
+    A 4xx answer to verify becomes an invalid VerifyResponse carrying the facilitator's own
+    reason, and to settle a failed SettleResponse, so the buyer gets the x402 PaymentRequired
+    or settlement-failed result instead of an opaque error. 5xx and transport errors become
+    `facilitator_unavailable` the same way. Nothing is ever settled by this adapter's choice:
+    it only reports. Each verify is also counted in the ledger's events (client `mcp`)."""
+
+    def __init__(self, inner: Any, ledger: Any) -> None:
+        self._inner = inner
+        self._ledger = ledger
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def get_supported(self) -> Any:
+        return self._inner.get_supported()
+
+    def _count(self, kind: str, code: str = "") -> None:
+        try:
+            self._ledger.event(kind, code)
+        except Exception:  # noqa: BLE001 - counting never affects a payment
+            pass
+
+    async def verify(self, payload: Any, requirements: Any) -> Any:
+        from x402.schemas import VerifyResponse
+
+        self._count("payment_attempt", "mcp")
+        try:
+            result = await self._inner.verify(payload, requirements)
+        except Exception as error:  # noqa: BLE001
+            status, body = _facilitator_answer(error) or (0, {})
+            reason = body.get("invalidReason") if 400 <= status < 500 else None
+            result = VerifyResponse(
+                is_valid=False,
+                invalid_reason=str(reason or "facilitator_unavailable"),
+                invalid_message=str(body.get("invalidMessage") or "")[:200] or None,
+                payer=body.get("payer"),
+            )
+        if not getattr(result, "is_valid", False):
+            self._count("payment_rejected", "mcp")
+            self._count("attempt_failed", f"mcp:{getattr(result, 'invalid_reason', '')}"[:60])
+        return result
+
+    async def settle(self, payload: Any, requirements: Any) -> Any:
+        from x402.schemas.responses import SettleResponse
+
+        try:
+            return await self._inner.settle(payload, requirements)
+        except Exception as error:  # noqa: BLE001
+            status, body = _facilitator_answer(error) or (0, {})
+            reason = body.get("errorReason") if 400 <= status < 500 else None
+            self._count("attempt_failed", f"mcp:settle:{reason or 'facilitator_unavailable'}"[:60])
+            return SettleResponse(
+                success=False,
+                error_reason=str(reason or "facilitator_unavailable"),
+                transaction="",
+                network=str(getattr(requirements, "network", "")),
+                payer=body.get("payer"),
+            )
