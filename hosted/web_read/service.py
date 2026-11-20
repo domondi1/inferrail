@@ -43,6 +43,14 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 HERE = Path(__file__).resolve().parent
 MAINNET, TESTNET = "eip155:8453", "eip155:84532"
+# Extra x402 networks Web Read can also accept, each with its own receiving address. Off unless
+# READ_X402_EXTRA_NETWORKS lists them; mainnet ones also need READ_X402_EXTRA_MAINNET_APPROVED=1.
+# (The SDK has no default USDC for Polygon's testnet, so Polygon is mainnet only.)
+POLYGON_MAINNET = "eip155:137"
+SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+SOLANA_DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+EXTRA_NETWORKS = {POLYGON_MAINNET: "evm", SOLANA_MAINNET: "svm", SOLANA_DEVNET: "svm"}
+EXTRA_MAINNETS = frozenset({POLYGON_MAINNET, SOLANA_MAINNET})
 log = logging.getLogger("inferrail.web_read")
 
 
@@ -139,6 +147,48 @@ class Task:
 DEFAULT_ICON_URL = "https://tryinferrail.com/favicon-192x192.png"
 
 
+def _extra_networks(e: dict[str, str], prefix: str, primary: str) -> tuple[tuple[str, str], ...]:
+    """`<prefix>X402_EXTRA_NETWORKS` = "network=payTo,network=payTo", validated; () when unset."""
+    raw = e.get(f"{prefix}X402_EXTRA_NETWORKS", "").strip()
+    if not raw:
+        return ()
+    out: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        network, _, pay_to = item.strip().partition("=")
+        network, pay_to = network.strip(), pay_to.strip()
+        if network not in EXTRA_NETWORKS:
+            raise RuntimeError(
+                f"{prefix}X402_EXTRA_NETWORKS: {network!r} is not supported "
+                f"(one of {', '.join(sorted(EXTRA_NETWORKS))})"
+            )
+        if network == primary or network in dict(out):
+            raise RuntimeError(f"{prefix}X402_EXTRA_NETWORKS lists {network} twice")
+        if not _valid_pay_to(network, pay_to):
+            raise RuntimeError(f"{prefix}X402_EXTRA_NETWORKS: invalid payTo for {network}")
+        if network in EXTRA_MAINNETS and e.get(f"{prefix}X402_EXTRA_MAINNET_APPROVED") != "1":
+            raise RuntimeError(
+                f"{network} sales require {prefix}X402_EXTRA_MAINNET_APPROVED=1 (separate approval)"
+            )
+        out.append((network, pay_to))
+    return tuple(out)
+
+
+def _valid_pay_to(network: str, pay_to: str) -> bool:
+    if EXTRA_NETWORKS.get(network) == "svm":
+        from x402.mechanisms.svm.utils import validate_svm_address
+
+        return validate_svm_address(pay_to)
+    return len(pay_to) == 42 and pay_to.startswith("0x") and _is_hex(pay_to[2:])
+
+
+def _is_hex(value: str) -> bool:
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
 def _icon_url(value: str, prefix: str) -> str | None:
     """An absolute https icon URL, or None when set empty (no icon in the offer)."""
     value = value.strip()
@@ -176,6 +226,15 @@ class Settings:
     # Service icon in the x402 offer (`resource.iconUrl`). Discovery indexes such as the CDP
     # Bazaar show it and count it toward listing quality; they accept PNG/JPEG/WebP/GIF, not SVG.
     icon_url: str | None = DEFAULT_ICON_URL
+    # Other networks accepted next to `network`, as (network, pay_to) pairs. Empty by default.
+    extra_networks: tuple[tuple[str, str], ...] = ()
+
+    def accepted(self) -> tuple[tuple[str, str], ...]:
+        """Every (network, pay_to) this service sells on over x402, the primary one first."""
+        return ((self.network, self.pay_to), *self.extra_networks)
+
+    def pay_to_for(self, network: str) -> str | None:
+        return dict(self.accepted()).get(network)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None, prefix: str = "READ_") -> Settings:
@@ -216,6 +275,7 @@ class Settings:
             unpaid_cap_usd=Decimal(e.get(f"{prefix}UNPAID_CAP_USD", "0.05")),
             commerce_events=e.get(f"{prefix}COMMERCE_EVENTS") == "1",
             icon_url=_icon_url(e.get(f"{prefix}ICON_URL", DEFAULT_ICON_URL), prefix),
+            extra_networks=_extra_networks(e, prefix, network) if x402 else (),
         )
 
 
@@ -455,13 +515,17 @@ def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
 
     try:
         req = payload.accepted
+        if (payload.payload or {}).get("transaction"):
+            return _svm_signed_by_payer(payload, settings)
         evm = ExactEIP3009Payload.from_dict(payload.payload)
         auth = evm.authorization
         price_units = int(Decimal(settings.price_usd) * 10**6)
+        ours = settings.pay_to_for(req.network)
         if (
-            req.network != settings.network
-            or req.pay_to.lower() != settings.pay_to.lower()
-            or auth.to.lower() != settings.pay_to.lower()
+            ours is None
+            or EXTRA_NETWORKS.get(req.network, "evm") != "evm"
+            or req.pay_to.lower() != ours.lower()
+            or auth.to.lower() != ours.lower()
             or int(auth.value) != price_units
             or not evm.signature
         ):
@@ -473,6 +537,47 @@ def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
         signature = bytes.fromhex(evm.signature.removeprefix("0x"))
         if verify_eoa_signature(digest, signature, auth.from_address):
             return auth.from_address.lower()
+    except Exception:  # malformed or unsupported: fall through to the paid path
+        return None
+    return None
+
+
+def _svm_signed_by_payer(payload: Any, settings: Settings) -> str | None:
+    """The payer, if this is a Solana USDC transfer to our address on that network at our price,
+    signed by its token authority. Checked locally (signature over the message; nothing is
+    broadcast), so a retry can be answered without a second charge, as on EVM."""
+    from solders.message import to_bytes_versioned
+    from solders.pubkey import Pubkey
+    from x402.mechanisms.svm.types import ExactSvmPayload
+    from x402.mechanisms.svm.utils import (
+        decode_transaction_from_payload,
+        derive_ata,
+        extract_transaction_info,
+        get_token_payer_from_transaction,
+        get_usdc_address,
+    )
+
+    try:
+        req = payload.accepted
+        ours = settings.pay_to_for(req.network)
+        if ours is None or EXTRA_NETWORKS.get(req.network) != "svm" or req.pay_to != ours:
+            return None
+        tx = decode_transaction_from_payload(ExactSvmPayload.from_dict(payload.payload))
+        info = extract_transaction_info(tx)
+        price_units = int(Decimal(settings.price_usd) * 10**6)
+        if (
+            info is None
+            or info.mint != get_usdc_address(req.network)
+            or int(info.amount) != price_units
+            or info.destination_ata != derive_ata(ours, info.mint, info.token_program)
+        ):
+            return None
+        payer = get_token_payer_from_transaction(tx)
+        keys = list(tx.message.account_keys)
+        index = keys.index(Pubkey.from_string(payer))
+        # The signed bytes are the versioned serialization (a v0 message carries a 0x80 prefix).
+        if tx.signatures[index].verify(keys[index], to_bytes_versioned(tx.message)):
+            return payer
     except Exception:  # malformed or unsupported: fall through to the paid path
         return None
     return None
@@ -503,11 +608,43 @@ def _bazaar_status(extension_responses: Any) -> tuple[str, str | None]:
 
 
 def _payment_ref(payload: Any) -> tuple[str, str] | None:
-    auth = (getattr(payload, "payload", None) or {}).get("authorization") or {}
+    """(ledger key, payer) of a signed x402 payment, or None.
+
+    EVM (EIP-3009): `payer:nonce`, lowercased, as before. Solana: `payer:svm:<message hash>`;
+    the payer is the token-transfer authority read from the transaction with the SDK's own
+    helper, and base58 case is kept. The message hash is what the facilitator itself dedupes on,
+    so the same signed transfer always maps to the same ledger row."""
+    inner = getattr(payload, "payload", None) or {}
+    if isinstance(inner, dict) and inner.get("transaction"):
+        return _svm_ref(inner)
+    auth = inner.get("authorization") if isinstance(inner, dict) else None
     if not isinstance(auth, dict) or not auth.get("nonce") or not auth.get("from"):
         return None
     payer = str(auth["from"]).lower()
     return f"{payer}:{str(auth['nonce']).lower()}", payer
+
+
+def _svm_ref(inner: dict[str, Any]) -> tuple[str, str] | None:
+    try:
+        from x402.mechanisms.svm.types import ExactSvmPayload
+        from x402.mechanisms.svm.utils import (
+            decode_transaction_from_payload,
+            get_token_payer_from_transaction,
+            transaction_message_hash,
+        )
+
+        tx = decode_transaction_from_payload(ExactSvmPayload.from_dict(inner))
+        payer = get_token_payer_from_transaction(tx)
+        if not payer:
+            return None
+        return f"{payer}:svm:{transaction_message_hash(tx)}", payer
+    except Exception:  # malformed: not a payment we can key
+        return None
+
+
+def _paid_network(payload: Any, default: str) -> str:
+    accepted = getattr(payload, "accepted", None)
+    return str(getattr(accepted, "network", None) or default)
 
 
 def _page_guide(settings: Settings) -> str:
@@ -667,6 +804,13 @@ def create_app(
         known = getattr(events, "purchase_for", lambda _: None)(ref)
         return known or commerce_events.purchase_id("ledger", ref)
 
+    def _signed_network(request: Request) -> str | None:
+        header = request.headers.get("payment-signature")
+        try:
+            return _paid_network(decode_payment_signature_header(header), "") if header else None
+        except Exception:
+            return None
+
     def x402_ref(request: Request) -> tuple[str, str] | None:
         """(payer:nonce, payer) of a signed x402 request, or None."""
         header = request.headers.get("payment-signature")
@@ -709,26 +853,33 @@ def create_app(
                 "settled", "x402", purchase_id=commerce_events.purchase_id("ledger", ref[0]),
                 ledger_key=ref[0], payer=ref[1], amount_atomic=amount, asset="USDC",
                 tx_hash=getattr(context.result, "transaction", None) or None,
-                network=getattr(context.result, "network", None) or settings.network,
+                network=getattr(context.result, "network", None)
+                or _paid_network(context.payment_payload, settings.network),
                 outcome="settled",
                 detail={"bazaar": {"status": status, "reason": reason}},
             )  # fmt: skip
 
     if settings.x402:
         server = x402ResourceServer(facilitator)
-        register_exact_evm_server(server, networks=settings.network)
+        evm_networks = [n for n, _ in settings.accepted() if EXTRA_NETWORKS.get(n, "evm") == "evm"]
+        register_exact_evm_server(server, networks=evm_networks)
+        svm_networks = [n for n, _ in settings.accepted() if EXTRA_NETWORKS.get(n) == "svm"]
+        if svm_networks:
+            from x402.mechanisms.svm.exact import register_exact_svm_server
+
+            register_exact_svm_server(server, networks=svm_networks)
         server.on_after_settle(after_settle)
     example = task.output_example(settings.price_usd)
 
     def offer(method: str) -> Any:
         body = {"body_type": "json"} if method == "POST" else {}  # GET takes the query string
         return RouteConfig(
-            accepts=PaymentOption(
-                scheme="exact",
-                pay_to=settings.pay_to,
-                price=f"${settings.price_usd}",
-                network=settings.network,
-            ),
+            accepts=[
+                PaymentOption(
+                    scheme="exact", pay_to=pay_to, price=f"${settings.price_usd}", network=net
+                )
+                for net, pay_to in settings.accepted()
+            ],
             resource=settings.resource_url,
             description=task.description,
             mime_type="application/json",
@@ -1025,6 +1176,7 @@ def create_app(
         paying = x402_ref(request) if signed and page else None
         x402_fields: dict[str, Any] = {"client": client, "network": settings.network}
         if paying:
+            x402_fields["network"] = _signed_network(request) or settings.network
             x402_fields.update(
                 purchase_id=commerce_events.purchase_id("ledger", paying[0]),
                 ledger_key=paying[0], payer=paying[1],
@@ -1095,9 +1247,10 @@ def create_app(
     async def sell(body: Any, request: Request) -> JSONResponse:
         """Deliver a page the x402 gate has already verified payment for (settled after)."""
         header = request.headers.get("payment-signature")
-        ref = _payment_ref(decode_payment_signature_header(header)) if header else None
+        decoded = decode_payment_signature_header(header) if header else None
+        ref = _payment_ref(decoded) if decoded is not None else None
         mine: dict[str, Any] = {
-            "network": settings.network,
+            "network": _paid_network(decoded, settings.network),
             "request_key": commerce_events.request_key(getattr(body, "request_id", None)),
         }
         if ref:

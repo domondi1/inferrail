@@ -226,6 +226,62 @@ def test_web_read_is_built_and_checked_against_its_approved_address(preflight, t
     assert any("READ_PAY_TO is" in p for p in wrong)
 
 
+POLYGON = "eip155:137"
+POLYGON_READ = "0x" + "6" * 40
+
+
+def _read_extra_env(tmp_path, **extra):
+    return _env(
+        tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=READ,
+        READ_X402_EXTRA_NETWORKS=f"{POLYGON}={POLYGON_READ}",
+        READ_X402_EXTRA_MAINNET_APPROVED="1", **extra,
+    )  # fmt: skip
+
+
+def test_an_extra_web_read_network_must_be_stated_matched_and_supported(preflight, tmp_path):
+    pytest.importorskip("x402")  # the hosted CI job installs it and fails on skips
+    env = _read_extra_env(tmp_path)
+
+    def kinds(_env):
+        return {("exact", "eip155:84532"), ("exact", POLYGON)}
+
+    good = {POLYGON: POLYGON_READ}
+    ok = preflight.check(
+        env, APPROVED, build=lambda s: None, kinds=kinds, expect_read_pay_to=READ,
+        expect_read_extra=good,
+    )  # fmt: skip
+    assert ok == []
+    missing = preflight.check(env, APPROVED, build=lambda s: None, kinds=kinds,
+                              expect_read_pay_to=READ)  # fmt: skip
+    assert any("no --expect-read-extra" in p for p in missing)
+    wrong = preflight.check(
+        env, APPROVED, build=lambda s: None, kinds=kinds, expect_read_pay_to=READ,
+        expect_read_extra={POLYGON: APPROVED},
+    )  # fmt: skip
+    assert any("not the approved" in p and POLYGON in p for p in wrong)
+    unsupported = preflight.check(
+        env, APPROVED, build=lambda s: None, kinds=lambda _e: {("exact", "eip155:84532")},
+        expect_read_pay_to=READ, expect_read_extra={POLYGON: POLYGON_READ},
+    )  # fmt: skip
+    assert any("does not support exact on eip155:137" in p for p in unsupported)
+
+
+def test_an_expected_extra_network_that_is_not_configured_stops_the_deploy(preflight, tmp_path):
+    pytest.importorskip("x402")
+    env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=READ)
+    problems = preflight.check(env, APPROVED, build=lambda s: None, expect_read_pay_to=READ,
+                               expect_read_extra={POLYGON: POLYGON_READ})  # fmt: skip
+    assert any("doesn't accept" in p for p in problems)
+
+
+def test_a_mainnet_extra_without_its_approval_does_not_mount(preflight, tmp_path):
+    pytest.importorskip("x402")
+    env = _read_extra_env(tmp_path)
+    env.pop("READ_X402_EXTRA_MAINNET_APPROVED")
+    problems = preflight.check(env, APPROVED, build=lambda s: None, expect_read_pay_to=READ)
+    assert any("Web Read is configured" in p for p in problems)
+
+
 def test_web_read_that_would_not_mount_stops_the_deploy(preflight, tmp_path):
     env = _env(tmp_path, BG_X402_PAY_TO=APPROVED, READ_PAY_TO=APPROVED)  # Hosted's own address
     problems = preflight.check(env, APPROVED, build=lambda s: None)

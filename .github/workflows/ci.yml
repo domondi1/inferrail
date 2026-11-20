@@ -203,6 +203,31 @@ jobs:
       - name: Test search lifecycle with hosted dependencies
         run: python -m pytest tests/unit/hosted/test_job_safe_search.py -v
 
+  hosted-web-read-multinetwork:
+    # Web Read's staged extra x402 networks (Polygon, Solana). Solana needs the SDK's `svm`
+    # extra, which production doesn't install yet. `solana` is pinned to 0.39.0: 0.40+ no
+    # longer ships the `solana.rpc.api` module the SDK imports, and 0.39 is the newest release
+    # whose solders range overlaps the SDK's (>=0.27). Zero skips.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install hosted dependencies plus the x402 Solana extra
+        run: pip install -e ".[dev,hosted]" "x402[svm]==2.22.0" "solana==0.39.0"
+      - name: Lint
+        run: ruff check hosted/web_read tests/unit/hosted/test_web_read_multinetwork.py
+      - name: Test (zero skips)
+        shell: bash
+        run: |
+          python -m pytest tests/unit/hosted/test_web_read_multinetwork.py -v -rs | tee multinetwork.log
+          if grep -q "SKIPPED" multinetwork.log; then
+            echo "::error::a skipped multi-network test must fail this job." >&2
+            exit 1
+          fi
+
   ap-exceptions:
     # Dedicated job for AP invoice-exception recovery: the main `test` job
     # only installs `[dev,mcp]`, so OpenAIRetryAdapter's `openai` import is

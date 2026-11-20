@@ -123,6 +123,7 @@ def check(
     expect_search_pay_to: str | None = None,
     expect_read_pay_to: str | None = None,
     expect_web_search_pay_to: str | None = None,
+    expect_read_extra: dict[str, str] | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -167,6 +168,7 @@ def check(
             print(f"web read: builds; network {w.network}, payTo {w.pay_to}, price ${w.price_usd}")
             if expect_read_pay_to and w.pay_to.lower() != expect_read_pay_to.lower():
                 problems.append(f"READ_PAY_TO is {w.pay_to}, not the approved {expect_read_pay_to}")
+            problems += _check_read_extras(w, env, kinds, expect_read_extra or {})
     if env.get("WEB_SEARCH_PAY_TO"):
         with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
             web_search = cohost.web_search_from_env(settings, {**env, "WEB_SEARCH_DATA_DIR": tmp})
@@ -227,6 +229,47 @@ def check(
     return problems
 
 
+def _check_read_extras(
+    w: Any,
+    env: dict[str, str],
+    kinds: Callable[[dict[str, str]], set[tuple[str, str]]],
+    expected: dict[str, str],
+) -> list[str]:
+    """Each extra Web Read network is a new receiving route: its address must be stated with
+    --expect-read-extra network=payTo and match, and the facilitator must support exact on it."""
+    problems: list[str] = []
+    extras = dict(getattr(w, "extra_networks", ()))
+    for network, pay_to in extras.items():
+        print(f"web read: also accepts {network}, payTo {pay_to}")
+        want = expected.get(network)
+        if want is None:
+            problems.append(
+                f"Web Read accepts {network} but no --expect-read-extra was given for it"
+            )
+        elif want != pay_to:
+            problems.append(f"Web Read's {network} payTo is {pay_to}, not the approved {want}")
+    for network in expected:
+        if network not in extras:
+            problems.append(f"--expect-read-extra names {network}, which Web Read doesn't accept")
+    if extras:
+        try:
+            supported = kinds(env)
+        except Exception as ex:  # noqa: BLE001
+            return [*problems, f"facilitator check failed: {type(ex).__name__}"]
+        for network in extras:
+            if ("exact", network) not in supported:
+                problems.append(f"the facilitator does not support exact on {network}")
+    return problems
+
+
+def _pairs(values: list[str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for v in values or []:
+        network, _, pay_to = v.partition("=")
+        out[network.strip()] = pay_to.strip()
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--expect-pay-to", help="the approved receiving address (EIP-55)")
@@ -235,6 +278,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--expect-web-search-pay-to", help="Web Search's approved receiving address (required)"
     )
+    ap.add_argument(
+        "--expect-read-extra", action="append", metavar="NETWORK=PAYTO",
+        help="an approved extra Web Read network and its receiving address (repeat per network)",
+    )  # fmt: skip
     args = ap.parse_args(argv)
     problems = check(
         dict(os.environ),
@@ -242,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         expect_search_pay_to=args.expect_search_pay_to,
         expect_read_pay_to=args.expect_read_pay_to,
         expect_web_search_pay_to=args.expect_web_search_pay_to,
+        expect_read_extra=_pairs(args.expect_read_extra),
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
