@@ -557,6 +557,11 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
             f"{'x402 or MPP' if read.mpp else 'x402'} challenge; HTTP 200 "
             "is the page. Send a request_id and retry with it if the "
             f"response is lost (no second charge). Guide: {origin}{READ_PREFIX}/llms.txt. "
+            + (
+                f"Or as the MCP tool read_page at {origin}{READ_PREFIX}/mcp/ (x402 in _meta). "
+                if getattr(read, "mcp", False)
+                else ""
+            )
         ) + guidance
     doc: dict[str, Any] = {
         "openapi": "3.1.0",

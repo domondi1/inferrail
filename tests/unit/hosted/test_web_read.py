@@ -875,6 +875,8 @@ def test_the_guides_name_the_mcp_tool_only_when_it_is_mounted(tmp_path, mcp):
         assert ("http://testserver/read/mcp/" in guide) is mcp
         assert ("read_page" in guide) is mcp
         assert ("`read_page` at `http://testserver/read/mcp/`" in origin) is mcp
+        x_guidance = c.get("/openapi.json").json()["info"]["x-guidance"]
+        assert ("read_page at http://testserver/read/mcp/" in x_guidance) is mcp
         init = c.post(
             "/read/mcp/",
             headers={"accept": "application/json, text/event-stream",
