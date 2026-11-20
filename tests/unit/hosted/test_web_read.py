@@ -801,3 +801,45 @@ def test_a_refused_x402_page_is_a_failed_attempt_not_a_sale(tmp_path):
                headers={"PAYMENT-SIGNATURE": signed.header})  # fmt: skip
     assert r.status_code == 422 and r.json()["charged"] is False
     assert _failed(c) == {"x402:http_422": 1}
+
+
+def _settle_with_extensions(ext):
+    from _x402_fake_facilitator import settle_success
+
+    def _ok(payload, requirements):
+        return settle_success(payload, requirements).model_copy(update={"extension_responses": ext})
+
+    return _ok
+
+
+@pytest.mark.parametrize(
+    ("ext", "status"),
+    [
+        ({"bazaar": {"status": "rejected", "rejectedReason": "metadata policy"}}, "rejected"),
+        ({"bazaar": {"status": "success"}}, "success"),
+        ({"other": {"status": "success"}}, "not_submitted"),
+        (None, "absent"),
+        ({"bazaar": "weird"}, "unknown"),
+    ],
+)
+def test_the_facilitators_discovery_index_status_is_counted_per_settlement(tmp_path, ext, status):
+    """The CDP facilitator says in EXTENSION-RESPONSES whether it catalogued the resource in its
+    Bazaar. The status is counted (operator stats) and kept on the settled event; the sale is
+    unaffected whatever the facilitator says."""
+    fac = FakeFacilitator(settle_outcomes=[_settle_with_extensions(ext)])
+    site = {"news.test/robots.txt": ROBOTS_OK,
+            "news.test/a": httpx.Response(200, text=ARTICLE, headers=HTML)}  # fmt: skip
+    c = _client(tmp_path, site, fac)
+    r = _paid(c, "https://news.test/a")
+    assert r.status_code == 200, r.text
+    assert len(fac.calls_to("settle")) == 1
+    stats = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()
+    assert stats["settled_reads"] == 1
+    assert stats["events"].get(f"bazaar_index:{status}") == 1
+
+
+def test_bazaar_status_parsing_is_bounded():
+    long = {"bazaar": {"status": "REJECTED", "rejectedReason": "x" * 999}}
+    assert svc._bazaar_status(long) == ("rejected", "x" * 200)
+    assert svc._bazaar_status({"bazaar": {"status": "teleported"}}) == ("unknown", None)
+    assert svc._bazaar_status({"bazaar": {"status": "processing"}}) == ("processing", None)
