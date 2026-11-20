@@ -870,16 +870,21 @@ def create_app(
                 detail={"bazaar": {"status": status, "reason": reason}},
             )  # fmt: skip
 
-    if settings.x402:
-        server = x402ResourceServer(facilitator)
+    def make_x402_server(fac: Any) -> Any:
+        """A resource server for every accepted network, with Web Read's settle accounting."""
+        built = x402ResourceServer(fac)
         evm_networks = [n for n, _ in settings.accepted() if EXTRA_NETWORKS.get(n, "evm") == "evm"]
-        register_exact_evm_server(server, networks=evm_networks)
+        register_exact_evm_server(built, networks=evm_networks)
         svm_networks = [n for n, _ in settings.accepted() if EXTRA_NETWORKS.get(n) == "svm"]
         if svm_networks:
             from x402.mechanisms.svm.exact import register_exact_svm_server
 
-            register_exact_svm_server(server, networks=svm_networks)
-        server.on_after_settle(after_settle)
+            register_exact_svm_server(built, networks=svm_networks)
+        built.on_after_settle(after_settle)
+        return built
+
+    if settings.x402:
+        server = make_x402_server(facilitator)
     example = task.output_example(settings.price_usd)
 
     def offer(method: str) -> Any:
@@ -920,7 +925,8 @@ def create_app(
         from mcp.server.transport_security import TransportSecuritySettings
 
         mcp_server = _sibling("mcp_tool").build(
-            settings=settings, server=server, task=task, ledger=ledger, rec=rec,
+            settings=settings, facilitator=facilitator, make_server=make_x402_server,
+            task=task, ledger=ledger, rec=rec,
             payment_ref=_payment_ref, paid_network=_paid_network,
             commerce_events=commerce_events,
         )  # fmt: skip

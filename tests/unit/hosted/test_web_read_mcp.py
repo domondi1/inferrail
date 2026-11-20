@@ -215,3 +215,57 @@ def test_a_refused_page_cancels_the_payment(tmp_path):
         assert result["isError"] is True
         assert fac.calls_to("settle") == []
         assert _stats(c)["settled_reads"] == 0
+
+
+class _CdpLike400(FakeFacilitator):
+    """Answers verify the way the CDP facilitator does for an unfunded payment: HTTP 400, which
+    the SDK's HTTP client raises as ValueError (observed in production, 2026-11-20)."""
+
+    async def verify(self, payload, requirements):  # type: ignore[override]
+        raise ValueError(
+            'Facilitator verify failed (400): {"invalidMessage":"contract call failed",'
+            '"invalidReason":"insufficient_funds","isValid":false,"payer":"0xabc"}'
+        )
+
+
+class _SettleDown(FakeFacilitator):
+    async def settle(self, payload, requirements):  # type: ignore[override]
+        raise ValueError("Facilitator settle failed (503): upstream unavailable")
+
+
+def test_a_facilitator_400_on_verify_is_a_payment_refusal_with_its_reason_not_an_error(tmp_path):
+    fac = _CdpLike400()
+    with _server(tmp_path, fac) as (c, _):
+        _init(c)
+        required = _payment_required(_call(c, {"url": "https://news.test/a"}))
+        result = _call(c, {"url": "https://news.test/a"}, _pay(required))
+        assert result["isError"] is True
+        assert "Internal Server Error" not in json.dumps(result)
+        refused = _payment_required(result)
+        assert refused.error == "insufficient_funds"
+        assert refused.accepts  # the buyer can pay again with a funded wallet
+        stats = _stats(c)
+        assert stats["settled_reads"] == 0
+        assert stats["events"].get("payment_attempt:mcp") == 1
+        assert stats["events"].get("payment_rejected:mcp") == 1
+        assert stats["events"].get("attempt_failed:mcp:insufficient_funds") == 1
+
+
+def test_a_facilitator_outage_at_settlement_is_reported_not_an_internal_error(tmp_path):
+    fac = _SettleDown()
+    with _server(tmp_path, fac) as (c, _):
+        _init(c)
+        required = _payment_required(_call(c, {"url": "https://news.test/a"}))
+        result = _call(c, {"url": "https://news.test/a"}, _pay(required))
+        assert result["isError"] is True
+        assert "Internal Server Error" not in json.dumps(result)
+        assert _stats(c)["settled_reads"] == 0  # delivered but not settled: never counted as a sale
+
+
+def test_a_paid_mcp_call_is_counted_as_an_mcp_payment_attempt(tmp_path):
+    with _server(tmp_path, FakeFacilitator()) as (c, _):
+        _init(c)
+        required = _payment_required(_call(c, {"url": "https://news.test/a"}))
+        _call(c, {"url": "https://news.test/a"}, _pay(required))
+        events = _stats(c)["events"]
+        assert events.get("payment_attempt:mcp") == 1 and "payment_rejected:mcp" not in events

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.domondi1/inferrail-web-read",
+  "title": "Inferrail Web Read",
+  "description": "Paid read_page tool: a public web page as clean markdown, $0.002 per delivered page over x402.",
+  "repository": {
+    "url": "https://github.com/domondi1/inferrail",
+    "source": "github",
+    "subfolder": "hosted/web_read"
+  },
+  "websiteUrl": "https://tryinferrail.com",
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://inferrail-cost-gateway.onrender.com/read/mcp/"
+    }
+  ]
+}

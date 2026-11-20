@@ -430,3 +430,7 @@ jobs:
 
       - name: Validate server.json
         run: ./mcp-publisher validate
+
+      - name: Validate mcp/web-read/server.json (the remote Web Read tool)
+        working-directory: mcp/web-read
+        run: ../../mcp-publisher validate
