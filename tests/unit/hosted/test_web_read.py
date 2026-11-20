@@ -24,7 +24,10 @@ from _x402_fake_facilitator import (  # noqa: E402
     sign_payment,
 )
 from eth_account import Account  # noqa: E402
-from x402.http.utils import encode_payment_signature_header  # noqa: E402
+from x402.http.utils import (  # noqa: E402
+    decode_payment_signature_header,
+    encode_payment_signature_header,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 PAY_TO = "0x" + "7" * 40
@@ -890,3 +893,45 @@ def test_the_guides_name_the_mcp_tool_only_when_it_is_mounted(tmp_path, mcp):
             assert init.json()["result"]["serverInfo"]["name"] == "inferrail-web-read"
         else:
             assert init.status_code == 404
+
+
+def _strip_discovery(header: str) -> str:
+    """The same signed payment as a client that doesn't echo extensions or resource sends it."""
+    payload = decode_payment_signature_header(header)
+    return encode_payment_signature_header(
+        payload.model_copy(update={"extensions": None, "resource": None})
+    )
+
+
+@pytest.mark.parametrize("client_echoes", [False, True])
+def test_the_settle_call_always_carries_bazaar_discovery_metadata(tmp_path, client_echoes):
+    """The CDP facilitator indexes a resource only when the settlement carries
+    paymentPayload.extensions.bazaar and paymentPayload.resource; production showed
+    `not_submitted` for a client that doesn't echo them. Web Read supplies what is missing and
+    never replaces what the buyer sent."""
+    seen: list = []
+    fac = FakeFacilitator(on_settle=lambda payload: seen.append(payload))
+    site = {"news.test/robots.txt": ROBOTS_OK,
+            "news.test/a": httpx.Response(200, text=ARTICLE, headers=HTML)}  # fmt: skip
+    c = _client(tmp_path, site, fac)
+    unpaid = c.post("/v1/page", json={"url": "https://news.test/a"})
+    signed = sign_payment(decode_payment_required(unpaid)).header
+    header = signed if client_echoes else _strip_discovery(signed)
+    sent = decode_payment_signature_header(header)
+    assert bool(sent.extensions) is client_echoes
+    r = c.post(
+        "/v1/page", json={"url": "https://news.test/a"}, headers={"PAYMENT-SIGNATURE": header}
+    )
+    assert r.status_code == 200, r.text
+    (settled,) = seen
+    bazaar = (settled.extensions or {}).get("bazaar")
+    assert bazaar and bazaar["info"]["input"]["method"] == "POST"
+    assert settled.resource is not None and settled.resource.url == "http://testserver/v1/page"
+    assert settled.payload == sent.payload  # the signed authorization is untouched
+    events = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()[
+        "events"
+    ]
+    expected = "bazaar_supplied:none" if client_echoes else "bazaar_supplied:extension+resource"
+    assert events.get(expected) == 1
+    if client_echoes:
+        assert settled.extensions == sent.extensions and settled.resource == sent.resource

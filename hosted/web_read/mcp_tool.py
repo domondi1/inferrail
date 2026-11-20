@@ -59,7 +59,6 @@ def build(
     # Its own resource server (same schemes and settle accounting as the HTTP route) over a
     # facilitator adapter: the MCP payment wrapper turns any facilitator exception into an opaque
     # "Internal Server Error", while the CDP facilitator answers an invalid payment with HTTP 400.
-    server = make_server(McpFacilitator(facilitator, ledger))
     schema = task.request_model.model_json_schema()
     example = task.output_example(settings.price_usd)
     resource = ResourceInfo(
@@ -70,6 +69,7 @@ def build(
         tags=list(task.tags)[:5],
         icon_url=settings.icon_url,
     )
+    server = make_server(McpFacilitator(facilitator, ledger), resource)
     extensions = declare_mcp_discovery_extension(
         DeclareMcpDiscoveryConfig(
             tool_name=TOOL_NAME,

@@ -269,3 +269,20 @@ def test_a_paid_mcp_call_is_counted_as_an_mcp_payment_attempt(tmp_path):
         _call(c, {"url": "https://news.test/a"}, _pay(required))
         events = _stats(c)["events"]
         assert events.get("payment_attempt:mcp") == 1 and "payment_rejected:mcp" not in events
+
+
+def test_the_mcp_settle_call_carries_the_tools_discovery_metadata(tmp_path):
+    seen: list = []
+    fac = FakeFacilitator(on_settle=lambda payload: seen.append(payload))
+    with _server(tmp_path, fac) as (c, _):
+        _init(c)
+        required = _payment_required(_call(c, {"url": "https://news.test/a"}))
+        meta = _pay(required)
+        meta[MCP_PAYMENT_META_KEY].pop("extensions", None)  # a client that doesn't echo them
+        meta[MCP_PAYMENT_META_KEY].pop("resource", None)
+        result = _call(c, {"url": "https://news.test/a"}, meta)
+        assert result.get("isError") in (False, None), result
+        (settled,) = seen
+        assert settled.resource is not None and settled.resource.url == "mcp://tool/read_page"
+        bazaar = (settled.extensions or {}).get("bazaar")
+        assert bazaar and bazaar["info"]["input"]["toolName"] == "read_page"
