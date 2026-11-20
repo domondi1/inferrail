@@ -597,6 +597,46 @@ def _svm_signed_by_payer(payload: Any, settings: Settings) -> str | None:
 _BAZAAR_STATUSES = frozenset({"success", "processing", "rejected"})
 
 
+def _http_resource(settings: Settings, task: Any) -> Any:
+    from x402.schemas import ResourceInfo
+
+    return ResourceInfo(
+        url=settings.resource_url, description=task.description, mime_type="application/json",
+        service_name=task.service_name, tags=list(task.tags)[:5], icon_url=settings.icon_url,
+    )  # fmt: skip
+
+
+def _discovery_on_settle(resource: Any, count: Any) -> Any:
+    """A before-settle hook: the settle call carries our discovery metadata.
+
+    The CDP facilitator catalogues a resource in its Bazaar only when the settlement call
+    carries `paymentPayload.extensions.bazaar` and `paymentPayload.resource`. Standard clients
+    echo both from the 402, but some don't, and the facilitator then reports `not_submitted`
+    (seen in production). This fills in what the buyer left out, from the route's own
+    declaration, and never replaces what the buyer sent. Neither field is part of the signed
+    authorization, so the payment itself is untouched. Counted as `bazaar_supplied:<what>`."""
+
+    def hook(context: Any) -> None:
+        try:
+            payload = context.payment_payload
+            if getattr(payload, "x402_version", None) != 2:
+                return
+            supplied = []
+            declared = (context.declared_extensions or {}).get("bazaar")
+            current = dict(payload.extensions or {})
+            if declared and not current.get("bazaar"):
+                payload.extensions = {**current, "bazaar": declared}
+                supplied.append("extension")
+            if getattr(payload, "resource", None) is None and resource is not None:
+                payload.resource = resource
+                supplied.append("resource")
+            count("bazaar_supplied", "+".join(supplied) or "none")
+        except Exception:  # noqa: BLE001 - discovery metadata never affects a settlement
+            return
+
+    return hook
+
+
 def _bazaar_status(extension_responses: Any) -> tuple[str, str | None]:
     """(status, reason) of the facilitator's `bazaar` extension response for a settlement.
 
@@ -883,8 +923,11 @@ def create_app(
                 detail={"bazaar": {"status": status, "reason": reason}},
             )  # fmt: skip
 
-    def make_x402_server(fac: Any) -> Any:
-        """A resource server for every accepted network, with Web Read's settle accounting."""
+    def make_x402_server(fac: Any, resource: Any = None) -> Any:
+        """A resource server for every accepted network, with Web Read's settle accounting.
+
+        `resource` (x402 ResourceInfo) is what the settle call names when the buyer's payment
+        doesn't; by default the HTTP route's."""
         built = x402ResourceServer(fac)
         evm_networks = [n for n, _ in settings.accepted() if EXTRA_NETWORKS.get(n, "evm") == "evm"]
         register_exact_evm_server(built, networks=evm_networks)
@@ -893,6 +936,9 @@ def create_app(
             from x402.mechanisms.svm.exact import register_exact_svm_server
 
             register_exact_svm_server(built, networks=svm_networks)
+        built.on_before_settle(
+            _discovery_on_settle(resource or _http_resource(settings, task), ledger.event)
+        )
         built.on_after_settle(after_settle)
         return built
 
@@ -947,9 +993,12 @@ def create_app(
         app.mount(
             "/mcp",
             mcp_server.streamable_http_app(
-                streamable_http_path="/", stateless_http=True, json_response=True,
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
                 transport_security=TransportSecuritySettings(
-                    enable_dns_rebinding_protection=True, allowed_hosts=[host],
+                    enable_dns_rebinding_protection=True,
+                    allowed_hosts=[host],
                     allowed_origins=[f"https://{host}", f"http://{host}"],
                 ),
             ),  # fmt: skip
