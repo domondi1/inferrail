@@ -699,6 +699,13 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
                 else ""
             )
         ) + guidance
+    finder = getattr(app.state, "finder_settings", None)
+    if app.state.discovery_paths and finder is not None:
+        guidance = (
+            f'Finder: POST {origin}{FIND_PREFIX}/v1/find with {{"need": "..."}} for up to five '
+            "paid x402 APIs that fit a task, ranked by 30-day paid usage; pay the MPP challenge; "
+            f"no match is not charged. Guide: {origin}{FIND_PREFIX}/llms.txt. "
+        ) + guidance
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {
