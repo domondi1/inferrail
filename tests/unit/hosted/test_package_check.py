@@ -301,3 +301,14 @@ def test_base_x402_pays_its_own_address(tmp_path):
     (accept,) = decode_payment_required(c.post("/v1/check", json=ONE)).accepts
     assert accept.pay_to == own
     assert _buy(c, ONE).status_code == 200 and [r.lower() for r in recipients] == [own]
+
+
+def test_the_skill_states_the_live_contract():
+    skill = (ROOT / "skills" / "package-check" / "SKILL.md").read_text()
+    head = skill.split("---")[1]
+    assert "name: inferrail-package-check" in head and "description:" in head
+    assert "$0.002" in skill and "/pkg/v1/check" in skill
+    assert f"up to {packages.MAX_PACKAGES}" in skill
+    assert "not a\n  guarantee" in skill or "not a guarantee" in skill
+    for eco in packages.ECOSYSTEMS:
+        assert f"`{eco}`" in skill
