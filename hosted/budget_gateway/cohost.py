@@ -52,6 +52,7 @@ PREFIX = "/hosted"
 READ_PREFIX = "/read"
 SEARCH_PREFIX = "/search"
 FIND_PREFIX = "/find"
+PKG_PREFIX = "/pkg"
 OPS_PREFIX = "/ops"
 SITE = "https://tryinferrail.com"
 REPO = "https://github.com/domondi1/inferrail"
@@ -90,6 +91,7 @@ def create_combined_app(
     web_read: Any = "env",
     web_search: Any = "env",
     finder: Any = "env",
+    packages: Any = "env",
     godmode: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
@@ -99,6 +101,8 @@ def create_combined_app(
         web_search = web_search_from_env(hosted_settings)
     if finder == "env":
         finder = finder_from_env(hosted_settings)
+    if packages == "env":
+        packages = package_check_from_env(hosted_settings)
     if godmode == "env":
         godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
@@ -146,6 +150,8 @@ def create_combined_app(
         routes.append(Mount(SEARCH_PREFIX, app=web_search[0]))
     if finder is not None:
         routes.append(Mount(FIND_PREFIX, app=finder[0]))
+    if packages is not None:
+        routes.append(Mount(PKG_PREFIX, app=packages[0]))
     if godmode is not None:
         routes.append(Mount(OPS_PREFIX, app=godmode))
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
@@ -154,6 +160,7 @@ def create_combined_app(
     app.state.web_read_settings = web_read[1] if web_read is not None else None
     app.state.web_search_settings = web_search[1] if web_search is not None else None
     app.state.finder_settings = finder[1] if finder is not None else None
+    app.state.package_settings = packages[1] if packages is not None else None
     # Another app sharing this origin adds its paid operations here: callables returning
     # OpenAPI `paths` entries keyed by full origin path.
     app.state.discovery_paths = []
@@ -163,6 +170,8 @@ def create_combined_app(
         app.state.discovery_paths.append(lambda: _web_search_paths(web_search[1]))
     if finder is not None:
         app.state.discovery_paths.append(lambda: _finder_paths(finder[1]))
+    if packages is not None:
+        app.state.discovery_paths.append(lambda: _package_paths(packages[1]))
     return app
 
 
@@ -297,7 +306,8 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
             taken = {
                 a.lower()
                 for a in (hosted_settings.x402_pay_to, e.get("READ_PAY_TO"),
-                          e.get("SEARCH_PAY_TO"), e.get("WEB_SEARCH_PAY_TO"))
+                          e.get("SEARCH_PAY_TO"), e.get("WEB_SEARCH_PAY_TO"),
+                          e.get("PKG_X402_PAY_TO"))
                 if a
             }  # fmt: skip
             if settings.x402_recipient.lower() in taken:
@@ -324,6 +334,56 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
     except Exception:
         log.exception("x402 Finder not mounted: configuration error")
         return None
+
+
+def package_check_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+    """(app, settings) for Inferrail Package Check when PKG_PAY_TO is set, else None.
+
+    Data is OSV.dev's free public API (no key); no supplier cost. MPP only unless PKG_X402=1,
+    which pays PKG_X402_PAY_TO, an address no other x402 service uses (an EIP-3009 transfer binds
+    a merchant, not a route); MPP keeps paying PKG_PAY_TO. Fail-isolated: a configuration error
+    leaves it unmounted.
+    """
+    e = dict(os.environ if env is None else env)
+    if not e.get("PKG_PAY_TO"):
+        return None
+    try:
+        mod = sys.modules.get("web_read_service") or _load(
+            "web_read_service", HOSTED_DIR.parent / "web_read" / "service.py"
+        )
+        packages = _load("web_read_packages", HOSTED_DIR.parent / "web_read" / "packages.py")
+        origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+        e.setdefault("PKG_RESOURCE_URL", f"{origin}{PKG_PREFIX}/v1/check")
+        e["PKG_MOUNT_PREFIX"] = PKG_PREFIX
+        e.setdefault("PKG_NETWORK", hosted_settings.x402_network)
+        e.setdefault("PKG_X402", "0")
+        e.setdefault("PKG_DATA_DIR", str(Path(hosted_settings.data_dir).parent / "packages"))
+        settings = mod.Settings.from_env(e, prefix="PKG_")
+        if settings.x402:
+            taken = {
+                a.lower()
+                for a in (hosted_settings.x402_pay_to, e.get("READ_PAY_TO"),
+                          e.get("SEARCH_PAY_TO"), e.get("WEB_SEARCH_PAY_TO"),
+                          e.get("FINDER_X402_PAY_TO"))
+                if a
+            }  # fmt: skip
+            if settings.x402_recipient.lower() in taken:
+                raise RuntimeError("PKG_X402=1 needs its own PKG_X402_PAY_TO")
+        task = packages.package_task(mod, _package_retry_secret(e))
+        return mod.create_app(settings, task=task), settings
+    except Exception:
+        log.exception("Package Check not mounted: configuration error")
+        return None
+
+
+def _package_retry_secret(e: dict[str, str]) -> bytes:
+    """Keys the retry identity (an HMAC of the package list). Stable across restarts."""
+    if e.get("PKG_RETRY_SECRET"):
+        return e["PKG_RETRY_SECRET"].encode()
+    seed = e.get("CDP_API_KEY_SECRET") or e.get("BG_OPERATOR_TOKEN")
+    if not seed:
+        raise RuntimeError("Package Check needs PKG_RETRY_SECRET or BG_OPERATOR_TOKEN")
+    return hashlib.sha256(f"inferrail-package-check-retry|{seed}".encode()).digest()
 
 
 def _finder_retry_secret(e: dict[str, str]) -> bytes:
@@ -531,6 +591,48 @@ def _finder_paths(settings: Any) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _package_paths(settings: Any) -> dict[str, Any]:
+    packages = sys.modules["web_read_packages"]
+    protocols = ([{"x402": {}}] if settings.x402 else []) + _mpp_protocols(settings)
+    return {
+        f"{PKG_PREFIX}/v1/check": {
+            "post": {
+                "operationId": "checkPackages",
+                "summary": packages.SUMMARY,
+                "description": packages.DESCRIPTION.replace("Pay only", f"${settings.price_usd} "
+                                                            "per delivered check. Pay only"),
+                "tags": packages.TAGS,
+                "security": [],
+                "x-payment-info": {
+                    "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
+                    "protocols": protocols,
+                },
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": packages.CheckRequest.model_json_schema(),
+                            "example": {"packages": [{"ecosystem": "npm", "name": "lodash",
+                                                      "version": "4.17.15"}]},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The check, delivered and paid",
+                        "content": {"application/json": {"schema": packages.OUTPUT_SCHEMA}},
+                    },
+                    "402": {"description": "Payment Required"},
+                    "422": {"description": "Invalid request; nothing charged"},
+                    "502": {
+                        "description": "OSV.dev unreachable; may succeed later; nothing charged"
+                    },
+                },
+            }
+        }
+    }  # fmt: skip
+
+
 def _search_rails(settings: Any) -> str:
     return " or ".join(
         r for r, on in (("x402 on Base", settings.x402), ("MPP on Tempo", settings.mpp)) if on
@@ -548,7 +650,9 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     read = getattr(app.state, "web_read_settings", None)
     found = getattr(app.state, "web_search_settings", None)
     finder = getattr(app.state, "finder_settings", None)
-    if not app.state.discovery_paths or (read is None and found is None and finder is None):
+    pkg = getattr(app.state, "package_settings", None)
+    if not app.state.discovery_paths or (read is None and found is None and finder is None
+                                         and pkg is None):  # fmt: skip
         return "Inferrail Hosted", hosted
     # Agent clients copy this paragraph verbatim as the tool description a model reads to decide
     # whether to use the origin (AgentCash's MCP instructions and its installed SKILL.md), so it
@@ -571,6 +675,11 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
             "Inferrail x402 Finder: which paid x402 API fits a task, ranked by real 30-day paid "
             f"usage, ${finder.price_usd} per answer, paid over {_search_rails(finder)}; no match "
             "is free."
+        )
+    if pkg is not None:
+        parts.append(
+            "Inferrail Package Check: known vulnerabilities (CVE, severity, fixed versions) for up "
+            f"to 20 package versions, ${pkg.price_usd} per check, paid over {_search_rails(pkg)}."
         )
     return "Inferrail", " ".join(parts) + " " + hosted
 
@@ -636,12 +745,21 @@ def origin_llms(app: Starlette) -> str:
             f"{_search_rails(finder)} and repeat the request. Up to five paid x402 APIs for "
             "the task, ranked by real 30-day paid usage.",
         ]
+    pkg = getattr(app.state, "package_settings", None)
+    if app.state.discovery_paths and pkg is not None:
+        lines += [
+            f"- [Inferrail Package Check]({origin}{PKG_PREFIX}/llms.txt): "
+            f'`POST {origin}{PKG_PREFIX}/v1/check` with `{{"packages": [{{"ecosystem": "npm", '
+            '"name": "...", "version": "..."}]}` returns HTTP 402; pay '
+            f"${pkg.price_usd} over {_search_rails(pkg)} and repeat the request. Known "
+            "vulnerabilities for up to 20 package versions, from OSV.dev.",
+        ]
     lines += [
         f"- [Inferrail Hosted]({base}/llms.txt): per-run dollar budgets shared across agents; "
         f"{settings.free_runs_per_month} governed runs a month free.",
         "",
     ]
-    if app.state.discovery_paths and (read is not None or finder is not None):
+    if app.state.discovery_paths and (read is not None or finder is not None or pkg is not None):
         lines += [
             "## Use from an agent wallet you already have",
             "",
@@ -723,6 +841,14 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
             "paid x402 APIs that fit a task, ranked by 30-day paid usage; pay the "
             f"{_search_rails(finder)} challenge; "
             f"no match is not charged. Guide: {origin}{FIND_PREFIX}/llms.txt. "
+        ) + guidance
+    pkg = getattr(app.state, "package_settings", None)
+    if app.state.discovery_paths and pkg is not None:
+        guidance = (
+            f'Package Check: POST {origin}{PKG_PREFIX}/v1/check with {{"packages": [{{"ecosystem": '
+            '"npm", "name": "...", "version": "..."}]} (1-20) before installing or shipping '
+            f"dependencies; pay the {_search_rails(pkg)} challenge; an OSV.dev outage is not "
+            f"charged. Guide: {origin}{PKG_PREFIX}/llms.txt. "
         ) + guidance
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
