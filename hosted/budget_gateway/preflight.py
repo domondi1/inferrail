@@ -125,6 +125,7 @@ def check(
     expect_web_search_pay_to: str | None = None,
     expect_read_extra: dict[str, str] | None = None,
     expect_finder_x402_pay_to: str | None = None,
+    expect_domain_x402_pay_to: str | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -215,6 +216,7 @@ def check(
             elif f.x402 and f.x402_recipient.lower() != expect_finder_x402_pay_to.lower():
                 problems.append(f"FINDER_X402_PAY_TO is {f.x402_recipient}, not the approved "
                                 f"{expect_finder_x402_pay_to}")  # fmt: skip
+    problems += _check_domain(cohost, settings, env, expect_read_pay_to, expect_domain_x402_pay_to)
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -251,6 +253,46 @@ def check(
                 problems.append(f"the facilitator does not support exact on {network}")
         except Exception as ex:
             problems.append(f"facilitator check failed with the API key: {type(ex).__name__}")
+    return problems
+
+
+def _check_domain(
+    cohost: Any,
+    settings: Any,
+    env: dict[str, str],
+    expect_read_pay_to: str | None,
+    expect_x402: str | None,
+) -> list[str]:
+    """Domain Check's recipients, checked only when it is configured (DOMAIN_PAY_TO), so the
+    other services' deploy is unchanged. MPP shares Web Read's Tempo address; Base x402 is a new
+    receiving route, so its address must be stated with --expect-domain-x402-pay-to and match."""
+    if not env.get("DOMAIN_PAY_TO"):
+        if expect_x402:
+            return ["--expect-domain-x402-pay-to was given but Domain Check isn't configured "
+                    "(no DOMAIN_PAY_TO)"]  # fmt: skip
+        return []
+    with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+        mounted = cohost.domain_check_from_env(settings, {**env, "DOMAIN_DATA_DIR": tmp})
+    if mounted is None:
+        return ["Domain Check is configured (DOMAIN_PAY_TO) but would not mount; the "
+                "configuration error is logged above"]  # fmt: skip
+    d = mounted[1]
+    print(
+        f"domain check: builds; price ${d.price_usd}, rails {cohost._search_rails(d)}; "
+        f"MPP payTo {d.pay_to}" + (f", x402 payTo {d.x402_recipient}" if d.x402 else "")
+    )
+    problems: list[str] = []
+    if d.mpp and expect_read_pay_to and d.pay_to.lower() != expect_read_pay_to.lower():
+        problems.append(f"DOMAIN_PAY_TO (MPP) is {d.pay_to}, not Web Read's approved "
+                        f"{expect_read_pay_to}")  # fmt: skip
+    if d.x402 and not expect_x402:
+        problems.append("Domain Check x402 is on but no --expect-domain-x402-pay-to was given")
+    elif d.x402 and expect_x402 and d.x402_recipient.lower() != expect_x402.lower():
+        problems.append(f"DOMAIN_X402_PAY_TO is {d.x402_recipient}, not the approved "
+                        f"{expect_x402}")  # fmt: skip
+    elif not d.x402 and expect_x402:
+        problems.append("--expect-domain-x402-pay-to was given but Domain Check's x402 is off "
+                        "(DOMAIN_X402=1 not set)")  # fmt: skip
     return problems
 
 
@@ -307,6 +349,9 @@ def main(argv: list[str] | None = None) -> int:
         "--expect-finder-x402-pay-to", help="x402 Finder's approved Base receiving address"
     )
     ap.add_argument(
+        "--expect-domain-x402-pay-to", help="Domain Check's approved Base receiving address"
+    )
+    ap.add_argument(
         "--expect-read-extra", action="append", metavar="NETWORK=PAYTO",
         help="an approved extra Web Read network and its receiving address (repeat per network)",
     )  # fmt: skip
@@ -319,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         expect_web_search_pay_to=args.expect_web_search_pay_to,
         expect_read_extra=_pairs(args.expect_read_extra),
         expect_finder_x402_pay_to=args.expect_finder_x402_pay_to,
+        expect_domain_x402_pay_to=args.expect_domain_x402_pay_to,
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
