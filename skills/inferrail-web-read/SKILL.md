@@ -1,12 +1,33 @@
 ---
 name: inferrail-web-read
-description: Read a public web page as clean markdown (title, main text, headings, lists, links, tables, word count, content hash) plus the page's own metadata (description, canonical URL, authors, published and modified dates, language), and pay $0.002 per delivered page in USDC over x402 on Base or MPP on Tempo, as an MCP tool or an HTTP call. Use when an agent with its own wallet needs the text of a URL, an article, docs page or product page; refused or failing pages are never charged, and a retry never pays twice.
+description: Read public web pages as clean markdown with each page's own metadata (description, canonical URL, authors, published and modified dates, language), one URL for $0.002 or up to 10 URLs in one call at $0.002 per page, paid in USDC from a wallet your agent already has (AgentCash, Coinbase agentic wallet, or any x402/MPP client). Use when a task needs the text of an article, docs page, changelog or product page, or evidence from several sources; a page that can't be read (blocked, missing, bot check, JavaScript-only) is never charged, and a retry never pays twice.
 ---
 
 # Inferrail Web Read
 
 One public web page as clean markdown, $0.002 per delivered page. No account, no API key:
 your agent pays per page from its own wallet.
+
+## Paying from your agent (AgentCash wallet)
+
+The simplest path for a coding or research agent, with no API key and no account:
+
+1. `npx agentcash@0.17.1 balance`: your USDC balance (Base and Tempo). If you have no AgentCash
+   wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
+   low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
+   Never pay beyond the budget your user approved.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/read/v1/page`: the exact request schema and price.
+3. Pay and get the result (`--max-amount` caps what one call may cost):
+
+```bash
+npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/read/v1/page -m POST \
+  -H "Content-Type: application/json" -H "X-Inferrail-Source: skill" \
+  -b '{"url": "https://example.com/", "request_id": "<unique id>"}' --max-amount 0.01
+```
+
+`X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
+identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
+service in your agent's paid tools.
 
 ## As an MCP tool
 
@@ -36,16 +57,16 @@ From Node with an x402 client you already use (`@x402/fetch`):
 your client refuse a Web Read offer above $0.002 or to another address before signing, and
 `readPage(paidFetch, url)` sends a request_id and retries a lost response with it.
 
-Already paying with AgentCash? `npx agentcash add https://inferrail-cost-gateway.onrender.com`
+Already paying with AgentCash? `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`
 lists Web Read (and the x402 Finder) in your agent's paid tools; it pays from the AgentCash
 wallet you already have. With a Coinbase agentic wallet:
 `npx awal x402 pay https://inferrail-cost-gateway.onrender.com/read/v1/page -X POST -d '{"url": "https://..."}'`.
 
 ## Several pages in one call
 
-When `https://inferrail-cost-gateway.onrender.com/openapi.json` lists `POST /read/v1/pages`,
-you can read 1 to 10 pages in one paid request:
-`{"urls": ["https://...", "https://..."], "request_id": "<unique id>"}`.
+`POST https://inferrail-cost-gateway.onrender.com/read/v1/pages` reads 1 to 10 pages in one paid
+request: `{"urls": ["https://...", "https://..."], "request_id": "<unique id>"}` (with AgentCash:
+the same `fetch` command with this URL and body, and `--max-amount 0.03`).
 
 - Use it when a task already has its list of sources (research, citation checks, comparing
   docs); use `/read/v1/page` for one page, or when you decide the next URL from the last one.

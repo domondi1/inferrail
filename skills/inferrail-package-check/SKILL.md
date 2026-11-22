@@ -17,6 +17,27 @@ same `request_id` never pays twice.
 
 Batch the packages you are changing into one call (up to 20).
 
+## Paying from your agent (AgentCash wallet)
+
+The simplest path for a coding or research agent, with no API key and no account:
+
+1. `npx agentcash@0.17.1 balance`: your USDC balance (Base and Tempo). If you have no AgentCash
+   wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
+   low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
+   Never pay beyond the budget your user approved.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/pkg/v1/check`: the exact request schema and price.
+3. Pay and get the result (`--max-amount` caps what one call may cost):
+
+```bash
+npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/check -m POST \
+  -H "Content-Type: application/json" -H "X-Inferrail-Source: skill" \
+  -b '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}], "request_id": "<unique id>"}' --max-amount 0.01
+```
+
+`X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
+identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
+service in your agent's paid tools.
+
 ## How to call it
 
 `POST https://inferrail-cost-gateway.onrender.com/pkg/v1/check` with
@@ -32,12 +53,12 @@ Ecosystems: `npm`, `PyPI`, `Go`, `crates.io`, `Maven`, `NuGet`, `RubyGems`, `Pac
 With the AgentCash wallet:
 
 ```bash
-npx agentcash fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/check -m POST \
+npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/check -m POST \
   -H "Content-Type: application/json" \
   -b '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}]}' --max-amount 0.01
 ```
 
-(Or once: `npx agentcash add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
+(Or once: `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
 services in your agent's paid tools.)
 
 With a Coinbase agentic wallet:

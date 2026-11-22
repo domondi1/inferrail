@@ -112,6 +112,19 @@ curl -i -X POST https://inferrail-cost-gateway.onrender.com/read/v1/page \
 # HTTP 402 with the price; an x402 or MPP client pays and repeats the request
 ```
 
+**Install as agent skills.** Three skills teach your coding or research agent when and how to
+use these tools: reading web pages (one, or up to 10 per call), checking dependencies for known
+vulnerabilities, and looking up a domain's DNS, SPF/DMARC and registration. Each is $0.002 per
+delivered result from the agent's own wallet, and the agent asks you before creating or funding
+one.
+
+```bash
+npx skills add domondi1/inferrail                         # Claude Code, Cursor, Codex, Copilot and more
+/plugin install inferrail --marketplace domondi1/inferrail  # Claude Code plugin (2.1.275+)
+```
+
+Skills: [`skills/`](skills/).
+
 Guides: [Web Read](https://inferrail-cost-gateway.onrender.com/read/llms.txt) ·
 [Hosted](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt) ·
 [service source](hosted/web_read/README.md).

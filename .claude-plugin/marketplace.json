@@ -1,0 +1,12 @@
+{
+  "name": "inferrail",
+  "description": "Inferrail's pay-per-call agent tools as Claude Code skills.",
+  "owner": { "name": "Inferrail" },
+  "plugins": [
+    {
+      "name": "inferrail",
+      "source": "./",
+      "description": "Read web pages as markdown, check dependencies for known vulnerabilities, and look up domains: $0.002 per delivered result, paid from your agent's wallet."
+    }
+  ]
+}
