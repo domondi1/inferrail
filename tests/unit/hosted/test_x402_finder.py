@@ -232,6 +232,7 @@ def test_mounted_mpp_only_and_listed_on_the_origin(tmp_path):
     op = c.get("/openapi.json").json()["paths"]["/find/v1/find"]["post"]
     assert op["operationId"] == "findApi" and op["x-payment-info"]["price"]["amount"] == "0.002"
     assert "x402 Finder" in c.get("/llms.txt").text
+    assert "/find/v1/find" in c.get("/openapi.json").json()["info"]["x-guidance"]
 
 
 def test_the_approved_production_config_is_mpp_only_at_two_tenths_of_a_cent(tmp_path):
@@ -267,3 +268,15 @@ def test_an_unpaid_quote_starts_loading_the_catalog(tmp_path):
     assert catalog._task is None
     assert TestClient(mounted[0]).post("/v1/find", json={"need": "x y"}).status_code == 402
     assert catalog._task is not None  # the first load was started by an unpaid request
+
+
+def test_the_catalog_status_is_free_and_reports_freshness(tmp_path):
+    _, _, settings = _hosted(tmp_path)
+    mounted = cohost.finder_from_env(settings, {**ENV, "FINDER_DATA_DIR": str(tmp_path / "f")})
+    catalog = mounted[0].state.finder_catalog
+    c = TestClient(mounted[0])
+    assert c.get("/v1/catalog").json() == {"loaded": False, "entries": 0, "as_of": None}
+    catalog._source = _catalog()._source
+    asyncio.run(catalog.load())
+    status = c.get("/v1/catalog").json()
+    assert status["loaded"] is True and status["entries"] == 5 and status["as_of"].endswith("Z")
