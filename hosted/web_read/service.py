@@ -67,6 +67,7 @@ def _sibling(name: str) -> Any:
 
 
 extract = _sibling("extract")
+meta = _sibling("meta")
 fetch = _sibling("fetch")
 mpp_rail = _sibling("mpp_rail")
 commerce_events = _sibling("commerce_events")
@@ -81,6 +82,21 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "word_count": {"type": "integer"},
         "content_sha256": {"type": "string"},
         "fetched_at": {"type": "string"},
+        # What the page declares about itself; null (authors: []) when it doesn't say.
+        "metadata": {
+            "type": "object",
+            "properties": {
+                "description": {"type": ["string", "null"]},
+                "canonical_url": {"type": ["string", "null"]},
+                "authors": {"type": "array", "items": {"type": "string"}},
+                "published_at": {"type": ["string", "null"]},
+                "modified_at": {"type": ["string", "null"]},
+                "language": {"type": ["string", "null"]},
+                "site_name": {"type": ["string", "null"]},
+                "image": {"type": ["string", "null"]},
+                "type": {"type": ["string", "null"]},
+            },
+        },
         "receipt": {
             "type": "object",
             "properties": {
@@ -94,10 +110,11 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 }
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
-    "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
-    "missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do "
-    "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
-    "never pays twice."
+    "with the page's own metadata (description, canonical URL, authors, published date, "
+    "language), word count, a content hash and a receipt. Pay only for a delivered page: a "
+    "blocked, missing or failing page (target-site 403, 404, 5xx, timeout, bot check, no text "
+    "without JavaScript) costs nothing, and neither do refusals (robots.txt, non-public "
+    "address, non-text, >2 MB). A retry from the same wallet never pays twice."
 )
 
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
@@ -732,6 +749,10 @@ def _page_guide(settings: Settings) -> str:
         + f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
         f"{settings.network} to {settings.x402_recipient}). Sign it and repeat the request with "
         "the PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
+        "A delivered page has title, content_markdown, word_count, content_sha256 and metadata: "
+        "description, canonical_url, authors, published_at, modified_at (ISO 8601 as the page "
+        "wrote it), language, site_name, image and type, each exactly as the page declares it "
+        "and null (authors: []) when it doesn't.\n"
         f"Lost the response? Send the same url and request_id again from the same wallet "
         f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
         "signature is not settled (no second charge).\n"
@@ -754,11 +775,17 @@ def _page_guide(settings: Settings) -> str:
         + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
         "dns_failed | disallowed_by_robots_txt | unsupported_content_type | too_large | "
         "too_many_redirects | no_readable_content (no text without running JavaScript) | "
+        "bot_check (the site served a bot check instead of the page) | "
         "upstream_status (the site answered 4xx: missing, gone or "
         "forbidden; detail is its status)} means retrying the same URL won't help; "
         "502 {error: upstream_status (the site answered 5xx, 408 or 429) | fetch_failed} "
         "and 504 {error: timeout} may succeed later.\n"
     )
+
+
+# A bot-check page is refused only when it is also short: the marker alone could, in theory, sit on
+# a real page that carries a challenge widget next to its content.
+BOT_CHECK_MAX_WORDS = 150
 
 
 def page_task(reader: Any) -> Task:
@@ -773,10 +800,18 @@ def page_task(reader: Any) -> Task:
             status = refusal_status(exc)
             return status, {"error": exc.code, "detail": exc.detail, "charged": False}
         text = got.body.decode(got.encoding, "replace")
-        if got.content_type in ("text/html", "application/xhtml+xml"):
+        html = got.content_type in ("text/html", "application/xhtml+xml")
+        if html:
             title, content = extract.html_to_markdown(text, got.final_url)
         else:
             title, content = "", text.strip()
+        vendor = meta.bot_challenge(text) if html else None
+        if vendor and len(content.split()) <= BOT_CHECK_MAX_WORDS:
+            # The site served its bot check instead of the page: nothing the buyer asked for.
+            event("refused", "bot_check")
+            return 422, {"error": "bot_check",
+                         "detail": f"the site served a {vendor} bot check instead of the page",
+                         "charged": False}  # fmt: skip
         if not content.strip():
             # Nothing readable without running JavaScript (or an empty body): charging for an
             # empty page would bill the buyer for nothing, so it is refused like any other.
@@ -792,6 +827,7 @@ def page_task(reader: Any) -> Task:
             "word_count": len(content.split()),
             "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
             "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "metadata": meta.page_metadata(text, got.final_url) if html else meta.empty_metadata(),
             "bytes": len(got.body),
         }
         return 200, row
@@ -805,6 +841,17 @@ def page_task(reader: Any) -> Task:
             "word_count": 28,
             "content_sha256": "3f1c…",
             "fetched_at": "2026-10-16T12:00:00Z",
+            "metadata": {
+                "description": None,
+                "canonical_url": None,
+                "authors": [],
+                "published_at": None,
+                "modified_at": None,
+                "language": "en",
+                "site_name": None,
+                "image": None,
+                "type": None,
+            },
             "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": price_usd},
         }
 

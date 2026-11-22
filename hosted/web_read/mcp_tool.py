@@ -25,8 +25,10 @@ TOOL_NAME = "read_page"
 SERVER_VERSION = "1.0.0"
 TOOL_DESCRIPTION = (
     "Read one public web page as clean, LLM-ready markdown (title, main text, headings, lists, "
-    "links, tables) with word count and a content hash. Paid per delivered page over x402; a "
-    "blocked, missing, failing or refused page costs nothing."
+    "links, tables) with the page's metadata (description, canonical URL, authors, published "
+    "date, language), word count and a content hash. Paid per delivered page over x402; a "
+    "blocked, missing, failing or refused page (including a bot check or a page with no text "
+    "without JavaScript) costs nothing."
 )
 
 
