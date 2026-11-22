@@ -1,21 +1,41 @@
 # Inferrail
 
-> Spending limits, paid execution and receipts for AI agents. Three things are live: a
-> self-hosted gateway that gives each AI job a dollar budget and a payload-free cost receipt;
-> Inferrail Hosted, the same budgets run for you; and Inferrail Web Read, a page reader an
-> agent pays per call. Developer preview: interfaces may change before 1.0.
+> Spending limits, paid execution and receipts for AI agents. Live: a self-hosted gateway that
+> gives each AI job a dollar budget and a payload-free cost receipt; Inferrail Hosted, the same
+> budgets run for you; and four pay-per-call tools an agent pays from its own wallet. Developer
+> preview: interfaces may change before 1.0.
 
 ## Buy now (agents with an x402 or MPP wallet)
 
-- [Inferrail Web Read](https://inferrail-cost-gateway.onrender.com/read/llms.txt): one public
-  web page as clean markdown with a content hash and receipt. $0.002 per delivered page,
-  USDC over x402 on Base or MPP on Tempo, no account or API key.
-  `POST https://inferrail-cost-gateway.onrender.com/read/v1/page` with
-  `{"url": "https://...", "request_id": "..."}` returns HTTP 402 with the offer; pay and repeat
-  the request. Refusals (robots.txt, non-public, non-text, over 2 MB, target-site errors) are
-  never charged, and the same `url` + `request_id` from the same wallet within 10 minutes
-  returns the page already paid for. Machine contract:
-  [openapi.json](https://inferrail-cost-gateway.onrender.com/openapi.json).
+Each costs $0.002 per delivered result in USDC, over x402 on Base or MPP on Tempo, with no
+account or API key. The first request returns HTTP 402 with the offer; pay and repeat it.
+Refusals and upstream failures are never charged, and the same request with the same
+`request_id` from the same wallet within 10 minutes returns what was already paid for.
+Machine contract: [openapi.json](https://inferrail-cost-gateway.onrender.com/openapi.json).
+
+- [Inferrail Web Read](https://inferrail-cost-gateway.onrender.com/read/llms.txt): a public web page as clean markdown with the page's
+  own metadata (description, canonical URL, authors, published date, language), $0.002 per
+  delivered page. `POST https://inferrail-cost-gateway.onrender.com/read/v1/page` with `{"url": "https://..."}`, or up to 10 pages in
+  one call with `POST https://inferrail-cost-gateway.onrender.com/read/v1/pages` and `{"urls": [...]}` (charged only if every page is
+  delivered). Pages behind robots.txt, a bot check or JavaScript are refused and never charged.
+- [Inferrail Package Check](https://inferrail-cost-gateway.onrender.com/pkg/llms.txt): known vulnerabilities (advisory ids, CVEs,
+  severity, fixed versions) for up to 20 package versions per call, from OSV.dev.
+  `POST https://inferrail-cost-gateway.onrender.com/pkg/v1/check`.
+- [Inferrail Domain Check](https://inferrail-cost-gateway.onrender.com/domain/llms.txt): a domain's DNS records, SPF and DMARC, and
+  its registration (registrar, created and expiry dates) from RDAP. `POST https://inferrail-cost-gateway.onrender.com/domain/v1/lookup`.
+- [Inferrail x402 Finder](https://inferrail-cost-gateway.onrender.com/find/llms.txt): which paid x402 API fits a task, ranked by real
+  30-day paid usage. `POST https://inferrail-cost-gateway.onrender.com/find/v1/find`.
+
+## Install in an agent
+
+- Agent skills (Claude Code, Cursor, Codex, GitHub Copilot, Gemini CLI and more):
+  `npx skills add domondi1/inferrail`. Claude Code plugin:
+  `/plugin install inferrail --marketplace domondi1/inferrail`. The skills say when a free tool
+  is better and ask the user before creating or funding a wallet.
+- AgentCash wallet: `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com` lists these tools in the agent's paid tools.
+- CI: check lockfiles for known vulnerabilities on every run with
+  [actions/package-check](https://github.com/domondi1/inferrail/tree/main/actions/package-check)
+  (an owner-set wallet and required spending limit).
 
 ## Budgets for agent runs
 
