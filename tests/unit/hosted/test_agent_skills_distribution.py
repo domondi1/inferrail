@@ -47,6 +47,14 @@ def test_each_skill_stops_at_the_wallet_boundary_and_pins_its_client(path):
     assert "https://inferrail-cost-gateway.onrender.com/" in text
 
 
+@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+def test_each_skill_says_when_a_free_tool_is_better(path):
+    # Don't send an agent to a paid call it doesn't need.
+    text = path.read_text()
+    assert "## When another tool is better" in text and "## When to call it" in text
+    assert "awal" not in text  # an untested wallet command is not offered as a recipe
+
+
 def test_the_plugin_and_marketplace_manifests_agree():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
@@ -99,6 +107,12 @@ def test_an_unknown_label_is_ignored(tmp_path, value):
     c = _client(tmp_path, {}, FakeFacilitator())
     c.post("/v1/page", json={"url": "https://news.test/a"}, headers={"X-Inferrail-Source": value})
     assert _stats(c)["funnel"]["by_channel"] == {}
+
+
+def test_ci_pipelines_are_their_own_channel(tmp_path):
+    c = _client(tmp_path, {}, FakeFacilitator())
+    c.post("/v1/page", json={"url": "https://news.test/a"}, headers={"X-Inferrail-Source": "ci"})
+    assert _stats(c)["funnel"]["by_channel"] == {"ci:challenge": 1}
 
 
 def test_unlabelled_calls_are_counted_as_before(tmp_path):

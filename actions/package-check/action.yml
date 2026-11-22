@@ -1,0 +1,70 @@
+name: Inferrail Package Check
+description: >-
+  Check your locked dependencies (npm, PyPI) for known vulnerabilities on every run, $0.002 per
+  20 packages, paid with x402 from a wallet you set, capped by max-usd before anything is paid.
+author: Inferrail
+branding:
+  icon: shield
+  color: green
+inputs:
+  wallet-key:
+    description: >-
+      Private key of a dedicated, low-balance Base wallet holding a little USDC, from a secret.
+      It pays for the checks and nothing else. Empty (as in a pull request from a fork): see
+      on-missing-key.
+    required: true
+  max-usd:
+    description: >-
+      Required spending limit per run, in USD. If checking everything would cost more, the step
+      fails without paying anything.
+    required: true
+  paths:
+    description: Lockfiles or directories to scan, space-separated.
+    required: false
+    default: "."
+  fail-on:
+    description: "`vulnerable` (fail the step on a known vulnerability) or `never`."
+    required: false
+    default: vulnerable
+  on-missing-key:
+    description: "`skip` (warn and pass, the default for forks' pull requests) or `fail`."
+    required: false
+    default: skip
+outputs:
+  packages:
+    description: Number of packages checked.
+    value: ${{ steps.check.outputs.packages }}
+  vulnerable:
+    description: Number of packages with known vulnerabilities.
+    value: ${{ steps.check.outputs.vulnerable }}
+  paid-usd:
+    description: The most this run paid, in USD.
+    value: ${{ steps.check.outputs.paid-usd }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+      with:
+        python-version: "3.12"
+    - name: Install the x402 client (hash-locked, isolated)
+      shell: bash
+      run: |
+        python -m venv "$RUNNER_TEMP/inferrail-package-check"
+        "$RUNNER_TEMP/inferrail-package-check/bin/python" -m pip install --quiet \
+          --require-hashes --no-deps -r "$GITHUB_ACTION_PATH/requirements.txt"
+    - name: Check dependencies
+      id: check
+      shell: bash
+      env:
+        EVM_PRIVATE_KEY: ${{ inputs.wallet-key }}
+        INPUT_MAX_USD: ${{ inputs.max-usd }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_ON_MISSING_KEY: ${{ inputs.on-missing-key }}
+        INPUT_PATHS: ${{ inputs.paths }}
+      run: |
+        # Inputs reach the script only through the environment, never the command text. -I keeps
+        # Python from importing anything from the checked-out repository.
+        read -r -a paths <<< "$INPUT_PATHS"
+        "$RUNNER_TEMP/inferrail-package-check/bin/python" -I "$GITHUB_ACTION_PATH/check_deps.py" \
+          --max-usd "$INPUT_MAX_USD" --fail-on "$INPUT_FAIL_ON" \
+          --on-missing-key "$INPUT_ON_MISSING_KEY" -- "${paths[@]}"

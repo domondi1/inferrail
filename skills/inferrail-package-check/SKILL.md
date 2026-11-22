@@ -17,6 +17,14 @@ same `request_id` never pays twice.
 
 Batch the packages you are changing into one call (up to 20).
 
+## When another tool is better
+
+If you can run the ecosystem's own free audit in the project (`npm audit`, `pip-audit`,
+`cargo audit`, `govulncheck`), and it works, use it. Package Check is worth paying for when you
+can't: checking versions **before** they are installed or without the project's environment,
+in a sandbox without registry access, or across several ecosystems in one call, with every
+advisory's source, licence and fixed versions in one JSON answer.
+
 ## Paying from your agent (AgentCash wallet)
 
 The simplest path for a coding or research agent, with no API key and no account:
@@ -25,18 +33,21 @@ The simplest path for a coding or research agent, with no API key and no account
    wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
    low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
    Never pay beyond the budget your user approved.
-2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/pkg/v1/check`: the exact request schema and price.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/pkg/v1/check`
+   returns the exact request schema and price.
 3. Pay and get the result (`--max-amount` caps what one call may cost):
 
 ```bash
 npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/check -m POST \
   -H "Content-Type: application/json" -H "X-Inferrail-Source: skill" \
-  -b '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}], "request_id": "<unique id>"}' --max-amount 0.01
+  -b '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}],
+       "request_id": "<unique id>"}' \
+  --max-amount 0.01
 ```
 
 `X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
-identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
-service in your agent's paid tools.
+identity). To list every Inferrail service in your agent's paid tools once, run
+`npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`.
 
 ## How to call it
 
@@ -50,26 +61,16 @@ service in your agent's paid tools.
 Ecosystems: `npm`, `PyPI`, `Go`, `crates.io`, `Maven`, `NuGet`, `RubyGems`, `Packagist`, `Hex`,
 `Pub`, `Hackage`, `CRAN`, `SwiftURL`.
 
-With the AgentCash wallet:
+Any x402 or MPP client works (a Coinbase agentic wallet pays x402 too; we haven't tested that
+one with this endpoint): the first response is HTTP 402 with the offer; check it is 2000 units
+($0.002) of USDC before you sign.
 
-```bash
-npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/check -m POST \
-  -H "Content-Type: application/json" \
-  -b '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}]}' --max-amount 0.01
-```
+## In CI
 
-(Or once: `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
-services in your agent's paid tools.)
-
-With a Coinbase agentic wallet:
-
-```bash
-npx awal x402 pay https://inferrail-cost-gateway.onrender.com/pkg/v1/check -X POST \
-  -d '{"packages": [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15"}]}'
-```
-
-Any other x402 or MPP client works the same way: the first response is HTTP 402 with the offer;
-check it is $0.002 before you sign.
+To check a project's lockfiles on every push or pull request (and fail the build on a known
+vulnerability), add the `domondi1/inferrail/actions/package-check` step, pinned to a reviewed commit, with
+a wallet secret and a required `max-usd` limit; see `actions/package-check/README.md` in
+https://github.com/domondi1/inferrail. Ask your user before adding a paid step to their CI.
 
 ## Reading the answer
 
