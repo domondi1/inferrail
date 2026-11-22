@@ -55,7 +55,15 @@ MPP_DESCRIPTION = (
     "invocation details. Charged only when picks are delivered."
 )
 SUMMARY = "Find a paid x402 API for a task, ranked by how many wallets actually pay for it"
-TAGS = ["find api", "api discovery", "x402 catalog", "which api to use", "tool selection"]
+TAGS = [
+    "find api",
+    "which api to use",
+    "api recommendation",
+    "discover x402 services",
+    "compare paid apis",
+    "api discovery",
+    "tool selection",
+]
 STOP = frozenset(
     "a an and api as at be by do for from get i in is it me my of on or the this to use want "
     "what which with".split()
