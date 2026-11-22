@@ -332,6 +332,15 @@ FINDER = {"FINDER_PAY_TO": WEB_READ, "READ_PAY_TO": WEB_READ, "FINDER_X402": "1"
           "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
 
 
+@pytest.fixture
+def finder_env(monkeypatch):
+    pytest.importorskip("x402")  # the plain test job has no hosted dependencies
+    # Base mainnet x402 settles through the CDP facilitator, which reads its keys from the
+    # process environment; dummy values build the app without contacting anything.
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-key-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-key-secret")
+
+
 def _finder_run(preflight, env, expect_finder):
     return [p for p in preflight.check(
         env, None, chain_id=lambda url: "0x2105", kinds=lambda e: {("exact", "eip155:8453")},
@@ -339,7 +348,7 @@ def _finder_run(preflight, env, expect_finder):
     ) if "Finder" in p or "FINDER" in p]  # fmt: skip
 
 
-def test_the_approved_finder_recipients_pass(preflight, tmp_path, capsys):
+def test_the_approved_finder_recipients_pass(preflight, tmp_path, capsys, finder_env):
     assert _finder_run(preflight, _env(tmp_path, **FINDER), FINDER_BASE) == []
     out = capsys.readouterr().out
     assert f"x402 payTo {FINDER_BASE}" in out and f"MPP payTo {WEB_READ}" in out
@@ -350,7 +359,7 @@ def test_the_approved_finder_recipients_pass(preflight, tmp_path, capsys):
     [(None, "no --expect-finder-x402-pay-to"), ("0x" + "1" * 40, "not the approved")],
 )
 def test_a_wrong_or_unstated_finder_base_address_stops_the_deploy(
-    preflight, tmp_path, expect, needle
+    preflight, tmp_path, expect, needle, finder_env
 ):
     problems = _finder_run(preflight, _env(tmp_path, **FINDER), expect)
     assert problems and needle in problems[0]

@@ -294,7 +294,9 @@ BOTH = {"FINDER_PAY_TO": WEB_READ_PAY_TO, "READ_PAY_TO": WEB_READ_PAY_TO,
         "FINDER_CATALOG_RIGHTS_CONFIRMED": "1", "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
 
 
-def test_the_production_env_splits_recipients_by_rail(tmp_path):
+def test_the_production_env_splits_recipients_by_rail(tmp_path, monkeypatch):
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-key-id")  # Base mainnet settles through CDP
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-key-secret")
     _, _, settings = _hosted(tmp_path)
     mounted = cohost.finder_from_env(settings, {**BOTH, "FINDER_DATA_DIR": str(tmp_path / "f")})
     assert mounted is not None
@@ -370,7 +372,10 @@ def test_a_signature_for_web_reads_address_is_refused(tmp_path):
         {"FINDER_X402_PAY_TO": "0x1234"},  # not an address
     ],
 )
-def test_base_misconfiguration_leaves_it_unmounted(tmp_path, change):
+def test_base_misconfiguration_leaves_it_unmounted(tmp_path, change, monkeypatch):
+    # with valid CDP keys, so only the change itself can be why it doesn't mount
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-key-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-key-secret")
     _, _, settings = _hosted(tmp_path)
     env = {**BOTH, "FINDER_DATA_DIR": str(tmp_path / "f")}
     for k, v in change.items():
