@@ -614,6 +614,8 @@ def test_an_agent_that_only_knows_the_origin_finds_the_services_from_llms_txt(tm
         assert f"${web_read[1].price_usd}" in text
         rails = "x402 on Base and MPP on Tempo" if mpp else "x402 on Base"
         assert rails in text and rails in c.get("/openapi.json").json()["info"]["description"]
+        # one-line adoption from the agent wallets buyers already hold
+        assert "npx agentcash add http://testserver" in text and "npx awal x402 pay" in text
         assert 'href="/llms.txt"' in c.get("/").text
 
 
@@ -674,7 +676,13 @@ def test_catalogs_can_match_the_task_not_just_the_brand(tmp_path):
         assert {"web page to markdown", "url to markdown"} <= set(op["tags"])
         assert "$0.002 per delivered page" in op["description"] and len(op["description"]) < 400
         assert "get" not in doc["paths"]["/read/v1/page"]  # GET off: not listed
-        assert doc["info"]["description"].startswith("Inferrail Web Read: any public web page")
+        info = doc["info"]["description"]
+        # Agent clients (AgentCash's MCP instructions, its installed SKILL.md) use this verbatim
+        # as the tool description: tasks and prices first, short, Hosted last.
+        assert info.startswith("Pay-per-call tools for agents, charged only on delivery. "
+                               "Inferrail Web Read: any public web page")  # fmt: skip
+        assert len(info) <= 600 and info.index("Hosted") > info.index("Web Read")
+        assert "/hosted/v1/chat/completions" not in info  # the how-to lives in x-guidance
 
 
 def test_an_enabled_get_is_listed_with_the_same_price_and_answers_402(tmp_path):

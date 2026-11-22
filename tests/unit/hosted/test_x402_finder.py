@@ -232,7 +232,9 @@ def test_mounted_mpp_only_and_listed_on_the_origin(tmp_path):
     op = c.get("/openapi.json").json()["paths"]["/find/v1/find"]["post"]
     assert op["operationId"] == "findApi" and op["x-payment-info"]["price"]["amount"] == "0.002"
     assert "x402 Finder" in c.get("/llms.txt").text
-    assert "/find/v1/find" in c.get("/openapi.json").json()["info"]["x-guidance"]
+    info = c.get("/openapi.json").json()["info"]
+    assert "/find/v1/find" in info["x-guidance"]
+    assert "x402 Finder: which paid x402 API fits a task" in info["description"]
 
 
 def test_the_approved_production_config_is_mpp_only_at_two_tenths_of_a_cent(tmp_path):
