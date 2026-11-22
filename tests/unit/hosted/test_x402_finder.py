@@ -280,3 +280,107 @@ def test_the_catalog_status_is_free_and_reports_freshness(tmp_path):
     asyncio.run(catalog.load())
     status = c.get("/v1/catalog").json()
     assert status["loaded"] is True and status["entries"] == 5 and status["as_of"].endswith("Z")
+
+
+# -- Base x402 next to Tempo MPP, each paying its own address (founder-approved 11-22) ---------
+from _x402_fake_facilitator import authorization_of  # noqa: E402
+
+FINDER_BASE_PAY_TO = "0x54BF9C490112CD6a54Cb8f22D6bf83621ABe77CF"
+WEB_READ_PAY_TO = "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E"
+BOTH = {"FINDER_PAY_TO": WEB_READ_PAY_TO, "READ_PAY_TO": WEB_READ_PAY_TO,
+        "FINDER_X402": "1", "FINDER_X402_PAY_TO": FINDER_BASE_PAY_TO,
+        "FINDER_NETWORK": "eip155:8453", "FINDER_MAINNET_APPROVED": "1",
+        "FINDER_MPP_CHAIN_ID": "4217", "FINDER_MPP_MAINNET_APPROVED": "1",
+        "FINDER_CATALOG_RIGHTS_CONFIRMED": "1", "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
+
+
+def test_the_production_env_splits_recipients_by_rail(tmp_path, monkeypatch):
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-key-id")  # Base mainnet settles through CDP
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-key-secret")
+    _, _, settings = _hosted(tmp_path)
+    mounted = cohost.finder_from_env(settings, {**BOTH, "FINDER_DATA_DIR": str(tmp_path / "f")})
+    assert mounted is not None
+    s = mounted[1]
+    assert s.x402 is True and s.price_usd == "0.002" and s.mpp.chain_id == 4217
+    assert s.accepted() == (("eip155:8453", FINDER_BASE_PAY_TO),)  # Base: the new address only
+    assert s.pay_to == WEB_READ_PAY_TO  # MPP (Tempo): unchanged
+
+
+def test_base_offer_pays_the_new_address_and_tempo_keeps_web_reads(tmp_path):
+    rail_mod = sys.modules["web_read_mpp_rail"]
+    settings = svc.Settings(
+        pay_to=WEB_READ_PAY_TO, x402_pay_to=FINDER_BASE_PAY_TO, network="eip155:8453",
+        resource_url="http://testserver/v1/find", data_dir=tmp_path,
+        mpp=rail_mod.MppSettings(chain_id=4217, secret_key="k", realm="testserver"),
+    )  # fmt: skip
+    app = svc.create_app(settings, facilitator=FakeFacilitator(network="eip155:8453"),
+                         task=finder.finder_task(svc, _catalog(), SECRET))  # fmt: skip
+    unpaid = TestClient(app).post("/v1/find", json={"need": "web page markdown"})
+    assert unpaid.status_code == 402
+    (accept,) = decode_payment_required(unpaid).accepts
+    assert (accept.network, accept.amount, accept.pay_to) == ("eip155:8453", "2000",
+                                                             FINDER_BASE_PAY_TO)  # fmt: skip
+    from mpp import Challenge
+
+    offers = unpaid.headers.get_list("www-authenticate")
+    challenges = [Challenge.from_www_authenticate(h) for h in offers]
+    assert challenges
+    for c in challenges:
+        assert c.request["recipient"] == WEB_READ_PAY_TO and c.request["amount"] == "2000"
+
+
+def test_a_paid_base_purchase_settles_to_the_new_address_once(tmp_path):
+    recipients = []
+    fac = FakeFacilitator(on_settle=lambda p: recipients.append(authorization_of(p)["to"]))
+    settings = svc.Settings(pay_to=WEB_READ_PAY_TO, x402_pay_to=FINDER_BASE_PAY_TO,
+                            resource_url="http://testserver/v1/find", data_dir=tmp_path,
+                            operator_token="op")  # fmt: skip
+    c = TestClient(svc.create_app(settings, facilitator=fac,
+                                  task=finder.finder_task(svc, _catalog(), SECRET)))  # fmt: skip
+    buyer = Account.create()
+    body = {"need": "web page markdown", "request_id": "job-b"}
+    first, again = _buy(c, body, buyer), _buy(c, body, buyer)
+    assert first.status_code == again.status_code == 200
+    # one settlement, to the new address
+    assert [r.lower() for r in recipients] == [FINDER_BASE_PAY_TO.lower()]
+
+
+def test_a_signature_for_web_reads_address_is_refused(tmp_path):
+    fac = FakeFacilitator()
+    settings = svc.Settings(
+        pay_to=WEB_READ_PAY_TO, x402_pay_to=FINDER_BASE_PAY_TO,
+        resource_url="http://testserver/v1/find", data_dir=tmp_path,
+    )  # fmt: skip
+    task = finder.finder_task(svc, _catalog(), SECRET)
+    c = TestClient(svc.create_app(settings, facilitator=fac, task=task))
+    unpaid = c.post("/v1/find", json={"need": "web page markdown"})
+    offer = decode_payment_required(unpaid)
+    offer.accepts[0].pay_to = WEB_READ_PAY_TO  # a buyer signing to the wrong merchant
+    signed = sign_payment(offer)
+    headers = {"PAYMENT-SIGNATURE": signed.header}
+    r = c.post("/v1/find", json={"need": "web page markdown"}, headers=headers)
+    assert r.status_code != 200 and fac.calls_to("settle") == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"FINDER_X402_PAY_TO": WEB_READ_PAY_TO},  # Web Read's address is taken
+        {"FINDER_X402_PAY_TO": HOSTED_PAY_TO},  # Hosted's address is taken
+        {"FINDER_X402_PAY_TO": None, "FINDER_PAY_TO": WEB_READ_PAY_TO},  # falls back to a taken one
+        {"FINDER_X402": "0"},  # an x402 address without x402
+        {"FINDER_X402_PAY_TO": "0x1234"},  # not an address
+    ],
+)
+def test_base_misconfiguration_leaves_it_unmounted(tmp_path, change, monkeypatch):
+    # with valid CDP keys, so only the change itself can be why it doesn't mount
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-key-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-key-secret")
+    _, _, settings = _hosted(tmp_path)
+    env = {**BOTH, "FINDER_DATA_DIR": str(tmp_path / "f")}
+    for k, v in change.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    assert cohost.finder_from_env(settings, env) is None
