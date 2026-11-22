@@ -30,6 +30,12 @@ A ready, tested buyer: `examples/web_read/buy_page.py` in
 https://github.com/domondi1/inferrail. It pays from `EVM_PRIVATE_KEY`, refuses any offer
 above `--max-usd` before signing, and retries a lost response safely.
 
+From Node with an x402 client you already use (`@x402/fetch`):
+`examples/web_read/typescript/web-read.ts` in the same repository. Pass it your
+`wrapFetchWithPayment(fetch, client)`; it never sees a key. `guardWebReadPrice(client)` makes
+your client refuse a Web Read offer above $0.002 or to another address before signing, and
+`readPage(paidFetch, url)` sends a request_id and retries a lost response with it.
+
 ## Rules that keep you from paying twice
 
 - Always send a `request_id`. If a response is lost, send the same url and request_id
