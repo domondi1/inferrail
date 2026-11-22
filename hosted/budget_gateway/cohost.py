@@ -265,7 +265,9 @@ def web_search_from_env(hosted_settings: Any, env: dict[str, str] | None = None)
 def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
     """(app, settings) for Inferrail x402 Finder when FINDER_PAY_TO is set, else None.
 
-    No supplier cost (the catalog is the CDP Bazaar's free discovery API). MPP only unless
+    No supplier cost (the catalog is the CDP Bazaar's free discovery API). Mounted only with
+    FINDER_CATALOG_RIGHTS_CONFIRMED=1: the operator's confirmation that the CDP terms permit
+    serving answers built from that data. MPP only unless
     FINDER_X402=1, which needs a receiving address of its own, like Web Search. Fail-isolated:
     a configuration error leaves it unmounted.
     """
@@ -273,6 +275,10 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
     if not e.get("FINDER_PAY_TO"):
         return None
     try:
+        # The catalog is CDP Bazaar data; serving answers built from it needs the operator's
+        # confirmation that the CDP terms allow this use (like Web Search's supplier rights).
+        if e.get("FINDER_CATALOG_RIGHTS_CONFIRMED") != "1":
+            raise RuntimeError("x402 Finder needs FINDER_CATALOG_RIGHTS_CONFIRMED=1")
         mod = sys.modules.get("web_read_service") or _load(
             "web_read_service", HOSTED_DIR.parent / "web_read" / "service.py"
         )
@@ -293,8 +299,17 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
             }  # fmt: skip
             if settings.pay_to.lower() in taken:
                 raise RuntimeError("FINDER_X402=1 needs its own FINDER_PAY_TO")
-        task = finder.finder_task(mod, finder.Catalog(), _finder_retry_secret(e))
-        return mod.create_app(settings, task=task), settings
+        catalog = finder.Catalog()
+        task = finder.finder_task(mod, catalog, _finder_retry_secret(e))
+        app = mod.create_app(settings, task=task)
+        app.state.finder_catalog = catalog
+
+        @app.middleware("http")
+        async def warm_catalog(request: Any, call_next: Any) -> Any:
+            catalog.ensure_fresh()  # any request (even an unpaid quote) starts the first load
+            return await call_next(request)
+
+        return app, settings
     except Exception:
         log.exception("x402 Finder not mounted: configuration error")
         return None

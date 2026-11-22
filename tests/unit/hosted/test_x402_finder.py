@@ -177,7 +177,8 @@ from test_web_search import ROOT, _load  # noqa: E402
 cohost = _load("budget_gateway_cohost_finder", ROOT / "hosted" / "budget_gateway" / "cohost.py")
 HOSTED_PAY_TO = "0x" + "9" * 40
 READ_PAY_TO = "0x" + "7" * 40
-ENV = {"FINDER_PAY_TO": PAY_TO, "FINDER_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "op"}
+ENV = {"FINDER_PAY_TO": PAY_TO, "FINDER_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "op",
+       "FINDER_CATALOG_RIGHTS_CONFIRMED": "1"}
 
 
 def _hosted(tmp_path: Path):
@@ -197,6 +198,7 @@ def test_not_mounted_without_its_payto(tmp_path):
 @pytest.mark.parametrize(
     "change",
     [
+        {"FINDER_CATALOG_RIGHTS_CONFIRMED": None},  # CDP data-use rights not confirmed
         {"FINDER_MPP_CHAIN_ID": None},  # MPP only by default: needs MPP
         {"FINDER_MPP_CHAIN_ID": "4217"},  # Tempo mainnet needs its own approval
         {"FINDER_X402": "1", "FINDER_PAY_TO": HOSTED_PAY_TO},  # x402 needs its own payee
@@ -230,3 +232,38 @@ def test_mounted_mpp_only_and_listed_on_the_origin(tmp_path):
     op = c.get("/openapi.json").json()["paths"]["/find/v1/find"]["post"]
     assert op["operationId"] == "findApi" and op["x-payment-info"]["price"]["amount"] == "0.002"
     assert "x402 Finder" in c.get("/llms.txt").text
+
+
+def test_the_approved_production_config_is_mpp_only_at_two_tenths_of_a_cent(tmp_path):
+    """Founder-approved: MPP on Tempo mainnet only, $0.002, Web Read's existing recipient."""
+    web_read_pay_to = "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E"
+    _, _, settings = _hosted(tmp_path)
+    env = {"FINDER_PAY_TO": web_read_pay_to, "READ_PAY_TO": web_read_pay_to,
+           "FINDER_NETWORK": "eip155:8453", "FINDER_MAINNET_APPROVED": "1",
+           "FINDER_MPP_CHAIN_ID": "4217", "FINDER_MPP_MAINNET_APPROVED": "1",
+           "BG_OPERATOR_TOKEN": "op", "FINDER_DATA_DIR": str(tmp_path / "f"),
+           "FINDER_CATALOG_RIGHTS_CONFIRMED": "1"}  # fmt: skip
+    mounted = cohost.finder_from_env(settings, env)
+    assert mounted is not None
+    s = mounted[1]
+    assert s.x402 is False and s.price_usd == "0.002" and s.mpp.chain_id == 4217
+    assert s.pay_to == web_read_pay_to
+    unpaid = TestClient(mounted[0]).post("/v1/find", json={"need": "web page markdown"})
+    assert unpaid.status_code == 402
+    assert "payment-required" not in unpaid.headers  # no x402 (Base) offer at all
+    offers = unpaid.headers.get_list("www-authenticate")
+    assert offers and all('method="tempo"' in o for o in offers)
+    from mpp import Challenge
+
+    for c in (Challenge.from_www_authenticate(h) for h in offers):
+        assert c.request["amount"] == "2000" and c.request["recipient"] == web_read_pay_to
+
+
+def test_an_unpaid_quote_starts_loading_the_catalog(tmp_path):
+    _, _, settings = _hosted(tmp_path)
+    mounted = cohost.finder_from_env(settings, {**ENV, "FINDER_DATA_DIR": str(tmp_path / "f")})
+    catalog = mounted[0].state.finder_catalog
+    catalog._source = _catalog()._source  # no network
+    assert catalog._task is None
+    assert TestClient(mounted[0]).post("/v1/find", json={"need": "x y"}).status_code == 402
+    assert catalog._task is not None  # the first load was started by an unpaid request
