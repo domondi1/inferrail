@@ -50,6 +50,7 @@ TRIAL_DIR = HOSTED_DIR.parent / "cost_gateway"
 PREFIX = "/hosted"
 READ_PREFIX = "/read"
 SEARCH_PREFIX = "/search"
+FIND_PREFIX = "/find"
 OPS_PREFIX = "/ops"
 SITE = "https://tryinferrail.com"
 REPO = "https://github.com/domondi1/inferrail"
@@ -87,6 +88,7 @@ def create_combined_app(
     modules: tuple[ModuleType, ModuleType] | None = None,
     web_read: Any = "env",
     web_search: Any = "env",
+    finder: Any = "env",
     godmode: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
@@ -94,6 +96,8 @@ def create_combined_app(
         web_read = web_read_from_env(hosted_settings)
     if web_search == "env":
         web_search = web_search_from_env(hosted_settings)
+    if finder == "env":
+        finder = finder_from_env(hosted_settings)
     if godmode == "env":
         godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
@@ -139,6 +143,8 @@ def create_combined_app(
         routes.append(Mount(READ_PREFIX, app=web_read[0]))
     if web_search is not None:
         routes.append(Mount(SEARCH_PREFIX, app=web_search[0]))
+    if finder is not None:
+        routes.append(Mount(FIND_PREFIX, app=finder[0]))
     if godmode is not None:
         routes.append(Mount(OPS_PREFIX, app=godmode))
     app = Starlette(routes=[*routes, Mount("/", app=trial_app)], lifespan=lifespan)
@@ -146,6 +152,7 @@ def create_combined_app(
     app.state.hosted_settings = hosted_settings
     app.state.web_read_settings = web_read[1] if web_read is not None else None
     app.state.web_search_settings = web_search[1] if web_search is not None else None
+    app.state.finder_settings = finder[1] if finder is not None else None
     # Another app sharing this origin adds its paid operations here: callables returning
     # OpenAPI `paths` entries keyed by full origin path.
     app.state.discovery_paths = []
@@ -153,6 +160,8 @@ def create_combined_app(
         app.state.discovery_paths.append(lambda: _web_read_paths(web_read[1]))
     if web_search is not None:
         app.state.discovery_paths.append(lambda: _web_search_paths(web_search[1]))
+    if finder is not None:
+        app.state.discovery_paths.append(lambda: _finder_paths(finder[1]))
     return app
 
 
@@ -251,6 +260,54 @@ def web_search_from_env(hosted_settings: Any, env: dict[str, str] | None = None)
     except Exception:
         log.exception("Web Search not mounted: configuration error")
         return None
+
+
+def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+    """(app, settings) for Inferrail x402 Finder when FINDER_PAY_TO is set, else None.
+
+    No supplier cost (the catalog is the CDP Bazaar's free discovery API). MPP only unless
+    FINDER_X402=1, which needs a receiving address of its own, like Web Search. Fail-isolated:
+    a configuration error leaves it unmounted.
+    """
+    e = dict(os.environ if env is None else env)
+    if not e.get("FINDER_PAY_TO"):
+        return None
+    try:
+        mod = sys.modules.get("web_read_service") or _load(
+            "web_read_service", HOSTED_DIR.parent / "web_read" / "service.py"
+        )
+        finder = _load("web_read_finder", HOSTED_DIR.parent / "web_read" / "finder.py")
+        origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+        e.setdefault("FINDER_RESOURCE_URL", f"{origin}{FIND_PREFIX}/v1/find")
+        e["FINDER_MOUNT_PREFIX"] = FIND_PREFIX
+        e.setdefault("FINDER_NETWORK", hosted_settings.x402_network)
+        e.setdefault("FINDER_X402", "0")
+        e.setdefault("FINDER_DATA_DIR", str(Path(hosted_settings.data_dir).parent / "finder"))
+        settings = mod.Settings.from_env(e, prefix="FINDER_")
+        if settings.x402:
+            taken = {
+                a.lower()
+                for a in (hosted_settings.x402_pay_to, e.get("READ_PAY_TO"),
+                          e.get("SEARCH_PAY_TO"), e.get("WEB_SEARCH_PAY_TO"))
+                if a
+            }  # fmt: skip
+            if settings.pay_to.lower() in taken:
+                raise RuntimeError("FINDER_X402=1 needs its own FINDER_PAY_TO")
+        task = finder.finder_task(mod, finder.Catalog(), _finder_retry_secret(e))
+        return mod.create_app(settings, task=task), settings
+    except Exception:
+        log.exception("x402 Finder not mounted: configuration error")
+        return None
+
+
+def _finder_retry_secret(e: dict[str, str]) -> bytes:
+    """Keys the retry identity (an HMAC of the request). Stable across restarts."""
+    if e.get("FINDER_RETRY_SECRET"):
+        return e["FINDER_RETRY_SECRET"].encode()
+    seed = e.get("CDP_API_KEY_SECRET") or e.get("BG_OPERATOR_TOKEN")
+    if not seed:
+        raise RuntimeError("x402 Finder needs FINDER_RETRY_SECRET or BG_OPERATOR_TOKEN")
+    return hashlib.sha256(f"inferrail-x402-finder-retry|{seed}".encode()).digest()
 
 
 def _search_retry_secret(e: dict[str, str]) -> bytes:
@@ -409,6 +466,45 @@ def _web_search_paths(settings: Any) -> dict[str, Any]:
     }
 
 
+def _finder_paths(settings: Any) -> dict[str, Any]:
+    finder = sys.modules["web_read_finder"]
+    protocols = ([{"x402": {}}] if settings.x402 else []) + _mpp_protocols(settings)
+    return {
+        f"{FIND_PREFIX}/v1/find": {
+            "post": {
+                "operationId": "findApi",
+                "summary": finder.SUMMARY,
+                "description": finder.DESCRIPTION.replace("Pay only", f"${settings.price_usd} "
+                                                          "per delivered answer. Pay only"),
+                "tags": finder.TAGS,
+                "security": [],
+                "x-payment-info": {
+                    "price": {"mode": "fixed", "currency": "USD", "amount": settings.price_usd},
+                    "protocols": protocols,
+                },
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": finder.FindRequest.model_json_schema(),
+                            "example": {"need": "read a web page as markdown"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "The picks, delivered and paid",
+                        "content": {"application/json": {"schema": finder.OUTPUT_SCHEMA}},
+                    },
+                    "402": {"description": "Payment Required"},
+                    "422": {"description": "No match or invalid request; nothing charged"},
+                    "503": {"description": "Catalog loading; retry shortly; nothing charged"},
+                },
+            }
+        }
+    }  # fmt: skip
+
+
 def _search_rails(settings: Any) -> str:
     return " or ".join(
         r for r, on in (("x402 on Base", settings.x402), ("MPP on Tempo", settings.mpp)) if on
@@ -425,7 +521,8 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     )
     read = getattr(app.state, "web_read_settings", None)
     found = getattr(app.state, "web_search_settings", None)
-    if not app.state.discovery_paths or (read is None and found is None):
+    finder = getattr(app.state, "finder_settings", None)
+    if not app.state.discovery_paths or (read is None and found is None and finder is None):
         return "Inferrail Hosted", hosted
     parts = []
     if read is not None:
@@ -439,6 +536,12 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
             "Inferrail Web Search: ranked web search results for a query for "
             f"${found.price_usd} per delivered search, paid over {_search_rails(found)}; failed "
             "searches are never charged."
+        )
+    if finder is not None:
+        parts.append(
+            "Inferrail x402 Finder: which paid x402 API to call for a task, ranked by real 30-day "
+            f"paid usage, for ${finder.price_usd} per delivered answer, paid over "
+            f"{_search_rails(finder)}; no match is never charged."
         )
     return "Inferrail", " ".join(parts) + " " + hosted
 
@@ -494,6 +597,15 @@ def origin_llms(app: Starlette) -> str:
             f'`POST {origin}{SEARCH_PREFIX}/v1/web` with `{{"query": "...", '
             f'"request_id": "..."}}` returns HTTP 402; pay ${found.price_usd} over '
             f"{_search_rails(found)} and repeat the request.",
+        ]
+    finder = getattr(app.state, "finder_settings", None)
+    if app.state.discovery_paths and finder is not None:
+        lines += [
+            f"- [Inferrail x402 Finder]({origin}{FIND_PREFIX}/llms.txt): "
+            f'`POST {origin}{FIND_PREFIX}/v1/find` with `{{"need": "...", '
+            f'"request_id": "..."}}` returns HTTP 402; pay ${finder.price_usd} over '
+            f"{_search_rails(finder)} and repeat the request. Up to five paid x402 APIs for "
+            "the task, ranked by real 30-day paid usage.",
         ]
     lines += [
         f"- [Inferrail Hosted]({base}/llms.txt): per-run dollar budgets shared across agents; "

@@ -1,0 +1,232 @@
+"""x402 Finder: paid picks of x402 APIs for a task, ranked by real 30-day unique payers. Proves the
+offer, delivery and receipt, ranking and filters, that no match / an unloaded catalog is never
+charged, that a retry never pays twice, and that the buyer's `need` is never recorded."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+pytest.importorskip("x402")
+pytest.importorskip("eth_account")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _x402_fake_facilitator import (  # noqa: E402
+    FakeFacilitator,
+    decode_payment_required,
+    sign_payment,
+)
+from eth_account import Account  # noqa: E402
+from test_web_read import svc  # noqa: E402
+
+finder = svc._sibling("finder")
+PAY_TO = "0x" + "8" * 40
+SECRET = b"s" * 32
+USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+
+def _item(url, desc, payers, amount="2000", network="eip155:8453", asset=USDC, method="POST"):
+    return {"resource": url, "description": desc, "tags": [], "serviceName": "",
+            "accepts": [{"scheme": "exact", "network": network, "amount": amount,
+                         "asset": asset, "payTo": "0x" + "1" * 40}],
+            "extensions": {"bazaar": {"info": {"input": {"method": method, "body": {"url": "x"}}}}},
+            "quality": {"l30DaysTotalCalls": payers * 3, "l30DaysUniquePayers": payers,
+                        "lastCalledAt": "2026-11-21T00:00:00Z"}}  # fmt: skip
+
+
+ITEMS = [
+    _item("https://a.test/read", "Read a web page as clean markdown", 2),
+    _item("https://b.test/md", "Convert any web page to markdown for agents", 400),
+    _item("https://c.test/weather", "Current weather for a city", 900),
+    _item("https://d.test/pricey", "Web page to markdown, premium", 50, amount="50000"),
+    _item(
+        "https://e.test/sol", "Read a web page as markdown", 30, network="solana:mainnet", asset="x"
+    ),
+    {"resource": "http://insecure.test/x", "description": "web page markdown", "accepts": []},
+    {"description": "no resource"},
+]
+
+
+def _catalog(items=ITEMS) -> finder.Catalog:
+    async def source(offset):
+        return items if offset == 0 else []
+
+    cat = finder.Catalog(source)
+    asyncio.run(cat.load())
+    return cat
+
+
+def _client(tmp_path: Path, catalog, fac: FakeFacilitator):
+    settings = svc.Settings(pay_to=PAY_TO, resource_url="http://testserver/v1/find",
+                            data_dir=tmp_path, operator_token="op")  # fmt: skip
+    task = finder.finder_task(svc, catalog, SECRET)
+    return TestClient(svc.create_app(settings, facilitator=fac, task=task))
+
+
+def _buy(c: TestClient, body: dict, account=None):
+    unpaid = c.post("/v1/find", json=body)
+    assert unpaid.status_code == 402, unpaid.text
+    signed = sign_payment(decode_payment_required(unpaid), account)
+    return c.post("/v1/find", json=body, headers={"PAYMENT-SIGNATURE": signed.header})
+
+
+def test_unpaid_request_gets_the_offer(tmp_path):
+    r = _client(tmp_path, _catalog(), FakeFacilitator()).post("/v1/find", json={"need": "x y"})
+    assert r.status_code == 402
+    (accept,) = decode_payment_required(r).accepts
+    assert accept.amount == "2000" and accept.pay_to == PAY_TO
+
+
+def test_picks_are_ranked_by_real_payers_and_settle_once(tmp_path):
+    fac = FakeFacilitator()
+    need = {"need": "read a web page as markdown", "network": "eip155:8453"}
+    r = _buy(_client(tmp_path, _catalog(), fac), need)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    urls = [p["url"] for p in body["picks"]]
+    # 400 payers outranks closer wording that only 2 wallets paid for
+    assert urls[0] == "https://b.test/md"
+    assert "https://c.test/weather" not in urls and "http://insecure.test/x" not in urls
+    top = body["picks"][0]
+    assert (
+        top["price_usd"] == "0.002" and top["method"] == "POST" and top["unique_payers_30d"] == 400
+    )
+    assert body["catalog_size"] == 5 and body["receipt"]["price_usd"] == "0.002"
+    assert urls.index("https://b.test/md") < urls.index("https://a.test/read")
+    assert len(fac.calls_to("settle")) == 1
+
+
+def test_network_and_price_filters(tmp_path):
+    fac = FakeFacilitator()
+    c = _client(tmp_path, _catalog(), fac)
+    urls = [
+        p["url"]
+        for p in _buy(c, {"need": "web page markdown", "max_price_usd": 0.01}).json()["picks"]
+    ]
+    assert "https://d.test/pricey" not in urls and "https://e.test/sol" not in urls
+    sol = _buy(
+        c, {"need": "web page markdown", "network": "solana:mainnet", "request_id": "s"}
+    ).json()
+    assert [p["url"] for p in sol["picks"]] == ["https://e.test/sol"] and sol["picks"][0][
+        "price_usd"
+    ] is None
+
+
+def test_no_match_is_never_charged(tmp_path):
+    fac = FakeFacilitator()
+    r = _buy(_client(tmp_path, _catalog(), fac), {"need": "translate klingon poetry"})
+    assert r.status_code == 422 and r.json()["error"] == "no_match" and r.json()["charged"] is False
+    assert fac.calls_to("settle") == []
+
+
+def test_an_unloaded_catalog_is_never_charged(tmp_path):
+    async def failing(_offset):
+        raise RuntimeError("bazaar down")
+
+    fac = FakeFacilitator()
+    r = _buy(_client(tmp_path, finder.Catalog(failing), fac), {"need": "web page markdown"})
+    assert r.status_code == 503 and r.json()["error"] == "catalog_loading"
+    assert fac.calls_to("settle") == []
+
+
+def test_a_retry_returns_the_paid_picks_without_a_second_charge(tmp_path):
+    fac = FakeFacilitator()
+    c = _client(tmp_path, _catalog(), fac)
+    body = {"need": "web page markdown", "request_id": "job-1"}
+    buyer = Account.create()
+    first, again = _buy(c, body, buyer), _buy(c, body, buyer)  # the response was lost; signs again
+    assert first.status_code == again.status_code == 200
+    assert first.json()["picks_sha256"] == again.json()["picks_sha256"]
+    assert len(fac.calls_to("settle")) == 1
+
+
+def test_the_need_is_never_recorded(tmp_path):
+    need = "find the secret merger target filings"
+    catalog = _catalog([_item("https://f.test/x", "merger target filings", 3)])
+    _buy(_client(tmp_path, catalog, FakeFacilitator()), {"need": need})
+    for db in tmp_path.glob("*.sqlite3"):
+        dump = "\n".join(sqlite3.connect(db).iterdump())
+        assert "merger" not in dump and "secret" not in dump
+
+
+def test_a_failed_refresh_keeps_the_previous_catalog():
+    cat = _catalog()
+    before = list(cat.entries)
+
+    async def empty(_offset):
+        return []
+
+    cat._source = empty
+    asyncio.run(cat.load())
+    assert cat.entries == before
+
+
+def test_a_short_secret_is_refused():
+    with pytest.raises(ValueError):
+        finder.finder_task(svc, _catalog(), b"short")
+
+
+# -- mounted next to Web Read and Hosted on the shared origin ------------------------------------
+from test_web_search import ROOT, _load  # noqa: E402
+
+cohost = _load("budget_gateway_cohost_finder", ROOT / "hosted" / "budget_gateway" / "cohost.py")
+HOSTED_PAY_TO = "0x" + "9" * 40
+READ_PAY_TO = "0x" + "7" * 40
+ENV = {"FINDER_PAY_TO": PAY_TO, "FINDER_MPP_CHAIN_ID": "42431", "BG_OPERATOR_TOKEN": "op"}
+
+
+def _hosted(tmp_path: Path):
+    trial_mod, hosted_mod = cohost.load_modules()
+    settings = hosted_mod.Settings.from_env(
+        {"BG_DATA_DIR": str(tmp_path / "hosted"), "BG_MOUNT_PREFIX": "/hosted",
+         "BG_PUBLIC_BASE_URL": "http://testserver/hosted", "BG_X402_PAY_TO": HOSTED_PAY_TO}
+    )  # fmt: skip
+    return trial_mod, hosted_mod, settings
+
+
+def test_not_mounted_without_its_payto(tmp_path):
+    _, _, settings = _hosted(tmp_path)
+    assert cohost.finder_from_env(settings, {}) is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"FINDER_MPP_CHAIN_ID": None},  # MPP only by default: needs MPP
+        {"FINDER_MPP_CHAIN_ID": "4217"},  # Tempo mainnet needs its own approval
+        {"FINDER_X402": "1", "FINDER_PAY_TO": HOSTED_PAY_TO},  # x402 needs its own payee
+        {"FINDER_X402": "1", "FINDER_PAY_TO": READ_PAY_TO, "READ_PAY_TO": READ_PAY_TO},
+        {"BG_OPERATOR_TOKEN": None},  # no stable retry secret
+    ],
+)
+def test_misconfiguration_leaves_it_unmounted(tmp_path, change):
+    _, _, settings = _hosted(tmp_path)
+    env = {**ENV, "FINDER_DATA_DIR": str(tmp_path / "f")}
+    for k, v in change.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    assert cohost.finder_from_env(settings, env) is None
+
+
+def test_mounted_mpp_only_and_listed_on_the_origin(tmp_path):
+    trial_mod, hosted_mod, settings = _hosted(tmp_path)
+    finder_app = cohost.finder_from_env(settings, {**ENV, "FINDER_DATA_DIR": str(tmp_path / "f")})
+    assert finder_app is not None and finder_app[1].x402 is False
+    app = cohost.create_combined_app(
+        tmp_path / "trial", settings, facilitator=FakeFacilitator(),
+        modules=(trial_mod, hosted_mod), web_read=None, web_search=None, finder=finder_app,
+        godmode=None,
+    )  # fmt: skip
+    c = TestClient(app)
+    unpaid = c.post("/find/v1/find", json={"need": "web page markdown"})
+    assert unpaid.status_code == 402 and unpaid.headers["www-authenticate"].startswith("Payment ")
+    op = c.get("/openapi.json").json()["paths"]["/find/v1/find"]["post"]
+    assert op["operationId"] == "findApi" and op["x-payment-info"]["price"]["amount"] == "0.002"
+    assert "x402 Finder" in c.get("/llms.txt").text
