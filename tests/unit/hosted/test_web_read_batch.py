@@ -375,3 +375,121 @@ def test_off_by_default_and_listed_when_enabled(tmp_path):
     paths = cohost._web_read_batch_paths(mounted[1])
     price = paths["/read/v1/pages"]["post"]["x-payment-info"]["price"]
     assert price == {"mode": "dynamic", "currency": "USD", "min": "0.002", "max": "0.02"}
+
+
+# -- the single-page protections hold inside a batch -------------------------------------------
+@pytest.mark.parametrize(
+    ("url", "code"),
+    [("http://internal.test/admin", "non_public_address"),
+     ("http://localhost/", "non_public_address"),
+     ("file:///etc/passwd", "unsupported_url"),
+     ("https://news.test:8443/", "unsupported_url")],
+)  # fmt: skip
+def test_private_and_unsupported_addresses_fail_the_batch_free(tmp_path, url, code):
+    fac = FakeFacilitator()
+    c, seen = _origin(tmp_path, fac)
+    r, _ = _buy(c, {"urls": [A, url]})
+    assert r.status_code == 422 and fac.calls_to("settle") == []
+    assert r.json()["results"][1] == {"url": url, "delivered": False, "error": code,
+                                      "detail": r.json()["results"][1]["detail"]}  # fmt: skip
+    assert not any(k.startswith(("internal.test", "localhost")) for k in seen)
+
+
+def test_robots_txt_is_respected_in_a_batch(tmp_path):
+    fac = FakeFacilitator()
+    seen: list[str] = []
+    base = _site(seen)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "closed.test":
+            seen.append(f"closed.test{request.url.path}")
+            if request.url.path == "/robots.txt":
+                return httpx.Response(200, text="User-agent: *\nDisallow: /\n")
+            return httpx.Response(200, headers=HTML, text=ARTICLE)
+        return base.handle_request(request)
+
+    reader = fetch.Fetcher("test", transport=httpx.MockTransport(handler), resolve=_public_dns)
+    settings = svc.Settings(pay_to=PAY_TO, resource_url="http://testserver/read/v1/pages",
+                            data_dir=tmp_path, mount_prefix="")  # fmt: skip
+    app = svc.create_app(settings, facilitator=fac, task=batch.batch_task(svc, reader))
+    c = TestClient(Starlette(routes=[Route("/read/v1/pages", endpoint=app, methods=["POST"])]))
+    r, _ = _buy(c, {"urls": [A, "https://closed.test/page"]})
+    assert r.status_code == 422 and r.json()["results"][1]["error"] == "disallowed_by_robots_txt"
+    assert "closed.test/page" not in seen and fac.calls_to("settle") == []
+
+
+def test_a_batch_over_the_size_limit_is_refused_free(tmp_path, monkeypatch):
+    monkeypatch.setattr(batch, "MAX_TOTAL_CHARS", 50)
+    fac = FakeFacilitator()
+    c, _ = _origin(tmp_path, fac)
+    r, _ = _buy(c, {"urls": [A, B]})
+    assert r.status_code == 422 and r.json()["error"] == "too_large"
+    assert fac.calls_to("settle") == [] and "Paying per call" not in r.text
+
+
+def test_a_batch_that_runs_out_of_time_is_refused_free(tmp_path, monkeypatch):
+    monkeypatch.setattr(batch, "DEADLINE_S", 0.05)
+
+    async def slow(self, url):  # every page takes longer than the batch's deadline
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(fetch.Fetcher, "fetch", slow)
+    fac = FakeFacilitator()
+    c, _ = _origin(tmp_path, fac)
+    r, _ = _buy(c, {"urls": [A, B]})
+    assert r.status_code == 504 and r.json()["charged"] is False
+    assert fac.calls_to("settle") == []
+
+
+def test_at_most_four_pages_are_fetched_at_once(tmp_path, monkeypatch):
+    live, peak = 0, 0
+    original = fetch.Fetcher.fetch
+
+    async def counted(self, url):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        await asyncio.sleep(0.01)
+        try:
+            return await original(self, url)
+        finally:
+            live -= 1
+
+    monkeypatch.setattr(fetch.Fetcher, "fetch", counted)
+    c, _ = _origin(tmp_path, FakeFacilitator())
+    urls = [A, B, C] + [f"https://news.test/a?{i}" for i in range(7)]
+    r, _ = _buy(c, {"urls": urls})
+    assert r.status_code == 200 and r.json()["count"] == 10
+    assert peak == batch.CONCURRENCY == 4
+
+
+def test_the_origin_guide_mentions_batching_only_when_it_is_on(tmp_path, monkeypatch):
+    from test_web_search import ROOT, _load
+
+    cohost = _load("budget_gateway_cohost_batch2", ROOT / "hosted" / "budget_gateway" / "cohost.py")
+    trial_mod, hosted_mod = cohost.load_modules()
+    hosted = hosted_mod.Settings.from_env(
+        {"BG_DATA_DIR": str(tmp_path / "hosted"), "BG_MOUNT_PREFIX": "/hosted",
+         "BG_PUBLIC_BASE_URL": "http://testserver/hosted", "BG_X402_PAY_TO": "0x" + "9" * 40}
+    )  # fmt: skip
+    for enabled in (False, True):
+        monkeypatch.setenv("READ_PAY_TO", PAY_TO)
+        monkeypatch.setenv("READ_DATA_DIR", str(tmp_path / f"wr{enabled}"))
+        monkeypatch.setenv("READ_BATCH_DATA_DIR", str(tmp_path / f"wrb{enabled}"))
+        if enabled:
+            monkeypatch.setenv("READ_BATCH", "1")
+        else:
+            monkeypatch.delenv("READ_BATCH", raising=False)
+        app = cohost.create_combined_app(
+            tmp_path / f"trial{enabled}", hosted, facilitator=FakeFacilitator(),
+            modules=(trial_mod, hosted_mod), web_search=None, finder=None, packages=None,
+            domains=None, godmode=None,
+        )  # fmt: skip
+        with TestClient(app) as tc:
+            guide = tc.get("/llms.txt").text
+            paths = tc.get("/openapi.json").json()["paths"]
+            assert ("/read/v1/pages" in guide) is enabled
+            assert ("/read/v1/pages" in paths) is enabled
+            assert "/read/v1/page" in paths
+            r = tc.post("/read/v1/pages", json={"urls": [A]})
+            assert r.status_code == (402 if enabled else 404)

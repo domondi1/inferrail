@@ -530,11 +530,11 @@ WEB_READ_TAGS = ["web page to markdown", "url to markdown", "web scraper", "read
 
 def _web_read_description(price_usd: str) -> str:
     return (
-        "Read any public web page as clean, LLM-ready markdown (title, main text, headings, "
-        "lists, links, tables), with word count and a content hash. URL to markdown for agents: "
-        f"articles, docs, blog posts, product pages. ${price_usd} per delivered page; a "
-        "missing, blocked, failing or refused page costs nothing, and a retry with the same "
-        "request_id never pays twice."
+        "Read any public web page as clean, LLM-ready markdown (headings, lists, links, "
+        "tables) with its metadata (description, canonical URL, authors, published date, "
+        f"language). URL to markdown for articles, docs and product pages. ${price_usd} per "
+        "delivered page; a missing, blocked or refused page, a bot check or a JavaScript-only "
+        "page costs nothing, and a retry never pays twice."
     )
 
 
@@ -924,6 +924,14 @@ def origin_llms(app: Starlette) -> str:
                 if getattr(read, "mcp", False)
                 else ""
             ),
+        ]
+    read_batch = getattr(app.state, "web_read_batch_settings", None)
+    if app.state.discovery_paths and read_batch is not None:
+        lines += [
+            f'- Several pages at once: `POST {origin}{READ_PREFIX}/v1/pages` with `{{"urls": '
+            '["https://...", ...], "request_id": "..."}` (1-10 URLs) returns HTTP 402 for N x '
+            f"${read_batch.price_usd}; it is charged only if every page is delivered, and a "
+            "failure lists which URLs to drop.",
         ]
     found = getattr(app.state, "web_search_settings", None)
     if app.state.discovery_paths and found is not None:
