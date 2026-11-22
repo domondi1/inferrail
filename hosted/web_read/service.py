@@ -467,9 +467,13 @@ class Ledger:
             totals[kind] += n
             if kind != "refused":  # refusals are keyed by reason, not client
                 by_client.setdefault(code or "unknown", {})[kind] = n
+        with self._lock:
+            channels = dict(self._db.execute(
+                "SELECT code, COUNT(*) FROM events WHERE kind='channel' GROUP BY code"
+            ).fetchall())  # fmt: skip
         return {
             **totals, "settled_reads": settled[0], "by_client": by_client,
-            "attempt_failed": failed,
+            "attempt_failed": failed, "by_channel": channels,
         }  # fmt: skip
 
     def stats(self) -> dict[str, Any]:
@@ -505,6 +509,17 @@ _CLIENTS = (
     ("go-http", "go"), ("bot", "crawler"), ("spider", "crawler"), ("crawl", "crawler"),
     ("mozilla", "browser"),
 )  # fmt: skip
+
+
+# Where a request came from, when the caller says so with `X-Inferrail-Source`: the integration
+# surface (one of these fixed labels), never a buyer's identity. Anything else is ignored. It lets
+# the funnel tell which distribution channel leads to price checks, payments and deliveries.
+SOURCES = frozenset({"skill", "plugin", "example", "llms"})
+
+
+def _source(request: Any) -> str | None:
+    value = (request.headers.get("x-inferrail-source") or "").strip().lower()
+    return value if value in SOURCES else None
 
 
 def _reason(rail: str, text: Any) -> str:
@@ -1342,6 +1357,8 @@ def create_app(
                     "rail": "mpp-tempo",
                 }
                 ledger.set_claim(key, "delivered", json.dumps(row))  # before the broadcast
+                if source := _source(request):
+                    ledger.event("channel", f"{source}:delivered")
                 rec("delivered", "mpp", **mine)
             try:
                 receipt = await rail.settle(credential, **rail_units(units))
@@ -1384,6 +1401,11 @@ def create_app(
                 ledger.event("refused", "invalid_request")
                 return JSONResponse({"error": "invalid_request", "charged": False},
                                     status_code=422)  # fmt: skip
+        source = _source(request) if page else None
+        if source:
+            mpp_paid = mpp_rail.is_mpp_authorization(request.headers.get("authorization"))
+            paying_now = signed or mpp_paid
+            ledger.event("channel", f"{source}:{'attempt' if paying_now else 'challenge'}")
         if rail and page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
             ledger.expire(settings.recovery_s)
             return await mpp_purchase(request, client)
@@ -1492,6 +1514,8 @@ def create_app(
         if status != 200:
             return JSONResponse(row, status_code=status)
         request.scope["inferrail_delivered"] = True
+        if source := _source(request):
+            ledger.event("channel", f"{source}:delivered")
         rec("delivered", "x402", amount_atomic=price_atomic * units, asset="USDC", **mine)
         row["receipt"] = {
             "payment_ref": ref[0] if ref else None,

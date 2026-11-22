@@ -152,7 +152,7 @@ def test_a_retry_after_a_lost_response_is_not_charged_again(tmp_path):
 
 
 def test_the_skill_states_the_live_contract():
-    skill = (ROOT / "skills" / "web-read" / "SKILL.md").read_text()
+    skill = (ROOT / "skills" / "inferrail-web-read" / "SKILL.md").read_text()
     head = skill.split("---")[1]
     assert "name: inferrail-web-read" in head and "description:" in head
     settings = svc.Settings(pay_to=PAY_TO, resource_url=ENDPOINT)

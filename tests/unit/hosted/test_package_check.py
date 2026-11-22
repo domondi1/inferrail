@@ -304,7 +304,7 @@ def test_base_x402_pays_its_own_address(tmp_path):
 
 
 def test_the_skill_states_the_live_contract():
-    skill = (ROOT / "skills" / "package-check" / "SKILL.md").read_text()
+    skill = (ROOT / "skills" / "inferrail-package-check" / "SKILL.md").read_text()
     head = skill.split("---")[1]
     assert "name: inferrail-package-check" in head and "description:" in head
     assert "$0.002" in skill and "/pkg/v1/check" in skill

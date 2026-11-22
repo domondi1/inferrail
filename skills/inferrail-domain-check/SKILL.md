@@ -17,6 +17,27 @@ the same `request_id` never pays twice.
 - When you set up or debug DNS or email delivery (MX, TXT, CAA, nameservers).
 - When a user asks who registered a name, or whether it is registered at all.
 
+## Paying from your agent (AgentCash wallet)
+
+The simplest path for a coding or research agent, with no API key and no account:
+
+1. `npx agentcash@0.17.1 balance`: your USDC balance (Base and Tempo). If you have no AgentCash
+   wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
+   low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
+   Never pay beyond the budget your user approved.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/domain/v1/lookup`: the exact request schema and price.
+3. Pay and get the result (`--max-amount` caps what one call may cost):
+
+```bash
+npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/domain/v1/lookup -m POST \
+  -H "Content-Type: application/json" -H "X-Inferrail-Source: skill" \
+  -b '{"domain": "example.com", "request_id": "<unique id>"}' --max-amount 0.01
+```
+
+`X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
+identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
+service in your agent's paid tools.
+
 ## How to call it
 
 `POST https://inferrail-cost-gateway.onrender.com/domain/v1/lookup` with
@@ -32,11 +53,11 @@ are accepted and answered in their ASCII (`xn--`) form.
 With the AgentCash wallet:
 
 ```bash
-npx agentcash fetch https://inferrail-cost-gateway.onrender.com/domain/v1/lookup -m POST \
+npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/domain/v1/lookup -m POST \
   -H "Content-Type: application/json" -b '{"domain": "example.com"}' --max-amount 0.01
 ```
 
-(Or once: `npx agentcash add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
+(Or once: `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
 services in your agent's paid tools.)
 
 Any other MPP or x402 client works the same way: the first response is HTTP 402 and lists each

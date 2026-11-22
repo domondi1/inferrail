@@ -1,0 +1,25 @@
+{
+  "name": "inferrail",
+  "version": "1.0.0",
+  "description": "Pay-per-call tools for agents, charged only on delivery: read web pages as markdown with metadata (one or up to 10 per call), check package versions for known vulnerabilities, and look up a domain's DNS, SPF/DMARC and registration. $0.002 per delivered result in USDC from your agent's own wallet (AgentCash, Coinbase agentic wallet or any x402/MPP client).",
+  "author": {
+    "name": "Inferrail"
+  },
+  "homepage": "https://tryinferrail.com",
+  "repository": "https://github.com/domondi1/inferrail",
+  "license": "Apache-2.0",
+  "keywords": [
+    "web-read",
+    "markdown",
+    "scrape",
+    "vulnerability",
+    "dependency",
+    "dns",
+    "whois",
+    "rdap",
+    "x402",
+    "mpp",
+    "pay-per-call"
+  ],
+  "icon": "./docs/favicon-192x192.png"
+}
