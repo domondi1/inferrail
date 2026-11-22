@@ -99,6 +99,7 @@ def create_combined_app(
     trial_mod, hosted_mod = modules or load_modules()
     if web_read == "env":
         web_read = web_read_from_env(hosted_settings)
+    read_batch = web_read_batch_from_env(hosted_settings) if web_read is not None else None
     if web_search == "env":
         web_search = web_search_from_env(hosted_settings)
     if finder == "env":
@@ -148,6 +149,8 @@ def create_combined_app(
         Route("/favicon.ico", favicon),
         Mount(PREFIX, app=hosted_app),
     ]
+    if read_batch is not None:  # an exact path ahead of Web Read's mount, which it doesn't touch
+        routes.append(Route(f"{READ_PREFIX}/v1/pages", endpoint=read_batch[0], methods=["POST"]))
     if web_read is not None:
         routes.append(Mount(READ_PREFIX, app=web_read[0]))
     if web_search is not None:
@@ -164,6 +167,7 @@ def create_combined_app(
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
     app.state.web_read_settings = web_read[1] if web_read is not None else None
+    app.state.web_read_batch_settings = read_batch[1] if read_batch is not None else None
     app.state.web_search_settings = web_search[1] if web_search is not None else None
     app.state.finder_settings = finder[1] if finder is not None else None
     app.state.package_settings = packages[1] if packages is not None else None
@@ -173,6 +177,8 @@ def create_combined_app(
     app.state.discovery_paths = []
     if web_read is not None:
         app.state.discovery_paths.append(lambda: _web_read_paths(web_read[1]))
+    if read_batch is not None:
+        app.state.discovery_paths.append(lambda: _web_read_batch_paths(read_batch[1]))
     if web_search is not None:
         app.state.discovery_paths.append(lambda: _web_search_paths(web_search[1]))
     if finder is not None:
@@ -208,6 +214,44 @@ def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -
         return mod.create_app(settings), settings
     except Exception:
         log.exception("Web Read not mounted: configuration error")
+        return None
+
+
+def web_read_batch_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+    """(app, settings) for Web Read's batch (`POST /read/v1/pages`) when READ_BATCH=1, else None.
+
+    The same product, price per page and receiving addresses as Web Read (READ_* settings), with
+    its own ledger. Sharing the address is safe because every payment is bound to one request:
+    an x402 authorization's amount is the batch's exact price and its nonce settles once on
+    chain (a reused one fails to settle and the result is withheld); an MPP challenge is bound
+    to the route path and amount; the retry identity is namespaced and per payer. Off by
+    default: turning it on is a production pricing change. Fail-isolated like Web Read."""
+    e = dict(os.environ if env is None else env)
+    if e.get("READ_BATCH") != "1" or not e.get("READ_PAY_TO"):
+        return None
+    try:
+        mod = sys.modules.get("web_read_service") or _load(
+            "web_read_service", HOSTED_DIR.parent / "web_read" / "service.py"
+        )
+        batch = _load("web_read_batch", HOSTED_DIR.parent / "web_read" / "batch.py")
+        origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+        e["READ_RESOURCE_URL"] = f"{origin}{READ_PREFIX}/v1/pages"
+        e["READ_MOUNT_PREFIX"] = ""  # the task's path is the full path (served by a Route)
+        e.setdefault("READ_NETWORK", hosted_settings.x402_network)
+        e["READ_DATA_DIR"] = str(
+            Path(e.get("READ_BATCH_DATA_DIR") or Path(hosted_settings.data_dir).parent
+                 / "web-read-batch")
+        )  # fmt: skip
+        e["READ_MCP"] = "0"
+        e["READ_ALLOW_GET"] = "0"
+        settings = mod.Settings.from_env(e)
+        taken = {a.lower() for a in (hosted_settings.x402_pay_to, e.get("SEARCH_PAY_TO")) if a}
+        if settings.pay_to.lower() in taken:
+            raise RuntimeError("READ_PAY_TO must differ from Hosted's and Search's payTo")
+        reader = mod.fetch.Fetcher(settings.user_agent)
+        return mod.create_app(settings, task=batch.batch_task(mod, reader)), settings
+    except Exception:
+        log.exception("Web Read batch not mounted: configuration error")
         return None
 
 
@@ -486,12 +530,57 @@ WEB_READ_TAGS = ["web page to markdown", "url to markdown", "web scraper", "read
 
 def _web_read_description(price_usd: str) -> str:
     return (
-        "Read any public web page as clean, LLM-ready markdown (title, main text, headings, "
-        "lists, links, tables), with word count and a content hash. URL to markdown for agents: "
-        f"articles, docs, blog posts, product pages. ${price_usd} per delivered page; a "
-        "missing, blocked, failing or refused page costs nothing, and a retry with the same "
-        "request_id never pays twice."
+        "Read any public web page as clean, LLM-ready markdown (headings, lists, links, "
+        "tables) with its metadata (description, canonical URL, authors, published date, "
+        f"language). URL to markdown for articles, docs and product pages. ${price_usd} per "
+        "delivered page; a missing, blocked or refused page, a bot check or a JavaScript-only "
+        "page costs nothing, and a retry never pays twice."
     )
+
+
+def _web_read_batch_paths(settings: Any) -> dict[str, Any]:
+    batch = sys.modules["web_read_batch"]
+    top = sys.modules["web_read_service"].price_for(settings.price_usd, batch.MAX_URLS)
+    return {
+        f"{READ_PREFIX}/v1/pages": {
+            "post": {
+                "operationId": "readPages",
+                "summary": batch.SUMMARY,
+                "description": batch.DESCRIPTION,
+                "tags": WEB_READ_TAGS,
+                "security": [],
+                "x-payment-info": {
+                    # N URLs cost N x the page price: the 402 for a request quotes its total.
+                    "price": {"mode": "dynamic", "currency": "USD", "min": settings.price_usd,
+                              "max": top},
+                    "protocols": [{"x402": {}}] + _mpp_protocols(settings),
+                },
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": batch.PagesRequest.model_json_schema(),
+                            "example": {"urls": ["https://example.com/",
+                                                 "https://example.org/"]},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Every page, delivered and paid",
+                        "content": {"application/json": {"schema": batch.output_schema(
+                            sys.modules["web_read_service"].OUTPUT_SCHEMA)}},
+                    },
+                    "402": {"description": "Payment Required (quotes N x the page price)"},
+                    "422": {"description": "Invalid request, or a page can't be read "
+                            "(results lists which); nothing charged"},
+                    "502": {"description": "A page's site failed; may succeed later; nothing "
+                            "charged"},
+                    "504": {"description": "The batch timed out; nothing charged"},
+                },
+            }
+        }
+    }  # fmt: skip
 
 
 def _web_read_paths(settings: Any) -> dict[str, Any]:
@@ -835,6 +924,14 @@ def origin_llms(app: Starlette) -> str:
                 if getattr(read, "mcp", False)
                 else ""
             ),
+        ]
+    read_batch = getattr(app.state, "web_read_batch_settings", None)
+    if app.state.discovery_paths and read_batch is not None:
+        lines += [
+            f'- Several pages at once: `POST {origin}{READ_PREFIX}/v1/pages` with `{{"urls": '
+            '["https://...", ...], "request_id": "..."}` (1-10 URLs) returns HTTP 402 for N x '
+            f"${read_batch.price_usd}; it is charged only if every page is delivered, and a "
+            "failure lists which URLs to drop.",
         ]
     found = getattr(app.state, "web_search_settings", None)
     if app.state.discovery_paths and found is not None:

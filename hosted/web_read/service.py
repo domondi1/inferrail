@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hashlib
 import importlib.util
 import json
@@ -160,6 +161,15 @@ class Task:
     # What one delivery costs us before the buyer's transfer is broadcast (a paid supplier call).
     # Above zero, a sale is held to the unpaid-cost controls in `mpp_purchase`.
     unit_cost_usd: Decimal = Decimal(0)
+    # How many units of the price one valid request buys (Web Read's batch: one per page). None
+    # means one: the price is fixed. A task with units has its request validated before any
+    # offer is made, and every offer, check, receipt and settlement is for units x price.
+    units: Callable[[Any], int] | None = None
+
+
+def price_for(price_usd: str, units: int) -> str:
+    """The price of `units` units, as a plain decimal string ("0.002" x 3 -> "0.006")."""
+    return format((Decimal(price_usd) * units).normalize(), "f")
 
 
 DEFAULT_ICON_URL = "https://tryinferrail.com/favicon-192x192.png"
@@ -544,7 +554,7 @@ def _idem(url: str, request_id: str | None) -> str:
     return hashlib.sha256(f"{url.strip()}\n{request_id or ''}".encode()).hexdigest()
 
 
-def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
+def _signed_by_payer(payload: Any, settings: Settings, units: int = 1) -> str | None:
     """The payer, if this is a valid EOA-signed EIP-3009 payment to us at our price.
 
     Checked locally (no facilitator call, nothing submitted), so a retry can prove it comes from
@@ -559,10 +569,10 @@ def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
     try:
         req = payload.accepted
         if (payload.payload or {}).get("transaction"):
-            return _svm_signed_by_payer(payload, settings)
+            return _svm_signed_by_payer(payload, settings, units)
         evm = ExactEIP3009Payload.from_dict(payload.payload)
         auth = evm.authorization
-        price_units = int(Decimal(settings.price_usd) * 10**6)
+        price_units = int(Decimal(settings.price_usd) * 10**6) * units
         ours = settings.pay_to_for(req.network)
         if (
             ours is None
@@ -585,7 +595,7 @@ def _signed_by_payer(payload: Any, settings: Settings) -> str | None:
     return None
 
 
-def _svm_signed_by_payer(payload: Any, settings: Settings) -> str | None:
+def _svm_signed_by_payer(payload: Any, settings: Settings, units: int = 1) -> str | None:
     """The payer, if this is a Solana USDC transfer to our address on that network at our price,
     signed by its token authority. Checked locally (signature over the message; nothing is
     broadcast), so a retry can be answered without a second charge, as on EVM."""
@@ -607,7 +617,7 @@ def _svm_signed_by_payer(payload: Any, settings: Settings) -> str | None:
             return None
         tx = decode_transaction_from_payload(ExactSvmPayload.from_dict(payload.payload))
         info = extract_transaction_info(tx)
-        price_units = int(Decimal(settings.price_usd) * 10**6)
+        price_units = int(Decimal(settings.price_usd) * 10**6) * units
         if (
             info is None
             or info.mint != get_usdc_address(req.network)
@@ -788,49 +798,57 @@ def _page_guide(settings: Settings) -> str:
 BOT_CHECK_MAX_WORDS = 150
 
 
+async def read_page(
+    reader: Any, url: str, event: Callable[[str, str], None]
+) -> tuple[int, dict[str, Any]]:
+    """Fetch and convert one page: (200, row) or (422/502/504, error). Payment-agnostic; shared
+    by the single-page task and the batch."""
+    try:
+        got = await reader.fetch(url.strip())
+    except fetch.Refused as exc:
+        event("refused", exc.code)
+        status = refusal_status(exc)
+        return status, {"error": exc.code, "detail": exc.detail, "charged": False}
+    text = got.body.decode(got.encoding, "replace")
+    html = got.content_type in ("text/html", "application/xhtml+xml")
+    if html:
+        title, content = extract.html_to_markdown(text, got.final_url)
+    else:
+        title, content = "", text.strip()
+    vendor = meta.bot_challenge(text) if html else None
+    if vendor and len(content.split()) <= BOT_CHECK_MAX_WORDS:
+        # The site served its bot check instead of the page: nothing the buyer asked for.
+        event("refused", "bot_check")
+        return 422, {"error": "bot_check",
+                     "detail": f"the site served a {vendor} bot check instead of the page",
+                     "charged": False}  # fmt: skip
+    if not content.strip():
+        # Nothing readable without running JavaScript (or an empty body): charging for an
+        # empty page would bill the buyer for nothing, so it is refused like any other.
+        event("refused", "no_readable_content")
+        return 422, {"error": "no_readable_content",
+                     "detail": "the page has no text without running JavaScript",
+                     "charged": False}  # fmt: skip
+    row = {
+        "url": url,
+        "final_url": got.final_url,
+        "title": title,
+        "content_markdown": content,
+        "word_count": len(content.split()),
+        "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "metadata": meta.page_metadata(text, got.final_url) if html else meta.empty_metadata(),
+        "bytes": len(got.body),
+    }
+    return 200, row
+
+
 def page_task(reader: Any) -> Task:
     """Web Read's task: fetch one public page and return it as markdown."""
 
     async def deliver(body: Any, event: Callable[[str, str], None]) -> tuple[int, dict[str, Any]]:
         """Fetch and convert the page: (200, row) or (422/502/504, error). Payment-agnostic."""
-        try:
-            got = await reader.fetch(body.url.strip())
-        except fetch.Refused as exc:
-            event("refused", exc.code)
-            status = refusal_status(exc)
-            return status, {"error": exc.code, "detail": exc.detail, "charged": False}
-        text = got.body.decode(got.encoding, "replace")
-        html = got.content_type in ("text/html", "application/xhtml+xml")
-        if html:
-            title, content = extract.html_to_markdown(text, got.final_url)
-        else:
-            title, content = "", text.strip()
-        vendor = meta.bot_challenge(text) if html else None
-        if vendor and len(content.split()) <= BOT_CHECK_MAX_WORDS:
-            # The site served its bot check instead of the page: nothing the buyer asked for.
-            event("refused", "bot_check")
-            return 422, {"error": "bot_check",
-                         "detail": f"the site served a {vendor} bot check instead of the page",
-                         "charged": False}  # fmt: skip
-        if not content.strip():
-            # Nothing readable without running JavaScript (or an empty body): charging for an
-            # empty page would bill the buyer for nothing, so it is refused like any other.
-            event("refused", "no_readable_content")
-            return 422, {"error": "no_readable_content",
-                         "detail": "the page has no text without running JavaScript",
-                         "charged": False}  # fmt: skip
-        row = {
-            "url": body.url,
-            "final_url": got.final_url,
-            "title": title,
-            "content_markdown": content,
-            "word_count": len(content.split()),
-            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "metadata": meta.page_metadata(text, got.final_url) if html else meta.empty_metadata(),
-            "bytes": len(got.body),
-        }
-        return 200, row
+        return await read_page(reader, body.url, event)
 
     def example(price_usd: str) -> dict[str, Any]:
         return {
@@ -923,6 +941,16 @@ def create_app(
     )
     product, route = task.service_name, f"{settings.mount_prefix}{task.path}"
     price_atomic = int(Decimal(settings.price_usd) * 1_000_000)
+    # Units this request buys (see Task.units): set per request before any offer or check.
+    units_var: contextvars.ContextVar[int] = contextvars.ContextVar("inferrail_units", default=1)
+
+    def units_of(body: Any) -> int:
+        return task.units(body) if task.units else 1
+
+    def rail_units(units: int | None = None) -> dict[str, int]:
+        """The rail's `units` argument, passed only for a task priced per unit."""
+        return {"units": units_var.get() if units is None else units} if task.units else {}
+
     mpp_network = f"tempo:{getattr(settings.mpp, 'chain_id', '')}".rstrip(":")
 
     def rec(type_: str, rail_name: str, **fields: Any) -> None:
@@ -974,9 +1002,11 @@ def create_app(
         if ref and getattr(context.result, "success", False):
             ledger.settled(ref[0])
             try:
-                amount = int(getattr(context.result, "amount", None) or price_atomic)
+                amount = int(
+                    getattr(context.result, "amount", None) or price_atomic * units_var.get()
+                )
             except (TypeError, ValueError):
-                amount = price_atomic
+                amount = price_atomic * units_var.get()
             # What the facilitator said about cataloguing this resource in its discovery index
             # (CDP Bazaar), from its EXTENSION-RESPONSES header. Observability only.
             status, reason = _bazaar_status(getattr(context.result, "extension_responses", None))
@@ -1017,13 +1047,16 @@ def create_app(
         server = make_x402_server(facilitator)
     example = task.output_example(settings.price_usd)
 
+    def unit_price(_context: Any) -> str:
+        """The x402 price of this request: units x price (units set by the middleware)."""
+        return f"${price_for(settings.price_usd, units_var.get())}"
+
     def offer(method: str) -> Any:
         body = {"body_type": "json"} if method == "POST" else {}  # GET takes the query string
+        price: Any = unit_price if task.units else f"${settings.price_usd}"
         return RouteConfig(
             accepts=[
-                PaymentOption(
-                    scheme="exact", pay_to=pay_to, price=f"${settings.price_usd}", network=net
-                )
+                PaymentOption(scheme="exact", pay_to=pay_to, price=price, network=net)
                 for net, pay_to in settings.accepted()
             ],
             resource=settings.resource_url,
@@ -1094,7 +1127,9 @@ def create_app(
             return None
         try:
             body = await page_request(request)
-            payer = _signed_by_payer(decode_payment_signature_header(header), settings)
+            payer = _signed_by_payer(
+                decode_payment_signature_header(header), settings, units_of(body)
+            )
         except Exception:
             return None
         return (payer, task.idem(body)) if payer else None
@@ -1125,7 +1160,11 @@ def create_app(
         return JSONResponse(body, headers={"x-inferrail-recovered": "1"})
 
     async def mpp_challenge(request: Request, error: str | None = None) -> JSONResponse:
-        headers = await rail.challenge_headers(str(request.url), request.method) if rail else []
+        headers = (
+            await rail.challenge_headers(str(request.url), request.method, **rail_units())
+            if rail
+            else []
+        )
         body = {"error": error, "charged": False} if error else {}
         response = JSONResponse(body, status_code=402)
         for k, v in headers:
@@ -1154,7 +1193,13 @@ def create_app(
         return None
 
     def paid(
-        row: dict[str, Any], receipt: Any, payer: str, idem: str, client: str, pid: str
+        row: dict[str, Any],
+        receipt: Any,
+        payer: str,
+        idem: str,
+        client: str,
+        pid: str,
+        units: int = 1,
     ) -> Any:
         """Record a settled sale and answer with it. The buyer has paid: a ledger failure is
         recorded as an event and never withholds the result."""
@@ -1162,13 +1207,14 @@ def create_app(
         with contextlib.suppress(Exception):  # telemetry never withholds a paid result
             who = str(receipt.payer or payer).lower()
             fields = {"purchase_id": pid, "ledger_key": ref, "payer": who, "network": mpp_network,
-                      "amount_atomic": price_atomic, "client": client}  # fmt: skip
+                      "amount_atomic": price_atomic * units, "client": client}  # fmt: skip
             rec("settled", "mpp", tx_hash=receipt.reference, outcome="settled", **fields)
             rec("receipt_issued", "mpp", receipt_ref=ref, **fields)
         try:
             ledger.delivered(
                 ref, (receipt.payer or payer).lower(), task.ledger_fields(row),
-                settings.price_usd, idem, json.dumps(row) if settings.recovery_s else None,
+                price_for(settings.price_usd, units), idem,
+                json.dumps(row) if settings.recovery_s else None,
             )  # fmt: skip
             ledger.settled(ref)
         except Exception:
@@ -1211,8 +1257,9 @@ def create_app(
                 code=_reason("mpp", "invalid_request"))  # fmt: skip
             ledger.event("attempt_failed", _reason("mpp", "invalid_request"))
             return JSONResponse({"error": "invalid_request", "charged": False}, status_code=422)
+        units = units_of(body)
         authorization = request.headers["authorization"]
-        valid = await rail.validate(authorization, str(request.url))
+        valid = await rail.validate(authorization, str(request.url), **rail_units(units))
         if valid is None or isinstance(valid, str):  # a str is the rail's reason for refusing
             rec("payment_rejected", "mpp", client=client, network=mpp_network,
                 code=_reason("mpp", valid))  # fmt: skip
@@ -1226,7 +1273,7 @@ def create_app(
         rkey = commerce_events.request_key(getattr(body, "request_id", None))
         mine = {"purchase_id": pid, "payer": str(payer).lower(), "network": mpp_network,
                 "client": client, "request_key": rkey}  # fmt: skip
-        rec("payment_attempt", "mpp", amount_atomic=price_atomic, **mine)
+        rec("payment_attempt", "mpp", amount_atomic=price_atomic * units, **mine)
         async with exclusive(("credential", key)), exclusive((payer, idem)):
             claim = ledger.claim(key)
             if claim and claim["idem"] and claim["idem"] != idem:  # one payment, one request
@@ -1281,7 +1328,7 @@ def create_app(
                     if kind == "hash":  # the client already paid on chain; we owe it back
                         ledger.set_claim(key, "failed")
                         with contextlib.suppress(Exception):
-                            await rail.settle(credential)
+                            await rail.settle(credential, **rail_units(units))
                         ledger.event("refund_owed", client)
                         rec("refund_owed", "mpp", **mine)
                         row.update(charged=True, refund="owed")
@@ -1290,14 +1337,14 @@ def create_app(
                     return JSONResponse(row, status_code=status)
                 row["receipt"] = {
                     "payment_ref": None,  # set once the transfer settles
-                    "price_usd": settings.price_usd,
+                    "price_usd": price_for(settings.price_usd, units),
                     "request_id": body.request_id,
                     "rail": "mpp-tempo",
                 }
                 ledger.set_claim(key, "delivered", json.dumps(row))  # before the broadcast
                 rec("delivered", "mpp", **mine)
             try:
-                receipt = await rail.settle(credential)
+                receipt = await rail.settle(credential, **rail_units(units))
             except mpp_rail.OutcomeUnknown:
                 if task.unit_cost_usd:
                     ledger.record_unpaid(key, payer, task.unit_cost_usd, "unknown")
@@ -1315,7 +1362,7 @@ def create_app(
             ledger.clear_unpaid(key)
             row["receipt"]["payment_ref"] = f"tempo:{receipt.reference}"
             ledger.set_claim(key, "settled", json.dumps(row) if settings.recovery_s else "")
-            return paid(row, receipt, payer, idem, client, pid)
+            return paid(row, receipt, payer, idem, client, pid, units)
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
@@ -1328,6 +1375,15 @@ def create_app(
         client = _client_class(request.headers.get("user-agent"))
         signed = bool(request.headers.get("payment-signature"))
         page = is_page(request)
+        if page and task.units:
+            # A per-unit price is quoted for a valid request only: an invalid one is refused
+            # here, before any offer or payment check, and costs nothing.
+            try:
+                units_var.set(units_of(await page_request(request)))
+            except Exception:
+                ledger.event("refused", "invalid_request")
+                return JSONResponse({"error": "invalid_request", "charged": False},
+                                    status_code=422)  # fmt: skip
         if rail and page and mpp_rail.is_mpp_authorization(request.headers.get("authorization")):
             ledger.expire(settings.recovery_s)
             return await mpp_purchase(request, client)
@@ -1355,8 +1411,8 @@ def create_app(
         if request.method == "POST" or page:
             ledger.expire(settings.recovery_s)
             if signed and page:
-                rec("payment_attempt", "x402", amount_atomic=price_atomic, asset="USDC",
-                    **x402_fields)  # fmt: skip
+                rec("payment_attempt", "x402", amount_atomic=price_atomic * units_var.get(),
+                    asset="USDC", **x402_fields)  # fmt: skip
                 ledger.event("payment_attempt", client)
         key = await _recover(request) if settings.recovery_s else None
         if key is None:
@@ -1387,7 +1443,9 @@ def create_app(
                 events.count_challenge(product, client)
             ledger.event("payment_rejected" if signed else "challenge", client)
             if rail and page and not signed:  # offer MPP (Tempo) next to x402
-                for k, v in await rail.challenge_headers(str(request.url), request.method):
+                for k, v in await rail.challenge_headers(
+                    str(request.url), request.method, **rail_units()
+                ):
                     response.headers.append(k, v)
         return response
 
@@ -1429,19 +1487,21 @@ def create_app(
                         ledger_key=ref[0], payer=ref[1])  # fmt: skip
         rec("payment_verified", "x402", **mine)
         rec("delivery_started", "x402", **mine)
+        units = units_of(body)
         status, row = await task.deliver(body, ledger.event)
         if status != 200:
             return JSONResponse(row, status_code=status)
         request.scope["inferrail_delivered"] = True
-        rec("delivered", "x402", amount_atomic=price_atomic, asset="USDC", **mine)
+        rec("delivered", "x402", amount_atomic=price_atomic * units, asset="USDC", **mine)
         row["receipt"] = {
             "payment_ref": ref[0] if ref else None,
-            "price_usd": settings.price_usd,
+            "price_usd": price_for(settings.price_usd, units),
             "request_id": body.request_id,
         }
         if ref:
             ledger.delivered(
-                ref[0], ref[1], task.ledger_fields(row), settings.price_usd, task.idem(body),
+                ref[0], ref[1], task.ledger_fields(row), price_for(settings.price_usd, units),
+                task.idem(body),
                 json.dumps(row) if settings.recovery_s else None,
             )  # fmt: skip
         return JSONResponse(row)

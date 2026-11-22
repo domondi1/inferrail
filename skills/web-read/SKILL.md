@@ -41,6 +41,23 @@ lists Web Read (and the x402 Finder) in your agent's paid tools; it pays from th
 wallet you already have. With a Coinbase agentic wallet:
 `npx awal x402 pay https://inferrail-cost-gateway.onrender.com/read/v1/page -X POST -d '{"url": "https://..."}'`.
 
+## Several pages in one call
+
+When `https://inferrail-cost-gateway.onrender.com/openapi.json` lists `POST /read/v1/pages`,
+you can read 1 to 10 pages in one paid request:
+`{"urls": ["https://...", "https://..."], "request_id": "<unique id>"}`.
+
+- Use it when a task already has its list of sources (research, citation checks, comparing
+  docs); use `/read/v1/page` for one page, or when you decide the next URL from the last one.
+- Price: $0.002 per page, one payment for the batch (3 URLs: $0.006; 10 URLs: $0.02). Check that
+  the 402's amount is 2000 units (USDC) times the number of URLs before you sign.
+- All or nothing: if any page can't be read, nothing is charged and no page is returned. The
+  answer (`error: pages_failed`) has `results`, one per URL, with `delivered` and, for each
+  failure, `error`. Send the batch again with only the delivered URLs and a new `request_id`.
+- A lost response: send the same `urls` in the same order with the same `request_id` from the
+  same wallet within 10 minutes; you get the paid batch and are not charged again.
+- No duplicate URLs and no more than 10: such a request gets 422 before any payment offer.
+
 ## What a delivered page contains
 
 `title`, `content_markdown`, `word_count`, `content_sha256`, `final_url`, and `metadata`:
