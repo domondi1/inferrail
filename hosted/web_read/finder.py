@@ -332,7 +332,19 @@ def finder_task(service: Any, catalog: Catalog, secret: bytes) -> Any:
             f'POST {settings.resource_url} with JSON {{"need": "...", "network": "eip155:8453", '
             '"max_price_usd": 0.01, "limit": 5, "request_id": "..."} (only need is required).\n'
             f"Price: ${settings.price_usd} per delivered answer. The first response is HTTP 402.\n"
-            "HTTP 200 = picks delivered and paid. 422 {error: no_match} and 503 "
+            + (
+                f"Pay with x402 v2 exact, ${settings.price_usd} USDC on {settings.network} to "
+                f"{settings.x402_recipient}: sign the 402 and repeat with PAYMENT-SIGNATURE.\n"
+                if settings.x402
+                else ""
+            )
+            + (
+                f"Pay with MPP on Tempo (chain {settings.mpp.chain_id}): repeat the request with "
+                "Authorization: Payment <credential>.\n"
+                if settings.mpp
+                else ""
+            )
+            + "HTTP 200 = picks delivered and paid. 422 {error: no_match} and 503 "
             "{error: catalog_loading} are not charged.\n"
             "Each pick is a catalog fact (URL, price, payTo, 30-day calls and unique payers from "
             "the public x402 Bazaar), not a delivery guarantee: you pay the API you pick "

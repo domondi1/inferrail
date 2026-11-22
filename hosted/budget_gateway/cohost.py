@@ -266,7 +266,9 @@ def web_search_from_env(hosted_settings: Any, env: dict[str, str] | None = None)
 def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
     """(app, settings) for Inferrail x402 Finder when FINDER_PAY_TO is set, else None.
 
-    No supplier cost (the catalog is the CDP Bazaar's free discovery API). Mounted only with
+    x402 (FINDER_X402=1) pays FINDER_X402_PAY_TO, an address no other x402 service uses; MPP keeps
+    paying FINDER_PAY_TO. No supplier cost (the catalog is the CDP Bazaar's free discovery API).
+    Mounted only with
     FINDER_CATALOG_RIGHTS_CONFIRMED=1: the operator's confirmation that the CDP terms permit
     serving answers built from that data. MPP only unless
     FINDER_X402=1, which needs a receiving address of its own, like Web Search. Fail-isolated:
@@ -298,8 +300,8 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
                           e.get("SEARCH_PAY_TO"), e.get("WEB_SEARCH_PAY_TO"))
                 if a
             }  # fmt: skip
-            if settings.pay_to.lower() in taken:
-                raise RuntimeError("FINDER_X402=1 needs its own FINDER_PAY_TO")
+            if settings.x402_recipient.lower() in taken:
+                raise RuntimeError("FINDER_X402=1 needs its own FINDER_X402_PAY_TO")
         catalog = finder.Catalog()
         task = finder.finder_task(mod, catalog, _finder_retry_secret(e))
         app = mod.create_app(settings, task=task)
@@ -703,7 +705,8 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
     if app.state.discovery_paths and finder is not None:
         guidance = (
             f'Finder: POST {origin}{FIND_PREFIX}/v1/find with {{"need": "..."}} for up to five '
-            "paid x402 APIs that fit a task, ranked by 30-day paid usage; pay the MPP challenge; "
+            "paid x402 APIs that fit a task, ranked by 30-day paid usage; pay the "
+            f"{_search_rails(finder)} challenge; "
             f"no match is not charged. Guide: {origin}{FIND_PREFIX}/llms.txt. "
         ) + guidance
     doc: dict[str, Any] = {

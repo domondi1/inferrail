@@ -320,3 +320,35 @@ def test_web_search_without_supplier_rights_stops_the_deploy(preflight, tmp_path
     env.pop("WEB_SEARCH_SUPPLIER_RIGHTS_CONFIRMED")
     problems = preflight.check(env, APPROVED, build=lambda s: None, expect_web_search_pay_to=SEARCH)
     assert any("Web Search is configured" in p for p in problems)
+
+
+# -- x402 Finder: Base pays its own address, Tempo keeps Web Read's ------------------------------
+FINDER_BASE = "0x54BF9C490112CD6a54Cb8f22D6bf83621ABe77CF"
+WEB_READ = "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E"
+FINDER = {"FINDER_PAY_TO": WEB_READ, "READ_PAY_TO": WEB_READ, "FINDER_X402": "1",
+          "FINDER_X402_PAY_TO": FINDER_BASE, "FINDER_NETWORK": "eip155:8453",
+          "FINDER_MAINNET_APPROVED": "1", "FINDER_MPP_CHAIN_ID": "4217",
+          "FINDER_MPP_MAINNET_APPROVED": "1", "FINDER_CATALOG_RIGHTS_CONFIRMED": "1",
+          "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
+
+
+def _finder_run(preflight, env, expect_finder):
+    return [p for p in preflight.check(
+        env, None, chain_id=lambda url: "0x2105", kinds=lambda e: {("exact", "eip155:8453")},
+        build=lambda settings: None, expect_finder_x402_pay_to=expect_finder,
+    ) if "Finder" in p or "FINDER" in p]  # fmt: skip
+
+
+def test_the_approved_finder_recipients_pass(preflight, tmp_path, capsys):
+    assert _finder_run(preflight, _env(tmp_path, **FINDER), FINDER_BASE) == []
+    out = capsys.readouterr().out
+    assert f"x402 payTo {FINDER_BASE}" in out and f"MPP payTo {WEB_READ}" in out
+
+
+@pytest.mark.parametrize(
+    ("expect", "needle"),
+    [(None, "no --expect-finder-x402-pay-to"), ("0x" + "1" * 40, "not the approved")],
+)
+def test_a_wrong_or_unstated_finder_base_address_stops_the_deploy(preflight, tmp_path, expect, needle):
+    problems = _finder_run(preflight, _env(tmp_path, **FINDER), expect)
+    assert problems and needle in problems[0]

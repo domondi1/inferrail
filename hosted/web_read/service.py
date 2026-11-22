@@ -26,6 +26,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -230,10 +231,18 @@ class Settings:
     mcp: bool = False
     # Other networks accepted next to `network`, as (network, pay_to) pairs. Empty by default.
     extra_networks: tuple[tuple[str, str], ...] = ()
+    # Receiving address for x402 on `network`, when it must differ from `pay_to` (which then
+    # stays the MPP recipient). An EIP-3009 transfer binds a merchant, not a route, so a second
+    # x402 service needs its own address, while MPP challenges are route-bound and can share one.
+    x402_pay_to: str = ""
+
+    @property
+    def x402_recipient(self) -> str:
+        return self.x402_pay_to or self.pay_to
 
     def accepted(self) -> tuple[tuple[str, str], ...]:
         """Every (network, pay_to) this service sells on over x402, the primary one first."""
-        return ((self.network, self.pay_to), *self.extra_networks)
+        return ((self.network, self.x402_recipient), *self.extra_networks)
 
     def pay_to_for(self, network: str) -> str | None:
         return dict(self.accepted()).get(network)
@@ -262,6 +271,11 @@ class Settings:
         x402 = e.get(f"{prefix}X402", "1") != "0"
         if not x402 and mpp is None:
             raise RuntimeError(f"{prefix}X402=0 needs {prefix}MPP_CHAIN_ID: nothing to sell")
+        x402_pay_to = e.get(f"{prefix}X402_PAY_TO", "").strip()
+        if x402_pay_to and not x402:
+            raise RuntimeError(f"{prefix}X402_PAY_TO is set but {prefix}X402=0")
+        if x402_pay_to and not re.fullmatch(r"0x[0-9a-fA-F]{40}", x402_pay_to):
+            raise RuntimeError(f"{prefix}X402_PAY_TO must be a 0x EVM address")
         return cls(
             pay_to=pay_to,
             network=network,
@@ -279,6 +293,7 @@ class Settings:
             icon_url=_icon_url(e.get(f"{prefix}ICON_URL", DEFAULT_ICON_URL), prefix),
             extra_networks=_extra_networks(e, prefix, network) if x402 else (),
             mcp=e.get(f"{prefix}MCP") == "1" and x402,
+            x402_pay_to=x402_pay_to,
         )
 
 
@@ -715,8 +730,8 @@ def _page_guide(settings: Settings) -> str:
             else ""
         )
         + f"The first response is HTTP 402 (x402 v2, exact, ${settings.price_usd} USDC on "
-        f"{settings.network} to {settings.pay_to}). Sign it and repeat the request with the "
-        "PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
+        f"{settings.network} to {settings.x402_recipient}). Sign it and repeat the request with "
+        "the PAYMENT-SIGNATURE header. HTTP 200 = delivered and paid; any error = not charged.\n"
         f"Lost the response? Send the same url and request_id again from the same wallet "
         f"within {settings.recovery_s // 60} minutes: you get the paid page back and the new "
         "signature is not settled (no second charge).\n"
@@ -857,7 +872,8 @@ def create_app(
 
     def rec(type_: str, rail_name: str, **fields: Any) -> None:
         events.record(
-            type_, product=product, route=route, rail=rail_name, pay_to=settings.pay_to.lower(),
+            type_, product=product, route=route, rail=rail_name,
+            pay_to=(settings.x402_recipient if rail_name == "x402" else settings.pay_to).lower(),
             **fields,
         )  # fmt: skip
 

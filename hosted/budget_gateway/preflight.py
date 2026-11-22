@@ -124,6 +124,7 @@ def check(
     expect_read_pay_to: str | None = None,
     expect_web_search_pay_to: str | None = None,
     expect_read_extra: dict[str, str] | None = None,
+    expect_finder_x402_pay_to: str | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -190,6 +191,30 @@ def check(
                 problems.append(
                     f"WEB_SEARCH_PAY_TO is {s.pay_to}, not the approved {expect_web_search_pay_to}"
                 )
+    if env.get("FINDER_PAY_TO"):
+        with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+            found = cohost.finder_from_env(settings, {**env, "FINDER_DATA_DIR": tmp})
+        if found is None:
+            problems.append(
+                "x402 Finder is configured (FINDER_PAY_TO) but would not mount; the "
+                "configuration error is logged above"
+            )
+        else:
+            f = found[1]
+            rails = cohost._search_rails(f)
+            print(
+                f"x402 finder: builds; price ${f.price_usd}, rails {rails}; "
+                f"MPP payTo {f.pay_to}" + (f", x402 payTo {f.x402_recipient}" if f.x402 else "")
+            )
+            if f.mpp and expect_read_pay_to and f.pay_to.lower() != expect_read_pay_to.lower():
+                problems.append(f"FINDER_PAY_TO (MPP) is {f.pay_to}, not Web Read's approved "
+                                f"{expect_read_pay_to}")  # fmt: skip
+            # A new x402 receiving route: its address must be stated and checked.
+            if f.x402 and not expect_finder_x402_pay_to:
+                problems.append("Finder x402 is on but no --expect-finder-x402-pay-to was given")
+            elif f.x402 and f.x402_recipient.lower() != expect_finder_x402_pay_to.lower():
+                problems.append(f"FINDER_X402_PAY_TO is {f.x402_recipient}, not the approved "
+                                f"{expect_finder_x402_pay_to}")  # fmt: skip
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -279,6 +304,9 @@ def main(argv: list[str] | None = None) -> int:
         "--expect-web-search-pay-to", help="Web Search's approved receiving address (required)"
     )
     ap.add_argument(
+        "--expect-finder-x402-pay-to", help="x402 Finder's approved Base receiving address"
+    )
+    ap.add_argument(
         "--expect-read-extra", action="append", metavar="NETWORK=PAYTO",
         help="an approved extra Web Read network and its receiving address (repeat per network)",
     )  # fmt: skip
@@ -290,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         expect_read_pay_to=args.expect_read_pay_to,
         expect_web_search_pay_to=args.expect_web_search_pay_to,
         expect_read_extra=_pairs(args.expect_read_extra),
+        expect_finder_x402_pay_to=args.expect_finder_x402_pay_to,
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
