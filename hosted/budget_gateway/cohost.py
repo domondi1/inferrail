@@ -35,6 +35,7 @@ import importlib.util
 import logging
 import os
 import sys
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import ModuleType
@@ -308,6 +309,14 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
         async def warm_catalog(request: Any, call_next: Any) -> Any:
             catalog.ensure_fresh()  # any request (even an unpaid quote) starts the first load
             return await call_next(request)
+
+        @app.get("/v1/catalog", include_in_schema=False)
+        async def catalog_status() -> dict[str, Any]:
+            """Free: whether the catalog is loaded and how fresh it is (no picks, no charge)."""
+            as_of = catalog.as_of
+            return {"loaded": as_of is not None, "entries": len(catalog.entries),
+                    "as_of": None if as_of is None else time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(as_of))}  # fmt: skip
 
         return app, settings
     except Exception:
