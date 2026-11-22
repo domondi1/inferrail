@@ -422,3 +422,58 @@ def test_mpp_only_domain_check_needs_no_base_address(preflight, tmp_path, finder
     env = _env(tmp_path, **{**DOMAIN, "DOMAIN_X402": "0"})
     env.pop("DOMAIN_X402_PAY_TO")
     assert _domain_run(preflight, env, None) == []
+
+
+# -- Package Check: checked when configured; its Base address when the flag is given -----------
+PKG_BASE = "0xe9c1249648257C1C1D70F8b7682851C377bb8f53"
+PKG = {"PKG_PAY_TO": WEB_READ, "READ_PAY_TO": WEB_READ, "PKG_X402": "1",
+       "PKG_X402_PAY_TO": PKG_BASE, "PKG_NETWORK": "eip155:8453", "PKG_MAINNET_APPROVED": "1",
+       "PKG_MPP_CHAIN_ID": "4217", "PKG_MPP_MAINNET_APPROVED": "1",
+       "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
+
+
+def _pkg_run(preflight, env, expect_pkg, expect_read=WEB_READ):
+    return [p for p in preflight.check(
+        env, None, chain_id=lambda url: "0x2105", kinds=lambda e: {("exact", "eip155:8453")},
+        build=lambda settings: None, expect_read_pay_to=expect_read,
+        expect_pkg_x402_pay_to=expect_pkg,
+    ) if "Package" in p or "PKG" in p or "pkg" in p]  # fmt: skip
+
+
+def test_the_approved_package_recipients_pass(preflight, tmp_path, capsys, finder_env):
+    assert _pkg_run(preflight, _env(tmp_path, **PKG), PKG_BASE) == []
+    out = capsys.readouterr().out
+    assert f"x402 payTo {PKG_BASE}" in out and f"MPP payTo {WEB_READ}" in out
+
+
+def test_an_existing_deploy_command_without_the_flag_still_passes(preflight, tmp_path, finder_env):
+    assert _pkg_run(preflight, _env(tmp_path, **PKG), None) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "expect", "needle"),
+    [
+        ({}, "0x" + "1" * 40, "not the approved"),
+        ({"PKG_PAY_TO": "0x" + "2" * 40}, PKG_BASE, "not Web Read's approved"),
+        ({"PKG_X402": "0", "PKG_X402_PAY_TO": None}, PKG_BASE, "x402 is off"),
+        ({"PKG_X402_PAY_TO": FINDER_BASE, "FINDER_X402_PAY_TO": FINDER_BASE}, FINDER_BASE,
+         "would not mount"),  # another service's Base address
+    ],
+)  # fmt: skip
+def test_a_wrong_package_recipient_stops_the_deploy(
+    preflight, tmp_path, change, expect, needle, finder_env
+):
+    env = _env(tmp_path, **PKG)
+    for k, v in change.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    problems = _pkg_run(preflight, env, expect)
+    assert problems and needle in problems[0], problems
+
+
+def test_package_check_off_leaves_the_deploy_unchanged(preflight, tmp_path, finder_env):
+    assert _pkg_run(preflight, _env(tmp_path), None) == []
+    stray = _pkg_run(preflight, _env(tmp_path), PKG_BASE)
+    assert stray and "isn't configured" in stray[0]

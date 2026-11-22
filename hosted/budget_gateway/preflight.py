@@ -126,6 +126,7 @@ def check(
     expect_read_extra: dict[str, str] | None = None,
     expect_finder_x402_pay_to: str | None = None,
     expect_domain_x402_pay_to: str | None = None,
+    expect_pkg_x402_pay_to: str | None = None,
 ) -> list[str]:
     """Problems that must stop the deploy (empty = OK). Prints what it verified."""
     import cohost
@@ -217,6 +218,7 @@ def check(
                 problems.append(f"FINDER_X402_PAY_TO is {f.x402_recipient}, not the approved "
                                 f"{expect_finder_x402_pay_to}")  # fmt: skip
     problems += _check_domain(cohost, settings, env, expect_read_pay_to, expect_domain_x402_pay_to)
+    problems += _check_package(cohost, settings, env, expect_read_pay_to, expect_pkg_x402_pay_to)
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -296,6 +298,44 @@ def _check_domain(
     return problems
 
 
+def _check_package(
+    cohost: Any,
+    settings: Any,
+    env: dict[str, str],
+    expect_read_pay_to: str | None,
+    expect_x402: str | None,
+) -> list[str]:
+    """Package Check's recipients, checked only when it is configured (PKG_PAY_TO). Its Base
+    address is checked when --expect-pkg-x402-pay-to is given; it is not yet required, so a deploy
+    command written before this check existed keeps passing."""
+    if not env.get("PKG_PAY_TO"):
+        if expect_x402:
+            return ["--expect-pkg-x402-pay-to was given but Package Check isn't configured "
+                    "(no PKG_PAY_TO)"]  # fmt: skip
+        return []
+    with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+        mounted = cohost.package_check_from_env(settings, {**env, "PKG_DATA_DIR": tmp})
+    if mounted is None:
+        return ["Package Check is configured (PKG_PAY_TO) but would not mount; the "
+                "configuration error is logged above"]  # fmt: skip
+    k = mounted[1]
+    print(
+        f"package check: builds; price ${k.price_usd}, rails {cohost._search_rails(k)}; "
+        f"MPP payTo {k.pay_to}" + (f", x402 payTo {k.x402_recipient}" if k.x402 else "")
+    )
+    problems: list[str] = []
+    if k.mpp and expect_read_pay_to and k.pay_to.lower() != expect_read_pay_to.lower():
+        problems.append(f"PKG_PAY_TO (MPP) is {k.pay_to}, not Web Read's approved "
+                        f"{expect_read_pay_to}")  # fmt: skip
+    if k.x402 and expect_x402 and k.x402_recipient.lower() != expect_x402.lower():
+        problems.append(f"PKG_X402_PAY_TO is {k.x402_recipient}, not the approved "
+                        f"{expect_x402}")  # fmt: skip
+    elif not k.x402 and expect_x402:
+        problems.append("--expect-pkg-x402-pay-to was given but Package Check's x402 is off "
+                        "(PKG_X402=1 not set)")  # fmt: skip
+    return problems
+
+
 def _check_read_extras(
     w: Any,
     env: dict[str, str],
@@ -352,6 +392,9 @@ def main(argv: list[str] | None = None) -> int:
         "--expect-domain-x402-pay-to", help="Domain Check's approved Base receiving address"
     )
     ap.add_argument(
+        "--expect-pkg-x402-pay-to", help="Package Check's approved Base receiving address"
+    )
+    ap.add_argument(
         "--expect-read-extra", action="append", metavar="NETWORK=PAYTO",
         help="an approved extra Web Read network and its receiving address (repeat per network)",
     )  # fmt: skip
@@ -365,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         expect_read_extra=_pairs(args.expect_read_extra),
         expect_finder_x402_pay_to=args.expect_finder_x402_pay_to,
         expect_domain_x402_pay_to=args.expect_domain_x402_pay_to,
+        expect_pkg_x402_pay_to=args.expect_pkg_x402_pay_to,
     )
     for p in problems:
         print(f"PREFLIGHT FAILED: {p}")
