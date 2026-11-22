@@ -339,20 +339,24 @@ def test_a_paid_base_purchase_settles_to_the_new_address_once(tmp_path):
     body = {"need": "web page markdown", "request_id": "job-b"}
     first, again = _buy(c, body, buyer), _buy(c, body, buyer)
     assert first.status_code == again.status_code == 200
-    assert [r.lower() for r in recipients] == [FINDER_BASE_PAY_TO.lower()]  # one settlement, new address
+    # one settlement, to the new address
+    assert [r.lower() for r in recipients] == [FINDER_BASE_PAY_TO.lower()]
 
 
 def test_a_signature_for_web_reads_address_is_refused(tmp_path):
     fac = FakeFacilitator()
-    settings = svc.Settings(pay_to=WEB_READ_PAY_TO, x402_pay_to=FINDER_BASE_PAY_TO,
-                            resource_url="http://testserver/v1/find", data_dir=tmp_path)  # fmt: skip
-    c = TestClient(svc.create_app(settings, facilitator=fac,
-                                  task=finder.finder_task(svc, _catalog(), SECRET)))  # fmt: skip
+    settings = svc.Settings(
+        pay_to=WEB_READ_PAY_TO, x402_pay_to=FINDER_BASE_PAY_TO,
+        resource_url="http://testserver/v1/find", data_dir=tmp_path,
+    )  # fmt: skip
+    task = finder.finder_task(svc, _catalog(), SECRET)
+    c = TestClient(svc.create_app(settings, facilitator=fac, task=task))
     unpaid = c.post("/v1/find", json={"need": "web page markdown"})
     offer = decode_payment_required(unpaid)
     offer.accepts[0].pay_to = WEB_READ_PAY_TO  # a buyer signing to the wrong merchant
     signed = sign_payment(offer)
-    r = c.post("/v1/find", json={"need": "web page markdown"}, headers={"PAYMENT-SIGNATURE": signed.header})
+    headers = {"PAYMENT-SIGNATURE": signed.header}
+    r = c.post("/v1/find", json={"need": "web page markdown"}, headers=headers)
     assert r.status_code != 200 and fac.calls_to("settle") == []
 
 

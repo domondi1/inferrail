@@ -349,6 +349,8 @@ def test_the_approved_finder_recipients_pass(preflight, tmp_path, capsys):
     ("expect", "needle"),
     [(None, "no --expect-finder-x402-pay-to"), ("0x" + "1" * 40, "not the approved")],
 )
-def test_a_wrong_or_unstated_finder_base_address_stops_the_deploy(preflight, tmp_path, expect, needle):
+def test_a_wrong_or_unstated_finder_base_address_stops_the_deploy(
+    preflight, tmp_path, expect, needle
+):
     problems = _finder_run(preflight, _env(tmp_path, **FINDER), expect)
     assert problems and needle in problems[0]
