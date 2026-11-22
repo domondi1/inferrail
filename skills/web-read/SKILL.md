@@ -1,6 +1,6 @@
 ---
 name: inferrail-web-read
-description: Read a public web page as clean markdown (title, main text, headings, lists, links, tables, word count, content hash) and pay $0.002 per delivered page in USDC over x402 on Base or MPP on Tempo, as an MCP tool or an HTTP call. Use when an agent with its own wallet needs the text of a URL, an article, docs page or product page; refused or failing pages are never charged, and a retry never pays twice.
+description: Read a public web page as clean markdown (title, main text, headings, lists, links, tables, word count, content hash) plus the page's own metadata (description, canonical URL, authors, published and modified dates, language), and pay $0.002 per delivered page in USDC over x402 on Base or MPP on Tempo, as an MCP tool or an HTTP call. Use when an agent with its own wallet needs the text of a URL, an article, docs page or product page; refused or failing pages are never charged, and a retry never pays twice.
 ---
 
 # Inferrail Web Read
@@ -41,13 +41,23 @@ lists Web Read (and the x402 Finder) in your agent's paid tools; it pays from th
 wallet you already have. With a Coinbase agentic wallet:
 `npx awal x402 pay https://inferrail-cost-gateway.onrender.com/read/v1/page -X POST -d '{"url": "https://..."}'`.
 
+## What a delivered page contains
+
+`title`, `content_markdown`, `word_count`, `content_sha256`, `final_url`, and `metadata`:
+`description`, `canonical_url`, `authors`, `published_at`, `modified_at` (ISO 8601, as the page
+wrote it), `language`, `site_name`, `image` and `type`. Each is exactly what the page declares
+(meta tags, Open Graph, JSON-LD); a field the page doesn't declare is `null` (`authors: []`),
+never guessed. Cite `canonical_url` and `published_at` when you quote a source.
+
 ## Rules that keep you from paying twice
 
 - Always send a `request_id`. If a response is lost, send the same url and request_id
   again from the same wallet within 10 minutes: you get the paid page and the new
   signature isn't settled.
 - Refused or failing pages cost nothing: 422 (unsupported or private address,
-  robots.txt, non-text, over 2 MB, or the site answered 4xx; retrying won't help);
+  robots.txt, non-text, over 2 MB, the site answered 4xx, the site served a bot check
+  (`bot_check`), or the page has no text without JavaScript (`no_readable_content`);
+  retrying won't help);
   502 or 504 (the site failed or timed out; may work later).
 - Guide: https://inferrail-cost-gateway.onrender.com/read/llms.txt. Contract:
   https://inferrail-cost-gateway.onrender.com/openapi.json.

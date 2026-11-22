@@ -6,14 +6,19 @@ need a page's text to finish a task: research, citation checks, docs lookups, ex
 - **Request:** `POST /read/v1/page` with `{"url": "https://...", "request_id": "optional"}`.
 - **Result:** `title`, `content_markdown` (main text, headings, lists, links; navigation,
   footers, scripts and cookie banners removed), `word_count`, `content_sha256`, `final_url`,
-  `fetched_at` and a `receipt` (`payment_ref`, `price_usd`, your `request_id`).
+  `fetched_at`, `metadata` and a `receipt` (`payment_ref`, `price_usd`, your `request_id`).
+- **Metadata:** `description`, `canonical_url`, `authors`, `published_at`, `modified_at`,
+  `language`, `site_name`, `image`, `type`: what the page itself declares (meta tags, Open
+  Graph, JSON-LD), in a documented order of precedence (`meta.py`). Undeclared or malformed
+  values are `null` (`authors: []`), never guessed. Dates are ISO 8601 as the page wrote them.
 - **Price:** $0.002 per delivered page, USDC on Base (`eip155:8453`), x402 `exact`.
 - **You pay only for a delivered page.** The payment settles after the page has been fetched
   and converted. Refusals return an error and nothing is charged:
   - 422 (retrying the same URL won't help): `unsupported_url`, `non_public_address`,
     `dns_failed`, `disallowed_by_robots_txt`, `unsupported_content_type`, `too_large` (over
     2 MB), `too_many_redirects`, `no_readable_content` (the page has no text without running
-    JavaScript), and `upstream_status` when the site answered 4xx (missing,
+    JavaScript), `bot_check` (the site served a known bot-check page: Amazon, Cloudflare,
+    DataDome or HUMAN), and `upstream_status` when the site answered 4xx (missing,
     gone, forbidden; `detail` is its status);
   - 502 (may succeed later): `upstream_status` when the site answered 5xx, 408 or 429, and
     `fetch_failed` (connection or TLS);
