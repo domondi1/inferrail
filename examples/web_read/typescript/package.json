@@ -1,0 +1,16 @@
+{
+  "name": "inferrail-web-read-ts-example",
+  "private": true,
+  "type": "module",
+  "description": "Reference only: buy Inferrail Web Read pages with the x402 client you already have (@x402/fetch).",
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/node": "22",
+    "@x402/core": "2.28.0",
+    "@x402/evm": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "viem": "2.57.3"
+  }
+}
