@@ -363,3 +363,62 @@ def test_a_wrong_or_unstated_finder_base_address_stops_the_deploy(
 ):
     problems = _finder_run(preflight, _env(tmp_path, **FINDER), expect)
     assert problems and needle in problems[0]
+
+
+# -- Domain Check: Base pays its own address, Tempo keeps Web Read's; off unless configured -----
+DOMAIN_BASE = "0x" + "D" * 40
+DOMAIN = {"DOMAIN_PAY_TO": WEB_READ, "READ_PAY_TO": WEB_READ, "DOMAIN_X402": "1",
+          "DOMAIN_X402_PAY_TO": DOMAIN_BASE, "DOMAIN_NETWORK": "eip155:8453",
+          "DOMAIN_MAINNET_APPROVED": "1", "DOMAIN_MPP_CHAIN_ID": "4217",
+          "DOMAIN_MPP_MAINNET_APPROVED": "1", "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
+
+
+def _domain_run(preflight, env, expect_domain, expect_read=WEB_READ):
+    return [p for p in preflight.check(
+        env, None, chain_id=lambda url: "0x2105", kinds=lambda e: {("exact", "eip155:8453")},
+        build=lambda settings: None, expect_read_pay_to=expect_read,
+        expect_domain_x402_pay_to=expect_domain,
+    ) if "Domain" in p or "DOMAIN" in p or "domain" in p]  # fmt: skip
+
+
+def test_the_approved_domain_recipients_pass(preflight, tmp_path, capsys, finder_env):
+    assert _domain_run(preflight, _env(tmp_path, **DOMAIN), DOMAIN_BASE) == []
+    out = capsys.readouterr().out
+    assert f"x402 payTo {DOMAIN_BASE}" in out and f"MPP payTo {WEB_READ}" in out
+
+
+@pytest.mark.parametrize(
+    ("change", "expect", "needle"),
+    [
+        ({}, None, "no --expect-domain-x402-pay-to"),
+        ({}, "0x" + "1" * 40, "not the approved"),
+        ({"DOMAIN_PAY_TO": "0x" + "2" * 40}, DOMAIN_BASE, "not Web Read's approved"),
+        ({"DOMAIN_X402": "0", "DOMAIN_X402_PAY_TO": None}, DOMAIN_BASE, "x402 is off"),
+        ({"DOMAIN_X402_PAY_TO": FINDER_BASE, "FINDER_X402_PAY_TO": FINDER_BASE}, FINDER_BASE,
+         "would not mount"),  # another service's Base address
+    ],
+)  # fmt: skip
+def test_a_wrong_domain_recipient_stops_the_deploy(
+    preflight, tmp_path, change, expect, needle, finder_env
+):
+    env = _env(tmp_path, **DOMAIN)
+    for k, v in change.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    problems = _domain_run(preflight, env, expect)
+    assert problems and needle in problems[0], problems
+
+
+def test_domain_check_off_leaves_the_deploy_unchanged(preflight, tmp_path, finder_env):
+    # No DOMAIN_PAY_TO: nothing about Domain Check is checked or required.
+    assert _domain_run(preflight, _env(tmp_path), None) == []
+    stray = _domain_run(preflight, _env(tmp_path), DOMAIN_BASE)
+    assert stray and "isn't configured" in stray[0]
+
+
+def test_mpp_only_domain_check_needs_no_base_address(preflight, tmp_path, finder_env):
+    env = _env(tmp_path, **{**DOMAIN, "DOMAIN_X402": "0"})
+    env.pop("DOMAIN_X402_PAY_TO")
+    assert _domain_run(preflight, env, None) == []
