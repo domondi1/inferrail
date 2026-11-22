@@ -12,7 +12,8 @@ need a page's text to finish a task: research, citation checks, docs lookups, ex
   and converted. Refusals return an error and nothing is charged:
   - 422 (retrying the same URL won't help): `unsupported_url`, `non_public_address`,
     `dns_failed`, `disallowed_by_robots_txt`, `unsupported_content_type`, `too_large` (over
-    2 MB), `too_many_redirects`, and `upstream_status` when the site answered 4xx (missing,
+    2 MB), `too_many_redirects`, `no_readable_content` (the page has no text without running
+    JavaScript), and `upstream_status` when the site answered 4xx (missing,
     gone, forbidden; `detail` is its status);
   - 502 (may succeed later): `upstream_status` when the site answered 5xx, 408 or 429, and
     `fetch_failed` (connection or TLS);
