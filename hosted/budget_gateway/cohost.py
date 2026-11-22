@@ -550,12 +550,15 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     finder = getattr(app.state, "finder_settings", None)
     if not app.state.discovery_paths or (read is None and found is None and finder is None):
         return "Inferrail Hosted", hosted
-    parts = []
+    # Agent clients copy this paragraph verbatim as the tool description a model reads to decide
+    # whether to use the origin (AgentCash's MCP instructions and its installed SKILL.md), so it
+    # leads with the tasks and prices; Hosted, which needs your own provider key, comes last.
+    parts = ["Pay-per-call tools for agents, charged only on delivery."]
     if read is not None:
         parts.append(
-            "Inferrail Web Read: any public web page as clean, LLM-ready markdown (URL to "
-            f"markdown) for ${read.price_usd} per delivered page, paid over {_rails(read)}; "
-            "failed or refused pages are never charged and a retry never pays twice."
+            "Inferrail Web Read: any public web page as clean markdown (URL to markdown), "
+            f"${read.price_usd} per delivered page, paid over {_rails(read)}; failed pages are "
+            "free and a retry never pays twice."
         )
     if found is not None:
         parts.append(
@@ -565,9 +568,9 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
         )
     if finder is not None:
         parts.append(
-            "Inferrail x402 Finder: which paid x402 API to call for a task, ranked by real 30-day "
-            f"paid usage, for ${finder.price_usd} per delivered answer, paid over "
-            f"{_search_rails(finder)}; no match is never charged."
+            "Inferrail x402 Finder: which paid x402 API fits a task, ranked by real 30-day paid "
+            f"usage, ${finder.price_usd} per answer, paid over {_search_rails(finder)}; no match "
+            "is free."
         )
     return "Inferrail", " ".join(parts) + " " + hosted
 
@@ -637,6 +640,18 @@ def origin_llms(app: Starlette) -> str:
         f"- [Inferrail Hosted]({base}/llms.txt): per-run dollar budgets shared across agents; "
         f"{settings.free_runs_per_month} governed runs a month free.",
         "",
+    ]
+    if app.state.discovery_paths and (read is not None or finder is not None):
+        lines += [
+            "## Use from an agent wallet you already have",
+            "",
+            f"- AgentCash: `npx agentcash add {origin}` lists these services in your agent's paid "
+            "tools (its MCP server and an installed skill); it pays from the AgentCash wallet.",
+            "- Coinbase agentic wallet: `npx awal x402 pay "
+            f'{origin}{READ_PREFIX}/v1/page -X POST -d \'{{"url": "https://..."}}\'`.',
+            "",
+        ]
+    lines += [
         "## Contract",
         "",
         f"- [OpenAPI]({origin}/openapi.json): every operation here, with price and schemas.",
@@ -716,7 +731,10 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
             "version": "1",
             "description": read_intro
             + (
-                "Inferrail Hosted: one dollar budget shared by every agent and process that "
+                "Also Inferrail Hosted: a dollar budget shared across agents' OpenAI and "
+                "Anthropic calls (your own provider key). How to call each: x-guidance."
+                if read_intro
+                else "Inferrail Hosted: one dollar budget shared by every agent and process that "
                 "uses a workspace key, reserved before each OpenAI or Anthropic call, so "
                 "parallel agents can't "
                 f"overspend a run. Create a workspace free with POST {base}/v1/workspaces; "

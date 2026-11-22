@@ -36,6 +36,11 @@ From Node with an x402 client you already use (`@x402/fetch`):
 your client refuse a Web Read offer above $0.002 or to another address before signing, and
 `readPage(paidFetch, url)` sends a request_id and retries a lost response with it.
 
+Already paying with AgentCash? `npx agentcash add https://inferrail-cost-gateway.onrender.com`
+lists Web Read (and the x402 Finder) in your agent's paid tools; it pays from the AgentCash
+wallet you already have. With a Coinbase agentic wallet:
+`npx awal x402 pay https://inferrail-cost-gateway.onrender.com/read/v1/page -X POST -d '{"url": "https://..."}'`.
+
 ## Rules that keep you from paying twice
 
 - Always send a `request_id`. If a response is lost, send the same url and request_id
