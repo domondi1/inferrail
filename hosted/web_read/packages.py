@@ -42,6 +42,23 @@ ECOSYSTEMS = ("npm", "PyPI", "Go", "crates.io", "Maven", "NuGet", "RubyGems", "P
               "Pub", "Hackage", "CRAN", "SwiftURL")  # fmt: skip
 # Record id prefixes from feeds whose licences don't allow this use (CC-BY-NC-ND, CC-BY-SA).
 EXCLUDED_PREFIXES = ("CGA-", "UBUNTU-", "USN-")
+# Attribution per advisory (CC-BY 4.0 asks for the source and licence): OSV id prefix ->
+# (database, licence). Unknown prefixes are attributed to OSV.dev's aggregated record.
+DATABASES = {
+    "GHSA-": ("GitHub Advisory Database", "CC-BY-4.0"),
+    "PYSEC-": ("PyPI Advisory Database", "CC-BY-4.0"),
+    "GO-": ("Go Vulnerability Database", "CC-BY-4.0"),
+    "RUSTSEC-": ("RustSec Advisory Database", "CC0-1.0"),
+    "OSV-": ("OSS-Fuzz", "CC-BY-4.0"),
+    "HSEC-": ("Haskell Security Advisories", "CC0-1.0"),
+    "MAL-": ("OpenSSF Malicious Packages", "Apache-2.0"),
+    "PSF-": ("Python Software Foundation", "CC-BY-4.0"),
+    "RSEC-": ("RConsortium Advisory Database", "Apache-2.0"),
+}
+NOTE = ("No known vulnerabilities means OSV.dev had no matching advisory at checked_at; it is not "
+        "a guarantee that a package is secure. A result with complete: false lists only the "
+        "advisories retrieved.")  # fmt: skip
+MAX_PAGES_PER_PACKAGE = 5
 SOURCE = (
     "OSV.dev (https://osv.dev); advisory data licensed per source (CC-BY 4.0, CC0, MIT, Apache-2.0)"
 )
@@ -112,6 +129,8 @@ VULN_SCHEMA: dict[str, Any] = {
         "severity": {"type": ["string", "null"]},
         "fixed": {"type": "array", "items": {"type": "string"}},
         "url": {"type": "string"},
+        "database": {"type": "string"},
+        "license": {"type": "string"},
     },
     "required": ["id", "url"],
 }
@@ -126,17 +145,24 @@ OUTPUT_SCHEMA: dict[str, Any] = {
                     "ecosystem": {"type": "string"},
                     "name": {"type": "string"},
                     "version": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["vulnerable", "no_known_vulnerabilities", "incomplete"],
+                    },
                     "vulnerable": {"type": "boolean"},
+                    "complete": {"type": "boolean"},
                     "vuln_count": {"type": "integer"},
                     "vulns": {"type": "array", "items": VULN_SCHEMA},
                 },
-                "required": ["ecosystem", "name", "version", "vulnerable", "vuln_count", "vulns"],
+                "required": ["ecosystem", "name", "version", "status", "vulnerable", "complete",
+                             "vuln_count", "vulns"],
             },
         },
         "checked": {"type": "integer"},
         "vulnerable_packages": {"type": "integer"},
         "details_truncated": {"type": "boolean"},
         "source": {"type": "string"},
+        "note": {"type": "string"},
         "checked_at": {"type": "string"},
         "results_sha256": {"type": "string"},
         "receipt": {"type": "object"},
@@ -192,7 +218,10 @@ def _fixed(record: dict[str, Any], ref: PackageRef) -> list[str]:
 
 
 def _vuln(vid: str, record: dict[str, Any] | None, ref: PackageRef) -> dict[str, Any]:
-    row: dict[str, Any] = {"id": vid, "url": f"https://osv.dev/vulnerability/{vid}"}
+    db, licence = next(((d, lic) for pre, (d, lic) in DATABASES.items() if vid.startswith(pre)),
+                       ("OSV.dev", "see https://google.github.io/osv.dev/data/"))  # fmt: skip
+    row: dict[str, Any] = {"id": vid, "url": f"https://osv.dev/vulnerability/{vid}",
+                           "database": db, "license": licence}  # fmt: skip
     if record is not None:
         row.update(aliases=[a for a in record.get("aliases") or [] if isinstance(a, str)],
                    summary=record.get("summary"), severity=_severity(record),
@@ -223,8 +252,29 @@ async def check(body: CheckRequest, client: Any, cache: _Cache) -> dict[str, Any
         raise OsvFailed(type(exc).__name__) from exc
     if len(batch) != len(queries):
         raise OsvFailed("result_count_mismatch")
-    ids_per = [[v["id"] for v in (row.get("vulns") or []) if isinstance(v, dict) and "id" in v
-                and not str(v["id"]).startswith(EXCLUDED_PREFIXES)] for row in batch]  # fmt: skip
+    def keep(vulns: Any) -> list[str]:
+        return [v["id"] for v in (vulns or []) if isinstance(v, dict) and "id" in v
+                and not str(v["id"]).startswith(EXCLUDED_PREFIXES)]  # fmt: skip
+
+    ids_per = [keep(row.get("vulns")) for row in batch]
+    # OSV pages long result lists: a row with next_page_token has more advisories. Fetch them, so a
+    # package is never reported short; if a page can't be fetched the package is marked incomplete.
+    complete = [not row.get("next_page_token") for row in batch]
+    for i, (row, q) in enumerate(zip(batch, queries, strict=True)):
+        token = row.get("next_page_token")
+        for _ in range(MAX_PAGES_PER_PACKAGE):
+            if not token:
+                complete[i] = True
+                break
+            try:
+                more = await client.post(f"{OSV_API}/query", json={**q, "page_token": token},
+                                         timeout=TIMEOUT_S)  # fmt: skip
+                more.raise_for_status()
+                page = more.json()
+            except Exception:  # noqa: BLE001 - leave it marked incomplete, never clean
+                break
+            ids_per[i] += [v for v in keep(page.get("vulns")) if v not in ids_per[i]]
+            token = page.get("next_page_token")
     wanted = list(dict.fromkeys(i for ids in ids_per for i in ids))
     fetch = [i for i in wanted[:MAX_DETAILS] if cache.get(i) is None]
     sem = asyncio.Semaphore(8)
@@ -240,16 +290,19 @@ async def check(body: CheckRequest, client: Any, cache: _Cache) -> dict[str, Any
 
     await asyncio.gather(*(detail(v) for v in fetch))
     results = []
-    for ref, ids in zip(body.packages, ids_per, strict=True):
+    for ref, ids, done in zip(body.packages, ids_per, complete, strict=True):
         vulns = [_vuln(v, cache.get(v) if v in wanted[:MAX_DETAILS] else None, ref) for v in ids]
+        # Never "clean" unless OSV returned the whole answer for this package.
+        status = "vulnerable" if vulns else ("no_known_vulnerabilities" if done else "incomplete")
         results.append({"ecosystem": ref.ecosystem, "name": ref.name, "version": ref.version,
-                        "vulnerable": bool(vulns), "vuln_count": len(vulns),
-                        "vulns": vulns})  # fmt: skip
+                        "status": status, "vulnerable": bool(vulns), "complete": done,
+                        "vuln_count": len(vulns), "vulns": vulns})  # fmt: skip
     return {
         "results": results,
         "checked": len(results),
         "vulnerable_packages": sum(1 for r in results if r["vulnerable"]),
         "details_truncated": len(wanted) > MAX_DETAILS,
+        "note": NOTE,
         "source": SOURCE,
         "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results_sha256": _sha256(results),
@@ -290,13 +343,16 @@ def package_task(service: Any, secret: bytes, client: Any = None) -> Any:
         return 200, row
 
     def example(price_usd: str) -> dict[str, Any]:
-        results = [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15", "vulnerable": True,
+        results = [{"ecosystem": "npm", "name": "lodash", "version": "4.17.15",
+                    "status": "vulnerable", "vulnerable": True, "complete": True,
                     "vuln_count": 1, "vulns": [{"id": "GHSA-35jh-r3h4-6jhm",
                     "aliases": ["CVE-2021-23337"], "summary": "Command Injection in lodash",
                     "severity": "HIGH", "fixed": ["4.17.21"],
-                    "url": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}]}]  # fmt: skip
+                    "url": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm",
+                    "database": "GitHub Advisory Database", "license": "CC-BY-4.0"}]}]  # fmt: skip
         return {"results": results, "checked": 1, "vulnerable_packages": 1,
-                "details_truncated": False, "source": SOURCE, "checked_at": "2026-11-22T00:00:00Z",
+                "details_truncated": False, "note": NOTE, "source": SOURCE,
+                "checked_at": "2026-11-22T00:00:00Z",
                 "results_sha256": _sha256(results),
                 "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": price_usd}}  # fmt: skip
 
@@ -320,7 +376,9 @@ def package_task(service: Any, secret: bytes, client: Any = None) -> Any:
                 if settings.mpp
                 else ""
             )
-            + "HTTP 200 = check delivered and paid (vulnerable: false is a delivered answer). "
+            + "HTTP 200 = check delivered and paid. Each result has status vulnerable, "
+            "no_known_vulnerabilities or incomplete (complete: false lists only what OSV returned; "
+            "never reported clean). No known vulnerabilities is not a guarantee of security. "
             "502 {error: upstream_failed} and 422 (invalid request) are not charged.\n"
             f"Data: {SOURCE}. Each advisory carries its OSV link; keep it when you show results.\n"
             f"Lost the response? Send the same packages and request_id again within "

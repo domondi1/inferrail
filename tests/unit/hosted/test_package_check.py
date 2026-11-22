@@ -5,6 +5,7 @@ that a retry never pays twice, that the package list is never recorded, and the 
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -43,8 +44,10 @@ LODASH = {
 }  # fmt: skip
 
 
-def _osv(batch: dict | None = None, fail: bool = False, details: dict | None = None):
-    """A fake OSV.dev: querybatch returns `batch` (or a 503), vulns/{id} returns `details`."""
+def _osv(batch: dict | None = None, fail: bool = False, details: dict | None = None,
+         pages: dict | None = None):  # fmt: skip
+    """A fake OSV.dev: querybatch returns `batch` (or a 503), vulns/{id} returns `details`,
+    query with a page_token returns pages[token] (a missing token answers 503)."""
     seen: list[str] = []
     details = {"GHSA-35jh-r3h4-6jhm": LODASH} if details is None else details
 
@@ -54,6 +57,10 @@ def _osv(batch: dict | None = None, fail: bool = False, details: dict | None = N
             if fail:
                 return httpx.Response(503)
             return httpx.Response(200, json=batch)
+        if request.url.path == "/v1/query":
+            token = json.loads(request.content).get("page_token")
+            page = (pages or {}).get(token)
+            return httpx.Response(200, json=page) if page is not None else httpx.Response(503)
         vid = request.url.path.rsplit("/", 1)[-1]
         return httpx.Response(200, json=details[vid]) if vid in details else httpx.Response(404)
 
@@ -99,7 +106,11 @@ def test_a_paid_check_reports_vulnerabilities_and_settles_once(tmp_path):
     assert v["id"] == "GHSA-35jh-r3h4-6jhm" and v["aliases"] == ["CVE-2021-23337"]
     assert v["severity"] == "HIGH" and v["fixed"] == ["4.17.21"]
     assert v["url"] == "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"
+    assert (v["database"], v["license"]) == ("GitHub Advisory Database", "CC-BY-4.0")
+    assert (lodash["status"], lodash["complete"]) == ("vulnerable", True)
     assert requests["vulnerable"] is False and requests["vulns"] == []
+    assert (requests["status"], requests["complete"]) == ("no_known_vulnerabilities", True)
+    assert "not a guarantee" in body["note"]
     assert body["checked"] == 2 and body["vulnerable_packages"] == 1 and "OSV.dev" in body["source"]
     assert body["receipt"]["price_usd"] == "0.002" and len(fac.calls_to("settle")) == 1
 
@@ -110,6 +121,30 @@ def test_a_clean_result_is_a_delivered_answer(tmp_path):
     r = _buy(_client(tmp_path, osv, fac), ONE)
     assert r.status_code == 200 and r.json()["results"][0]["vulnerable"] is False
     assert len(fac.calls_to("settle")) == 1
+
+
+def test_paged_results_are_fetched_to_completion(tmp_path):
+    batch = {"results": [{"vulns": [{"id": "GHSA-35jh-r3h4-6jhm"}], "next_page_token": "t1"}]}
+    pages = {"t1": {"vulns": [{"id": "GHSA-more"}], "next_page_token": "t2"},
+             "t2": {"vulns": [{"id": "GHSA-last"}]}}  # fmt: skip
+    osv, _ = _osv(batch, pages=pages)
+    res = _buy(_client(tmp_path, osv, FakeFacilitator()), ONE).json()["results"][0]
+    assert [v["id"] for v in res["vulns"]] == ["GHSA-35jh-r3h4-6jhm", "GHSA-more", "GHSA-last"]
+    assert res["complete"] is True and res["status"] == "vulnerable"
+
+
+def test_a_page_that_cannot_be_fetched_is_marked_incomplete_never_clean(tmp_path):
+    batch = {"results": [{"vulns": [{"id": "GHSA-35jh-r3h4-6jhm"}], "next_page_token": "lost"}]}
+    osv, _ = _osv(batch, pages={})
+    res = _buy(_client(tmp_path, osv, FakeFacilitator()), ONE).json()["results"][0]
+    assert res["complete"] is False and res["vulnerable"] is True and res["vuln_count"] == 1
+
+
+def test_an_empty_but_paged_result_is_incomplete_not_clean(tmp_path):
+    # Defensive: a row that has no advisories yet still says there are more.
+    osv, _ = _osv({"results": [{"next_page_token": "lost"}]}, pages={})
+    res = _buy(_client(tmp_path, osv, FakeFacilitator()), ONE).json()["results"][0]
+    assert res["status"] == "incomplete" and res["complete"] is False
 
 
 def test_an_osv_outage_is_never_charged(tmp_path):
