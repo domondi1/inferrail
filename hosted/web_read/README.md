@@ -12,6 +12,11 @@ need a page's text to finish a task: research, citation checks, docs lookups, ex
   Graph, JSON-LD), in a documented order of precedence (`meta.py`). Undeclared or malformed
   values are `null` (`authors: []`), never guessed. Dates are ISO 8601 as the page wrote them.
 - **Price:** $0.002 per delivered page, USDC on Base (`eip155:8453`), x402 `exact`.
+- **Several pages (off by default, `READ_BATCH=1`):** `POST /read/v1/pages` with
+  `{"urls": [...], "request_id": "..."}` (1-10 URLs, no duplicates) returns `pages` in the
+  order given, each as above. The 402 quotes N x $0.002 (x402 `exact` and MPP); it settles only
+  when every page is delivered. If any page fails, nothing is charged, no content is returned,
+  and `results` says which URLs failed so you can send again without them (`batch.py`).
 - **You pay only for a delivered page.** The payment settles after the page has been fetched
   and converted. Refusals return an error and nothing is charged:
   - 422 (retrying the same URL won't help): `unsupported_url`, `non_public_address`,

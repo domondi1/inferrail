@@ -150,16 +150,35 @@ class TempoRail:
         )
         # The challenge's `description` is what MPP indexes and clients show for the offer; it
         # isn't part of the challenge id, so changing it doesn't invalidate open challenges.
+        self.description = description
         self._charge = self.server.charge(
             amount=price_usd, **({"description": description} if description else {})
         )
+        self._charges: dict[int, Any] = {1: self._charge}
         self.atomic = int(Decimal(price_usd) * 10**6)
 
-    async def challenge_headers(self, url: str, method: str = "POST") -> list[tuple[str, str]]:
-        """The WWW-Authenticate header(s) of a fresh charge challenge for this route."""
+    def amount(self, units: int = 1) -> str:
+        """The charge amount for `units` units of the price ("0.002" x 3 -> "0.006")."""
+        if units == 1:
+            return self.price
+        return format((Decimal(self.price) * units).normalize(), "f")
+
+    def _charge_for(self, units: int) -> Any:
+        """The charge handler for `units` units (one per amount; the amount is in the HMAC)."""
+        if units not in self._charges:
+            self._charges[units] = self.server.charge(
+                amount=self.amount(units),
+                **({"description": self.description} if self.description else {}),
+            )
+        return self._charges[units]
+
+    async def challenge_headers(
+        self, url: str, method: str = "POST", units: int = 1
+    ) -> list[tuple[str, str]]:
+        """The WWW-Authenticate header(s) of a fresh charge challenge for this route and amount."""
         from mpp.server import Request as MppRequest
 
-        result = await self._charge(MppRequest(method=method, url=url, headers={}))
+        result = await self._charge_for(units)(MppRequest(method=method, url=url, headers={}))
         challenge = getattr(result, "challenge", None)
         if challenge is None:
             return []
@@ -167,7 +186,9 @@ class TempoRail:
             (k, v) for k, v in challenge.headers.multi_items() if k.lower() == "www-authenticate"
         ]
 
-    async def validate(self, authorization: str, url: str) -> tuple[Any, str, str] | str:
+    async def validate(
+        self, authorization: str, url: str, units: int = 1
+    ) -> tuple[Any, str, str] | str:
         """(credential, payer, credential type) when the credential is a valid, unspent payment
         for this route's price; otherwise the reason, as the error's class name (never its
         message, which can quote the credential). Nothing is broadcast.
@@ -181,7 +202,7 @@ class TempoRail:
             return "RouteMismatch"
         try:
             v = await self.server.validate_credential(
-                authorization, intent="charge", request={"amount": self.price}
+                authorization, intent="charge", request={"amount": self.amount(units)}
             )
         except Exception as exc:
             return type(exc).__name__
@@ -189,7 +210,7 @@ class TempoRail:
         kind = payload.get("type") if isinstance(payload, dict) else getattr(payload, "type", "")
         return v.credential, (v.payer or "").lower(), str(kind)
 
-    async def settle(self, credential: Any) -> Any:
+    async def settle(self, credential: Any, units: int = 1) -> Any:
         """Broadcast the transfer (or confirm an already-broadcast one). Returns the receipt.
 
         Raises `Unsettled` when the transfer definitely didn't happen (the buyer wasn't
@@ -200,7 +221,7 @@ class TempoRail:
 
         try:
             return await self.server.broadcast_credential(
-                credential, intent="charge", request={"amount": self.price}
+                credential, intent="charge", request={"amount": self.amount(units)}
             )
         except (InternalPaymentError, PaymentOutcomeUnknownError) as exc:
             raise OutcomeUnknown(type(exc).__name__) from exc
