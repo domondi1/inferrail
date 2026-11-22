@@ -136,6 +136,7 @@ jobs:
           tests/unit/hosted/test_web_read_meta.py
           tests/unit/hosted/test_web_read_batch.py
           tests/unit/hosted/test_agent_skills_distribution.py
+          tests/unit/hosted/test_package_check_ci_action.py actions/package-check
           tests/unit/hosted/test_budget_gateway.py
           tests/unit/hosted/test_budget_gateway_cohost.py
           tests/unit/hosted/test_budget_gateway_activation.py
@@ -168,6 +169,7 @@ jobs:
             tests/unit/hosted/test_web_read_meta.py \
             tests/unit/hosted/test_web_read_batch.py \
             tests/unit/hosted/test_agent_skills_distribution.py \
+            tests/unit/hosted/test_package_check_ci_action.py \
             tests/unit/hosted/test_godmode.py -v -rs | tee budget-gateway.log
           if grep -q "SKIPPED" budget-gateway.log; then
             echo "::error::a skipped Inferrail Hosted test must fail this job." >&2

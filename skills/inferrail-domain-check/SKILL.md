@@ -17,6 +17,13 @@ the same `request_id` never pays twice.
 - When you set up or debug DNS or email delivery (MX, TXT, CAA, nameservers).
 - When a user asks who registered a name, or whether it is registered at all.
 
+## When another tool is better
+
+If you have a shell with network access, `dig`, `nslookup` and `whois` are free and fine for a
+quick look at one record. Domain Check is worth paying for when you don't, or when you want the
+whole picture in one structured answer: every record type, the SPF and DMARC policy, and the
+registry's registration data (RDAP) with dates and status, without parsing WHOIS text.
+
 ## Paying from your agent (AgentCash wallet)
 
 The simplest path for a coding or research agent, with no API key and no account:
@@ -25,7 +32,8 @@ The simplest path for a coding or research agent, with no API key and no account
    wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
    low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
    Never pay beyond the budget your user approved.
-2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/domain/v1/lookup`: the exact request schema and price.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/domain/v1/lookup`
+   returns the exact request schema and price.
 3. Pay and get the result (`--max-amount` caps what one call may cost):
 
 ```bash
@@ -35,8 +43,8 @@ npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/domain/v1
 ```
 
 `X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
-identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
-service in your agent's paid tools.
+identity). To list every Inferrail service in your agent's paid tools once, run
+`npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`.
 
 ## How to call it
 
@@ -50,19 +58,9 @@ Optional: `"records"`: a subset of `A`, `AAAA`, `CNAME`, `MX`, `NS`, `TXT`, `SOA
 (default all), and `"registration": false` to skip the registry lookup. Internationalized names
 are accepted and answered in their ASCII (`xn--`) form.
 
-With the AgentCash wallet:
-
-```bash
-npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/domain/v1/lookup -m POST \
-  -H "Content-Type: application/json" -b '{"domain": "example.com"}' --max-amount 0.01
-```
-
-(Or once: `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com` to list Inferrail's
-services in your agent's paid tools.)
-
-Any other MPP or x402 client works the same way: the first response is HTTP 402 and lists each
-payment rail this service accepts (MPP on Tempo; x402 on Base when it is listed in the 402).
-Check that the price is $0.002 before you sign.
+Any x402 or MPP client works the same way: the first response is HTTP 402 with both offers
+(x402 on Base, MPP on Tempo). Check that the price is 2000 units ($0.002) of USDC before you
+sign.
 
 ## Reading the answer
 

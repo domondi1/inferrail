@@ -5,8 +5,23 @@ description: Read public web pages as clean markdown with each page's own metada
 
 # Inferrail Web Read
 
-One public web page as clean markdown, $0.002 per delivered page. No account, no API key:
-your agent pays per page from its own wallet.
+One public web page as clean markdown, $0.002 per delivered page, or up to 10 in one call. No
+account, no API key: your agent pays per page from its own wallet.
+
+## When to call it
+
+- A task needs the text of an article, docs page, changelog, release notes or product page.
+- You are gathering evidence from several sources you already have the URLs for (one call).
+- You need the page's own date, author or canonical URL to cite it.
+
+## When another tool is better
+
+If your environment already has a free web fetch tool that returns what you need, use it.
+Web Read is worth paying for when you have none (many agent runtimes don't), when you need
+clean markdown plus the page's declared metadata in one predictable JSON shape, or when you
+want several pages in one call. It reads pages without running JavaScript and honours
+robots.txt, so it can't read pages that need a browser or that block crawlers; those are
+refused and never charged.
 
 ## Paying from your agent (AgentCash wallet)
 
@@ -16,7 +31,8 @@ The simplest path for a coding or research agent, with no API key and no account
    wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
    low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
    Never pay beyond the budget your user approved.
-2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/read/v1/page`: the exact request schema and price.
+2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/read/v1/page`
+   returns the exact request schema and price.
 3. Pay and get the result (`--max-amount` caps what one call may cost):
 
 ```bash
@@ -26,8 +42,8 @@ npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/read/v1/p
 ```
 
 `X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
-identity). Prefer installing once with `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`: it lists every Inferrail
-service in your agent's paid tools.
+identity). To list every Inferrail service in your agent's paid tools once, run
+`npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`.
 
 ## As an MCP tool
 
@@ -57,10 +73,7 @@ From Node with an x402 client you already use (`@x402/fetch`):
 your client refuse a Web Read offer above $0.002 or to another address before signing, and
 `readPage(paidFetch, url)` sends a request_id and retries a lost response with it.
 
-Already paying with AgentCash? `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`
-lists Web Read (and the x402 Finder) in your agent's paid tools; it pays from the AgentCash
-wallet you already have. With a Coinbase agentic wallet:
-`npx awal x402 pay https://inferrail-cost-gateway.onrender.com/read/v1/page -X POST -d '{"url": "https://..."}'`.
+A Coinbase agentic wallet pays x402 too; we haven't tested that one with this endpoint.
 
 ## Several pages in one call
 
