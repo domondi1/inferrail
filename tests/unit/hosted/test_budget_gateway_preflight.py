@@ -477,3 +477,35 @@ def test_package_check_off_leaves_the_deploy_unchanged(preflight, tmp_path, find
     assert _pkg_run(preflight, _env(tmp_path), None) == []
     stray = _pkg_run(preflight, _env(tmp_path), PKG_BASE)
     assert stray and "isn't configured" in stray[0]
+
+
+# -- Web Read batch: checked only when READ_BATCH=1 --------------------------------------------
+def _read_batch_run(preflight, env):
+    return [p for p in preflight.check(
+        env, None, chain_id=lambda url: "0x2105", kinds=lambda e: {("exact", "eip155:8453")},
+        build=lambda settings: None, expect_read_pay_to=WEB_READ,
+    ) if "batch" in p.lower() or "READ_PAY_TO" in p]  # fmt: skip
+
+
+READ_ENV = {"READ_PAY_TO": WEB_READ, "READ_NETWORK": "eip155:8453", "READ_MAINNET_APPROVED": "1",
+        "BG_OPERATOR_TOKEN": "op"}  # fmt: skip
+
+
+def test_batch_off_changes_nothing(preflight, tmp_path, capsys, finder_env):
+    assert _read_batch_run(preflight, _env(tmp_path, **READ_ENV)) == []
+    assert "web read batch" not in capsys.readouterr().out
+
+
+def test_batch_on_mounts_with_web_reads_recipient(preflight, tmp_path, capsys, finder_env):
+    assert _read_batch_run(preflight, _env(tmp_path, **READ_ENV, READ_BATCH="1")) == []
+    assert f"web read batch: builds; price $0.002 per page, payTo {WEB_READ}" in (
+        capsys.readouterr().out
+    )
+
+
+def test_batch_on_but_unmountable_stops_the_deploy(preflight, tmp_path, finder_env, monkeypatch):
+    import cohost
+
+    monkeypatch.setattr(cohost, "web_read_batch_from_env", lambda *a, **k: None)
+    problems = _read_batch_run(preflight, _env(tmp_path, **READ_ENV, READ_BATCH="1"))
+    assert problems and "would not mount" in problems[0]

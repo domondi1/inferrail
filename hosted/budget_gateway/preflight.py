@@ -172,6 +172,7 @@ def check(
             if expect_read_pay_to and w.pay_to.lower() != expect_read_pay_to.lower():
                 problems.append(f"READ_PAY_TO is {w.pay_to}, not the approved {expect_read_pay_to}")
             problems += _check_read_extras(w, env, kinds, expect_read_extra or {})
+            problems += _check_read_batch(cohost, settings, env, w)
     if env.get("WEB_SEARCH_PAY_TO"):
         with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
             web_search = cohost.web_search_from_env(settings, {**env, "WEB_SEARCH_DATA_DIR": tmp})
@@ -256,6 +257,28 @@ def check(
         except Exception as ex:
             problems.append(f"facilitator check failed with the API key: {type(ex).__name__}")
     return problems
+
+
+def _check_read_batch(cohost: Any, settings: Any, env: dict[str, str], read: Any) -> list[str]:
+    """Web Read's batch (READ_BATCH=1) must mount and pay exactly Web Read's recipients: it is
+    fail-isolated at startup, so without this check a misconfiguration would only leave it
+    silently unmounted."""
+    if env.get("READ_BATCH") != "1":
+        return []
+    with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+        mounted = cohost.web_read_batch_from_env(
+            settings, {**env, "READ_DATA_DIR": tmp, "READ_BATCH_DATA_DIR": tmp + "/batch"}
+        )
+    if mounted is None:
+        return ["Web Read batch is on (READ_BATCH=1) but would not mount; the configuration "
+                "error is logged above"]  # fmt: skip
+    b = mounted[1]
+    print(f"web read batch: builds; price ${b.price_usd} per page, payTo {b.pay_to}")
+    if (b.pay_to.lower(), b.x402_recipient.lower(), b.price_usd) != (
+        read.pay_to.lower(), read.x402_recipient.lower(), read.price_usd
+    ):
+        return ["Web Read batch would not pay Web Read's recipients at its price"]
+    return []
 
 
 def _check_domain(
