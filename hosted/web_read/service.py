@@ -753,7 +753,8 @@ def _page_guide(settings: Settings) -> str:
         )
         + "Errors (never charged): 422 {error: unsupported_url | non_public_address | "
         "dns_failed | disallowed_by_robots_txt | unsupported_content_type | too_large | "
-        "too_many_redirects | upstream_status (the site answered 4xx: missing, gone or "
+        "too_many_redirects | no_readable_content (no text without running JavaScript) | "
+        "upstream_status (the site answered 4xx: missing, gone or "
         "forbidden; detail is its status)} means retrying the same URL won't help; "
         "502 {error: upstream_status (the site answered 5xx, 408 or 429) | fetch_failed} "
         "and 504 {error: timeout} may succeed later.\n"
@@ -776,6 +777,13 @@ def page_task(reader: Any) -> Task:
             title, content = extract.html_to_markdown(text, got.final_url)
         else:
             title, content = "", text.strip()
+        if not content.strip():
+            # Nothing readable without running JavaScript (or an empty body): charging for an
+            # empty page would bill the buyer for nothing, so it is refused like any other.
+            event("refused", "no_readable_content")
+            return 422, {"error": "no_readable_content",
+                         "detail": "the page has no text without running JavaScript",
+                         "charged": False}  # fmt: skip
         row = {
             "url": body.url,
             "final_url": got.final_url,

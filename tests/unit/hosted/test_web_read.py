@@ -132,6 +132,14 @@ def test_a_paid_read_delivers_markdown_with_a_receipt_and_settles_once(tmp_path)
         ("https://news.test/hop", {"news.test/robots.txt": ROBOTS_OK, "news.test/hop":
             httpx.Response(302, headers={"location": "http://internal.test/meta"})},
          422, "non_public_address"),
+        # A JavaScript-only page: a title and scripts, no text. Billing it would charge for nothing.
+        ("https://news.test/app", {"news.test/robots.txt": ROBOTS_OK, "news.test/app":
+            httpx.Response(200, headers=HTML, text="<html><head><title>App</title><script>"
+                           "boot()</script></head><body><div id=root></div></body></html>")},
+         422, "no_readable_content"),
+        ("https://news.test/empty.txt", {"news.test/robots.txt": ROBOTS_OK, "news.test/empty.txt":
+            httpx.Response(200, text="  \n", headers={"content-type": "text/plain"})},
+         422, "no_readable_content"),
     ],
 )  # fmt: skip
 def test_a_refused_read_is_never_charged(tmp_path, url, site, status, code):
@@ -595,6 +603,7 @@ def test_the_published_contract_lists_every_refusal_status(tmp_path):
         assert {"402", "422", "502", "504"} <= set(responses)
         guide = c.get("/read/llms.txt").text
         assert "504 {error: timeout}" in guide and "the site answered 4xx" in guide
+        assert "no_readable_content" in guide
 
 
 @pytest.mark.parametrize("mpp", [False, True])
