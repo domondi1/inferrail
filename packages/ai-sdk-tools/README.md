@@ -19,6 +19,15 @@ robots.txt refusal, a timeout or an upstream failure costs nothing, and the mode
 `request_id`; a network failure is retried once with the same id, which the service
 answers with the paid result instead of charging again.
 
+## Install
+
+```bash
+npm i @inferrail/ai-sdk-tools ai zod @x402/fetch @x402/evm viem
+```
+
+`ai` (5 or later) and `zod` (3.25 or later) are peer dependencies; the package has no
+dependencies of its own and no install scripts.
+
 ## Use
 
 ```ts
@@ -48,10 +57,11 @@ call returns a 402 result and nothing is bought.
 from Inferrail's origin, it refuses an amount above the listed price and any receiving
 address other than that service's own. Offers from other sellers pass through untouched.
 
-## Not on npm yet
+## Provenance
 
-Until this package is published, copy `src/index.ts` into your project. It's one file, and
-it depends only on `ai` (5 or later) and `zod` (3.25 or later).
+Every release is built and published by GitHub Actions from this repository
+(`.github/workflows/npm-publish.yml`) with an npm provenance attestation. Check it with
+`npm audit signatures`, or on the package page.
 
 ## Details
 
@@ -67,6 +77,9 @@ it depends only on `ai` (5 or later) and `zod` (3.25 or later).
   | Package Check | `0xe9c1249648257C1C1D70F8b7682851C377bb8f53` |
   | Domain Check | `0xb95D56f169324A0B23B82bd3975635Cf0187ce07` |
 
+- Page text is whatever the site published. Treat `content_markdown` as untrusted input,
+  not as instructions. An agent that can spend or run code should keep that boundary in
+  its prompt and in its tool permissions.
 - A clean package check isn't a guarantee. It means no known advisory in OSV.dev's
   open-licensed sources.
 - `bun test` runs offline. `LIVE=1 bun test` also checks each live offer against the price
