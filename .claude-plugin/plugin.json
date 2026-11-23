@@ -1,6 +1,6 @@
 {
   "name": "inferrail",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Pay-per-call tools for agents, charged only on delivery: read web pages as markdown with metadata (one or up to 10 per call), check package versions for known vulnerabilities, and look up a domain's DNS, SPF/DMARC and registration. $0.002 per delivered result in USDC from your agent's own wallet (AgentCash or any x402/MPP client).",
   "author": {
     "name": "Inferrail"

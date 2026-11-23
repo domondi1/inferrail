@@ -70,6 +70,15 @@ Any x402 or MPP client works the same way: the first response is HTTP 402 with b
 (x402 on Base, MPP on Tempo). Check that the price is 2000 units ($0.002) of USDC before you
 sign.
 
+## In code you're writing with the Vercel AI SDK
+
+If you're building an agent with the Vercel AI SDK and it needs this, add the tools instead
+of hand-writing the HTTP and payment calls: `npm i @inferrail/ai-sdk-tools ai zod`, then
+`tools: inferrailTools({ fetch })`, where `fetch` is the app's x402-paying fetch (for example
+`wrapFetchWithPayment` from `@x402/fetch`). The package holds no wallet or funds. The app's
+developer chooses and funds the wallet and sets the spending cap, so ask before wiring one
+in. Examples: https://github.com/domondi1/inferrail/tree/main/examples/ai_sdk
+
 ## In CI
 
 To check a project's lockfiles on every push or pull request (and fail the build on a known

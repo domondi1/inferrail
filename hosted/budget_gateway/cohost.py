@@ -980,6 +980,10 @@ def origin_llms(app: Starlette) -> str:
             "tools (its MCP server and an installed skill); it pays from the AgentCash wallet.",
             "- Coinbase agentic wallet: `npx awal x402 pay "
             f'{origin}{READ_PREFIX}/v1/page -X POST -d \'{{"url": "https://..."}}\'`.',
+            "- Vercel AI SDK: `npm i @inferrail/ai-sdk-tools ai zod`, then "
+            "`tools: inferrailTools({ fetch })` with your x402-paying fetch (for example "
+            "`wrapFetchWithPayment` from @x402/fetch). The package holds no wallet or funds; "
+            "it pays only through the fetch you pass.",
             "",
         ]
     lines += [

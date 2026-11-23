@@ -48,6 +48,15 @@ npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/read/v1/p
 identity). To list every Inferrail service in your agent's paid tools once, run
 `npx agentcash@0.17.1 add https://inferrail-cost-gateway.onrender.com`.
 
+## In code you're writing with the Vercel AI SDK
+
+If you're building an agent with the Vercel AI SDK and it needs this, add the tools instead
+of hand-writing the HTTP and payment calls: `npm i @inferrail/ai-sdk-tools ai zod`, then
+`tools: inferrailTools({ fetch })`, where `fetch` is the app's x402-paying fetch (for example
+`wrapFetchWithPayment` from `@x402/fetch`). The package holds no wallet or funds. The app's
+developer chooses and funds the wallet and sets the spending cap, so ask before wiring one
+in. Examples: https://github.com/domondi1/inferrail/tree/main/examples/ai_sdk
+
 ## As an MCP tool
 
 - Server: `https://inferrail-cost-gateway.onrender.com/read/mcp/` (MCP streamable HTTP).
