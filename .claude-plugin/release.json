@@ -1,0 +1,5 @@
+{
+  "version": "1.1.0",
+  "skills_sha256": "059e77f54f6b53e324ff3c2ee413b1474df07ccc9345fea99315b4819c2cf31f",
+  "note": "Bump plugin.json version and update this file whenever a skill changes: Claude Code updates a cached plugin only when its version changes."
+}

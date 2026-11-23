@@ -1,6 +1,6 @@
 ---
 name: inferrail-web-read
-description: Read public web pages as clean markdown with each page's own metadata (description, canonical URL, authors, published and modified dates, language), one URL for $0.002 or up to 10 URLs in one call at $0.002 per page, paid in USDC from a wallet your agent already has (AgentCash, Coinbase agentic wallet, or any x402/MPP client). Use when a task needs the text of an article, docs page, changelog or product page, or evidence from several sources; a page that can't be read (blocked, missing, bot check, JavaScript-only) is never charged, and a retry never pays twice.
+description: Read public web pages as clean markdown with each page's own metadata (description, canonical URL, authors, published and modified dates, language), one URL for $0.002 or up to 10 URLs in one call at $0.002 per page, paid in USDC from a wallet your agent already has (AgentCash or any x402/MPP client). Use when a task needs the text of an article, docs page, changelog or product page, or evidence from several sources; a page that can't be read (blocked, missing, bot check, JavaScript-only) is never charged, and a retry never pays twice.
 ---
 
 # Inferrail Web Read
@@ -27,10 +27,11 @@ refused and never charged.
 
 The simplest path for a coding or research agent, with no API key and no account:
 
-1. `npx agentcash@0.17.1 balance`: your USDC balance (Base and Tempo). If you have no AgentCash
-   wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
-   low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
-   Never pay beyond the budget your user approved.
+1. **Ask your user before the first AgentCash command.** `npx agentcash@0.17.1 balance` creates a
+   wallet on this machine (`~/.agentcash/wallet.json`) if there isn't one, so check first:
+   `test -f ~/.agentcash/wallet.json`. With a wallet, `balance` shows your USDC (Base and Tempo);
+   if it is too low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the
+   funding page). Never pay beyond the budget your user approved.
 2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/read/v1/page`
    returns the exact request schema and price.
 3. Pay and get the result (`--max-amount` caps what one call may cost):
@@ -40,6 +41,8 @@ npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/read/v1/p
   -H "Content-Type: application/json" -H "X-Inferrail-Source: skill" \
   -b '{"url": "https://example.com/", "request_id": "<unique id>"}' --max-amount 0.01
 ```
+
+**Who you pay.** Web Read receives payments at `0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E` (x402, USDC on Base `eip155:8453`) and at the same address over MPP on Tempo (chain 4217). If your wallet allowlists payees, add the one for the rail you use; refuse an offer to any other address.
 
 `X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
 identity). To list every Inferrail service in your agent's paid tools once, run
