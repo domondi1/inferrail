@@ -109,14 +109,20 @@ OUTPUT_SCHEMA: dict[str, Any] = {
     },
     "required": ["url", "final_url", "content_markdown", "word_count", "content_sha256"],
 }
+# Echoed by the buyer in its payment and forwarded to the facilitator, so it stays the text the
+# CDP facilitator accepted for every settled sale (373 characters). On 2026-11-22 a longer one
+# (501) and a metadata schema with ["string", "null"] types went out together, and from then on
+# the facilitator refused every verify request with HTTP 400. Richer wording lives in OpenAPI and
+# the guides, which are never echoed.
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
-    "with the page's own metadata (description, canonical URL, authors, published date, "
-    "language), word count, a content hash and a receipt. Pay only for a delivered page: a "
-    "blocked, missing or failing page (target-site 403, 404, 5xx, timeout, bot check, no text "
-    "without JavaScript) costs nothing, and neither do refusals (robots.txt, non-public "
-    "address, non-text, >2 MB). A retry from the same wallet never pays twice."
+    "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
+    "missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do "
+    "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
+    "never pays twice."
 )
+# The longest offer description the CDP facilitator has accepted; a test keeps every task under it.
+OFFER_DESCRIPTION_MAX = 373
 
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
 MPP_DESCRIPTION = (
@@ -165,6 +171,36 @@ class Task:
     # means one: the price is fixed. A task with units has its request validated before any
     # offer is made, and every offer, check, receipt and settlement is for units x price.
     units: Callable[[Any], int] | None = None
+    # The output schema published in the 402's discovery extension (echoed by the buyer to the
+    # facilitator). None means output_schema; either way it is made facilitator-safe first.
+    discovery_schema: dict[str, Any] | None = None
+
+
+def bazaar_safe(value: Any) -> Any:
+    """A schema or example as it may go in the 402's discovery extension: every JSON Schema
+    `type` list becomes its first non-null type and every null value is dropped. Buyers echo the
+    extension to the facilitator; the shapes accepted for every settled sale had neither."""
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if k == "type" and isinstance(v, list):
+                v = next((t for t in v if t != "null"), "string")
+            if v is None:
+                continue
+            out[k] = bazaar_safe(v)
+        return out
+    if isinstance(value, list):
+        return [bazaar_safe(v) for v in value if v is not None]
+    return value
+
+
+def discovery_output(task: Any, example: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(schema, example) for the 402's discovery extension: the task's discovery schema, and the
+    example reduced to that schema's top-level fields, both facilitator-safe."""
+    schema = task.discovery_schema or task.output_schema
+    keys = set((schema.get("properties") or {}).keys())
+    trimmed = {k: v for k, v in example.items() if not keys or k in keys}
+    return bazaar_safe(schema), bazaar_safe(trimmed)
 
 
 def price_for(price_usd: str, units: int) -> str:
@@ -572,10 +608,14 @@ class ExplainedFacilitator:
             except ValueError:
                 data = {}
             data = data if isinstance(data, dict) else {}
-            reason = data.get("invalidReason") if 400 <= status < 500 else None
+            # An invalid payment: {invalidReason, invalidMessage}; a request the API refused:
+            # {errorType, errorMessage} (both with a correlationId).
+            reason = (data.get("invalidReason") or data.get("errorType")
+                      if 400 <= status < 500 else None)  # fmt: skip
             reason = re.sub(r"[^a-z0-9_]", "_", str(reason or "facilitator_unavailable").lower())
             note = {"reason": reason[:64], "status": str(status or "none")}
-            message = re.sub(r"\s+", " ", str(data.get("invalidMessage") or ""))[:200]
+            message = re.sub(r"\s+", " ", str(data.get("invalidMessage") or data.get("errorMessage")
+                                               or ""))[:200]  # fmt: skip
             if message:
                 note["message"] = message
             cid = str(data.get("correlationId") or "")
@@ -947,7 +987,10 @@ def page_task(reader: Any) -> Task:
             "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": price_usd},
         }
 
+    discovery = {**OUTPUT_SCHEMA, "properties": {
+        k: v for k, v in OUTPUT_SCHEMA["properties"].items() if k != "metadata"}}  # fmt: skip
     return Task(
+        discovery_schema=discovery,
         path="/v1/page",
         request_model=PageRequest,
         service_name="Inferrail Web Read",
@@ -1120,6 +1163,7 @@ def create_app(
     if settings.x402:
         server = make_x402_server(ExplainedFacilitator(facilitator))
     example = task.output_example(settings.price_usd)
+    offer_schema, offer_example = discovery_output(task, example)
 
     def unit_price(_context: Any) -> str:
         """The x402 price of this request: units x price (units set by the middleware)."""
@@ -1142,7 +1186,7 @@ def create_app(
             extensions=declare_discovery_extension(
                 input=task.input_example,
                 input_schema=task.request_model.model_json_schema(),
-                output=OutputConfig(example=example, schema=task.output_schema),
+                output=OutputConfig(example=offer_example, schema=offer_schema),
                 **body,
             ),
         )

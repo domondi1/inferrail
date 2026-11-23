@@ -1,0 +1,166 @@
+{
+ "extensions": {
+  "bazaar": {
+   "info": {
+    "input": {
+     "body": {
+      "url": "https://example.com/"
+     },
+     "bodyType": "json",
+     "method": "POST",
+     "type": "http"
+    },
+    "output": {
+     "example": {
+      "content_markdown": "# Example Domain\n\nThis domain is for use in examples...",
+      "content_sha256": "3f1c\u2026",
+      "fetched_at": "2026-10-16T12:00:00Z",
+      "final_url": "https://example.com/",
+      "receipt": {
+       "payment_ref": "0xpayer:0xnonce",
+       "price_usd": "0.002"
+      },
+      "title": "Example Domain",
+      "url": "https://example.com/",
+      "word_count": 28
+     },
+     "type": "json"
+    }
+   },
+   "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "input": {
+      "additionalProperties": false,
+      "properties": {
+       "body": {
+        "properties": {
+         "request_id": {
+          "default": null,
+          "description": "Your id, echoed back. Retrying with the same url and request_id within the recovery window returns the paid page without a second charge.",
+          "maxLength": 128,
+          "title": "Request Id",
+          "type": "string"
+         },
+         "url": {
+          "description": "Public http(s) URL to read",
+          "maxLength": 2048,
+          "title": "Url",
+          "type": "string"
+         }
+        },
+        "required": [
+         "url"
+        ],
+        "title": "PageRequest",
+        "type": "object"
+       },
+       "bodyType": {
+        "enum": [
+         "json",
+         "form-data",
+         "text"
+        ],
+        "type": "string"
+       },
+       "method": {
+        "enum": [
+         "POST",
+         "PUT",
+         "PATCH"
+        ],
+        "type": "string"
+       },
+       "type": {
+        "const": "http",
+        "type": "string"
+       }
+      },
+      "required": [
+       "type",
+       "method",
+       "bodyType",
+       "body"
+      ],
+      "type": "object"
+     },
+     "output": {
+      "properties": {
+       "example": {
+        "properties": {
+         "content_markdown": {
+          "type": "string"
+         },
+         "content_sha256": {
+          "type": "string"
+         },
+         "fetched_at": {
+          "type": "string"
+         },
+         "final_url": {
+          "type": "string"
+         },
+         "receipt": {
+          "properties": {
+           "payment_ref": {
+            "type": "string"
+           },
+           "price_usd": {
+            "type": "string"
+           },
+           "request_id": {
+            "type": "string"
+           }
+          },
+          "type": "object"
+         },
+         "title": {
+          "type": "string"
+         },
+         "url": {
+          "type": "string"
+         },
+         "word_count": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "url",
+         "final_url",
+         "content_markdown",
+         "word_count",
+         "content_sha256"
+        ],
+        "type": "object"
+       },
+       "type": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "type"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "input"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ "resource": {
+  "description": "Read one public web page as clean markdown (title, main text, headings, lists, links), with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet never pays twice.",
+  "iconUrl": "https://tryinferrail.com/favicon-192x192.png",
+  "mimeType": "application/json",
+  "serviceName": "Inferrail Web Read",
+  "tags": [
+   "web-read",
+   "scrape",
+   "markdown",
+   "fetch"
+  ],
+  "url": "https://inferrail-cost-gateway.onrender.com/read/v1/page"
+ }
+}
