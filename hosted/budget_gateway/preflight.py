@@ -220,6 +220,7 @@ def check(
                                 f"{expect_finder_x402_pay_to}")  # fmt: skip
     problems += _check_domain(cohost, settings, env, expect_read_pay_to, expect_domain_x402_pay_to)
     problems += _check_package(cohost, settings, env, expect_read_pay_to, expect_pkg_x402_pay_to)
+    problems += check_offers(cohost, settings, env)
     if env.get("CDP_WALLET_SECRET"):
         problems.append(
             "CDP_WALLET_SECRET is set: remove it; this service never signs for a wallet"
@@ -256,6 +257,76 @@ def check(
                 problems.append(f"the facilitator does not support exact on {network}")
         except Exception as ex:
             problems.append(f"facilitator check failed with the API key: {type(ex).__name__}")
+    return problems
+
+
+def _offline_facilitator(s: Any) -> Any:
+    """While the offer check asks an app for its 402, the x402 middleware's start-up lookup of
+    what the facilitator supports is answered locally (exact on the route's own networks)
+    instead of over the network. Whether the facilitator really supports them is checked
+    separately, with the API key, by `check`."""
+    from unittest import mock
+
+    from x402.http import HTTPFacilitatorClient
+    from x402.schemas import SupportedKind, SupportedResponse
+
+    networks = [s.network, *dict(getattr(s, "extra_networks", ())).keys()]
+    answer = SupportedResponse(
+        kinds=[SupportedKind(x402_version=2, scheme="exact", network=n) for n in networks],
+        extensions=[], signers={},
+    )  # fmt: skip
+    return mock.patch.object(HTTPFacilitatorClient, "get_supported", lambda self: answer)
+
+
+def check_offers(cohost: Any, settings: Any, env: dict[str, str]) -> list[str]:
+    """Each paid route's own unpaid 402, as this deploy would serve it, checked against the CDP
+    facilitator's published verify schema (hosted/web_read/x402_contract.py). A buyer echoes the
+    offer's resource and extensions into its payment, so a field out of that schema (on
+    2026-11-23, a 501-character description where 500 is allowed) gets every payment refused at
+    verify while the offer looks valid. No network call and no payment: the app is asked for its
+    402 in-process, on a throwaway data directory."""
+    from fastapi.testclient import TestClient
+
+    contract = cohost._load("web_read_x402_contract",
+                            cohost.HOSTED_DIR.parent / "web_read" / "x402_contract.py")  # fmt: skip
+    routes = [
+        ("web read", "READ_PAY_TO", cohost.web_read_from_env, ("READ_DATA_DIR",)),
+        ("web read batch", "READ_BATCH", cohost.web_read_batch_from_env, ("READ_BATCH_DATA_DIR",)),
+        ("x402 finder", "FINDER_PAY_TO", cohost.finder_from_env, ("FINDER_DATA_DIR",)),
+        ("package check", "PKG_PAY_TO", cohost.package_check_from_env, ("PKG_DATA_DIR",)),
+        ("domain check", "DOMAIN_PAY_TO", cohost.domain_check_from_env, ("DOMAIN_DATA_DIR",)),
+    ]
+    problems: list[str] = []
+    for name, flag, factory, dirs in routes:
+        if not env.get(flag):
+            continue
+        with tempfile.TemporaryDirectory() as tmp:  # never touch the real disk here
+            mounted = factory(settings, {**env, "READ_DATA_DIR": tmp + "/r",
+                                         **{d: f"{tmp}/{d.lower()}" for d in dirs}})  # fmt: skip
+            if mounted is None:
+                continue  # already reported by that route's own check
+            app, s = mounted
+            if not getattr(s, "x402", True):
+                print(f"{name}: x402 off; no facilitator contract to check")
+                continue
+            task = app.state.task
+            with _offline_facilitator(s):
+                r = TestClient(app).post(f"{s.mount_prefix}{task.path}", json=task.input_example)
+            header = r.headers.get("payment-required")
+            if r.status_code != 402 or not header:
+                problems.append(f"{name}: the unpaid request got HTTP {r.status_code}, not a 402 "
+                                "with an x402 offer")  # fmt: skip
+                continue
+            try:
+                found = contract.offer_problems(contract.decode_payment_required(header))
+            except ImportError:
+                problems.append(f"{name}: cdp-sdk is missing, so the offer can't be checked")
+                continue
+            if found:
+                problems += [f"{name}: the facilitator would refuse every payment: {p}"
+                             for p in found]  # fmt: skip
+            else:
+                print(f"{name}: offer passes the facilitator's verify schema")
     return problems
 
 
