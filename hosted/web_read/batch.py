@@ -30,12 +30,10 @@ CONCURRENCY = 4  # pages fetched at once per batch
 DEADLINE_S = 45.0  # the whole batch; each page also has the fetcher's own timeout
 MAX_TOTAL_CHARS = 4_000_000  # markdown across the batch; beyond it the batch is refused (free)
 
-DESCRIPTION = (
-    "Read up to 10 public web pages in one call as clean markdown, each with its own metadata "
-    "(description, canonical URL, authors, published date, language), word count and content "
-    "hash, in the order given. $0.002 per page, settled in one payment for the whole batch. "
-    "All or nothing: if any page fails (blocked, missing, robots.txt, bot check, no text), "
-    "nothing is charged and the answer lists which URLs failed. A retry never pays twice."
+DESCRIPTION = (  # echoed to the facilitator: kept under service.OFFER_DESCRIPTION_MAX
+    "Read up to 10 public web pages in one call as clean markdown with each page's metadata, in "
+    "the order given. $0.002 per page in one payment. All or nothing: if any page fails, nothing "
+    "is charged and the answer lists which URLs failed. A retry never pays twice."
 )
 MPP_DESCRIPTION = (
     "Up to 10 public web pages as clean markdown in one call, $0.002 per page. Charged only "

@@ -769,3 +769,76 @@ def test_every_explained_code_matches_how_the_payment_code_records_it():
     for code, _ in gmod._REASON_TEXT:
         assert gmod.fold_reason("x402", code) == svc._reason("x402", code)
         assert gmod.fold_reason("x402", code) in gmod.REASONS
+
+
+# -- the facilitator's explanation of a refused payment ----------------------------------------
+class Http400Facilitator(FakeFacilitator):
+    """Answers verify the way the CDP facilitator answers an invalid payment: HTTP 400, JSON."""
+
+    async def verify(self, payload, requirements):
+        from _x402_fake_facilitator import payer_of
+
+        body = {"correlationId": "a5ee1234-abcd", "invalidMessage": "payer balance 0 < 2000",
+                "invalidReason": "insufficient_funds", "isValid": False,
+                "payer": payer_of(payload)}  # fmt: skip
+        raise ValueError(f"Facilitator verify failed (400): {json.dumps(body)}")
+
+
+def test_a_facilitator_400_is_a_clean_refusal_with_its_reason_recorded(tmp_path):
+    fac = Http400Facilitator()
+    c, store, settings = _x402_app(tmp_path, fac=fac)
+    header = _sign(c, "https://news.test/a")
+    r = c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": header})  # fmt: skip
+    assert r.status_code == 402 and fac.calls_to("settle") == []
+    # The buyer's client gets the standard x402 reason, not the SDK's exception text.
+    assert decode_payment_required(r).error == "insufficient_funds"
+    (p,) = _evidence(store, settings).purchases()
+    assert p["status"] == "rejected" and p["codes"] == ["x402:insufficient_funds"]
+    (ev,) = [e for e in store.rows("SELECT * FROM events WHERE type='payment_rejected'")]
+    note = json.loads(ev["detail"])["facilitator"]
+    assert note == {"reason": "insufficient_funds", "status": "400",
+                    "message": "payer balance 0 < 2000", "correlation_id": "a5ee1234-abcd"}
+
+
+def test_an_unreachable_facilitator_is_a_refusal_not_a_crash(tmp_path):
+    class Down(FakeFacilitator):
+        async def verify(self, payload, requirements):
+            raise ValueError("Facilitator verify failed (503): upstream down")
+
+    fac = Down()
+    c, store, _ = _x402_app(tmp_path, fac=fac)
+    r = c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": _sign(c, "https://news.test/a")})  # fmt: skip
+    assert r.status_code == 402 and decode_payment_required(r).error == "facilitator_unavailable"
+    assert fac.calls_to("settle") == []
+
+
+def test_the_rejections_report_is_read_only_and_needs_the_operator_token(tmp_path):
+    fac = Http400Facilitator()
+    c, store, settings = _x402_app(tmp_path, fac=fac)
+    for _ in range(2):
+        c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": _sign(c, "https://news.test/a")})  # fmt: skip
+    assert c.get("/v1/operator/rejections").status_code == 401
+    wrong = {"Authorization": "Bearer no"}
+    assert c.get("/v1/operator/rejections", headers=wrong).status_code == 401
+    r = c.get("/v1/operator/rejections", headers={"Authorization": "Bearer op"})
+    assert r.status_code == 200
+    rep = r.json()
+    assert rep["count"] == 2
+    assert all(x["codes"] == ["x402:insufficient_funds"] for x in rep["rejections"])
+    x = rep["rejections"][0]
+    assert x["payer"] and x["payer_ever_settled"] is False and x["route"] == "/v1/page"
+    assert x["facilitator"][0]["correlation_id"] == "a5ee1234-abcd"
+    assert "signature" not in r.text.lower()  # no payment material is stored or returned
+    assert c.post("/v1/operator/rejections").status_code == 405
+
+
+def test_a_settled_purchase_is_not_in_the_rejections_report(tmp_path):
+    c, store, settings = _x402_app(tmp_path)
+    r = c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": _sign(c, "https://news.test/a")})  # fmt: skip
+    assert r.status_code == 200
+    rep = c.get("/v1/operator/rejections", headers={"Authorization": "Bearer op"}).json()
+    assert rep["count"] == 0

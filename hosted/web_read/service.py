@@ -109,14 +109,20 @@ OUTPUT_SCHEMA: dict[str, Any] = {
     },
     "required": ["url", "final_url", "content_markdown", "word_count", "content_sha256"],
 }
+# Echoed by the buyer in its payment and forwarded to the facilitator, so it stays the text the
+# CDP facilitator accepted for every settled sale (373 characters). On 2026-11-22 a longer one
+# (501) and a metadata schema with ["string", "null"] types went out together, and from then on
+# the facilitator refused every verify request with HTTP 400. Richer wording lives in OpenAPI and
+# the guides, which are never echoed.
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
-    "with the page's own metadata (description, canonical URL, authors, published date, "
-    "language), word count, a content hash and a receipt. Pay only for a delivered page: a "
-    "blocked, missing or failing page (target-site 403, 404, 5xx, timeout, bot check, no text "
-    "without JavaScript) costs nothing, and neither do refusals (robots.txt, non-public "
-    "address, non-text, >2 MB). A retry from the same wallet never pays twice."
+    "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
+    "missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do "
+    "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
+    "never pays twice."
 )
+# The longest offer description the CDP facilitator has accepted; a test keeps every task under it.
+OFFER_DESCRIPTION_MAX = 373
 
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
 MPP_DESCRIPTION = (
@@ -165,6 +171,36 @@ class Task:
     # means one: the price is fixed. A task with units has its request validated before any
     # offer is made, and every offer, check, receipt and settlement is for units x price.
     units: Callable[[Any], int] | None = None
+    # The output schema published in the 402's discovery extension (echoed by the buyer to the
+    # facilitator). None means output_schema; either way it is made facilitator-safe first.
+    discovery_schema: dict[str, Any] | None = None
+
+
+def bazaar_safe(value: Any) -> Any:
+    """A schema or example as it may go in the 402's discovery extension: every JSON Schema
+    `type` list becomes its first non-null type and every null value is dropped. Buyers echo the
+    extension to the facilitator; the shapes accepted for every settled sale had neither."""
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if k == "type" and isinstance(v, list):
+                v = next((t for t in v if t != "null"), "string")
+            if v is None:
+                continue
+            out[k] = bazaar_safe(v)
+        return out
+    if isinstance(value, list):
+        return [bazaar_safe(v) for v in value if v is not None]
+    return value
+
+
+def discovery_output(task: Any, example: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(schema, example) for the 402's discovery extension: the task's discovery schema, and the
+    example reduced to that schema's top-level fields, both facilitator-safe."""
+    schema = task.discovery_schema or task.output_schema
+    keys = set((schema.get("properties") or {}).keys())
+    trimmed = {k: v for k, v in example.items() if not keys or k in keys}
+    return bazaar_safe(schema), bazaar_safe(trimmed)
 
 
 def price_for(price_usd: str, units: int) -> str:
@@ -529,6 +565,69 @@ def _reason(rail: str, text: Any) -> str:
     return f"{rail}:{'_'.join(filter(None, folded.split('_')))[:48] or 'unknown'}"
 
 
+# The facilitator's own explanation of the last refused payment in this request (its message and
+# correlation id), kept for the operator's private event record. Never sent to the buyer.
+_facilitator_note: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "inferrail_facilitator_note", default=None
+)
+_FACILITATOR_ERROR = re.compile(r"Facilitator verify failed \((\d{3})\): (.*)", re.S)
+_CORRELATION = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+class ExplainedFacilitator:
+    """The configured facilitator, with an error answer to `verify` turned into a refused
+    verification that carries the facilitator's own reason.
+
+    The CDP facilitator answers an invalid payment (an unfunded wallet, an expired
+    authorization) with HTTP 400 and a JSON body `{invalidReason, invalidMessage, payer,
+    correlationId}`. The SDK raises that as an exception, which reached the buyer as a raw string
+    and was recorded truncated. Here a 4xx becomes `is_valid=False` with `invalidReason`, so the
+    buyer's client gets the standard x402 reason; a 5xx or transport error becomes
+    `facilitator_unavailable`. It only ever reports a refusal: nothing is accepted, and `settle`
+    passes through untouched."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def get_supported(self) -> Any:
+        return self._inner.get_supported()
+
+    async def verify(self, payload: Any, requirements: Any) -> Any:
+        from x402.schemas import VerifyResponse
+
+        try:
+            return await self._inner.verify(payload, requirements)
+        except Exception as error:  # noqa: BLE001 - every error answer is a refusal
+            m = _FACILITATOR_ERROR.match(str(error))
+            status, body = (int(m.group(1)), m.group(2)) if m else (0, "")
+            try:
+                data = json.loads(body) if body else {}
+            except ValueError:
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            # An invalid payment: {invalidReason, invalidMessage}; a request the API refused:
+            # {errorType, errorMessage} (both with a correlationId).
+            reason = (data.get("invalidReason") or data.get("errorType")
+                      if 400 <= status < 500 else None)  # fmt: skip
+            reason = re.sub(r"[^a-z0-9_]", "_", str(reason or "facilitator_unavailable").lower())
+            note = {"reason": reason[:64], "status": str(status or "none")}
+            message = re.sub(r"\s+", " ", str(data.get("invalidMessage") or data.get("errorMessage")
+                                               or ""))[:200]  # fmt: skip
+            if message:
+                note["message"] = message
+            cid = str(data.get("correlationId") or "")
+            if _CORRELATION.match(cid):
+                note["correlation_id"] = cid
+            _facilitator_note.set(note)
+            payer = data.get("payer")
+            return VerifyResponse(is_valid=False, invalid_reason=reason[:64],
+                                  invalid_message=message or None,
+                                  payer=payer if isinstance(payer, str) else None)  # fmt: skip
+
+
 def _x402_rejection(response: Any) -> str:
     """Why the x402 gate refused a signed payment, from its PAYMENT-REQUIRED `error` field."""
     from x402.http.utils import decode_payment_required_header
@@ -888,7 +987,10 @@ def page_task(reader: Any) -> Task:
             "receipt": {"payment_ref": "0xpayer:0xnonce", "price_usd": price_usd},
         }
 
+    discovery = {**OUTPUT_SCHEMA, "properties": {
+        k: v for k, v in OUTPUT_SCHEMA["properties"].items() if k != "metadata"}}  # fmt: skip
     return Task(
+        discovery_schema=discovery,
         path="/v1/page",
         request_model=PageRequest,
         service_name="Inferrail Web Read",
@@ -1059,8 +1161,9 @@ def create_app(
         return built
 
     if settings.x402:
-        server = make_x402_server(facilitator)
+        server = make_x402_server(ExplainedFacilitator(facilitator))
     example = task.output_example(settings.price_usd)
+    offer_schema, offer_example = discovery_output(task, example)
 
     def unit_price(_context: Any) -> str:
         """The x402 price of this request: units x price (units set by the middleware)."""
@@ -1083,7 +1186,7 @@ def create_app(
             extensions=declare_discovery_extension(
                 input=task.input_example,
                 input_schema=task.request_model.model_json_schema(),
-                output=OutputConfig(example=example, schema=task.output_schema),
+                output=OutputConfig(example=offer_example, schema=offer_schema),
                 **body,
             ),
         )
@@ -1455,8 +1558,10 @@ def create_app(
                 rec("receipt_issued", "x402", receipt_ref=x402_fields.get("ledger_key"),
                     **x402_fields)  # fmt: skip
             elif response.status_code == 402:
+                note = _facilitator_note.get() if not delivered else None
                 rec("settlement_failed" if delivered else "payment_rejected", "x402",
-                    code=_x402_rejection(response), **x402_fields)  # fmt: skip
+                    code=_x402_rejection(response), **x402_fields,
+                    **({"detail": {"facilitator": note}} if note else {}))  # fmt: skip
             else:  # the payment was verified, but nothing was delivered: not charged
                 rec("delivery_failed", "x402", code=_reason("x402", f"http_{response.status_code}"),
                     **x402_fields)  # fmt: skip
@@ -1529,6 +1634,63 @@ def create_app(
                 json.dumps(row) if settings.recovery_s else None,
             )  # fmt: skip
         return JSONResponse(row)
+
+    @app.get("/v1/operator/rejections", include_in_schema=False)
+    async def rejections(request: Request) -> JSONResponse:
+        """Read-only, operator token only: recent purchases that didn't settle, with their
+        recorded reason, the facilitator's explanation, client, route, payer and whether that
+        payer ever settled a purchase here. No payment payloads, signatures or request bodies
+        are stored, so none can be returned."""
+        import hmac
+
+        token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not settings.operator_token or not hasattr(events, "rows"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        if not hmac.compare_digest(token.encode(), settings.operator_token.encode()):
+            return JSONResponse({"detail": "operator token required"}, status_code=401)
+        try:
+            since = float(request.query_params.get("since", "0") or 0)
+            limit = max(1, min(int(request.query_params.get("limit", "100")), 500))
+        except ValueError:
+            return JSONResponse({"error": "invalid_request"}, status_code=422)
+        failed = ("payment_rejected", "settlement_failed", "delivery_failed",
+                  "duplicate_credential", "settlement_unknown")  # fmt: skip
+        rows = events.rows(
+            "SELECT purchase_id, type, at, product, route, rail, network, payer, code, client, "
+            "attempt, detail FROM events WHERE purchase_id IN (SELECT purchase_id FROM events "
+            f"WHERE type IN ({','.join('?' * len(failed))}) AND at >= ?) ORDER BY seq",
+            (*failed, since),
+        )  # fmt: skip
+        settled_sql = "SELECT DISTINCT payer FROM events WHERE type='settled' AND payer IS NOT NULL"
+        paid = {str(r["payer"]).lower() for r in events.rows(settled_sql)}
+        by: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            p = by.setdefault(r["purchase_id"], {
+                "purchase_id": r["purchase_id"], "first_at": r["at"], "types": [], "codes": [],
+                "facilitator": [], "attempts": 0})  # fmt: skip
+            for k in ("product", "route", "rail", "network", "payer", "client"):
+                p[k] = p.get(k) or r[k]
+            p["last_at"] = r["at"]
+            p["types"].append(r["type"])
+            p["attempts"] += r["type"] == "payment_attempt"
+            if r["code"] and r["code"] not in p["codes"]:
+                p["codes"].append(r["code"])
+            try:
+                note = (json.loads(r["detail"]) if r["detail"] else {}).get("facilitator")
+            except (ValueError, AttributeError):
+                note = None
+            if note:
+                p["facilitator"].append(note)
+        out = []
+        for p in by.values():
+            if "settled" in p["types"]:
+                continue
+            p["payer_ever_settled"] = bool(p["payer"]) and str(p["payer"]).lower() in paid
+            p["types"] = sorted(set(p["types"]))
+            out.append(p)
+        out.sort(key=lambda p: p["first_at"], reverse=True)
+        return JSONResponse({"product": product, "route": route, "count": len(out),
+                             "rejections": out[:limit]})  # fmt: skip
 
     @app.get("/v1/operator/stats", include_in_schema=False)
     async def stats(request: Request) -> JSONResponse:
