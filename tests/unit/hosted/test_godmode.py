@@ -723,3 +723,49 @@ def test_the_health_api_reports_release_storage_and_recorder(tmp_path, monkeypat
     assert h["backfill_error"] is None and "0x" not in json.dumps(h)
     page = c.get("/ops/").text
     assert "Definitions" in page and "abcdef123456" in page and "$0.004" in page
+
+
+# -- why purchases failed ----------------------------------------------------------------------
+def _ops_over(store, settings):
+    app = gmod.create_app(store, settings.data_dir / "web_read.sqlite3", settings,
+                          gmod.GodModeSettings(login_secret=SECRET))  # fmt: skip
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    return TestClient(Starlette(routes=[Mount("/ops", app=app)]), base_url="https://ops.test")
+
+
+def test_a_refused_payment_records_the_facilitators_reason(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason="invalid_exact_evm_insufficient_balance")
+    c, store, settings = _x402_app(tmp_path, fac=fac)
+    header = _sign(c, "https://news.test/a")
+    r = c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": header})  # fmt: skip
+    assert r.status_code == 402 and fac.calls_to("settle") == []
+    (p,) = _evidence(store, settings).purchases()
+    assert p["status"] == "rejected" and p["payer"]
+    assert p["codes"] == ["x402:invalid_exact_evm_insufficient_balance"]
+
+
+def test_the_explorer_says_why_and_whether_the_wallet_ever_paid(tmp_path):
+    fac = FakeFacilitator(verify_invalid_reason="invalid_exact_evm_insufficient_balance")
+    c, store, settings = _x402_app(tmp_path, fac=fac)
+    for _ in range(2):  # the same unfunded wallet tries twice (fresh signatures)
+        header = _sign(c, "https://news.test/a")
+        c.post("/v1/page", json={"url": "https://news.test/a"},
+               headers={"PAYMENT-SIGNATURE": header})  # fmt: skip
+    ops = _ops_over(store, settings)
+    _login(ops)
+    page = ops.get("/ops/transactions").text
+    assert "Why purchases failed" in page
+    assert "x402:invalid_exact_evm_insufficient_balance" in page
+    assert "the paying wallet doesn&#x27;t hold enough USDC" in page or (
+        "the paying wallet doesn't hold enough USDC" in page)
+    (row,) = gmod.rejection_breakdown(_evidence(store, settings).purchases())
+    assert row["purchases"] == 2 and row["wallets"] >= 1 and row["wallets_that_paid"] == 0
+
+
+def test_every_explained_code_matches_how_the_payment_code_records_it():
+    for code, _ in gmod._REASON_TEXT:
+        assert gmod.fold_reason("x402", code) == svc._reason("x402", code)
+        assert gmod.fold_reason("x402", code) in gmod.REASONS

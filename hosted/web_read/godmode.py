@@ -315,6 +315,7 @@ class Evidence:
                     "codes": sorted({e["code"] for e in evs if e["code"]}),
                     "request_keys": sorted({e["request_key"] for e in evs if e["request_key"]}),
                     "asset": pick("asset"),
+                    "client": pick("client"),
                     "events": len(evs),
                 }
             )
@@ -890,6 +891,87 @@ def _bytes(n: int | None) -> str:
     return str(n)
 
 
+# What each refusal code means, for the operator (the codes come from the x402 SDK, the MPP rail
+# and our own checks; anything unlisted is shown as recorded). Never shown to buyers.
+_REASON_TEXT = (
+    ("invalid_exact_evm_insufficient_balance", "the paying wallet doesn't hold enough USDC"),
+    ("invalid_exact_evm_payload_authorization_valid_before", "the authorization had expired"),
+    ("invalid_exact_evm_payload_authorization_valid_after", "the authorization isn't valid yet"),
+    ("invalid_exact_evm_payload_signature", "the signature doesn't verify"),
+    ("invalid_exact_evm_failed_to_verify_signature", "the signature couldn't be checked"),
+    ("invalid_exact_evm_payload_undeployed_smart_wallet", "a smart wallet not deployed yet"),
+    ("invalid_exact_evm_payload_recipient_mismatch", "paid another address than ours"),
+    ("invalid_exact_evm_payload_authorization_value_mismatch", "signed a different amount"),
+    ("invalid_exact_evm_nonce_already_used", "this authorization was already spent"),
+    ("network_mismatch", "signed for another network"),
+    ("unsupported_scheme", "a payment scheme we don't offer"),
+    ("invalid_exact_evm_transaction_simulation_failed", "the transfer would fail on chain"),
+    ("unknown", "refused without a reason (no error in the PAYMENT-REQUIRED header)"),
+)
+
+
+def fold_reason(rail: str, text: str) -> str:
+    """The code as the payment code records it (service._reason: folded to [a-z0-9_], capped)."""
+    folded = "".join(ch if ch.isascii() and ch.isalnum() else "_" for ch in text.lower())
+    return f"{rail}:{'_'.join(filter(None, folded.split('_')))[:48] or 'unknown'}"
+
+
+REASONS = {fold_reason("x402", code): text for code, text in _REASON_TEXT}
+FAILED = ("rejected", "settlement_failed", "delivery_failed", "duplicate")
+
+
+def short_addr(addr: str | None) -> str:
+    return f"{addr[:6]}…{addr[-4:]}" if addr and len(addr) > 12 else (addr or "—")
+
+
+def rejection_breakdown(purchases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Failed purchases by reason: how many, from how many wallets, how many of those wallets
+    tried more than once, and how many of them ever paid (a lost sale versus noise)."""
+    paid = {(p["payer"] or "").lower() for p in purchases if p["status"] == "settled"}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for p in purchases:
+        if p["status"] in FAILED:
+            for code in p["codes"] or ["(no code recorded)"]:
+                groups.setdefault(code, []).append(p)
+    out = []
+    for code, ps in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        wallets: dict[str, int] = {}
+        for p in ps:
+            if p["payer"]:
+                wallets[p["payer"].lower()] = wallets.get(p["payer"].lower(), 0) + 1
+        out.append({
+            "code": code, "meaning": REASONS.get(code, ""), "purchases": len(ps),
+            "wallets": len(wallets), "repeat_wallets": sum(1 for n in wallets.values() if n > 1),
+            "wallets_that_paid": sum(1 for w in wallets if w in paid),
+            "first": min(p["first_at"] for p in ps), "last": max(p["first_at"] for p in ps),
+            "clients": sorted({p["client"] for p in ps if p.get("client")}),
+            "routes": sorted({p["route"] for p in ps if p.get("route")}),
+        })  # fmt: skip
+    return out
+
+
+def _breakdown_html(purchases: list[dict[str, Any]]) -> str:
+    rows = rejection_breakdown(purchases)
+    if not rows:
+        return ""
+    body = "".join(
+        f"<tr><td><a href=\"{PREFIX}/transactions?reason={_e(r['code'])}\">{_e(r['code'])}</a>"
+        f"<div class=\"muted\">{_e(r['meaning'])}</div></td><td>{r['purchases']}</td>"
+        f"<td>{r['wallets']}</td><td>{r['repeat_wallets']}</td><td>{r['wallets_that_paid']}</td>"
+        f"<td>{_e(', '.join(r['clients']) or '—')}</td><td>{_e(', '.join(r['routes']) or '—')}</td>"
+        f"<td>{_e(iso(r['first']))} → {_e(iso(r['last']))}</td></tr>"
+        for r in rows
+    )  # fmt: skip
+    return (
+        "<h2>Why purchases failed</h2><p class=\"muted\">Each failed purchase by the reason "
+        "recorded with it. \"Paid since\" counts wallets that also have a settled purchase: a "
+        "refusal from a wallet that never pays is unlikely to be a lost sale.</p>"
+        "<table><thead><tr><th>Reason</th><th>Purchases</th><th>Wallets</th><th>Retried</th>"
+        "<th>Paid since</th><th>Clients</th><th>Routes</th><th>When</th></tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+    )
+
+
 def _row(p: dict[str, Any]) -> str:
     tx = (
         f'<a href="{_e(p["explorer"])}" rel="noreferrer noopener" target="_blank">'
@@ -901,8 +983,22 @@ def _row(p: dict[str, Any]) -> str:
         f'<tr><td><a href="{PREFIX}/transactions/{_e(p["purchase_id"])}">{_e(iso(p["settled_at"] or p["first_at"]))}</a></td>'  # noqa: E501
         f"<td>{_e(p['product'])}</td><td>{_e(p['rail'])} · {_e(p['network'])}</td>"
         f"<td>${_e(usd(p['amount_atomic']))}</td><td>{_status(p)}</td>"
-        f"<td>{_class_badge(p['classification'])}</td><td>{tx}</td></tr>"
+        f"<td>{_class_badge(p['classification'])} {_e(short_addr(p['payer']))}</td>"
+        f"<td>{_why(p)}</td><td>{tx}</td></tr>"
     )  # fmt: skip
+
+
+def _why(p: dict[str, Any]) -> str:
+    """For a purchase that didn't settle: its recorded reason, the client family and the route
+    when it isn't the single-page read."""
+    if p["status"] == "settled":
+        return "—"
+    parts = [_e(", ".join(p["codes"]) or "no code recorded")]
+    if p.get("client"):
+        parts.append(f"client {_e(p['client'])}")
+    if p.get("route") and not str(p["route"]).endswith("/v1/page"):
+        parts.append(_e(p["route"]))
+    return " · ".join(parts)
 
 
 FILTERS = (
@@ -974,11 +1070,12 @@ def transactions_html(
         + "</form>"
     )  # fmt: skip
     body = (
-        f"<h1>Transactions</h1>{form}<p class=\"muted\">{len(rows)} of {len(purchases)} purchase "
+        f"<h1>Transactions</h1>{_breakdown_html(purchases)}{form}<p class=\"muted\">{len(rows)} "
+        f"of {len(purchases)} purchase "
         "lifecycles. A retry of the same payment stays in its purchase.</p>"
         "<table><thead><tr><th>Time</th><th>Product</th><th>Rail</th><th>Amount</th><th>Status</th>"
-        "<th>Buyer</th><th>Tx</th></tr></thead><tbody>"
-        + ("".join(_row(p) for p in rows) or '<tr><td colspan="7">Nothing matches.</td></tr>')
+        "<th>Buyer</th><th>Why</th><th>Tx</th></tr></thead><tbody>"
+        + ("".join(_row(p) for p in rows) or '<tr><td colspan="8">Nothing matches.</td></tr>')
         + "</tbody></table>"
     )  # fmt: skip
     return _page("Transactions", body, seq, csrf)
