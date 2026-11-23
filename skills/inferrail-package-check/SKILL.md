@@ -1,6 +1,6 @@
 ---
 name: inferrail-package-check
-description: Check package versions for known vulnerabilities before you add, upgrade, pin or ship a dependency, paying $0.002 per check of up to 20 packages from a wallet your agent already has (AgentCash, Coinbase agentic wallet, or any x402/MPP client). Use when a coding or build task adds or changes npm, PyPI, Go, crates.io, Maven, NuGet, RubyGems or Packagist dependencies; returns advisory ids, CVEs, severity, fixed versions and links from OSV.dev, and an OSV outage is never charged.
+description: Check package versions for known vulnerabilities before you add, upgrade, pin or ship a dependency, paying $0.002 per check of up to 20 packages from a wallet your agent already has (AgentCash or any x402/MPP client). Use when a coding or build task adds or changes npm, PyPI, Go, crates.io, Maven, NuGet, RubyGems or Packagist dependencies; returns advisory ids, CVEs, severity, fixed versions and links from OSV.dev, and an OSV outage is never charged.
 ---
 
 # Inferrail Package Check
@@ -29,10 +29,11 @@ advisory's source, licence and fixed versions in one JSON answer.
 
 The simplest path for a coding or research agent, with no API key and no account:
 
-1. `npx agentcash@0.17.1 balance`: your USDC balance (Base and Tempo). If you have no AgentCash
-   wallet yet, this creates one on this machine: **ask your user first.** If the balance is too
-   low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the funding page).
-   Never pay beyond the budget your user approved.
+1. **Ask your user before the first AgentCash command.** `npx agentcash@0.17.1 balance` creates a
+   wallet on this machine (`~/.agentcash/wallet.json`) if there isn't one, so check first:
+   `test -f ~/.agentcash/wallet.json`. With a wallet, `balance` shows your USDC (Base and Tempo);
+   if it is too low, stop and ask your user to fund it (`npx agentcash@0.17.1 fund` opens the
+   funding page). Never pay beyond the budget your user approved.
 2. `npx agentcash@0.17.1 check https://inferrail-cost-gateway.onrender.com/pkg/v1/check`
    returns the exact request schema and price.
 3. Pay and get the result (`--max-amount` caps what one call may cost):
@@ -44,6 +45,8 @@ npx agentcash@0.17.1 fetch https://inferrail-cost-gateway.onrender.com/pkg/v1/ch
        "request_id": "<unique id>"}' \
   --max-amount 0.01
 ```
+
+**Who you pay.** Package Check receives payments at `0xe9c1249648257C1C1D70F8b7682851C377bb8f53` (x402, USDC on Base `eip155:8453`) and at `0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E` over MPP on Tempo (chain 4217), Inferrail's shared Tempo address. If your wallet allowlists payees, add the one for the rail you use; refuse an offer to any other address.
 
 `X-Inferrail-Source: skill` is optional and says only that the call came from this skill (no
 identity). To list every Inferrail service in your agent's paid tools once, run
@@ -61,9 +64,11 @@ identity). To list every Inferrail service in your agent's paid tools once, run
 Ecosystems: `npm`, `PyPI`, `Go`, `crates.io`, `Maven`, `NuGet`, `RubyGems`, `Packagist`, `Hex`,
 `Pub`, `Hackage`, `CRAN`, `SwiftURL`.
 
-Any x402 or MPP client works (a Coinbase agentic wallet pays x402 too; we haven't tested that
-one with this endpoint): the first response is HTTP 402 with the offer; check it is 2000 units
-($0.002) of USDC before you sign.
+A Coinbase agentic wallet pays x402 too; we haven't tested that one with this endpoint.
+
+Any x402 or MPP client works the same way: the first response is HTTP 402 with both offers
+(x402 on Base, MPP on Tempo). Check that the price is 2000 units ($0.002) of USDC before you
+sign.
 
 ## In CI
 

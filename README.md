@@ -123,6 +123,9 @@ npx skills add domondi1/inferrail                         # Claude Code, Cursor,
 /plugin install inferrail --marketplace domondi1/inferrail  # Claude Code plugin (2.1.275+)
 ```
 
+To get later versions: `npx skills update`, or in Claude Code
+`/plugin marketplace update inferrail` then `/plugin update inferrail@inferrail`.
+
 Skills: [`skills/`](skills/). **In CI:** check lockfiles for known vulnerabilities on every push
 with [`actions/package-check`](actions/package-check/README.md) (a capped wallet you set).
 

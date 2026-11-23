@@ -55,6 +55,36 @@ def test_each_skill_says_when_a_free_tool_is_better(path):
     assert "awal" not in text  # an untested wallet command is not offered as a recipe
 
 
+APPROVED = {  # each service's approved receiving addresses (preflight checks the same ones)
+    "inferrail-web-read": "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E",
+    "inferrail-package-check": "0xe9c1249648257C1C1D70F8b7682851C377bb8f53",
+    "inferrail-domain-check": "0xb95D56f169324A0B23B82bd3975635Cf0187ce07",
+}
+TEMPO = "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E"
+
+
+@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+def test_each_skill_asks_before_any_wallet_is_created(path):
+    text = path.read_text()
+    ask = text.index("Ask your user before the first AgentCash command")
+    assert ask < text.index("npx agentcash@0.17.1 balance")  # consent comes first
+    assert "test -f ~/.agentcash/wallet.json" in text
+
+
+@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+def test_each_skill_names_who_it_pays(path):
+    who = path.read_text().split("**Who you pay.**")[1].split("\n\n")[0]
+    assert APPROVED[path.parent.name] in who and TEMPO in who
+    assert "eip155:8453" in who and "4217" in who
+
+
+@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+def test_an_untested_wallet_is_labelled_the_same_way_and_not_claimed(path):
+    text = path.read_text()
+    assert "Coinbase agentic wallet" not in _front(path)["description"]
+    assert "we haven't tested that one with this endpoint" in text
+
+
 def test_the_plugin_and_marketplace_manifests_agree():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
@@ -63,6 +93,23 @@ def test_the_plugin_and_marketplace_manifests_agree():
     assert market["owner"]["name"] and re.match(r"^\d+\.\d+\.\d+$", plugin["version"])
     assert (ROOT / plugin["icon"]).is_file()
     assert plugin["license"] == "Apache-2.0"  # the repository's licence
+
+
+def test_a_skill_change_comes_with_a_new_plugin_version():
+    # Claude Code updates an installed plugin only when its version changes, so changed skills
+    # under an old version would never reach anyone who installed before.
+    import hashlib
+
+    digest = hashlib.sha256()
+    for path in SKILLS:
+        rel = path.relative_to(ROOT).as_posix()
+        digest.update(rel.encode() + b"\0" + path.read_bytes() + b"\0")
+    release = json.loads((ROOT / ".claude-plugin" / "release.json").read_text())
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert release["skills_sha256"] == digest.hexdigest(), (
+        "skills changed: bump .claude-plugin/plugin.json version and record it, with the new "
+        "hash, in .claude-plugin/release.json")
+    assert release["version"] == plugin["version"]
 
 
 def test_the_readme_shows_both_install_lines():
