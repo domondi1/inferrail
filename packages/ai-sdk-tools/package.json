@@ -10,10 +10,29 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
-  "engines": { "node": ">=18" },
-  "keywords": ["ai-sdk", "vercel-ai", "ai-tools", "x402", "agent-payments", "web-scraping", "markdown", "osv", "vulnerability", "dns", "rdap", "agents"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "ai-sdk",
+    "vercel-ai",
+    "ai-tools",
+    "x402",
+    "agent-payments",
+    "web-scraping",
+    "markdown",
+    "osv",
+    "vulnerability",
+    "dns",
+    "rdap",
+    "agents"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/domondi1/inferrail.git",
@@ -21,7 +40,10 @@
   },
   "homepage": "https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools",
   "bugs": "https://github.com/domondi1/inferrail/issues",
-  "peerDependencies": { "ai": ">=5.0.0", "zod": ">=3.25.0" },
+  "peerDependencies": {
+    "ai": ">=5.0.0",
+    "zod": ">=3.25.0"
+  },
   "devDependencies": {
     "@types/node": "22",
     "ai": "7.0.165",
@@ -32,5 +54,8 @@
     "build": "tsc -p tsconfig.json && cp ../../LICENSE LICENSE",
     "test": "bun test",
     "prepublishOnly": "npm run build && bun test"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

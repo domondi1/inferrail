@@ -1,0 +1,165 @@
+name: Publish to npm
+
+# Publishes one npm package from packages/<name> when a tag `<name>-v<version>` is pushed,
+# e.g. `ai-sdk-tools-v0.1.0`. Like publish.yml (PyPI), a release is never just a version bump:
+# - the full CI workflow must pass on the exact tagged commit;
+# - the tarball is built once, checked against a file allowlist and a version that isn't on npm
+#   yet, and that same tarball is published;
+# - publishing waits for approval in the `npm` environment (required reviewer) and authenticates
+#   with npm trusted publishing (GitHub OIDC): no long-lived npm token. Provenance is attached.
+# - after publishing, a clean project installs the package from the registry, imports it, checks
+#   the published integrity matches the tarball that was built, and verifies its signatures.
+#
+# First release of a brand-new package only: npm can attach a trusted publisher only to a package
+# that already exists, so the very first publish uses a short-lived granular token stored as the
+# `npm` environment secret NPM_BOOTSTRAP_TOKEN (never in the repo). After that release, configure
+# the trusted publisher on npmjs.com, disallow tokens, and delete the secret.
+
+on:
+  push:
+    tags:
+      - "ai-sdk-tools-v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      dir: ${{ steps.meta.outputs.dir }}
+      name: ${{ steps.meta.outputs.name }}
+      version: ${{ steps.meta.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha512: ${{ steps.pack.outputs.sha512 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+      - name: Package, version and tag agree; version not on npm yet
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          short="${TAG%-v*}"; version="${TAG##*-v}"; dir="packages/$short"
+          test -f "$dir/package.json" || { echo "::error::no $dir/package.json"; exit 1; }
+          name=$(node -p "require('./$dir/package.json').name")
+          pkgver=$(node -p "require('./$dir/package.json').version")
+          [ "$pkgver" = "$version" ] || { echo "::error::tag $version != package.json $pkgver"; exit 1; }
+          case "$name" in @inferrail/*) ;; *) echo "::error::$name is not in the @inferrail scope"; exit 1;; esac
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "::error::$name@$version is already on npm"; exit 1
+          fi
+          { echo "dir=$dir"; echo "name=$name"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+      - name: Install, typecheck, build, test
+        working-directory: ${{ steps.meta.outputs.dir }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npx --yes bun@1.4.4 test
+      - name: Pack and check the exact files that will be published
+        id: pack
+        working-directory: ${{ steps.meta.outputs.dir }}
+        run: |
+          npm pack --json > pack.json
+          node -e '
+            const p = require("./pack.json")[0];
+            const pkg = require("./package.json");
+            const files = p.files.map(f => f.path).sort();
+            const allowed = ["LICENSE", "README.md", "dist/index.d.ts", "dist/index.js", "package.json"];
+            if (JSON.stringify(files) !== JSON.stringify(allowed)) {
+              console.error("unexpected files:", files); process.exit(1);
+            }
+            for (const s of ["preinstall", "install", "postinstall", "prepare"]) {
+              if (pkg.scripts && pkg.scripts[s]) { console.error("install script:", s); process.exit(1); }
+            }
+            if (pkg.dependencies && Object.keys(pkg.dependencies).length) {
+              console.error("runtime dependencies:", pkg.dependencies); process.exit(1);
+            }
+            console.log(p.filename, p.size, "bytes", files.join(" "));
+          '
+          tarball=$(node -p 'require("./pack.json")[0].filename')
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha512=$(node -p 'require("./pack.json")[0].integrity')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: npm-tarball
+          path: ${{ steps.meta.outputs.dir }}/${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+
+  publish:
+    needs: [ci, build]
+    runs-on: ubuntu-latest
+    environment: npm # required reviewer; deployments limited to these tags
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: npm new enough for trusted publishing (11.5.1+)
+        run: |
+          v=$(npm --version)
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$v" \
+            || npm install -g npm@11.15.0
+          npm --version
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: npm-tarball
+      - name: Publish the tarball that was built and checked
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          INTEGRITY: ${{ needs.build.outputs.sha512 }}
+          BOOTSTRAP: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: |
+          got="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w0)"
+          [ "$got" = "$INTEGRITY" ] || { echo "::error::tarball changed after it was checked"; exit 1; }
+          if [ -n "$BOOTSTRAP" ]; then
+            echo "::warning::first-release bootstrap token in use; delete NPM_BOOTSTRAP_TOKEN after this release"
+            NODE_AUTH_TOKEN="$BOOTSTRAP" npm publish "$TARBALL" --access public --provenance
+          else
+            unset NODE_AUTH_TOKEN
+            npm publish "$TARBALL" --access public
+          fi
+
+  verify:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+      - name: Install the published package in a clean project and use it
+        env:
+          NAME: ${{ needs.build.outputs.name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          INTEGRITY: ${{ needs.build.outputs.sha512 }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          for i in $(seq 1 20); do npm view "$NAME@$VERSION" version >/dev/null 2>&1 && break; sleep 15; done
+          published=$(npm view "$NAME@$VERSION" dist.integrity)
+          [ "$published" = "$INTEGRITY" ] || { echo "::error::registry has $published, built $INTEGRITY"; exit 1; }
+          mkdir consumer && cd consumer && npm init -y >/dev/null
+          npm install --no-fund "$NAME@$VERSION" ai zod
+          npm audit signatures
+          node --input-type=module -e '
+            const m = await import(process.env.NAME);
+            const tools = m.inferrailTools({ fetch: async () => new Response("{}", { status: 402 }) });
+            const names = Object.keys(tools).sort().join(",");
+            if (names !== "checkPackages,findPaidApi,lookupDomain,readPage,readPages") throw new Error(names);
+            const r = await tools.readPage.execute({ url: "https://example.com/" }, { toolCallId: "t", messages: [] });
+            if (r.ok !== false || r.charged !== false || r.status !== 402) throw new Error(JSON.stringify(r));
+            console.log("installed and working:", process.env.NAME, process.env.VERSION, names);
+          '
