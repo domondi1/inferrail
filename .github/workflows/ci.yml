@@ -178,6 +178,28 @@ jobs:
             exit 1
           fi
 
+  ai-sdk-tools:
+    # packages/ai-sdk-tools: the Vercel AI SDK tools for the paid services. Offline tests only
+    # (a mocked fetch); the unpaid live-offer checks run with LIVE=1, not in CI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/ai-sdk-tools
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: packages/ai-sdk-tools/package-lock.json
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck and build
+        run: npx tsc -p tsconfig.json
+      - name: Test
+        run: npx --yes bun@1.4.4 test
+
   hosted-production-install:
     # The production host (inferrail-cost-gateway) installs from requirements files, not from the
     # `hosted` extra the job above uses. This job installs exactly like the host, then starts the
