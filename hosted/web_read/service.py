@@ -551,7 +551,7 @@ _CLIENTS = (
 # Where a request came from, when the caller says so with `X-Inferrail-Source`: the integration
 # surface (one of these fixed labels), never a buyer's identity. Anything else is ignored. It lets
 # the funnel tell which distribution channel leads to price checks, payments and deliveries.
-SOURCES = frozenset({"skill", "plugin", "example", "llms", "ci"})
+SOURCES = frozenset({"skill", "plugin", "example", "llms", "ci", "ai-sdk"})
 
 
 def _source(request: Any) -> str | None:

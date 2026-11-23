@@ -1,0 +1,36 @@
+{
+  "name": "@inferrail/ai-sdk-tools",
+  "version": "0.1.0",
+  "description": "Pay-per-call tools for the Vercel AI SDK: read web pages, check package vulnerabilities, look up DNS and domain registration, find x402 APIs. $0.002 USDC per delivered result over x402, paid by the fetch you already have.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "engines": { "node": ">=18" },
+  "keywords": ["ai-sdk", "vercel-ai", "ai-tools", "x402", "agent-payments", "web-scraping", "markdown", "osv", "vulnerability", "dns", "rdap", "agents"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/domondi1/inferrail.git",
+    "directory": "packages/ai-sdk-tools"
+  },
+  "homepage": "https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools",
+  "bugs": "https://github.com/domondi1/inferrail/issues",
+  "peerDependencies": { "ai": ">=5.0.0", "zod": ">=3.25.0" },
+  "devDependencies": {
+    "@types/node": "22",
+    "ai": "7.0.165",
+    "typescript": "5.9.3",
+    "zod": "4.6.7"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp ../../LICENSE LICENSE",
+    "test": "bun test",
+    "prepublishOnly": "npm run build && bun test"
+  }
+}
