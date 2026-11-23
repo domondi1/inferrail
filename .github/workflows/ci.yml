@@ -202,6 +202,28 @@ jobs:
       - name: Test
         run: npx --yes bun@1.4.4 test
 
+  ai-sdk-examples:
+    # examples/ai_sdk: the task agents, installed from the published @inferrail/ai-sdk-tools and
+    # run through a real AI SDK loop with a scripted model and a mocked service (no network).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: examples/ai_sdk
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: examples/ai_sdk/package-lock.json
+      - name: Install (lockfile, from npm)
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx -p typescript@5.9.3 tsc -p tsconfig.json
+      - name: Test
+        run: npx --yes bun@1.4.4 test
+
   hosted-production-install:
     # The production host (inferrail-cost-gateway) installs from requirements files, not from the
     # `hosted` extra the job above uses. This job installs exactly like the host, then starts the

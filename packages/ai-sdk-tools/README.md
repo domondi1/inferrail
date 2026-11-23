@@ -49,9 +49,15 @@ const { text } = await generateText({
 });
 ```
 
-The wallet pays USDC on Base. Fund it with a few cents; a dollar buys 500 calls. This
-package never sees your key: it gets only the fetch you pass. With a plain `fetch`, every
-call returns a 402 result and nothing is bought.
+The wallet pays USDC on Base. Fund it with a few cents; a dollar buys 500 calls. **Installing
+this package doesn't give your agent a wallet, funds or permission to pay:** you choose the
+wallet, fund it and pass its paying fetch. The package never sees your key. With a plain
+`fetch`, every call returns a 402 result and nothing is bought.
+
+To cap what one run can spend, add a before-payment hook that refuses past your limit. See
+`capSpending` in [examples/ai_sdk/wallet.ts](https://github.com/domondi1/inferrail/blob/main/examples/ai_sdk/wallet.ts).
+Working agents for dependency review, research with dated citations, and link vetting live in
+[examples/ai_sdk](https://github.com/domondi1/inferrail/tree/main/examples/ai_sdk).
 
 `guardInferrailPrices(client)` adds a before-payment hook to your x402 client. For offers
 from Inferrail's origin, it refuses an amount above the listed price and any receiving

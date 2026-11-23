@@ -625,6 +625,7 @@ def test_an_agent_that_only_knows_the_origin_finds_the_services_from_llms_txt(tm
         assert rails in text and rails in c.get("/openapi.json").json()["info"]["description"]
         # one-line adoption from the agent wallets buyers already hold
         assert "npx agentcash add http://testserver" in text and "npx awal x402 pay" in text
+        assert "npm i @inferrail/ai-sdk-tools" in text and "inferrailTools({ fetch })" in text
         assert 'href="/llms.txt"' in c.get("/").text
 
 

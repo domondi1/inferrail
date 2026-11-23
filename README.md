@@ -126,6 +126,21 @@ npx skills add domondi1/inferrail                         # Claude Code, Cursor,
 To get later versions: `npx skills update`, or in Claude Code
 `/plugin marketplace update inferrail` then `/plugin update inferrail@inferrail`.
 
+**In a Vercel AI SDK agent.** [`@inferrail/ai-sdk-tools`](packages/ai-sdk-tools/README.md) gives
+your agent `readPage`, `readPages`, `checkPackages`, `lookupDomain` and `findPaidApi`, at $0.002
+per delivered result. They're paid by the x402 fetch you pass in, from a wallet you fund and
+control. Installing the package doesn't give your agent a wallet or funds.
+
+```bash
+npm i @inferrail/ai-sdk-tools ai zod
+```
+
+```ts
+tools: inferrailTools({ fetch: wrapFetchWithPayment(fetch, client) })  // see the package README
+```
+
+Working agents with a per-run spending cap: [`examples/ai_sdk/`](examples/ai_sdk/README.md).
+
 Skills: [`skills/`](skills/). **In CI:** check lockfiles for known vulnerabilities on every push
 with [`actions/package-check`](actions/package-check/README.md) (a capped wallet you set).
 

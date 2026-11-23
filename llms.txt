@@ -65,6 +65,8 @@
 
 - [inferrail-mcp](https://github.com/domondi1/inferrail/tree/main/inferrail-mcp): MCP server (stdio, run with `inferrail mcp` or `uvx inferrail mcp`; registry name `io.github.domondi1/inferrail`) exposing `get_spend` (query attributed cost) and `get_health` (gateway reachability + last receipt) — read-only, cannot execute inference or spend provider budget
 
+- [@inferrail/ai-sdk-tools](https://www.npmjs.com/package/@inferrail/ai-sdk-tools) (npm, Vercel AI SDK): `npm i @inferrail/ai-sdk-tools ai zod`. Tools `readPage`, `readPages`, `checkPackages`, `lookupDomain` and `findPaidApi`, $0.002 USDC per delivered result over x402, paid by the x402 fetch you pass in (`inferrailTools({ fetch })`) from a wallet you fund and control. Refusals are uncharged and returned to the model. `guardInferrailPrices(client)` refuses offers above the listed price. Published with npm provenance from this repository. Examples with a per-run spending cap: [examples/ai_sdk](https://github.com/domondi1/inferrail/tree/main/examples/ai_sdk)
+
 ## Examples
 
 - [AP invoice-exception recovery examples](https://github.com/domondi1/inferrail/tree/main/examples/ap_invoice_exception_recovery): fixture-based demo, real-provider (OpenAI) demo, a custom-integration example (your own extraction pipeline + review queue, threading decision → retry → recovered data or review → outcome → report end to end), and a hosted-API client example (local authorization/execution against the hosted decision API, keeping invoice content and credentials out of every hosted call)

@@ -1,0 +1,23 @@
+{
+  "name": "inferrail-ai-sdk-examples",
+  "private": true,
+  "type": "module",
+  "description": "Task-first Vercel AI SDK agents that use @inferrail/ai-sdk-tools (installed from npm), with a per-run spending cap.",
+  "scripts": {
+    "test": "bun test",
+    "deps": "bun cli.ts deps",
+    "research": "bun cli.ts research",
+    "link": "bun cli.ts link"
+  },
+  "dependencies": {
+    "@inferrail/ai-sdk-tools": "0.1.0",
+    "@x402/evm": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "ai": "7.0.165",
+    "viem": "2.57.3",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22"
+  }
+}

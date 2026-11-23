@@ -120,18 +120,24 @@ jobs:
           name: npm-tarball
       - name: Publish the tarball that was built and checked
         env:
+          NAME: ${{ needs.build.outputs.name }}
           TARBALL: ${{ needs.build.outputs.tarball }}
           INTEGRITY: ${{ needs.build.outputs.sha512 }}
           BOOTSTRAP: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
         run: |
           got="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w0)"
           [ "$got" = "$INTEGRITY" ] || { echo "::error::tarball changed after it was checked"; exit 1; }
-          if [ -n "$BOOTSTRAP" ]; then
-            echo "::warning::first-release bootstrap token in use; delete NPM_BOOTSTRAP_TOKEN after this release"
-            NODE_AUTH_TOKEN="$BOOTSTRAP" npm publish "$TARBALL" --access public --provenance
-          else
+          if npm view "$NAME" name >/dev/null 2>&1; then
+            # The package exists, so it publishes only through its trusted publisher (OIDC).
+            # A leftover bootstrap secret is never used; delete it.
+            [ -z "$BOOTSTRAP" ] || echo "::warning::NPM_BOOTSTRAP_TOKEN is still set and was not used; delete it"
             unset NODE_AUTH_TOKEN
             npm publish "$TARBALL" --access public
+          elif [ -n "$BOOTSTRAP" ]; then
+            echo "::warning::first release of $NAME: bootstrap token in use; delete NPM_BOOTSTRAP_TOKEN afterwards"
+            NODE_AUTH_TOKEN="$BOOTSTRAP" npm publish "$TARBALL" --access public --provenance
+          else
+            echo "::error::$NAME isn't on npm yet: its first release needs NPM_BOOTSTRAP_TOKEN (see the header)"; exit 1
           fi
 
   verify:
