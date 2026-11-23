@@ -110,10 +110,10 @@ OUTPUT_SCHEMA: dict[str, Any] = {
     "required": ["url", "final_url", "content_markdown", "word_count", "content_sha256"],
 }
 # Echoed by the buyer in its payment and forwarded to the facilitator, so it stays the text the
-# CDP facilitator accepted for every settled sale (373 characters). On 2026-11-22 a longer one
-# (501) and a metadata schema with ["string", "null"] types went out together, and from then on
-# the facilitator refused every verify request with HTTP 400. Richer wording lives in OpenAPI and
-# the guides, which are never echoed.
+# CDP facilitator accepted for every settled sale (373 characters). On 2026-11-22 a 501-character
+# one went out; the facilitator's schema allows 500 (x402_contract.py), so it refused every
+# verify request with HTTP 400 until it was restored. Richer wording lives in OpenAPI and the
+# guides, which are never echoed.
 DESCRIPTION = (
     "Read one public web page as clean markdown (title, main text, headings, lists, links), "
     "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
@@ -121,7 +121,8 @@ DESCRIPTION = (
     "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
     "never pays twice."
 )
-# The longest offer description the CDP facilitator has accepted; a test keeps every task under it.
+# The longest offer description the CDP facilitator has accepted for a settled sale. Its schema
+# allows 500 (x402_contract.description_limit()); a test keeps every task under both.
 OFFER_DESCRIPTION_MAX = 373
 
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
@@ -1201,6 +1202,7 @@ def create_app(
     )
     app = FastAPI(title=task.service_name)
     app.state.commerce_events = events
+    app.state.task = task  # what the route sells (the pre-deploy offer check asks for its 402)
     app.state.mcp = None
     if settings.mcp and settings.x402:
         from mcp.server.transport_security import TransportSecuritySettings
