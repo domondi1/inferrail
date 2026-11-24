@@ -108,7 +108,9 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
+          # No registry-url: it writes an .npmrc whose _authToken is ${NODE_AUTH_TOKEN}. When the
+          # OIDC exchange fails, npm silently falls back to that placeholder and the real reason
+          # surfaces as a misleading 404. Without it, npm authenticates only through OIDC.
       - name: npm new enough for trusted publishing (11.5.1+)
         run: |
           v=$(npm --version)
@@ -132,10 +134,25 @@ jobs:
             # A leftover bootstrap secret is never used; delete it.
             [ -z "$BOOTSTRAP" ] || echo "::warning::NPM_BOOTSTRAP_TOKEN is still set and was not used; delete it"
             unset NODE_AUTH_TOKEN
-            npm publish "$TARBALL" --access public
+            # npm logs why an OIDC exchange failed only at verbose level, then falls back.
+            # Keep that log and show its oidc lines and errors (npm redacts tokens in logs).
+            log="$RUNNER_TEMP/npm-publish.log"
+            if npm publish "$TARBALL" --access public --loglevel verbose > "$log" 2>&1; then
+              grep -E "npm (notice|verbose oidc)" "$log" || true
+            else
+              grep -E "verbose oidc|npm error" "$log" || true
+              if ! grep -q "verbose oidc Successfully retrieved and set token" "$log"; then
+                echo "::error::npm trusted publishing (OIDC) did not authenticate; the 'verbose oidc' line above is npm's reason. Check the package's trusted publisher on npmjs.com: GitHub Actions, domondi1 / inferrail / npm-publish.yml / environment npm, with npm publish allowed."
+              fi
+              exit 1
+            fi
           elif [ -n "$BOOTSTRAP" ]; then
             echo "::warning::first release of $NAME: bootstrap token in use; delete NPM_BOOTSTRAP_TOKEN afterwards"
-            NODE_AUTH_TOKEN="$BOOTSTRAP" npm publish "$TARBALL" --access public --provenance
+            # A brand-new package only: a throwaway npmrc for this one command.
+            rc="$RUNNER_TEMP/bootstrap.npmrc"
+            printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$rc"
+            NPM_CONFIG_USERCONFIG="$rc" NODE_AUTH_TOKEN="$BOOTSTRAP" npm publish "$TARBALL" --access public --provenance
+            rm -f "$rc"
           else
             echo "::error::$NAME isn't on npm yet: its first release needs NPM_BOOTSTRAP_TOKEN (see the header)"; exit 1
           fi
