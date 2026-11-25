@@ -31,16 +31,17 @@ DEADLINE_S = 45.0  # the whole batch; each page also has the fetcher's own timeo
 MAX_TOTAL_CHARS = 4_000_000  # markdown across the batch; beyond it the batch is refused (free)
 
 DESCRIPTION = (  # echoed to the facilitator: kept under service.OFFER_DESCRIPTION_MAX
-    "Read up to 10 public web pages in one call as clean markdown with each page's metadata, in "
-    "the order given. $0.002 per page in one payment. All or nothing: if any page fails, nothing "
-    "is charged and the answer lists which URLs failed. A retry never pays twice."
+    "Web pages to Markdown in bulk: read up to 10 public URLs in one call as clean, LLM-ready "
+    "Markdown with each page's metadata, in the order given. $0.002 per page in one payment. All "
+    "or nothing: if any page fails, nothing is charged and the answer lists which URLs failed. A "
+    "retry never pays twice."
 )
 MPP_DESCRIPTION = (
     "Up to 10 public web pages as clean markdown in one call, $0.002 per page. Charged only "
     "when every page is delivered; a retry never pays twice."
 )
 SUMMARY = "Read up to 10 web pages as markdown in one paid call ($0.002 per page)"
-TAGS = ["web-read", "batch", "scrape", "markdown"]
+TAGS = ["web pages to markdown", "batch url to markdown", "web scraper", "read urls", "bulk"]
 
 
 class PagesRequest(BaseModel):
@@ -170,6 +171,7 @@ def batch_task(service: Any, reader: Any) -> Any:
         path="/read/v1/pages",
         request_model=PagesRequest,
         service_name="Inferrail Web Read",
+        listing_name="Web Pages to Markdown, batch",
         description=DESCRIPTION,
         mpp_description=MPP_DESCRIPTION,
         tags=TAGS,

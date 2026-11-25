@@ -4,9 +4,14 @@ Incident 2026-11-23: after #223, every x402 verify request for Web Read was refu
 facilitator with HTTP 400 (three funded EOA payers, one of them a 25-time repeat buyer). The
 only differences from the requests it had accepted for every settled sale were fields the buyer
 echoes from our 402: a longer resource description (501 characters) and a discovery-extension
-output schema with `["string", "null"]` types and null example values. These tests keep the
-echoed fields in the shape the facilitator accepted (`data_x402_known_good_echo.json` is the
-echo from the pre-#223 code that settled those sales)."""
+output schema with `["string", "null"]` types and null example values. The cause was the
+description: the facilitator's schema allows 500 characters (test_x402_facilitator_contract.py).
+
+`data_x402_known_good_echo.json` is the reviewed echo. It was the pre-#223 echo that settled
+those sales; on 2026-11-25 its resource description, serviceName and tags were reworded so the
+CDP Bazaar's task search ranks Web Read (extensions unchanged, description still within the
+373 characters that settled sales, every field within the facilitator's schema). Changing the
+echo means changing this file in the same reviewed PR."""
 
 from __future__ import annotations
 
@@ -89,6 +94,11 @@ def test_web_reads_echoed_fields_are_the_ones_the_facilitator_accepted(tmp_path)
     payload = captured["body"]["paymentPayload"]
     assert payload["resource"] == KNOWN_GOOD["resource"]
     assert payload["extensions"] == KNOWN_GOOD["extensions"]
+    # What the Bazaar ranks must reach it: the SDK silently drops a serviceName over 32
+    # characters and tags over its caps.
+    task = svc.page_task(None)
+    assert payload["resource"]["serviceName"] == task.listing_name
+    assert payload["resource"]["tags"] == task.tags
 
 
 def _no_type_lists_or_nulls(value, path="") -> list[str]:
