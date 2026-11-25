@@ -46,7 +46,14 @@ export type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Re
 
 export type Result =
   | ({ ok: true } & Record<string, unknown>)
-  | { ok: false; charged: false; status: number; error: string; detail?: string };
+  | {
+      ok: false;
+      charged: false;
+      status: number;
+      error: string;
+      detail?: string;
+      results?: Array<{ url: string; delivered: boolean; error?: string; detail?: string }>;
+    };
 
 function randomId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `ai-sdk-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -97,6 +104,8 @@ export async function call(
     status: res.status,
     error: String(json.error ?? `http_${res.status}`),
     ...(detail === undefined ? {} : { detail: String(detail).slice(0, 300) }),
+    // A batch refusal lists which URLs failed, so the caller can resend without them.
+    ...(Array.isArray(json.results) ? { results: json.results.slice(0, 10) } : {}),
   };
 }
 

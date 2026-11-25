@@ -76,6 +76,13 @@ describe("tools", () => {
       ok: false, charged: false, status: 502, error: "http_502" });
   });
 
+  test("a batch refusal keeps which URLs failed, so the model can resend without them", async () => {
+    const results = [{ url: "https://a.test/", delivered: true }, { url: "https://b.test/", delivered: false, error: "upstream_status" }];
+    const { fetch } = mockFetch([json(422, { error: "pages_failed", charged: false, results })]);
+    const r = await inferrailTools({ fetch }).readPages.execute!({ urls: ["https://a.test/", "https://b.test/"] }, opts);
+    expect(r).toMatchObject({ ok: false, charged: false, status: 422, error: "pages_failed", results });
+  });
+
   test("input schemas match the service limits", () => {
     const t = inferrailTools({ fetch: mockFetch([]).fetch });
     const schema = (x: { inputSchema: unknown }) => x.inputSchema as { safeParse(v: unknown): { success: boolean } };
