@@ -29,8 +29,10 @@ process. Run with one worker:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
+import hmac
 import importlib.util
 import logging
 import os
@@ -57,7 +59,25 @@ DOMAIN_PREFIX = "/domain"
 OPS_PREFIX = "/ops"
 SITE = "https://tryinferrail.com"
 REPO = "https://github.com/domondi1/inferrail"
+MEMORY_LOG_S = 900  # one `memory` log line every 15 minutes
 log = logging.getLogger("inferrail.cohost")
+
+
+def process_memory() -> dict[str, int | None]:
+    """This process's resident memory now and at its peak, in MB (Linux; None elsewhere)."""
+    rss: int | None = None
+    try:
+        with open("/proc/self/statm") as f:
+            rss = int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") // 2**20
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import resource
+
+        peak: int | None = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024  # KiB
+    except (ImportError, OSError):
+        peak = None
+    return {"rss_mb": rss, "peak_rss_mb": peak}
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -112,9 +132,26 @@ def create_combined_app(
         godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
     hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
+    started = time.monotonic()
+
+    def memory() -> dict[str, Any]:
+        catalog = getattr(finder[0].state, "finder_catalog", None) if finder else None
+        entries = len(catalog.entries) if catalog is not None else None
+        return {**process_memory(), "finder_catalog_entries": entries}
+
+    async def log_memory() -> None:
+        """A `memory` line at startup and every MEMORY_LOG_S, so memory growth shows up in the
+        host's logs long before it reaches the instance limit."""
+        while True:
+            try:
+                trial_mod._log_event(logging.INFO, "memory", **memory())
+            except Exception:  # noqa: BLE001 - observability never takes the service down
+                pass
+            await asyncio.sleep(MEMORY_LOG_S)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        memory_task = asyncio.get_running_loop().create_task(log_memory())
         try:
             async with contextlib.AsyncExitStack() as stack:
                 await stack.enter_async_context(trial_app.router.lifespan_context(trial_app))
@@ -124,7 +161,18 @@ def create_combined_app(
                     await stack.enter_async_context(mcp_server.session_manager.run())
                 yield
         finally:
+            memory_task.cancel()
             hosted_app.state.release_instance_lock()
+
+    async def operator_memory(request: Request) -> JSONResponse:
+        """Operator only (BG_OPERATOR_TOKEN): process memory, for checking headroom."""
+        expected = hosted_settings.operator_token
+        if not expected:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(token.encode(), expected.encode()):
+            return JSONResponse({"detail": "operator token required"}, status_code=401)
+        return JSONResponse({**memory(), "uptime_s": int(time.monotonic() - started)})
 
     async def openapi(_: Request) -> JSONResponse:
         return JSONResponse(origin_openapi(app))
@@ -147,6 +195,7 @@ def create_combined_app(
         Route("/llms.txt", llms),
         Route("/.well-known/api-catalog", api_catalog),
         Route("/favicon.ico", favicon),
+        Route("/v1/operator/memory", operator_memory),
         Mount(PREFIX, app=hosted_app),
     ]
     if read_batch is not None:  # an exact path ahead of Web Read's mount, which it doesn't touch

@@ -26,6 +26,7 @@ MAX_REDIRECTS = 3
 TIMEOUT_S = 15.0
 TEXT_TYPES = ("text/html", "application/xhtml+xml", "text/plain", "text/markdown")
 ROBOTS_TTL_S = 3600
+ROBOTS_MAX = 1024  # origins whose robots.txt is remembered; the oldest is forgotten first
 
 
 class Refused(Exception):
@@ -144,6 +145,9 @@ class Fetcher:
                 parser = urllib.robotparser.RobotFileParser()
                 parser.disallow_all = True
             cached = (time.monotonic(), parser)
+            self._robots.pop(origin, None)
+            if len(self._robots) >= ROBOTS_MAX:
+                self._robots.pop(next(iter(self._robots)))
             self._robots[origin] = cached
         parser = cached[1]
         return parser is None or parser.can_fetch(self.user_agent, url)

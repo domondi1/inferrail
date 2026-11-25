@@ -406,3 +406,56 @@ def test_workspace_creation_says_where_to_send_the_first_call(parts):
         assert url == "http://testserver/hosted/v1/chat/completions"
         r = c.post(url, headers={"x-api-key": created["api_key"]}, json={})
         assert r.status_code not in (404, 405)
+
+
+def test_unmatched_paths_on_the_shared_origin_log_as_unmatched_with_a_fixed_probe_label(
+    parts, caplog
+):
+    """A 404 at the origin used to log `route: ""` (the catch-all Mount's own path). It is
+    `unmatched`, with a fixed label for paths agents commonly try, and never the raw path."""
+    import logging
+
+    build, trial_mod, _, _ = parts
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    with TestClient(build()) as client:
+        ids = {}
+        for path in ("/mcp", "/.well-known/x402", "/secret-caller-text-123"):
+            r = client.get(path)
+            assert r.status_code == 404
+            ids[path] = r.headers["x-request-id"]
+    formatter = trial_mod._JsonLogFormatter()
+    lines = {}
+    for record in caplog.records:
+        if record.name == "inferrail.cost_gateway":
+            line = json.loads(formatter.format(record))
+            lines[line.get("request_id")] = line
+    assert [lines[ids[p]]["route"] for p in ids] == ["unmatched"] * 3
+    assert [lines[ids[p]]["probe"] for p in ids] == ["mcp", "x402-discovery", "other"]
+    assert not any("secret-caller-text" in json.dumps(line) for line in lines.values())
+
+
+def test_operator_memory_needs_the_operator_token(parts):
+    build, *_ = parts
+    with TestClient(build()) as client:  # no operator token configured: not there at all
+        assert client.get("/v1/operator/memory").status_code == 404
+    with TestClient(build(BG_OPERATOR_TOKEN="op-token")) as client:
+        assert client.get("/v1/operator/memory").status_code == 401
+        assert client.get("/v1/operator/memory",
+                          headers={"Authorization": "Bearer nope"}).status_code == 401  # fmt: skip
+        r = client.get("/v1/operator/memory", headers={"Authorization": "Bearer op-token"})
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body) == {"rss_mb", "peak_rss_mb", "finder_catalog_entries", "uptime_s"}
+        if sys.platform == "linux":
+            assert 0 < body["rss_mb"] <= body["peak_rss_mb"]
+
+
+def test_a_memory_line_is_logged_at_startup(parts, caplog):
+    import logging
+
+    build, *_ = parts
+    caplog.set_level(logging.INFO, logger="inferrail.cost_gateway")
+    with TestClient(build()) as client:
+        client.get("/health")
+    [record] = [r for r in caplog.records if r.getMessage() == "memory"]
+    assert set(record.cg_fields) == {"rss_mb", "peak_rss_mb", "finder_catalog_entries"}

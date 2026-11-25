@@ -386,3 +386,105 @@ def test_base_misconfiguration_leaves_it_unmounted(tmp_path, change, monkeypatch
         else:
             env[k] = v
     assert cohost.finder_from_env(settings, env) is None
+
+
+# --- memory: the catalog is held in process memory on a 512 MB instance ------------------------
+
+
+def _many(n, offset=0):
+    """Bazaar-like items: shared vocabulary, networks and addresses, distinct URLs."""
+    vocab = [f"term{i}" for i in range(400)]
+    return [
+        _item(f"https://s{(offset + i) % 97}.test/api/{offset + i}",
+              " ".join(vocab[(offset + i * 7 + k) % 400] for k in range(40)), 2 + i % 50)
+        for i in range(n)
+    ]  # fmt: skip
+
+
+def test_catalog_entries_share_repeated_strings_and_have_no_instance_dict():
+    a, b = finder.entries_from_item(ITEMS[0])[0], finder.entries_from_item(ITEMS[1])[0]
+    assert not hasattr(a, "__dict__")  # slots: no per-entry attribute dict
+    shared = next(iter(a.words & b.words))
+    assert any(w is shared for w in a.words) and any(w is shared for w in b.words)
+    assert a.network is b.network and a.pay_to is b.pay_to and a.asset is b.asset
+
+
+# Traced bytes per entry on this synthetic catalog: 4558 before the Nov 2026 fix, 2479 after.
+BUDGET = 3200
+
+
+def test_catalog_memory_per_entry_stays_small():
+    """Regression guard for the Nov 2026 out-of-memory restart: ~24k entries must not cost
+    ~2 KB each again (measured on the real catalog: 1.9 KB before, ~1.2 KB after)."""
+    import gc
+    import tracemalloc
+
+    pages = [_many(1000, offset=p * 1000) for p in range(4)]
+
+    async def source(offset):
+        return pages[offset // 1000] if offset // 1000 < len(pages) else []
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        cat = finder.Catalog(source)
+        asyncio.run(cat.load())
+        pages.clear()
+        gc.collect()
+        held, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(cat.entries) == 4000
+    assert held / len(cat.entries) < BUDGET, f"{held / len(cat.entries):.0f} bytes per entry"
+
+
+def test_a_refresh_from_the_bazaar_uses_one_client_and_releases_memory(monkeypatch):
+    import httpx
+
+    made, released = [], []
+    real = httpx.AsyncClient
+    pages = {0: _many(1000), 1000: _many(1000, 1000), 2000: _many(5, 2000)}
+
+    def handler(request):
+        return httpx.Response(200, json={"items": pages[int(request.url.params["offset"])]})
+
+    class Counting(real):
+        def __init__(self, **kw):
+            made.append(1)
+            super().__init__(transport=httpx.MockTransport(handler), **kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Counting)
+    monkeypatch.setattr(finder, "release_memory", lambda: released.append(1))
+    cat = finder.Catalog()
+    asyncio.run(cat.load())
+    assert len(cat.entries) == 2005 and made == [1] and released == [1]
+
+
+def test_release_memory_is_safe_without_glibc(monkeypatch):
+    def no_libc(_name):
+        raise OSError("no libc here")
+
+    monkeypatch.setattr(finder, "_libc", None)
+    monkeypatch.setattr(finder.ctypes, "CDLL", no_libc)
+    finder.release_memory()
+    finder.release_memory()  # remembered as unavailable; still a no-op
+    assert finder._libc is False
+
+
+def test_release_memory_is_gc_only_off_linux(monkeypatch):
+    def must_not_load(_name):
+        raise AssertionError("loaded libc off Linux")
+
+    monkeypatch.setattr(finder, "_libc", None)
+    monkeypatch.setattr(finder.sys, "platform", "darwin")
+    monkeypatch.setattr(finder.ctypes, "CDLL", must_not_load)
+    finder.release_memory()
+    assert finder._libc is False
+
+
+def test_release_memory_trims_on_linux_glibc(monkeypatch):
+    if not sys.platform.startswith("linux"):
+        pytest.skip("glibc trimming is Linux-only")
+    monkeypatch.setattr(finder, "_libc", None)
+    finder.release_memory()
+    assert finder._libc is not False  # libc.so.6 with malloc_trim found (CI: Ubuntu, glibc)
