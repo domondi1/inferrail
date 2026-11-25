@@ -33,7 +33,8 @@ MAX_TOTAL_CHARS = 4_000_000  # markdown across the batch; beyond it the batch is
 DESCRIPTION = (  # echoed to the facilitator: kept under service.OFFER_DESCRIPTION_MAX
     "Web pages to Markdown in bulk: read up to 10 public URLs in one call as clean, LLM-ready "
     "Markdown with each page's metadata, in the order given. $0.002 per page in one payment. All "
-    "or nothing: if any page fails, nothing is charged and the answer lists which URLs failed."
+    "or nothing: if any page fails, nothing is charged and the answer lists which URLs failed. A "
+    "retry never pays twice."
 )
 MPP_DESCRIPTION = (
     "Up to 10 public web pages as clean markdown in one call, $0.002 per page. Charged only "
