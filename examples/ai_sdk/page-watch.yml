@@ -1,0 +1,53 @@
+# A GitHub Actions workflow that checks docs, changelogs and release notes for changes on a
+# schedule and lists the changed pages in the run's summary. Setup: "Run it on a schedule" in
+# README.md. Copy this file to .github/workflows/page-watch.yml in your repository.
+#
+# Each check pays $0.002 per page delivered (Web Read's batch, 10 pages per paid call), from a
+# wallet you fund. MAX_USD caps one run; the check refuses to start if the cap can't cover every
+# page. A page that can't be read is never charged. No model key is needed (MODEL: none).
+name: page-watch
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily at 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: page-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .github/page-watch # your copy of examples/ai_sdk, with urls.txt
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
+      - name: Restore the last check's page hashes
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .github/page-watch/state.json
+          key: page-watch-${{ github.run_id }}
+          restore-keys: page-watch-
+      - name: Check the pages
+        env:
+          EVM_PRIVATE_KEY: ${{ secrets.PAGE_WATCH_WALLET_KEY }}
+          MAX_USD: ${{ vars.PAGE_WATCH_MAX_USD || '0.04' }}
+          MODEL: none
+        run: npx --yes bun@1.4.4 cli.ts watch urls.txt state.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Save this check's page hashes
+        if: ${{ hashFiles('.github/page-watch/state.json') != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .github/page-watch/state.json
+          key: page-watch-${{ github.run_id }}

@@ -6,12 +6,13 @@
  *
  * Needs EVM_PRIVATE_KEY (your wallet with a little USDC on Base), MAX_USD (default 0.01 for the
  * run), and a model: MODEL (default "openai/gpt-5-mini", through the Vercel AI Gateway with
- * AI_GATEWAY_API_KEY, or any AI SDK provider you wire in).
+ * AI_GATEWAY_API_KEY, or any AI SDK provider you wire in). For watch, MODEL=none lists the
+ * changed pages without a model.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { reviewDependencies, researchBrief, vetLink } from "./tasks";
-import { checkForChanges, summarizeChanges } from "./watch";
+import { checkForChanges, listChanges, summarizeChanges } from "./watch";
 import { paidFetchFromEnv } from "./wallet";
 
 const [task, ...args] = process.argv.slice(2);
@@ -42,7 +43,9 @@ if (task === "deps" && args[0]) {
   const check = await checkForChanges(fetch, urls, state);
   writeFileSync(args[1], JSON.stringify(check.state, null, 2));
   for (const f of check.failed) console.error(`not read (not charged): ${f.url} ${f.error}`);
-  result = { text: await summarizeChanges(run.model, check.changed) };
+  // MODEL=none: list the changed pages instead of summarising them (no model key needed).
+  const list = listChanges(check, state);
+  result = { text: run.model === "none" ? list : `${list}\n\n${await summarizeChanges(run.model, check.changed)}` };
 } else {
   console.error('usage: bun cli.ts deps <package.json> | research "<question>" <url>... | link <url> | watch <urls.txt> <state.json>');
   process.exit(2);
