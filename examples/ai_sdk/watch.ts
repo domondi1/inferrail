@@ -82,6 +82,20 @@ export async function checkForChanges(fetch: Fetch, urls: string[], state: Watch
   return out;
 }
 
+/** The same report without a model: a Markdown list of the pages that changed, for a job log,
+ * a GitHub job summary or an issue. Costs nothing beyond the check itself. */
+export function listChanges(check: CheckResult, before: WatchState = {}): string {
+  const lines = [`**${check.changed.length} changed**, ${check.unchanged.length} unchanged, ` +
+    `${check.failed.length} not read (not charged). Paid for ${check.paidPages} page(s).`];
+  for (const p of check.changed) {
+    const words = typeof p.word_count === "number" ? `, ${p.word_count.toLocaleString("en-US")} words` : "";
+    const was = before[p.url] ? `changed since ${before[p.url].checkedAt}` : "first check";
+    lines.push(`- [${(p.title ?? p.url).replace(/[[\]]/g, "")}](${p.url}): ${was}${words}`);
+  }
+  for (const f of check.failed) lines.push(`- not read: ${f.url} (${f.error})`);
+  return lines.join("\n");
+}
+
 /** What changed, in a few lines per page, written by `model` from the changed pages only. */
 export async function summarizeChanges(model: LanguageModel, changed: Page[]) {
   if (!changed.length) return "No changes.";

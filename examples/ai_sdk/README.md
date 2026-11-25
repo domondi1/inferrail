@@ -8,7 +8,7 @@ Each one does a real job and gets only the tools that job needs.
 | Are these dependency versions safe to ship? | `bun cli.ts deps package.json` | `checkPackages` | $0.002 (up to 20 packages in one check) |
 | Answer a question from several pages, with dated citations | `bun cli.ts research "What changed in v5?" <url> <url>...` | `readPages` | $0.002 per page, 1–10 pages |
 | Should I trust this link? | `bun cli.ts link https://example.com/` | `lookupDomain`, `readPage` | $0.004 |
-| What changed in these docs, changelogs and release notes since the last run? Run it on a schedule. | `bun cli.ts watch urls.txt state.json` | Web Read batch (`watch.ts`) | $0.002 per page per check; only **changed** pages (by `content_sha256`) reach the model |
+| What changed in these docs, changelogs and release notes since the last run? Run it on a schedule. | `bun cli.ts watch urls.txt state.json` (or daily in [GitHub Actions](#run-it-on-a-schedule-github-actions)) | Web Read batch (`watch.ts`) | $0.002 per page per check; only **changed** pages (by `content_sha256`) reach the model |
 
 ## What you need
 
@@ -32,6 +32,21 @@ EVM_PRIVATE_KEY=0x... MAX_USD=0.01 AI_GATEWAY_API_KEY=... bun cli.ts link https:
 You're charged only for delivered results. A refused page (robots.txt, bot check, 404), an
 unknown domain or a failed check costs nothing. The model receives
 `{ ok: false, charged: false, ... }` and carries on.
+
+## Run it on a schedule (GitHub Actions)
+
+[`page-watch.yml`](page-watch.yml) runs `watch` every day and puts the changed pages in the
+run's summary. It needs no model key (`MODEL: none` lists the changes instead of summarising
+them), and it remembers the last run's page hashes in the Actions cache.
+
+1. Copy this directory into your repository as `.github/page-watch/`, and put the pages to
+   watch in `.github/page-watch/urls.txt`, one URL per line.
+2. Copy `page-watch.yml` to `.github/workflows/page-watch.yml`.
+3. Add a repository secret `PAGE_WATCH_WALLET_KEY`: the key of a wallet that holds only a
+   little USDC on Base. Keep this wallet separate and fund it with only what the job should
+   spend. Anyone who can change workflows in the repository can use the secret.
+4. Optional: a repository variable `PAGE_WATCH_MAX_USD` (default `0.04`, enough for 20 pages
+   per run). 20 pages a day costs $0.04 a day, about $1.20 a month.
 
 ## Using it in your own agent
 

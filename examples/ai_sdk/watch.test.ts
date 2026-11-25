@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkForChanges } from "./watch";
+import { checkForChanges, listChanges } from "./watch";
 
 const page = (url: string, v: string) => ({ url, title: url, content_markdown: `# ${v}`, content_sha256: `sha-${url}-${v}` });
 
@@ -45,5 +45,19 @@ describe("watch", () => {
     const r = await checkForChanges(svc.fetch, [...urls, urls[0]]);
     expect(svc.calls.map((c) => c.length)).toEqual([10, 10, 3]);
     expect(r.paidPages).toBe(23);
+  });
+
+  test("without a model, the report lists changed pages (first check vs changed) and unread ones", async () => {
+    const urls = ["https://a.test/changelog", "https://b.test/releases"];
+    const first = await checkForChanges(service({}).fetch, urls);
+    const svc = service({ "https://b.test/releases": "v2" }, ["https://down.test/x"]);
+    const check = await checkForChanges(svc.fetch, [...urls, "https://c.test/new", "https://down.test/x"], first.state);
+    const report = listChanges(check, first.state);
+    expect(report.split("\n")).toEqual([
+      "**2 changed**, 1 unchanged, 1 not read (not charged). Paid for 3 page(s).",
+      `- [https://b.test/releases](https://b.test/releases): changed since ${first.state["https://b.test/releases"].checkedAt}`,
+      "- [https://c.test/new](https://c.test/new): first check",
+      "- not read: https://down.test/x (upstream_status)",
+    ]);
   });
 });
