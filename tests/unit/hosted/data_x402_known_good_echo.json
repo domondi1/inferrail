@@ -151,15 +151,16 @@
   }
  },
  "resource": {
-  "description": "Read one public web page as clean markdown (title, main text, headings, lists, links), with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet never pays twice.",
+  "description": "Web page to Markdown: read any public URL as clean Markdown (title, main text, headings, lists, links, tables) with the page's author, date and language, word count and content hash. $0.002, charged only when the page is delivered: a failing page (target-site 403, 404, 5xx, timeout), a bot check or a robots.txt refusal costs nothing, and a retry never pays twice.",
   "iconUrl": "https://tryinferrail.com/favicon-192x192.png",
   "mimeType": "application/json",
-  "serviceName": "Inferrail Web Read",
+  "serviceName": "Web Page to Markdown (Inferrail)",
   "tags": [
-   "web-read",
-   "scrape",
-   "markdown",
-   "fetch"
+   "web page to markdown",
+   "url to markdown",
+   "web scraper",
+   "read url",
+   "article text"
   ],
   "url": "https://inferrail-cost-gateway.onrender.com/read/v1/page"
  }

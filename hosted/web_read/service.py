@@ -109,16 +109,16 @@ OUTPUT_SCHEMA: dict[str, Any] = {
     },
     "required": ["url", "final_url", "content_markdown", "word_count", "content_sha256"],
 }
-# Echoed by the buyer in its payment and forwarded to the facilitator, so it stays the text the
-# CDP facilitator accepted for every settled sale (373 characters). On 2026-11-22 a 501-character
-# one went out; the facilitator's schema allows 500 (x402_contract.py), so it refused every
-# verify request with HTTP 400 until it was restored. Richer wording lives in OpenAPI and the
-# guides, which are never echoed.
+# Echoed by the buyer in its payment and forwarded to the facilitator: it must stay within the
+# facilitator's schema (500 characters, x402_contract.py; a 501-character one refused every
+# verify on 2026-11-23) and within OFFER_DESCRIPTION_MAX, the longest one that settled sales.
+# It is also what the CDP Bazaar's task search ranks, so it opens with the task phrase agents
+# search for ("web page to Markdown", "URL"). Richer wording lives in OpenAPI and the guides.
 DESCRIPTION = (
-    "Read one public web page as clean markdown (title, main text, headings, lists, links), "
-    "with word count, a content hash and a receipt. Pay only for a delivered page: a blocked, "
-    "missing or failing page (target-site 403, 404, 5xx, timeout) costs nothing, and neither do "
-    "refusals (robots.txt, non-public address, non-text, >2 MB). A retry from the same wallet "
+    "Web page to Markdown: read any public URL as clean Markdown (title, main text, headings, "
+    "lists, links, tables) with the page's author, date and language, word count and "
+    "content hash. $0.002, charged only when the page is delivered: a failing page (target-site "
+    "403, 404, 5xx, timeout), a bot check or a robots.txt refusal costs nothing, and a retry "
     "never pays twice."
 )
 # The longest offer description the CDP facilitator has accepted for a settled sale. Its schema
@@ -153,7 +153,7 @@ class Task:
 
     path: str  # route under the mount prefix, e.g. "/v1/page"
     request_model: type[BaseModel]
-    service_name: str
+    service_name: str  # the product name in our own events, OpenAPI and guides
     description: str  # x402 offer and discovery text
     mpp_description: str  # short form for the MPP challenge header
     tags: list[str]
@@ -175,6 +175,9 @@ class Task:
     # The output schema published in the 402's discovery extension (echoed by the buyer to the
     # facilitator). None means output_schema; either way it is made facilitator-safe first.
     discovery_schema: dict[str, Any] | None = None
+    # The name discovery indexes (CDP Bazaar `serviceName`, at most 32 characters) show and rank,
+    # phrased as the task agents search for. None means service_name.
+    listing_name: str | None = None
 
 
 def bazaar_safe(value: Any) -> Any:
@@ -759,7 +762,8 @@ def _http_resource(settings: Settings, task: Any) -> Any:
 
     return ResourceInfo(
         url=settings.resource_url, description=task.description, mime_type="application/json",
-        service_name=task.service_name, tags=list(task.tags)[:5], icon_url=settings.icon_url,
+        service_name=task.listing_name or task.service_name, tags=list(task.tags)[:5],
+        icon_url=settings.icon_url,
     )  # fmt: skip
 
 
@@ -997,7 +1001,9 @@ def page_task(reader: Any) -> Task:
         service_name="Inferrail Web Read",
         description=DESCRIPTION,
         mpp_description=MPP_DESCRIPTION,
-        tags=["web-read", "scrape", "markdown", "fetch"],
+        # Phrases agents search the Bazaar with (each at most 32 characters, at most 5).
+        tags=["web page to markdown", "url to markdown", "web scraper", "read url", "article text"],
+        listing_name="Web Page to Markdown (Inferrail)",
         input_example={"url": "https://example.com/"},
         output_example=example,
         output_schema=OUTPUT_SCHEMA,
@@ -1181,7 +1187,7 @@ def create_app(
             resource=settings.resource_url,
             description=task.description,
             mime_type="application/json",
-            service_name=task.service_name,
+            service_name=task.listing_name or task.service_name,
             tags=task.tags,
             icon_url=settings.icon_url,
             extensions=declare_discovery_extension(
