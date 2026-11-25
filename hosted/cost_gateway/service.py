@@ -145,6 +145,10 @@ _LOG_FIELDS = frozenset(
         "admin_enabled",
         "client_ip_header",
         "purged_count",
+        "probe",
+        "rss_mb",
+        "peak_rss_mb",
+        "finder_catalog_entries",
     }
 )
 """Every field any log line in this service may carry. **Key-free and
@@ -190,10 +194,38 @@ def configure_logging() -> None:
 def _route_template(scope: Any) -> str:
     """The matched route's *template* (`/v1/trial/{tenant_id}`), never
     the raw path -- a raw path carries caller-chosen text (work ids, task
-    ids, or anything pasted into a URL by mistake)."""
+    ids, or anything pasted into a URL by mistake). A request no route
+    matched is `unmatched`, also when this app is the cohost's catch-all
+    `Mount("/")`, whose own path is the empty string."""
     route = scope.get("route")
     path = getattr(route, "path", None)
-    return path if isinstance(path, str) else "unmatched"
+    return path if isinstance(path, str) and path else "unmatched"
+
+
+_PROBES = {
+    "/mcp": "mcp",
+    "/mcp/": "mcp",
+    "/sse": "mcp",
+    "/.well-known/mcp.json": "mcp-discovery",
+    "/.well-known/mcp": "mcp-discovery",
+    "/.well-known/x402": "x402-discovery",
+    "/.well-known/x402.json": "x402-discovery",
+    "/.well-known/agent.json": "a2a",
+    "/.well-known/agent-card.json": "a2a",
+    "/.well-known/ai-plugin.json": "openai-plugin",
+    "/v1/models": "openai-api",
+    "/v1/chat/completions": "openai-api",
+    "/robots.txt": "robots",
+    "/sitemap.xml": "sitemap",
+}
+"""Unmatched paths that agents and catalogs commonly try, each logged as a
+fixed label (never the path itself), so a missing endpoint buyers look for
+shows up in the logs. Anything else unmatched is `other`."""
+
+
+def _probe(scope: Any) -> str:
+    path = scope.get("path")
+    return _PROBES.get(path, "other") if isinstance(path, str) else "other"
 
 
 def _error_location(exc: BaseException) -> str:
@@ -273,6 +305,7 @@ class _AccessLogMiddleware:
             # logging each success would bury every other line. A failing
             # health check is still logged.
             if not (route == "/health" and status == 200):
+                extra = {"probe": _probe(scope)} if route == "unmatched" else {}
                 _log_event(
                     logging.INFO,
                     "request",
@@ -282,6 +315,7 @@ class _AccessLogMiddleware:
                     status=status,
                     duration_ms=round((time.monotonic() - started_at) * 1000, 1),
                     tenant_id=state.get("tenant_id"),
+                    **extra,
                 )
 
 

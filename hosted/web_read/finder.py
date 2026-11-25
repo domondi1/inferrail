@@ -19,11 +19,14 @@ Picks are catalog facts, not a delivery guarantee: Inferrail doesn't call or vou
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import gc
 import hashlib
 import hmac
 import json
 import math
 import re
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -133,7 +136,7 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP and len(w) > 1]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Entry:
     url: str
     method: str | None
@@ -155,25 +158,33 @@ class Entry:
 
 
 def entries_from_item(item: dict[str, Any]) -> list[Entry]:
-    """One Entry per accepted payment option of a Bazaar resource (skips malformed ones)."""
+    """One Entry per accepted payment option of a Bazaar resource (skips malformed ones).
+
+    Strings that repeat across the catalog (words, networks, assets, addresses, methods) are
+    interned, so ~24k entries share one copy of each instead of one per entry."""
     url = item.get("resource")
     if not isinstance(url, str) or not url.startswith("https://"):
         return []
+    quality = item.get("quality") or {}
+    if (quality.get("l30DaysUniquePayers") or 0) < MIN_PAYERS:
+        return []  # most resources: skip them before any other work
     info = ((item.get("extensions") or {}).get("bazaar") or {}).get("info") or {}
     inp = info.get("input") if isinstance(info.get("input"), dict) else {}
-    method = inp.get("method") if isinstance(inp.get("method"), str) else None
+    method = sys.intern(inp["method"]) if isinstance(inp.get("method"), str) else None
     example = inp.get("body", inp.get("queryParams"))
     desc = str(item.get("description") or "")[:DESC_CHARS]
     tags = " ".join(t for t in item.get("tags") or [] if isinstance(t, str))
-    words = frozenset(_words(f"{desc} {tags} {item.get('serviceName') or ''} {url}"))
-    quality = item.get("quality") or {}
-    if (quality.get("l30DaysUniquePayers") or 0) < MIN_PAYERS:
-        return []
+    text = f"{desc} {tags} {item.get('serviceName') or ''} {url}"
+    words = frozenset(sys.intern(w) for w in _words(text))
     out = []
     for a in item.get("accepts") or []:
         try:
             amount = int(a.get("amount") or a.get("maxAmountRequired"))
-            network, pay_to, asset = str(a["network"]), str(a["payTo"]), str(a.get("asset") or "")
+            network, pay_to, asset = (
+                sys.intern(str(a["network"])),
+                sys.intern(str(a["payTo"])),
+                sys.intern(str(a.get("asset") or "")),
+            )
         except (KeyError, TypeError, ValueError):
             continue
         out.append(Entry(url, method, desc, network, asset, pay_to, amount, example,
@@ -195,15 +206,28 @@ class Catalog:
         self._task: asyncio.Task[None] | None = None
 
     async def load(self) -> None:
+        if self._source is _bazaar_page:  # one connection pool for the whole refresh
+            import httpx
+
+            async with httpx.AsyncClient(timeout=60) as client:
+                await self._load(lambda offset: _bazaar_page(offset, client))
+        else:
+            await self._load(self._source)
+
+    async def _load(self, source: Callable[[int], Awaitable[list[dict[str, Any]]]]) -> None:
         entries: list[Entry] = []
         for page in range(MAX_PAGES):
-            items = await self._source(page * PAGE)
+            items = await source(page * PAGE)
+            count = len(items)
             for item in items:
                 entries.extend(entries_from_item(item))
-            if len(items) < PAGE:
+            del items  # the parsed page (~3 MB of JSON) is garbage from here on
+            if count < PAGE:
                 break
         if entries:  # a failed or empty refresh keeps the previous catalog
             self.entries, self.as_of = entries, time.time()
+        del entries
+        release_memory()  # the previous catalog and the parsed pages
 
     def ensure_fresh(self) -> None:
         """Start a background refresh if the catalog is missing or stale (never blocks)."""
@@ -218,14 +242,46 @@ class Catalog:
             pass
 
 
-async def _bazaar_page(offset: int) -> list[dict[str, Any]]:
+async def _bazaar_page(offset: int, client: Any = None) -> list[dict[str, Any]]:
     import httpx
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.get(BAZAAR_RESOURCES, params={"limit": PAGE, "offset": offset})
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        return items if isinstance(items, list) else []
+    if client is None:
+        async with httpx.AsyncClient(timeout=60) as own:
+            return await _bazaar_page(offset, own)
+    r = await client.get(BAZAAR_RESOURCES, params={"limit": PAGE, "offset": offset})
+    r.raise_for_status()
+    items = r.json().get("items", [])
+    return items if isinstance(items, list) else []
+
+
+_libc: Any = None
+
+
+def release_memory() -> None:
+    """Collect garbage, then hand freed heap pages back to the OS.
+
+    A refresh briefly holds the old catalog, the new one and a parsed page. CPython frees them,
+    but glibc keeps the freed pages mapped, so without this the process's resident memory
+    ratchets up with every refresh (measured: 291 -> 384 MB over five refreshes).
+
+    `malloc_trim` is glibc-only (Linux). Elsewhere (macOS, Windows, musl/Alpine, which has no
+    `malloc_trim`) loading it fails once and this is only `gc.collect()`. Measured with the
+    full catalog: ~25 ms of collection and <1 ms of trimming, once per refresh."""
+    global _libc
+    gc.collect()
+    if _libc is False:
+        return
+    try:
+        if _libc is None:
+            if not sys.platform.startswith("linux"):
+                raise OSError("malloc_trim is glibc-only")
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim.argtypes = [ctypes.c_size_t]
+            libc.malloc_trim.restype = ctypes.c_int
+            _libc = libc
+        _libc.malloc_trim(0)
+    except (OSError, AttributeError):
+        _libc = False
 
 
 def rank(entries: list[Entry], body: FindRequest) -> list[Entry]:

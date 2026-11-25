@@ -953,3 +953,18 @@ def test_the_settle_call_always_carries_bazaar_discovery_metadata(tmp_path, clie
     assert events.get(expected) == 1
     if client_echoes:
         assert settled.extensions == sent.extensions and settled.resource == sent.resource
+
+
+def test_robots_cache_is_bounded(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(fetch, "ROBOTS_MAX", 3)
+    site = {f"o{i}.test/robots.txt": ROBOTS_OK for i in range(5)}
+    reader = fetch.Fetcher("t", transport=_site(site), resolve=_public_dns)
+
+    async def visit():
+        for i in range(5):
+            assert await reader._allowed(f"https://o{i}.test/page")
+
+    asyncio.run(visit())
+    assert list(reader._robots) == ["https://o2.test", "https://o3.test", "https://o4.test"]
