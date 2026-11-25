@@ -19,6 +19,17 @@ robots.txt refusal, a timeout or an upstream failure costs nothing, and the mode
 `request_id`; a network failure is retried once with the same id, which the service
 answers with the paid result instead of charging again.
 
+## Why pay for a page
+
+A plain `fetch` hands your model the page's raw HTML. Web Read hands it the readable content as
+Markdown, plus the page's own metadata as JSON fields. On 20 real docs, changelog, advisory and
+news pages, that's a **median of about 9× fewer tokens** (2× on long docs, 30–56× on
+markup-heavy pages). At $3 per million input tokens, a 100k-token raw page costs $0.30 of
+context; through Web Read it's $0.002 plus the smaller Markdown. Pages it can't read (no text
+without JavaScript, bot walls, over 2 MB) are refused and never charged. Reproduce it, or run
+it on your own pages:
+[benchmarks/web_read](https://github.com/domondi1/inferrail/tree/main/benchmarks/web_read).
+
 ## Install
 
 ```bash

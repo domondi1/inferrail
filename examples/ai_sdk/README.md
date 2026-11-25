@@ -1,6 +1,6 @@
 # Vercel AI SDK agents with Inferrail's paid tools
 
-Three small agents built on [`@inferrail/ai-sdk-tools`](../../packages/ai-sdk-tools/README.md).
+Four small agents built on [`@inferrail/ai-sdk-tools`](../../packages/ai-sdk-tools/README.md).
 Each one does a real job and gets only the tools that job needs.
 
 | Job | Command | Tools | Typical cost |
@@ -8,13 +8,15 @@ Each one does a real job and gets only the tools that job needs.
 | Are these dependency versions safe to ship? | `bun cli.ts deps package.json` | `checkPackages` | $0.002 (up to 20 packages in one check) |
 | Answer a question from several pages, with dated citations | `bun cli.ts research "What changed in v5?" <url> <url>...` | `readPages` | $0.002 per page, 1–10 pages |
 | Should I trust this link? | `bun cli.ts link https://example.com/` | `lookupDomain`, `readPage` | $0.004 |
+| What changed in these docs, changelogs and release notes since the last run? Run it on a schedule. | `bun cli.ts watch urls.txt state.json` | Web Read batch (`watch.ts`) | $0.002 per page per check; only **changed** pages (by `content_sha256`) reach the model |
 
 ## What you need
 
 - **A wallet you control with a little USDC on Base.** Put its key in `EVM_PRIVATE_KEY`.
   Installing the package doesn't give your agent a wallet, funds or permission to pay. You
   provide the key, and nothing here creates or funds a wallet.
-- **A spending cap.** `MAX_USD` defaults to `0.01` per run. Once a payment would take the run
+- **A spending cap.** `MAX_USD` defaults to `0.01` per run. `watch` needs $0.002 × the
+  number of pages per check (`MAX_USD=0.04` for 20 pages) and refuses to start below that. Once a payment would take the run
   past it, the payment is refused before it's signed (`wallet.ts`, `capSpending`). The price
   guard also refuses any Inferrail offer above the listed $0.002 per result, or one that pays
   another address.
