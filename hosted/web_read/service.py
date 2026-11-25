@@ -198,6 +198,43 @@ def bazaar_safe(value: Any) -> Any:
     return value
 
 
+def unpaid_guide(settings: Any, task: Any, units: int = 1) -> dict[str, Any]:
+    """The body of an unpaid 402, for callers that aren't x402 clients yet (an LLM with a plain
+    HTTP tool, a developer with curl). x402 v2 puts the offer in the PAYMENT-REQUIRED header, so
+    the default body is `{}`: a dead end for anyone who can't read it. This says what it costs,
+    that nothing was charged, and how to start paying from a wallet the caller controls.
+
+    It has no `x402Version` key on purpose: x402 clients read the header first and look at the
+    body only for a v1 offer, so paying clients never see it, and it is never echoed to the
+    facilitator."""
+    from urllib.parse import urlsplit
+
+    url = urlsplit(settings.resource_url)
+    origin = f"{url.scheme}://{url.netloc}"
+    pay: dict[str, str] = {
+        "x402": "USDC on Base: pay the offer in this response's PAYMENT-REQUIRED header with any "
+        "x402 client, then repeat this request with the PAYMENT-SIGNATURE header.",
+    }
+    if getattr(settings, "mpp", None) is not None:
+        pay["mpp"] = "Tempo: answer the WWW-Authenticate: Payment challenge with an MPP client."
+    return {
+        "error": "payment_required",
+        "charged": False,
+        "price_usd": price_for(settings.price_usd, units),
+        "service": task.listing_name or task.service_name,
+        "summary": task.mpp_description,
+        "charged_only_on_delivery": True,
+        "pay": pay,
+        "start_paying": {
+            "agentcash": f"npx agentcash add {origin}",
+            "vercel_ai_sdk": "npm i @inferrail/ai-sdk-tools",
+            "wallet": "Both pay from a wallet you control and fund; neither creates or funds one.",
+        },
+        "docs": {"guide": f"{origin}{settings.mount_prefix}/llms.txt",
+                 "openapi": f"{origin}/openapi.json"},
+    }  # fmt: skip
+
+
 def discovery_output(task: Any, example: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """(schema, example) for the 402's discovery extension: the task's discovery schema, and the
     example reduced to that schema's top-level fields, both facilitator-safe."""
@@ -1032,7 +1069,7 @@ def create_app(
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
     from x402.http.middleware.fastapi import payment_middleware
-    from x402.http.types import PaymentOption, RouteConfig
+    from x402.http.types import HTTPResponseBody, PaymentOption, RouteConfig
     from x402.http.utils import decode_payment_signature_header
     from x402.mechanisms.evm.exact import register_exact_evm_server
     from x402.server import x402ResourceServer
@@ -1195,6 +1232,10 @@ def create_app(
                 input_schema=task.request_model.model_json_schema(),
                 output=OutputConfig(example=offer_example, schema=offer_schema),
                 **body,
+            ),
+            unpaid_response_body=lambda _ctx: HTTPResponseBody(
+                content_type="application/json",
+                body=unpaid_guide(settings, task, units_var.get() if task.units else 1),
             ),
         )
 

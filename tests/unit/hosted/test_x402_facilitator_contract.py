@@ -247,3 +247,26 @@ def test_preflight_stops_a_deploy_whose_offer_the_facilitator_would_refuse(tmp_p
     assert len(found) == 1
     assert found[0].startswith("web read: the facilitator would refuse every payment")
     assert "at most 500 characters" in found[0]
+
+
+def test_an_unpaid_402_tells_a_non_x402_caller_how_to_pay_without_confusing_x402_clients(tmp_path):
+    """Every route's unpaid 402 carries a readable guide (the SDK default body is `{}`). It has
+    no `x402Version`, so a real x402 client still takes the offer from the header, and the price
+    it states is the header's."""
+    from x402 import x402ClientSync
+    from x402.http import x402HTTPClientSync
+
+    reader = x402HTTPClientSync(x402ClientSync())
+    for name, app, path, body in _routes(tmp_path, _facilitator({}, valid=False)):
+        r = app.post(path, json=body)
+        guide = r.json()
+        assert r.status_code == 402 and "x402Version" not in guide, name
+        assert guide["charged"] is False and guide["charged_only_on_delivery"] is True, name
+        assert guide["start_paying"]["vercel_ai_sdk"] == "npm i @inferrail/ai-sdk-tools", name
+        assert guide["docs"]["guide"].endswith("/llms.txt"), name
+        offer = reader.get_payment_required_response(r.headers.get, r.content)
+        header = contract.decode_payment_required(r.headers["payment-required"])
+        assert offer.model_dump(by_alias=True, exclude_none=True)["accepts"][0]["amount"] == \
+            header["accepts"][0]["amount"], name
+        assert str(int(header["accepts"][0]["amount"]) / 1_000_000) == \
+            str(float(guide["price_usd"])), name
