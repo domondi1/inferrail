@@ -156,11 +156,11 @@
   "mimeType": "application/json",
   "serviceName": "Web Page to Markdown (Inferrail)",
   "tags": [
+   "markdown",
+   "web-scraping",
+   "web",
    "web page to markdown",
-   "url to markdown",
-   "web scraper",
-   "read url",
-   "article text"
+   "url to markdown"
   ],
   "url": "https://inferrail-cost-gateway.onrender.com/read/v1/page"
  }
