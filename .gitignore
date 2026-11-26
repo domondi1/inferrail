@@ -44,3 +44,4 @@ local/
 
 # Local gateway state written to the repo root by ad-hoc runs (receipts.db, budgets.db, ...)
 /*.db
+mcp/desktop-extension/*.mcpb
