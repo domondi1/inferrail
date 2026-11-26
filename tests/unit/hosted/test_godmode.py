@@ -842,3 +842,16 @@ def test_a_settled_purchase_is_not_in_the_rejections_report(tmp_path):
     assert r.status_code == 200
     rep = c.get("/v1/operator/rejections", headers={"Authorization": "Bearer op"}).json()
     assert rep["count"] == 0
+
+
+def test_the_reporting_token_cannot_read_per_wallet_rejections(tmp_path):
+    fac = Http400Facilitator()
+    c, store, settings = _x402_app(tmp_path, fac=fac, stats_token="r" * 40)
+    c.post("/v1/page", json={"url": "https://news.test/a"},
+           headers={"PAYMENT-SIGNATURE": _sign(c, "https://news.test/a")})  # fmt: skip
+    reporting = {"Authorization": "Bearer " + "r" * 40}
+    assert c.get("/v1/operator/rejections", headers=reporting).status_code == 401
+    operator = {"Authorization": "Bearer op"}
+    assert c.get("/v1/operator/rejections", headers=operator).status_code == 200
+    stats = c.get("/v1/operator/stats", headers=reporting)
+    assert stats.status_code == 200 and "reads_by_payer" not in stats.json()

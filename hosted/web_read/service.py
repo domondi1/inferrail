@@ -318,6 +318,9 @@ class Settings:
     data_dir: Path = Path("/tmp/inferrail_web_read")
     user_agent: str = "InferrailReader/1.0 (+https://github.com/domondi1/inferrail)"
     operator_token: str | None = None
+    # A separate, read-only reporting credential: it opens only /v1/operator/stats, without the
+    # per-wallet breakdown. It is never a key seed and never opens anything else.
+    stats_token: str | None = None
     mount_prefix: str = ""  # e.g. "/read" when mounted on a shared origin
     recovery_s: int = 600  # how long a delivered page can be recovered without paying again
     mpp: Any = None  # mpp_rail.MppSettings when MPP (Tempo) payments are also accepted
@@ -389,6 +392,7 @@ class Settings:
             resource_url=resource_url,
             data_dir=Path(e.get(f"{prefix}DATA_DIR", "/tmp/inferrail_web_read")),
             operator_token=e.get("BG_OPERATOR_TOKEN") or None,
+            stats_token=_stats_token(e),
             mount_prefix=e.get(f"{prefix}MOUNT_PREFIX", "").rstrip("/"),
             recovery_s=recovery_s,
             mpp=mpp,
@@ -599,6 +603,15 @@ SOURCES = frozenset({"skill", "plugin", "example", "llms", "ci", "ai-sdk", "mcp-
 def _source(request: Any) -> str | None:
     value = (request.headers.get("x-inferrail-source") or "").strip().lower()
     return value if value in SOURCES else None
+
+
+def _stats_token(e: dict[str, str]) -> str | None:
+    """INFERRAIL_STATS_TOKEN, when it is long enough and isn't the operator token (sharing the
+    operator token would defeat the point of a narrow credential)."""
+    token = (e.get("INFERRAIL_STATS_TOKEN") or "").strip()
+    if len(token) < 32 or token == (e.get("BG_OPERATOR_TOKEN") or "").strip():
+        return None
+    return token
 
 
 def _reason(rail: str, text: Any) -> str:
@@ -1754,10 +1767,17 @@ def create_app(
         import hmac
 
         token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not settings.operator_token:
+        if not settings.operator_token and not settings.stats_token:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        if not hmac.compare_digest(token.encode(), settings.operator_token.encode()):
+        full = bool(settings.operator_token) and hmac.compare_digest(
+            token.encode(), (settings.operator_token or "").encode())  # fmt: skip
+        reporting = bool(settings.stats_token) and hmac.compare_digest(
+            token.encode(), (settings.stats_token or "").encode())  # fmt: skip
+        if not (full or reporting):
             return JSONResponse({"detail": "operator token required"}, status_code=401)
-        return JSONResponse(json.loads(json.dumps(ledger.stats(), default=str)))
+        out = ledger.stats()
+        if not full:  # the reporting credential gets counts only, never wallet addresses
+            out.pop("reads_by_payer", None)
+        return JSONResponse(json.loads(json.dumps(out, default=str)))
 
     return app

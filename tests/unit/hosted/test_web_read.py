@@ -968,3 +968,58 @@ def test_robots_cache_is_bounded(monkeypatch):
 
     asyncio.run(visit())
     assert list(reader._robots) == ["https://o2.test", "https://o3.test", "https://o4.test"]
+
+
+# -- the read-only reporting credential (INFERRAIL_STATS_TOKEN) --------------------------------
+
+STATS_TOKEN = "s" * 40
+
+
+def _client_with_stats_token(tmp_path: Path, fac: FakeFacilitator):
+    site = {"news.test/robots.txt": ROBOTS_OK,
+            "news.test/a": httpx.Response(200, text=ARTICLE, headers=HTML)}  # fmt: skip
+    settings = svc.Settings(pay_to=PAY_TO, resource_url="http://testserver/v1/page",
+                            data_dir=tmp_path, operator_token="op-token",
+                            stats_token=STATS_TOKEN)  # fmt: skip
+    reader = fetch.Fetcher(settings.user_agent, transport=_site(site), resolve=_public_dns)
+    return TestClient(svc.create_app(settings, facilitator=fac, fetcher=reader))
+
+
+def test_the_reporting_token_reads_counts_but_never_wallet_addresses(tmp_path):
+    c = _client_with_stats_token(tmp_path, FakeFacilitator())
+    assert _paid(c, "https://news.test/a").status_code == 200
+    full = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op-token"}).json()
+    assert len(full["reads_by_payer"]) == 1  # the operator still sees the breakdown
+    r = c.get("/v1/operator/stats", headers={"Authorization": f"Bearer {STATS_TOKEN}"})
+    assert r.status_code == 200
+    report = r.json()
+    assert "reads_by_payer" not in report
+    assert report["settled_reads"] == 1 and report["distinct_payers"] == 1
+    assert "funnel" in report and "by_channel" in report["funnel"]
+    payer = next(iter(full["reads_by_payer"]))
+    assert payer.lower() not in r.text.lower()
+
+
+def test_the_reporting_token_opens_nothing_else(tmp_path):
+    c = _client_with_stats_token(tmp_path, FakeFacilitator())
+    auth = {"Authorization": f"Bearer {STATS_TOKEN}"}
+    assert c.get("/v1/operator/rejections", headers=auth).status_code in (401, 404)
+    assert c.get("/v1/operator/stats", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+@pytest.mark.parametrize("value", ["", "short", "op-token-op-token-op-token-op-token-x"])
+def test_a_weak_or_shared_reporting_token_is_ignored(value):
+    env = {"BG_OPERATOR_TOKEN": "op-token-op-token-op-token-op-token-x",
+           "INFERRAIL_STATS_TOKEN": value}
+    assert svc._stats_token(env) is None
+    assert svc._stats_token({**env, "INFERRAIL_STATS_TOKEN": STATS_TOKEN}) == STATS_TOKEN
+
+
+def test_the_reporting_token_is_never_a_key_seed():
+    import re
+
+    root = Path(__file__).resolve().parents[3] / "hosted"
+    uses = [p for p in root.rglob("*.py") if "INFERRAIL_STATS_TOKEN" in p.read_text()]
+    assert [p.name for p in uses] == ["service.py"]
+    src = (root / "web_read" / "service.py").read_text()
+    assert len(re.findall(r"INFERRAIL_STATS_TOKEN", src)) == 2  # the docstring and the one read
