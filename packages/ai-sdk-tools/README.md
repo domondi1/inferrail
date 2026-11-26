@@ -1,6 +1,7 @@
 # @inferrail/ai-sdk-tools
 
-Pay-per-call tools for the [Vercel AI SDK](https://ai-sdk.dev). Your agent can read web
+Pay-per-call tools for the [Vercel AI SDK](https://ai-sdk.dev), and the same tools as a
+[local MCP server](#use-it-from-an-mcp-client-claude-code-claude-desktop-cursor). Your agent can read web
 pages, check dependencies for known vulnerabilities, look up a domain, and find other paid
 APIs. Each costs $0.002 USDC per delivered result, paid over [x402](https://x402.org) by the
 fetch you already use.
@@ -36,7 +37,8 @@ it on your own pages:
 npm i @inferrail/ai-sdk-tools ai zod @x402/fetch @x402/evm viem
 ```
 
-`ai` (5 or later) and `zod` (3.25 or later) are peer dependencies; the package has no
+`ai` (5 or later) and `zod` (3.25 or later) are peer dependencies; `@x402/fetch`, `@x402/evm`
+and `viem` are optional peers that only the MCP server loads, to pay. The package has no
 dependencies of its own and no install scripts.
 
 ## Use
@@ -73,6 +75,43 @@ Working agents for dependency review, research with dated citations, and link ve
 `guardInferrailPrices(client)` adds a before-payment hook to your x402 client. For offers
 from Inferrail's origin, it refuses an amount above the listed price and any receiving
 address other than that service's own. Offers from other sellers pass through untouched.
+
+## Use it from an MCP client (Claude Code, Claude Desktop, Cursor)
+
+The package also ships `inferrail-mcp`, a local MCP server (stdio) for clients that can't pay
+x402 themselves. It pays from your own wallet, up to a daily budget you set, and offers
+`read_page`, `read_pages`, `check_packages` and `lookup_domain`.
+
+```bash
+claude mcp add inferrail \
+  -e INFERRAIL_WALLET_KEY=0x... -e INFERRAIL_MAX_USD_PER_DAY=0.10 \
+  -- npx -y -p @inferrail/ai-sdk-tools -p @x402/fetch -p @x402/evm -p viem inferrail-mcp
+```
+
+For Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "inferrail": {
+      "command": "npx",
+      "args": ["-y", "-p", "@inferrail/ai-sdk-tools", "-p", "@x402/fetch", "-p", "@x402/evm", "-p", "viem", "inferrail-mcp"],
+      "env": { "INFERRAIL_WALLET_KEY": "0x...", "INFERRAIL_MAX_USD_PER_DAY": "0.10" }
+    }
+  }
+}
+```
+
+- **The wallet:** use a separate wallet that holds only a little USDC on Base. The key stays on
+  your machine, in your MCP client's config file, so treat that file as a secret. The server
+  signs locally and sends only the payment for each call.
+- **The budget:** `INFERRAIL_MAX_USD_PER_DAY` (default `0.10`, 50 pages) caps what the server
+  pays per UTC day, across restarts (kept in `~/.inferrail/spend.json`, or
+  `INFERRAIL_STATE_DIR`). A call that would pass it is refused before anything is signed. The
+  server also refuses to sign any offer above the call's own price, or to another address.
+- **Without a key** the tools still run, and every call answers "not paid" with no charge.
+- **Charged only on delivery:** a page that can't be read, a failed check or a refused call
+  costs nothing, and the tool result says so.
 
 ## Provenance
 

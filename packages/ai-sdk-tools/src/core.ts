@@ -1,0 +1,148 @@
+/**
+ * The framework-free core shared by the AI SDK tools and the MCP server: origin, prices,
+ * receiving addresses, the request helper and the price guard. No dependencies.
+ */
+export const ORIGIN = "https://inferrail-cost-gateway.onrender.com";
+/** $0.002 in USDC base units (6 decimals): the price of one page, check, lookup or answer. */
+export const PRICE_ATOMIC = 2000n;
+/** Each service's receiving address on Base, as its 402 names it. */
+export const PAY_TO = {
+  read: "0xA45140E99E9482a50BC3fA5F6000c02FAAB6F65E",
+  find: "0x54BF9C490112CD6a54Cb8f22D6bf83621ABe77CF",
+  packages: "0xe9c1249648257C1C1D70F8b7682851C377bb8f53",
+  domains: "0xb95D56f169324A0B23B82bd3975635Cf0187ce07",
+} as const;
+
+/** Path -> (receiving address, most units one request can buy). */
+export const ROUTES: Record<string, { payTo: string; maxUnits: bigint }> = {
+  "/read/v1/page": { payTo: PAY_TO.read, maxUnits: 1n },
+  "/read/v1/pages": { payTo: PAY_TO.read, maxUnits: 10n },
+  "/find/v1/find": { payTo: PAY_TO.find, maxUnits: 1n },
+  "/pkg/v1/check": { payTo: PAY_TO.packages, maxUnits: 1n },
+  "/domain/v1/lookup": { payTo: PAY_TO.domains, maxUnits: 1n },
+};
+
+/** Sent with every call so the services can count this channel; nothing about you. */
+export const SOURCE_HEADER = { "x-inferrail-source": "ai-sdk" } as const;
+
+export type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export type Result =
+  | ({ ok: true } & Record<string, unknown>)
+  | {
+      ok: false;
+      charged: false;
+      status: number;
+      error: string;
+      detail?: string;
+      results?: Array<{ url: string; delivered: boolean; error?: string; detail?: string }>;
+    };
+
+function randomId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `ai-sdk-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export interface CallOptions {
+  /** The integration sending the request, for the services' per-channel counts. */
+  source?: string;
+  /** What a 402 (not paid) result tells the caller to do. */
+  unpaidDetail?: string;
+}
+
+/** POST one paid request. Never throws for an HTTP answer: the model gets a result it can use. */
+export async function call(
+  paidFetch: Fetch,
+  path: string,
+  body: Record<string, unknown>,
+  origin: string = ORIGIN,
+  options: CallOptions = {},
+): Promise<Result> {
+  const payload = JSON.stringify({ ...body, request_id: randomId() });
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      "x-inferrail-source": options.source ?? SOURCE_HEADER["x-inferrail-source"],
+    },
+    body: payload,
+  };
+  let res: Response;
+  try {
+    res = await paidFetch(`${origin}${path}`, init);
+  } catch {
+    // Same request_id: a request that was paid and delivered is answered again, not charged again.
+    res = await paidFetch(`${origin}${path}`, init);
+  }
+  let json: Record<string, unknown> = {};
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    // a non-JSON answer: reported by status below
+  }
+  if (res.ok) return { ok: true, ...json };
+  if (res.status === 402) {
+    return {
+      ok: false,
+      charged: false,
+      status: 402,
+      error: String(json.error ?? "payment_required"),
+      detail:
+        options.unpaidDetail ??
+        "Not paid. The fetch given to inferrailTools must pay x402 offers (e.g. wrapFetchWithPayment " +
+          "from @x402/fetch with a funded Base USDC wallet).",
+    };
+  }
+  const detail = json.detail ?? json.message;
+  return {
+    ok: false,
+    charged: false,
+    status: res.status,
+    error: String(json.error ?? `http_${res.status}`),
+    ...(detail === undefined ? {} : { detail: String(detail).slice(0, 300) }),
+    // A batch refusal lists which URLs failed, so the caller can resend without them.
+    ...(Array.isArray(json.results) ? { results: json.results.slice(0, 10) } : {}),
+  };
+}
+
+/** Minimal shape of an @x402/core x402Client (or x402HTTPClient) that the guard needs. */
+export interface HookableClient {
+  onBeforePaymentCreation(
+    hook: (ctx: {
+      paymentRequired: { resource?: { url?: string } };
+      selectedRequirements: { amount: string; payTo: string };
+    }) => Promise<void | { abort: true; reason: string }>,
+  ): unknown;
+}
+
+/** The guard's decision for one offer (exported for tests and for clients with other hooks). */
+export function checkOffer(
+  resourceUrl: string | undefined,
+  requirements: { amount: string; payTo: string },
+  origin: string = ORIGIN,
+): void | { abort: true; reason: string } {
+  if (!resourceUrl?.startsWith(`${origin}/`)) return; // another seller: not ours to judge
+  const path = new URL(resourceUrl).pathname;
+  const route = ROUTES[path];
+  if (!route) return { abort: true, reason: `inferrail: unknown paid route ${path}` };
+  if (requirements.payTo.toLowerCase() !== route.payTo.toLowerCase()) {
+    return { abort: true, reason: `inferrail: ${path} must pay ${route.payTo}` };
+  }
+  let amount: bigint;
+  try {
+    amount = BigInt(requirements.amount);
+  } catch {
+    return { abort: true, reason: "inferrail: unreadable amount" };
+  }
+  if (amount <= 0n || amount > PRICE_ATOMIC * route.maxUnits) {
+    return { abort: true, reason: `inferrail: ${path} costs at most ${PRICE_ATOMIC * route.maxUnits}` };
+  }
+}
+
+/** Make `client` refuse any Inferrail offer above the listed price or to another address. */
+export function guardInferrailPrices<T extends HookableClient>(client: T, origin: string = ORIGIN): T {
+  client.onBeforePaymentCreation(async (ctx) =>
+    checkOffer(ctx.paymentRequired.resource?.url, ctx.selectedRequirements, origin),
+  );
+  return client;
+}
