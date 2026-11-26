@@ -37,9 +37,9 @@ it on your own pages:
 npm i @inferrail/ai-sdk-tools ai zod @x402/fetch @x402/evm viem
 ```
 
-`ai` (5 or later) and `zod` (3.25 or later) are peer dependencies; `@x402/fetch`, `@x402/evm`
-and `viem` are optional peers that only the MCP server loads, to pay. The package has no
-dependencies of its own and no install scripts.
+`ai` (5 or later), `zod` (3.25 or later), `@x402/fetch`, `@x402/evm` and `viem` are peer
+dependencies (npm installs them for you); the package has no dependencies of its own and no
+install scripts.
 
 ## Use
 
@@ -85,7 +85,7 @@ x402 themselves. It pays from your own wallet, up to a daily budget you set, and
 ```bash
 claude mcp add inferrail \
   -e INFERRAIL_WALLET_KEY=0x... -e INFERRAIL_MAX_USD_PER_DAY=0.10 \
-  -- npx -y -p @inferrail/ai-sdk-tools -p @x402/fetch -p @x402/evm -p viem inferrail-mcp
+  -- npx -y @inferrail/ai-sdk-tools
 ```
 
 For Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`):
@@ -95,7 +95,7 @@ For Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`)
   "mcpServers": {
     "inferrail": {
       "command": "npx",
-      "args": ["-y", "-p", "@inferrail/ai-sdk-tools", "-p", "@x402/fetch", "-p", "@x402/evm", "-p", "viem", "inferrail-mcp"],
+      "args": ["-y", "@inferrail/ai-sdk-tools"],
       "env": { "INFERRAIL_WALLET_KEY": "0x...", "INFERRAIL_MAX_USD_PER_DAY": "0.10" }
     }
   }

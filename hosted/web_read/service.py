@@ -228,7 +228,9 @@ def unpaid_guide(settings: Any, task: Any, units: int = 1) -> dict[str, Any]:
         "start_paying": {
             "agentcash": f"npx agentcash add {origin}",
             "vercel_ai_sdk": "npm i @inferrail/ai-sdk-tools",
-            "wallet": "Both pay from a wallet you control and fund; neither creates or funds one.",
+            "mcp_client": "npx -y @inferrail/ai-sdk-tools (a local MCP server for Claude Code, "
+            "Claude Desktop or Cursor; set INFERRAIL_WALLET_KEY and INFERRAIL_MAX_USD_PER_DAY)",
+            "wallet": "Each pays from a wallet you control and fund; none creates or funds one.",
         },
         "docs": {"guide": f"{origin}{settings.mount_prefix}/llms.txt",
                  "openapi": f"{origin}/openapi.json"},
