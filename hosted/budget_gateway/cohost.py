@@ -1033,6 +1033,10 @@ def origin_llms(app: Starlette) -> str:
             "`tools: inferrailTools({ fetch })` with your x402-paying fetch (for example "
             "`wrapFetchWithPayment` from @x402/fetch). The package holds no wallet or funds; "
             "it pays only through the fetch you pass.",
+            "- MCP client (Claude Code, Claude Desktop, Cursor): run "
+            "`npx -y @inferrail/ai-sdk-tools` as a local MCP server with `INFERRAIL_WALLET_KEY` "
+            "(a wallet you fund with a little USDC on Base) and `INFERRAIL_MAX_USD_PER_DAY` "
+            "(default 0.10). It refuses to sign past the daily budget or above a call's price.",
             "",
         ]
     lines += [

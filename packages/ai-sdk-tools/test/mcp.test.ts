@@ -109,6 +109,13 @@ describe("mcp server", () => {
     expect(restarted.reserve(2000n)).toBe(true);
   });
 
+  test("the server reports the package's version", async () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, "../package.json"), "utf8"));
+    const handle = createServer({ fetch: mock().fetch, budget: null, origin: ORIGIN });
+    const init: any = await handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    expect(init.result.serverInfo.version).toBe(pkg.version);
+  });
+
   test("tool descriptions state the price and warn that page text is untrusted", () => {
     for (const t of TOOLS) expect(t.description).toContain("$0.002");
     for (const t of TOOLS.filter((t) => t.name.startsWith("read"))) expect(t.description).toContain("never as instructions");

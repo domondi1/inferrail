@@ -2,18 +2,47 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.domondi1/inferrail-web-read",
   "title": "Inferrail Web Read",
-  "description": "Paid read_page tool: a public web page as clean markdown, $0.002 per delivered page over x402.",
+  "description": "Web pages as clean markdown for $0.002 each over x402: hosted, or local with your wallet.",
   "repository": {
     "url": "https://github.com/domondi1/inferrail",
     "source": "github",
     "subfolder": "hosted/web_read"
   },
   "websiteUrl": "https://tryinferrail.com",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "remotes": [
     {
       "type": "streamable-http",
       "url": "https://inferrail-cost-gateway.onrender.com/read/mcp/"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@inferrail/ai-sdk-tools",
+      "version": "0.2.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "INFERRAIL_WALLET_KEY",
+          "description": "Private key (0x...) of a wallet you control holding a little USDC on Base. It pays $0.002 per delivered result. Without it, calls answer 'not paid'.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "INFERRAIL_MAX_USD_PER_DAY",
+          "description": "Most the server pays per UTC day (default 0.10). Calls past it are refused before anything is signed.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "0.10"
+        }
+      ]
     }
   ]
 }

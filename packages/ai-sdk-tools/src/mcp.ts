@@ -4,7 +4,7 @@
  * wallet, under a daily budget you set. For MCP clients that can't pay x402 themselves (Claude
  * Desktop, Claude Code, Cursor and others).
  *
- *   npx -y -p @inferrail/ai-sdk-tools -p @x402/fetch -p @x402/evm -p viem inferrail-mcp
+ *   npx -y @inferrail/ai-sdk-tools
  *
  * Environment:
  *   INFERRAIL_WALLET_KEY       0x... key of a wallet holding a little USDC on Base. Without it the
@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { call, guardInferrailPrices, ORIGIN, PRICE_ATOMIC, type Fetch, type Result } from "./core.js";
 
-export const SERVER_VERSION = "0.2.0";
+export const SERVER_VERSION = "0.2.1";
 /** How the services count requests from this server (no personal data). */
 export const SOURCE = "mcp-local";
 
@@ -264,7 +264,7 @@ export function createServer({ fetch, budget, origin = ORIGIN, expected = new As
   };
 }
 
-const OPTIONAL = "npx -y -p @inferrail/ai-sdk-tools -p @x402/fetch -p @x402/evm -p viem inferrail-mcp";
+const OPTIONAL = "npx -y @inferrail/ai-sdk-tools (npm installs @x402/fetch, @x402/evm and viem with it)";
 
 /** A paying fetch from INFERRAIL_WALLET_KEY: price guard plus "never above this call's cost". */
 async function payingFetch(key: string, origin: string, expected: AsyncLocalStorage<bigint>): Promise<Fetch> {
