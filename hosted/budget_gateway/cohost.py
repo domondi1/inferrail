@@ -931,7 +931,12 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
             f"(registrar, created and expiry dates, status) from RDAP, ${dom.price_usd} per "
             f"lookup, paid over {_search_rails(dom)}."
         )
-    return "Inferrail", " ".join(parts) + " " + hosted
+    # Catalog search often matches only an origin's title and URL (x402scan / AgentCash index a v2
+    # endpoint's description nowhere searchable), so the title names the main task, not just us.
+    title = "Inferrail"
+    if read is not None:
+        title = "Inferrail: web page to markdown and checks for agents"
+    return title, " ".join(parts) + " " + hosted
 
 
 def _rails(read: Any) -> str:
@@ -1088,7 +1093,7 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
     settings = app.state.hosted_settings
     base = settings.public_base_url
     title, summary = _origin_summary(app)
-    read_intro = summary.split(" Inferrail Hosted:")[0] + " " if title == "Inferrail" else ""
+    read_intro = summary.split(" Inferrail Hosted:")[0] + " " if title != "Inferrail Hosted" else ""
     origin = base.removesuffix(PREFIX)
     guidance = (
         f"Hosted: create a workspace (POST {base}/v1/workspaces), then call "

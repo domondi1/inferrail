@@ -438,10 +438,12 @@ def test_mounted_on_the_origin_and_listed_for_catalogs(tmp_path):
         assert decode_payment_required(r).resource.url == "http://testserver/read/v1/page"
         assert c.get("/hosted/health").status_code == 200
         # The origin now sells two things; its listing says so.
-        assert doc["info"]["title"] == "Inferrail"
+        # Catalogs that search only an origin's title and URL find it by the task.
+        title = "Inferrail: web page to markdown and checks for agents"
+        assert doc["info"]["title"] == title
         assert "Web Read" in doc["info"]["description"]
         assert "/read/v1/page" in doc["info"]["x-guidance"]
-        assert "<title>Inferrail</title>" in c.get("/").text
+        assert f"<title>{title}</title>" in c.get("/").text
 
 
 def test_the_listed_request_contract_has_plain_types(tmp_path):
