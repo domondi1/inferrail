@@ -450,6 +450,18 @@ def test_operator_memory_needs_the_operator_token(parts):
             assert 0 < body["rss_mb"] <= body["peak_rss_mb"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/statm")
+def test_the_peak_is_never_reported_below_the_current_memory(monkeypatch):
+    # statm and ru_maxrss round separately, so "now" can read 1 MB above "peak" (a CI flake).
+    import resource
+    from types import SimpleNamespace
+
+    cohost = _load_cohost()
+    monkeypatch.setattr(resource, "getrusage", lambda _who: SimpleNamespace(ru_maxrss=1024))  # 1 MB
+    m = cohost.process_memory()
+    assert m["rss_mb"] > 1 and m["peak_rss_mb"] == m["rss_mb"]
+
+
 def test_a_memory_line_is_logged_at_startup(parts, caplog):
     import logging
 

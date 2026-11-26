@@ -77,6 +77,10 @@ def process_memory() -> dict[str, int | None]:
         peak: int | None = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024  # KiB
     except (ImportError, OSError):
         peak = None
+    # The two readings come from different counters (statm pages vs ru_maxrss KiB) and round
+    # separately, so "now" can read 1 MB above "peak". The peak is never below the current value.
+    if rss is not None and peak is not None:
+        peak = max(peak, rss)
     return {"rss_mb": rss, "peak_rss_mb": peak}
 
 
