@@ -577,13 +577,15 @@ def _mpp_protocols(settings: Any) -> list[dict[str, Any]]:
 # description and tags; a long summary + description can end up as one long "alias" that no
 # short task phrase matches. Keep the summary a task phrase, lead the description with what it
 # does, and tag the tasks.
-WEB_READ_SUMMARY = "Web page to markdown: read any public URL as clean, LLM-ready markdown"
-WEB_READ_TAGS = ["web page to markdown", "url to markdown", "web scraper", "read url", "markdown"]
+# Agents with budgets ask catalogs to "scrape a website"; the paid listings they find are phrased
+# that way, so the summary leads with it (Web Read does fetch and extract the page).
+WEB_READ_SUMMARY = "Scrape a web page to clean markdown: any public URL, with its metadata"
+WEB_READ_TAGS = ["web scraping", "scrape", "web page to markdown", "url to markdown", "markdown"]
 
 
 def _web_read_description(price_usd: str) -> str:
     return (
-        "Read any public web page as clean, LLM-ready markdown (headings, lists, links, "
+        "Scrape and read any public web page as clean, LLM-ready markdown (headings, lists, links, "
         "tables) with its metadata (description, canonical URL, authors, published date, "
         f"language). URL to markdown for articles, docs and product pages. ${price_usd} per "
         "delivered page; a missing, blocked or refused page, a bot check or a JavaScript-only "

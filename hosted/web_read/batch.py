@@ -40,7 +40,7 @@ MPP_DESCRIPTION = (
     "Up to 10 public web pages as clean markdown in one call, $0.002 per page. Charged only "
     "when every page is delivered; a retry never pays twice."
 )
-SUMMARY = "Read up to 10 web pages as markdown in one paid call ($0.002 per page)"
+SUMMARY = "Scrape up to 10 web pages to markdown in one paid call ($0.002 per page)"
 TAGS = ["markdown", "web-scraping", "web", "web pages to markdown", "bulk"]
 
 

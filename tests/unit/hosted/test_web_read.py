@@ -684,7 +684,10 @@ def test_catalogs_can_match_the_task_not_just_the_brand(tmp_path):
     with TestClient(app) as c:
         doc = c.get("/openapi.json").json()
         op = doc["paths"]["/read/v1/page"]["post"]
-        assert op["summary"].lower().startswith("web page to markdown") and len(op["summary"]) <= 80
+        # Paid listings agents find are phrased as "scrape a web page"; keep markdown in the phrase.
+        summary = op["summary"].lower()
+        assert summary.startswith("scrape a web page") and "markdown" in summary
+        assert len(op["summary"]) <= 80
         assert {"web page to markdown", "url to markdown"} <= set(op["tags"])
         assert "$0.002 per delivered page" in op["description"] and len(op["description"]) < 400
         assert "get" not in doc["paths"]["/read/v1/page"]  # GET off: not listed
