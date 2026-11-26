@@ -115,10 +115,10 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 # It is also what the CDP Bazaar's task search ranks, so it opens with the task phrase agents
 # search for ("web page to Markdown", "URL"). Richer wording lives in OpenAPI and the guides.
 DESCRIPTION = (
-    "Web page to Markdown: read any public URL as clean Markdown (title, main text, headings, "
-    "lists, links, tables) with the page's author, date and language, word count and "
-    "content hash. $0.002, charged only when the page is delivered: a failing page (target-site "
-    "403, 404, 5xx, timeout), a bot check or a robots.txt refusal costs nothing, and a retry "
+    "Web page to Markdown: read any public URL as clean Markdown (main text, headings, lists, "
+    "links, tables) with its author, date, language and content hash. Use it when you need a "
+    "page's full text to quote, cite or check for changes. $0.002, only on delivery: a "
+    "failing page (403, 404, 5xx, timeout), bot check or robots.txt refusal is free; a retry "
     "never pays twice."
 )
 # The longest offer description the CDP facilitator has accepted for a settled sale. Its schema
