@@ -1054,7 +1054,9 @@ def page_task(reader: Any) -> Task:
         description=DESCRIPTION,
         mpp_description=MPP_DESCRIPTION,
         # Phrases agents search the Bazaar with (each at most 32 characters, at most 5).
-        tags=["web page to markdown", "url to markdown", "web scraper", "read url", "article text"],
+        # Two task phrases for semantic search, plus the exact single-word tags page readers use
+        # most in the Bazaar: Wallet MCP's `search_x402_services` tag filter is exact match.
+        tags=["markdown", "web-scraping", "web", "web page to markdown", "url to markdown"],
         listing_name="Web Page to Markdown (Inferrail)",
         input_example={"url": "https://example.com/"},
         output_example=example,

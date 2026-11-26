@@ -41,7 +41,7 @@ MPP_DESCRIPTION = (
     "when every page is delivered; a retry never pays twice."
 )
 SUMMARY = "Read up to 10 web pages as markdown in one paid call ($0.002 per page)"
-TAGS = ["web pages to markdown", "batch url to markdown", "web scraper", "read urls", "bulk"]
+TAGS = ["markdown", "web-scraping", "web", "web pages to markdown", "bulk"]
 
 
 class PagesRequest(BaseModel):
