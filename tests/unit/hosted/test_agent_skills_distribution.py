@@ -167,8 +167,17 @@ def test_the_ai_sdk_tools_package_is_its_own_channel(tmp_path):
     c.post("/v1/page", json={"url": "https://news.test/a"},
            headers={"X-Inferrail-Source": "ai-sdk"})  # fmt: skip
     assert _stats(c)["funnel"]["by_channel"] == {"ai-sdk:challenge": 1}
-    tools = (ROOT / "packages" / "ai-sdk-tools" / "src" / "index.ts").read_text()
+    tools = (ROOT / "packages" / "ai-sdk-tools" / "src" / "core.ts").read_text()
     assert '"x-inferrail-source": "ai-sdk"' in tools
+
+
+def test_the_local_mcp_server_is_its_own_channel(tmp_path):
+    c = _client(tmp_path, {}, FakeFacilitator())
+    c.post("/v1/page", json={"url": "https://news.test/a"},
+           headers={"X-Inferrail-Source": "mcp-local"})  # fmt: skip
+    assert _stats(c)["funnel"]["by_channel"] == {"mcp-local:challenge": 1}
+    server = (ROOT / "packages" / "ai-sdk-tools" / "src" / "mcp.ts").read_text()
+    assert 'export const SOURCE = "mcp-local";' in server
 
 
 def test_unlabelled_calls_are_counted_as_before(tmp_path):

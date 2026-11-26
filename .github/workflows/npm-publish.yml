@@ -76,7 +76,8 @@ jobs:
             const p = require("./pack.json")[0];
             const pkg = require("./package.json");
             const files = p.files.map(f => f.path).sort();
-            const allowed = ["LICENSE", "README.md", "dist/index.d.ts", "dist/index.js", "package.json"];
+            const allowed = ["LICENSE", "README.md", "dist/core.d.ts", "dist/core.js", "dist/index.d.ts",
+              "dist/index.js", "dist/mcp.d.ts", "dist/mcp.js", "package.json"];
             if (JSON.stringify(files) !== JSON.stringify(allowed)) {
               console.error("unexpected files:", files); process.exit(1);
             }
@@ -185,4 +186,12 @@ jobs:
             const r = await tools.readPage.execute({ url: "https://example.com/" }, { toolCallId: "t", messages: [] });
             if (r.ok !== false || r.charged !== false || r.status !== 402) throw new Error(JSON.stringify(r));
             console.log("installed and working:", process.env.NAME, process.env.VERSION, names);
+          '
+          # The MCP server bin, with no wallet: it must start and list its tools (nothing is paid).
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | timeout 60 npx --no-install inferrail-mcp > mcp.out
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("mcp.out", "utf8"));
+            const names = r.result.tools.map(t => t.name).join(",");
+            if (names !== "read_page,read_pages,check_packages,lookup_domain") throw new Error(names);
+            console.log("mcp server working:", names);
           '
