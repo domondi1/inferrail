@@ -120,6 +120,26 @@ def test_an_invalid_request_gets_no_offer_and_is_never_charged(tmp_path, body):
     assert seen == [] and fac.calls == []
 
 
+def test_a_bare_price_check_with_no_body_gets_the_one_page_offer(tmp_path):
+    # CDP Bazaar's validator and health probe POST with no body; they must see an offer.
+    fac = FakeFacilitator()
+    c, seen = _origin(tmp_path, fac)
+    r = c.post("/read/v1/pages")
+    assert r.status_code == 402, r.text
+    (accept,) = decode_payment_required(r).accepts
+    assert accept.amount == "2000" and accept.pay_to == PAY_TO
+    assert seen == [] and fac.calls_to("settle") == []
+
+
+def test_a_paid_request_with_no_body_is_still_refused_and_never_settled(tmp_path):
+    fac = FakeFacilitator()
+    c, seen = _origin(tmp_path, fac)
+    signed = sign_payment(_quote(c, {"urls": [A]}))
+    r = c.post("/read/v1/pages", headers={"PAYMENT-SIGNATURE": signed.header})
+    assert r.status_code == 422 and r.json()["charged"] is False
+    assert seen == [] and fac.calls_to("settle") == []
+
+
 def test_a_delivered_batch_settles_once_for_exactly_n_pages(tmp_path):
     amounts = []
     fac = FakeFacilitator(on_settle=lambda p: amounts.append(authorization_of(p)["value"]))

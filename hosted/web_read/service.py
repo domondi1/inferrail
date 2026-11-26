@@ -1548,9 +1548,15 @@ def create_app(
         page = is_page(request)
         if page and task.units:
             # A per-unit price is quoted for a valid request only: an invalid one is refused
-            # here, before any offer or payment check, and costs nothing.
+            # here, before any offer or payment check, and costs nothing. The exception is a
+            # bare, unpaid POST with no body at all (a price check, as the CDP Bazaar's
+            # validator and health probe send): it gets the one-unit offer, like the single-page
+            # route. Anything with a body or a payment is validated as before.
+            bare_probe = (request.method == "POST" and not signed
+                          and not request.headers.get("authorization")
+                          and not (await request.body()).strip())  # fmt: skip
             try:
-                units_var.set(units_of(await page_request(request)))
+                units_var.set(1 if bare_probe else units_of(await page_request(request)))
             except Exception:
                 ledger.event("refused", "invalid_request")
                 return JSONResponse({"error": "invalid_request", "charged": False},
