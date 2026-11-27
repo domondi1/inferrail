@@ -300,6 +300,7 @@ def _session_event(workspace, packs=1, amount=1000, status="paid", sid="cs_test_
     return json.dumps(
         {
             "type": "checkout.session.completed",
+            "livemode": False,  # STRIPE_ENV uses a test key; Stripe sends livemode on every event
             "data": {
                 "object": {
                     "id": sid,
@@ -318,6 +319,7 @@ def _refund_event(refunded):
     return json.dumps(
         {
             "type": "charge.refunded",
+            "livemode": False,
             "data": {"object": {"payment_intent": "pi_test_1", "amount_refunded": refunded}},
         }
     ).encode()
@@ -342,6 +344,32 @@ def test_stripe_webhook_grants_once_and_only_for_paid_matching_sessions(mods, tm
     assert _post_event(c, _session_event(ws)).json()["granted"] is True
     assert _post_event(c, _session_event(ws)).json()["granted"] is False  # replay
     assert c.get("/v1/workspace", headers=_auth(key)).json()["credits_remaining"] == 10_000
+
+
+def test_an_event_from_the_other_stripe_mode_never_moves_credits(mods, tmp_path):
+    # A Sandbox webhook pointed at a live deployment (or the reverse) must not grant or refund.
+    c = _client(mods, tmp_path, STRIPE_ENV)
+    key = _workspace(c)
+    ws = _ws_id(c, key)
+    live = json.loads(_session_event(ws))
+    live["livemode"] = True
+    body = json.dumps(live).encode()
+    r = _post_event(c, body)
+    assert r.status_code == 200 and r.json()["granted"] is False
+    assert "livemode" in r.json()["reason"]
+    assert c.get("/v1/workspace", headers=_auth(key)).json()["credits_remaining"] == 0
+
+
+def test_a_test_key_never_sells_cards_on_mainnet(mods, tmp_path, caplog):
+    mainnet = {"BG_X402_NETWORK": mods.MAINNET, "BG_X402_PAY_TO": "0x" + "9" * 40,
+               "BG_X402_MAINNET_APPROVED": "1", "BG_BASE_RPC_URL": "https://rpc.test"}  # fmt: skip
+    assert _settings(mods, tmp_path, {**STRIPE_ENV, **mainnet}).stripe is None
+    allowed = {**STRIPE_ENV, **mainnet, "BG_STRIPE_ALLOW_TEST_KEY": "1"}
+    assert _settings(mods, tmp_path, allowed).stripe is not None
+    live = {"STRIPE_SECRET_KEY": "sk_live_x", "STRIPE_WEBHOOK_SECRET": "whsec_2", **mainnet}
+    cfg = _settings(mods, tmp_path, live).stripe
+    assert cfg is not None and cfg.livemode is True
+    assert _settings(mods, tmp_path, STRIPE_ENV).stripe.livemode is False  # testnet: fine
 
 
 def test_checkout_redirect_alone_grants_nothing(mods, tmp_path):
