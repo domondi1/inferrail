@@ -22,8 +22,10 @@ Later calls in a billed run cost nothing more.
 | `credit_reversals` | — | Refunded credits for one grant. Monotonic: a replay is a no-op |
 | `refund_proofs` | — | A verified on-chain refund transfer. One tx backs one refund |
 | `usage_events` | — | Payload-free daily counters: refusals, payment challenges |
+| `credit_spends` | `held` / `billed` | Credits for a Web Read result: held, billed on delivery |
 
-Balance = grants − reversals − (held + billed runs that needed a credit). A refund can make the
+Balance = grants − reversals − (held + billed runs that needed a credit)
+− (held + billed spends). A refund can make the
 balance negative. Paid runs are then refused until it is topped up, so a customer can never
 spend credits they don't have.
 
@@ -108,6 +110,14 @@ CREATE TABLE IF NOT EXISTS usage_events (
   count INTEGER NOT NULL,
   PRIMARY KEY (workspace_id, day, kind)
 );
+CREATE TABLE IF NOT EXISTS credit_spends (
+  ref TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  units INTEGER NOT NULL CHECK (units > 0),
+  state TEXT NOT NULL CHECK (state IN ('held', 'billed')),
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_spends_workspace ON credit_spends(workspace_id);
 """
 
 
@@ -198,7 +208,56 @@ class WorkspaceLedger:
         consumed = self._db.execute(
             "SELECT COUNT(*) FROM governed_runs WHERE workspace_id=? AND paid=1", (workspace_id,)
         ).fetchone()[0]
-        return int(granted - reversed_ - consumed)
+        spent = self._db.execute(
+            "SELECT COALESCE(SUM(units),0) FROM credit_spends WHERE workspace_id=?",
+            (workspace_id,),
+        ).fetchone()[0]
+        return int(granted - reversed_ - consumed - spent)
+
+    # -- credits spent on other services' results (Web Read pages) ---------------------------
+
+    def balance(self, workspace_id: str) -> int:
+        with self._lock:
+            return self._credits_remaining(workspace_id)
+
+    def hold_spend(self, workspace_id: str, ref: str, units: int) -> tuple[str, int]:
+        """Reserve `units` credits for one result identified by `ref` (unique per workspace
+        and request). Returns (state, balance after):
+
+        - "held": reserved; call `finish_spend` exactly once.
+        - "billed": this ref was already delivered and paid; serve it again, charge nothing.
+        - "busy": this ref is held by a request still in flight.
+        - "insufficient": not enough credits; nothing reserved.
+
+        Prepaid credits only: the Hosted free monthly allowance never pays for these."""
+        if units <= 0:
+            raise ValueError("units must be positive")
+        with self._tx():
+            row = self._db.execute(
+                "SELECT state, workspace_id FROM credit_spends WHERE ref=?", (ref,)
+            ).fetchone()
+            balance = self._credits_remaining(workspace_id)
+            if row is not None:
+                if row[1] != workspace_id:  # refs are namespaced by workspace; never cross them
+                    raise ValueError("ref belongs to another workspace")
+                return ("billed" if row[0] == "billed" else "busy"), balance
+            if balance < units:
+                return "insufficient", balance
+            self._db.execute(
+                "INSERT INTO credit_spends VALUES (?,?,?,'held',?)",
+                (ref, workspace_id, units, int(time.time())),
+            )
+            return "held", balance - units
+
+    def finish_spend(self, ref: str, delivered: bool) -> None:
+        """Close a held spend: bill it when the result was delivered, otherwise release it."""
+        with self._tx():
+            if delivered:
+                self._db.execute(
+                    "UPDATE credit_spends SET state='billed' WHERE ref=? AND state='held'", (ref,)
+                )
+            else:
+                self._db.execute("DELETE FROM credit_spends WHERE ref=? AND state='held'", (ref,))
 
     def _month_runs(self, workspace_id: str, month: str) -> int:
         return int(
@@ -266,7 +325,8 @@ class WorkspaceLedger:
         with self._tx():
             cur = self._db.execute("DELETE FROM governed_runs WHERE state='held'")
             self._db.execute("UPDATE governed_runs SET inflight=0")
-            return int(cur.rowcount)
+            spends = self._db.execute("DELETE FROM credit_spends WHERE state='held'")
+            return int(cur.rowcount) + int(spends.rowcount)
 
     def usage(self, workspace_id: str, now: float | None = None) -> Usage:
         with self._lock:
