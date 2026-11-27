@@ -13,3 +13,6 @@ cdp-sdk==1.48.1
 # Web Read's MPP (Tempo) rail; only used when READ_MPP_CHAIN_ID is set. `tempo` brings the
 # transaction codec the server needs to validate a signed transfer before broadcasting it.
 pympp[tempo,server]==0.16.0
+# Web Read on AWS Marketplace Agentic Commerce; only imported when READ_AWS_PRODUCT_ID is set
+# (hosted/web_read/aws_rail.py). AWS's seller SDK for x402 (quote signing, payment tokens).
+fiat-extension-for-x402==1.0.2
