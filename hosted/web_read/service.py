@@ -1100,6 +1100,7 @@ def create_app(
     task: Task | None = None,
     recorder: Any = None,
     aws_verifier: Any = None,  # tests: a payment-token verifier for the AWS rail (aws_rail.build)
+    credits: Any = None,  # prepaid workspace credits with an API key (credits_rail.Credits)
 ) -> FastAPI:
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
@@ -1573,6 +1574,8 @@ def create_app(
         aws_path = f"{settings.mount_prefix}/aws/"
         if settings.aws is not None and request.url.path.startswith(aws_path):
             return await call_next(request)  # the AWS rail's own sub-app prices and sells these
+        if credits is not None and request.url.path.startswith(f"{settings.mount_prefix}/credits/"):
+            return await call_next(request)  # paid from workspace credits by the credits sub-app
         response = await sell_or_challenge(request, call_next)
         if is_page(request):  # paid pages and one-time challenges must never be served from a cache
             response.headers["cache-control"] = "no-store"
@@ -1680,6 +1683,16 @@ def create_app(
             app.mount("/aws", aws_app)
         except Exception:
             log.exception("AWS Agentic Commerce rail not mounted")
+
+    if credits is not None:
+        try:  # fail-isolated, like the AWS rail
+            app.mount("/credits", _sibling("credits_rail").build(
+                task=task, credits=credits, price_usd=settings.price_usd,
+                data_dir=settings.data_dir, recovery_s=settings.recovery_s,
+                allow_get=settings.allow_get, event=ledger.event,
+            ))  # fmt: skip
+        except Exception:
+            log.exception("Credits rail not mounted")
 
     @app.get("/health")
     async def health() -> dict[str, str]:
