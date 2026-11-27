@@ -37,6 +37,26 @@ class StripeConfig:
     success_url: str
     cancel_url: str
 
+    @property
+    def livemode(self) -> bool:
+        """True for a live key, False for a test (Sandbox) key. Events must match: a Sandbox
+        event never grants credits on a live deployment, and the reverse."""
+        return key_livemode(self.secret_key)
+
+
+def key_livemode(secret_key: str) -> bool:
+    """Live or test from the key's own prefix (secret or restricted key)."""
+    if secret_key.startswith(("sk_live_", "rk_live_")):
+        return True
+    if secret_key.startswith(("sk_test_", "rk_test_")):
+        return False
+    raise ValueError("STRIPE_SECRET_KEY must be a Stripe secret or restricted key")
+
+
+def event_matches_mode(event: dict[str, Any], cfg: StripeConfig) -> bool:
+    """A verified event counts only if it comes from the same mode (live/test) as our key."""
+    return event.get("livemode") is cfg.livemode
+
 
 def verify_event(
     raw_body: bytes, signature_header: str, secret: str, now: float | None = None
@@ -108,7 +128,8 @@ async def create_session(
         "line_items[0][price_data][currency]": "usd",
         "line_items[0][price_data][unit_amount]": str(cfg.pack_price_cents),
         "line_items[0][price_data][product_data][name]": (
-            f"Inferrail Hosted: {cfg.pack_runs:,} governed runs"
+            f"Inferrail credits: {cfg.pack_runs:,} ($0.001 each: one Hosted run, or half a Web "
+            "Read page)"
         ),
     }
     r = await client.post(API, data=form, auth=(cfg.secret_key, ""), timeout=30)
