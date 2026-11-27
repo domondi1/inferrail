@@ -350,7 +350,7 @@ def web_read_batch_from_env(hosted_settings: Any, env: dict[str, str] | None = N
         taken = {a.lower() for a in (hosted_settings.x402_pay_to, e.get("SEARCH_PAY_TO")) if a}
         if settings.pay_to.lower() in taken:
             raise RuntimeError("READ_PAY_TO must differ from Hosted's and Search's payTo")
-        reader = mod.fetch.Fetcher(settings.user_agent)
+        reader = mod.fetch.Fetcher(settings.user_agent, pdf=settings.pdf)
         return mod.create_app(settings, task=batch.batch_task(mod, reader)), settings
     except Exception:
         log.exception("Web Read batch not mounted: configuration error")

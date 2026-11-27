@@ -25,6 +25,8 @@ MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 3
 TIMEOUT_S = 15.0
 TEXT_TYPES = ("text/html", "application/xhtml+xml", "text/plain", "text/markdown")
+PDF_TYPE = "application/pdf"
+MAX_PDF_BYTES = 5_000_000  # PDFs are bigger than pages; read only by a Fetcher with pdf=True
 ROBOTS_TTL_S = 3600
 ROBOTS_MAX = 1024  # origins whose robots.txt is remembered; the oldest is forgotten first
 
@@ -93,14 +95,17 @@ class Fetcher:
         user_agent: str,
         transport: httpx.AsyncBaseTransport | None = None,
         resolve: Any = _resolve,
+        pdf: bool = False,
     ) -> None:
         self.user_agent = user_agent
         self._resolve = resolve
+        self.pdf = pdf
+        accept = ", ".join(TEXT_TYPES) + ";q=0.9" + (f", {PDF_TYPE};q=0.8" if pdf else "")
         self._client = httpx.AsyncClient(
             transport=transport,
             timeout=TIMEOUT_S,
             follow_redirects=False,
-            headers={"User-Agent": user_agent, "Accept": ", ".join(TEXT_TYPES) + ";q=0.9"},
+            headers={"User-Agent": user_agent, "Accept": accept},
         )
         self._robots: dict[str, tuple[float, urllib.robotparser.RobotFileParser | None]] = {}
         # Tests inject a transport without real sockets; peer checks then rely on DNS checks.
@@ -116,6 +121,9 @@ class Fetcher:
         try:
             if self._check_peer and not _peer_is_public(response):
                 raise Refused("non_public_address", urlsplit(url).hostname or "")
+            ctype = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            if self.pdf and ctype == PDF_TYPE and limit == MAX_BYTES:
+                limit = MAX_PDF_BYTES
             body = bytearray()
             async for chunk in response.aiter_bytes():  # decoded; caps the decoded size
                 body.extend(chunk)
@@ -169,7 +177,7 @@ class Fetcher:
             if response.status_code >= 400:
                 raise Refused("upstream_status", str(response.status_code))
             ctype = response.headers.get("content-type", "").split(";")[0].strip().lower()
-            if ctype not in TEXT_TYPES:
+            if ctype not in TEXT_TYPES and not (self.pdf and ctype == PDF_TYPE):
                 raise Refused("unsupported_content_type", ctype or "none")
             return Page(url, current, response.status_code, ctype, body,
                         response.charset_encoding or "utf-8")  # fmt: skip
