@@ -242,14 +242,20 @@ class Settings:
         base = e.get("BG_PUBLIC_BASE_URL", "http://localhost:8424")
         stripe = None
         if e.get("STRIPE_SECRET_KEY") and e.get("STRIPE_WEBHOOK_SECRET"):
-            stripe = stripe_checkout.StripeConfig(
-                secret_key=e["STRIPE_SECRET_KEY"],
-                webhook_secret=e["STRIPE_WEBHOOK_SECRET"],
-                pack_price_cents=int(e.get("BG_STRIPE_PACK_CENTS", "1000")),
-                pack_runs=int(e.get("BG_STRIPE_PACK_RUNS", "10000")),
-                success_url=f"{base}/v1/credits/thanks",
-                cancel_url=f"{base}/pricing",
-            )
+            live = stripe_checkout.key_livemode(e["STRIPE_SECRET_KEY"])
+            if not live and network != TESTNET and e.get("BG_STRIPE_ALLOW_TEST_KEY") != "1":
+                # A test (Sandbox) key on a mainnet deployment would let anyone buy real
+                # credits with Stripe's public test cards. Card sales stay off instead.
+                log.error("STRIPE_SECRET_KEY is a test key on a mainnet deployment: card sales off")
+            else:
+                stripe = stripe_checkout.StripeConfig(
+                    secret_key=e["STRIPE_SECRET_KEY"],
+                    webhook_secret=e["STRIPE_WEBHOOK_SECRET"],
+                    pack_price_cents=int(e.get("BG_STRIPE_PACK_CENTS", "1000")),
+                    pack_runs=int(e.get("BG_STRIPE_PACK_RUNS", "10000")),
+                    success_url=f"{base}/v1/credits/thanks",
+                    cancel_url=f"{base}/pricing",
+                )
         return cls(
             data_dir=Path(e.get("BG_DATA_DIR", "/tmp/inferrail_budget_gateway")),
             free_runs_per_month=int(e.get("BG_FREE_RUNS_PER_MONTH", "250")),
@@ -900,6 +906,11 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
             )
         except stripe_checkout.SignatureError as ex:
             raise HTTPException(400, f"invalid signature: {ex}") from ex
+        if not stripe_checkout.event_matches_mode(event, settings.stripe):
+            # A Sandbox event on a live deployment (or the reverse) never moves credits.
+            log.warning("ignored a Stripe event from the other mode (livemode=%s)",
+                        event.get("livemode"))  # fmt: skip
+            return {"granted": False, "reason": "event livemode does not match this deployment"}
         refund = stripe_checkout.refunded_charge(event)
         if refund is not None:
             intent, refunded = refund
