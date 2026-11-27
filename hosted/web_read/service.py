@@ -115,9 +115,9 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 # It is also what the CDP Bazaar's task search ranks, so it opens with the task phrase agents
 # search for ("web page to Markdown", "URL"). Richer wording lives in OpenAPI and the guides.
 DESCRIPTION = (
-    "Web page to Markdown: read any public URL as clean Markdown (main text, headings, lists, "
-    "links, tables) with its author, date, language and content hash. Use it when you need a "
-    "page's full text to quote, cite or check for changes. $0.002, only on delivery: a "
+    "Web page to Markdown: read any public URL or PDF as clean Markdown (main text, headings, "
+    "lists, links, tables) with its author, date, language and content hash. Use it when you "
+    "need a page's full text to quote, cite or check for changes. $0.002, only on delivery: a "
     "failing page (403, 404, 5xx, timeout), bot check or robots.txt refusal is free; a retry "
     "never pays twice."
 )
@@ -344,6 +344,8 @@ class Settings:
     # stays the MPP recipient). An EIP-3009 transfer binds a merchant, not a route, so a second
     # x402 service needs its own address, while MPP challenges are route-bound and can share one.
     x402_pay_to: str = ""
+    # Read PDFs (text layer, first 50 pages) as well as HTML and text. On unless READ_PDF=0.
+    pdf: bool = True
 
     @property
     def x402_recipient(self) -> str:
@@ -404,6 +406,7 @@ class Settings:
             extra_networks=_extra_networks(e, prefix, network) if x402 else (),
             mcp=e.get(f"{prefix}MCP") == "1" and x402,
             x402_pay_to=x402_pay_to,
+            pdf=e.get(f"{prefix}PDF", "1") != "0",
         )
 
 
@@ -980,6 +983,8 @@ async def read_page(
         event("refused", exc.code)
         status = refusal_status(exc)
         return status, {"error": exc.code, "detail": exc.detail, "charged": False}
+    if got.content_type == fetch.PDF_TYPE:
+        return await _read_pdf(url, got, event)
     text = got.body.decode(got.encoding, "replace")
     html = got.content_type in ("text/html", "application/xhtml+xml")
     if html:
@@ -1012,6 +1017,36 @@ async def read_page(
         "bytes": len(got.body),
     }
     return 200, row
+
+
+async def _read_pdf(
+    url: str, got: Any, event: Callable[[str, str], None]
+) -> tuple[int, dict[str, Any]]:
+    """A PDF's text layer as the page's content, its document info as the metadata."""
+    pdf = _sibling("pdf")
+    try:
+        title, content, fields = await pdf.parse_async(got.body)
+    except pdf.Unreadable as exc:
+        event("refused", "unreadable_pdf")
+        return 422, {"error": "unreadable_pdf", "detail": f"the PDF can't be read ({exc})",
+                     "charged": False}  # fmt: skip
+    if not content.strip():
+        event("refused", "no_readable_content")
+        return 422, {"error": "no_readable_content",
+                     "detail": "the PDF has no text layer (a scan); nothing to read",
+                     "charged": False}  # fmt: skip
+    metadata = {**meta.empty_metadata(), **fields, "canonical_url": got.final_url}
+    return 200, {
+        "url": url,
+        "final_url": got.final_url,
+        "title": title,
+        "content_markdown": content,
+        "word_count": len(content.split()),
+        "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "metadata": metadata,
+        "bytes": len(got.body),
+    }
 
 
 def page_task(reader: Any) -> Task:
@@ -1092,7 +1127,7 @@ def create_app(
     from x402.server import x402ResourceServer
 
     ledger = Ledger(settings.data_dir / "web_read.sqlite3")
-    reader = fetcher or fetch.Fetcher(settings.user_agent)
+    reader = fetcher or fetch.Fetcher(settings.user_agent, pdf=settings.pdf)
     task = task or page_task(reader)
     if not settings.x402 and settings.mpp is None and tempo_rail is None:
         raise ValueError("x402 is off and MPP isn't configured: nothing to sell")

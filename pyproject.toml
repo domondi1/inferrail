@@ -95,6 +95,7 @@ hosted = [
     "mcp==2.1.1",
     "a2a-sdk[fastapi]==1.1.2",
     "pympp[tempo,server]==0.16.0",
+    "pypdf==7.0.1",
 ]
 
 [project.scripts]

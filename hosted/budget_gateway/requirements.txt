@@ -13,3 +13,5 @@ cdp-sdk==1.48.1
 # Web Read's MPP (Tempo) rail; only used when READ_MPP_CHAIN_ID is set. `tempo` brings the
 # transaction codec the server needs to validate a signed transfer before broadcasting it.
 pympp[tempo,server]==0.16.0
+# Web Read reads PDFs' text layer (hosted/web_read/pdf.py); off with READ_PDF=0.
+pypdf==7.0.1
