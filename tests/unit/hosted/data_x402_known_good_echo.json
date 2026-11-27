@@ -151,7 +151,7 @@
   }
  },
  "resource": {
-  "description": "Web page to Markdown: read any public URL as clean Markdown (main text, headings, lists, links, tables) with its author, date, language and content hash. Use it when you need a page's full text to quote, cite or check for changes. $0.002, only on delivery: a failing page (403, 404, 5xx, timeout), bot check or robots.txt refusal is free; a retry never pays twice.",
+  "description": "Web page to Markdown: read any public URL or PDF as clean Markdown (main text, headings, lists, links, tables) with its author, date, language and content hash. Use it when you need a page's full text to quote, cite or check for changes. $0.002, only on delivery: a failing page (403, 404, 5xx, timeout), bot check or robots.txt refusal is free; a retry never pays twice.",
   "iconUrl": "https://tryinferrail.com/favicon-192x192.png",
   "mimeType": "application/json",
   "serviceName": "Web Page to Markdown (Inferrail)",
