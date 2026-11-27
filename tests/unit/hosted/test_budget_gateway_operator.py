@@ -266,6 +266,7 @@ def test_report_reads_no_request_content(mods, ledger):
         "pending_purchases",
         "refund_proofs",
         "usage_events",
+        "credit_spends",  # Web Read spends: a hashed ref, units, state, time (no URL, no content)
     }
 
 

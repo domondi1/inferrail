@@ -121,8 +121,11 @@ def create_combined_app(
     godmode: Any = "env",
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
+    hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
     if web_read == "env":
-        web_read = web_read_from_env(hosted_settings)
+        web_read = web_read_from_env(
+            hosted_settings, credits=read_credits_from_env(hosted_app, hosted_settings)
+        )
     read_batch = web_read_batch_from_env(hosted_settings) if web_read is not None else None
     if web_search == "env":
         web_search = web_search_from_env(hosted_settings)
@@ -135,7 +138,6 @@ def create_combined_app(
     if godmode == "env":
         godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
-    hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
     started = time.monotonic()
 
     def memory() -> dict[str, Any]:
@@ -243,7 +245,53 @@ def create_combined_app(
     return app
 
 
-def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+class HostedCredits:
+    """Web Read's view of Hosted's workspace ledger (credits_rail.Credits): authenticate a key,
+    hold and finish a spend. Nothing else of the ledger is reachable from Web Read."""
+
+    def __init__(self, ledger: Any, origin: str, *, units_per_result: int, card: bool) -> None:
+        self._ledger = ledger
+        self.units_per_result = units_per_result
+        self.top_up = {
+            "create_key": f"POST {origin}{PREFIX}/v1/workspaces",
+            "x402": f"POST {origin}{PREFIX}/v1/credits/x402 (USDC on Base, 1,000 credits = $1)",
+        }
+        if card:
+            self.top_up["card"] = f"POST {origin}{PREFIX}/v1/credits/checkout"
+
+    def authenticate(self, api_key: str) -> str | None:
+        return self._ledger.authenticate(api_key)
+
+    def hold(self, workspace_id: str, ref: str, units: int) -> tuple[str, int]:
+        return self._ledger.hold_spend(workspace_id, ref, units)
+
+    def finish(self, ref: str, delivered: bool) -> None:
+        self._ledger.finish_spend(ref, delivered)
+
+
+def read_credits_from_env(
+    hosted_app: Any, hosted_settings: Any, env: dict[str, str] | None = None
+) -> Any:
+    """Hosted credits for Web Read when READ_CREDITS=1 (default off). A Web Read page costs
+    READ_CREDITS_PER_PAGE credits (default 2: Hosted credits are $0.001, a page is $0.002)."""
+    e = dict(os.environ if env is None else env)
+    if e.get("READ_CREDITS") != "1":
+        return None
+    ledger = getattr(hosted_app.state, "ledger", None)
+    if ledger is None:
+        log.error("READ_CREDITS=1 but Hosted has no workspace ledger; credits rail off")
+        return None
+    origin = hosted_settings.public_base_url.removesuffix(PREFIX)
+    per_page = int(e.get("READ_CREDITS_PER_PAGE", "2"))
+    if per_page < 1:
+        raise RuntimeError("READ_CREDITS_PER_PAGE must be at least 1")
+    card = getattr(hosted_settings, "stripe", None) is not None
+    return HostedCredits(ledger, origin, units_per_result=per_page, card=card)
+
+
+def web_read_from_env(
+    hosted_settings: Any, env: dict[str, str] | None = None, credits: Any = None
+) -> Any:
     """(app, settings) for Inferrail Web Read when READ_PAY_TO is set, else None.
 
     Fail-isolated: a Web Read configuration error is logged and Web Read stays unmounted, so it
@@ -264,7 +312,7 @@ def web_read_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -
         taken = {a.lower() for a in (hosted_settings.x402_pay_to, e.get("SEARCH_PAY_TO")) if a}
         if settings.pay_to.lower() in taken:
             raise RuntimeError("READ_PAY_TO must differ from Hosted's and Search's payTo")
-        return mod.create_app(settings), settings
+        return mod.create_app(settings, credits=credits), settings
     except Exception:
         log.exception("Web Read not mounted: configuration error")
         return None
