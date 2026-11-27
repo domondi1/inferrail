@@ -346,6 +346,8 @@ class Settings:
     x402_pay_to: str = ""
     # Read PDFs (text layer, first 50 pages) as well as HTML and text. On unless READ_PDF=0.
     pdf: bool = True
+    # AWS Marketplace Agentic Commerce (aws_rail.AwsSettings), sold at <mount_prefix>/aws<path>.
+    aws: Any = None
 
     @property
     def x402_recipient(self) -> str:
@@ -407,7 +409,22 @@ class Settings:
             mcp=e.get(f"{prefix}MCP") == "1" and x402,
             x402_pay_to=x402_pay_to,
             pdf=e.get(f"{prefix}PDF", "1") != "0",
+            aws=_aws_settings(e, prefix, resource_url),
         )
+
+
+def _aws_settings(e: dict[str, str], prefix: str, resource_url: str) -> Any:
+    """AWS Agentic Commerce settings, or None. Fail-isolated: a bad AWS configuration is logged and
+    leaves only the AWS rail off, never Web Read itself (its USDC and MPP rails are unaffected)."""
+    if not e.get(f"{prefix}AWS_PRODUCT_ID", "").strip():
+        return None
+    try:
+        return _sibling("aws_rail").AwsSettings.from_env(
+            e, prefix, resource_url, e.get(f"{prefix}MOUNT_PREFIX", "").rstrip("/")
+        )
+    except Exception:
+        log.exception("AWS Agentic Commerce rail not enabled: configuration error")
+        return None
 
 
 class Ledger:
@@ -1117,6 +1134,7 @@ def create_app(
     tempo_rail: Any = None,
     task: Task | None = None,
     recorder: Any = None,
+    aws_verifier: Any = None,  # tests: a payment-token verifier for the AWS rail (aws_rail.build)
 ) -> FastAPI:
     from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import HTTPFacilitatorClient
@@ -1587,6 +1605,9 @@ def create_app(
 
     @app.middleware("http")
     async def _x402(request: Request, call_next: Any) -> Any:
+        aws_path = f"{settings.mount_prefix}/aws/"
+        if settings.aws is not None and request.url.path.startswith(aws_path):
+            return await call_next(request)  # the AWS rail's own sub-app prices and sells these
         response = await sell_or_challenge(request, call_next)
         if is_page(request):  # paid pages and one-time challenges must never be served from a cache
             response.headers["cache-control"] = "no-store"
@@ -1682,6 +1703,18 @@ def create_app(
                 ):
                     response.headers.append(k, v)
         return response
+
+    if settings.aws is not None:
+        try:  # fail-isolated: an AWS rail that can't start leaves the USDC and MPP rails serving
+            aws_app = _sibling("aws_rail").build(
+                task=task, aws=settings.aws, price_usd=settings.price_usd,
+                data_dir=settings.data_dir, mount_prefix=settings.mount_prefix,
+                allow_get=settings.allow_get, event=ledger.event, rec=rec,
+                verifier=aws_verifier,
+            )  # fmt: skip
+            app.mount("/aws", aws_app)
+        except Exception:
+            log.exception("AWS Agentic Commerce rail not mounted")
 
     @app.get("/health")
     async def health() -> dict[str, str]:

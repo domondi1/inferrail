@@ -297,6 +297,7 @@ def web_read_batch_from_env(hosted_settings: Any, env: dict[str, str] | None = N
         )  # fmt: skip
         e["READ_MCP"] = "0"
         e["READ_ALLOW_GET"] = "0"
+        e["READ_AWS_PRODUCT_ID"] = ""  # AWS Agentic Commerce sells the single-page route only
         settings = mod.Settings.from_env(e)
         taken = {a.lower() for a in (hosted_settings.x402_pay_to, e.get("SEARCH_PAY_TO")) if a}
         if settings.pay_to.lower() in taken:

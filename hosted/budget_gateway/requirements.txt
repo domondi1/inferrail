@@ -15,3 +15,6 @@ cdp-sdk==1.48.1
 pympp[tempo,server]==0.16.0
 # Web Read reads PDFs' text layer (hosted/web_read/pdf.py); off with READ_PDF=0.
 pypdf==7.0.1
+# Web Read on AWS Marketplace Agentic Commerce; only imported when READ_AWS_PRODUCT_ID is set
+# (hosted/web_read/aws_rail.py). AWS's seller SDK for x402 (quote signing, payment tokens).
+fiat-extension-for-x402==1.0.2

@@ -293,6 +293,30 @@ jobs:
             exit 1
           fi
 
+  web-read-aws:
+    # Web Read on AWS Marketplace Agentic Commerce (hosted/web_read/aws_rail.py): the real AWS
+    # seller SDK and x402 middleware end to end, with a locally generated key standing in for
+    # the AWS payment service. No AWS credentials, no network. Zero skips.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install hosted dependencies (includes the AWS seller SDK)
+        run: pip install -e ".[dev,hosted]"
+      - name: Lint
+        run: ruff check hosted/web_read tests/unit/hosted/test_web_read_aws.py
+      - name: Test (zero skips)
+        shell: bash
+        run: |
+          python -m pytest tests/unit/hosted/test_web_read_aws.py -v -rs | tee aws.log
+          if grep -q "SKIPPED" aws.log; then
+            echo "::error::a skipped AWS rail test must fail this job." >&2
+            exit 1
+          fi
+
   ap-exceptions:
     # Dedicated job for AP invoice-exception recovery: the main `test` job
     # only installs `[dev,mcp]`, so OpenAIRetryAdapter's `openai` import is

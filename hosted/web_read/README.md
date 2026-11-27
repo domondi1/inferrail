@@ -98,3 +98,34 @@ distinct and repeat payers, revenue, refusals by reason, and a `funnel`: unsigne
 checks), requests carrying a payment, rejected payments, recoveries and settled reads, each split
 by client family taken from the User-Agent (for example `x402scan`, `agentcash`, `python`). No
 IPs, URLs or bodies are recorded in it.
+
+## AWS Marketplace Agentic Commerce (off by default)
+
+Web Read can also be sold to agents that pay through Amazon Bedrock AgentCore payments: the
+charge lands on the buyer's AWS bill, and the buyer needs no account or credential from us. It is
+served at `<mount prefix>/aws/v1/page` (on the hosted origin: `/read/aws/v1/page`) with x402's
+`exact` scheme on network `aws:base`, using AWS's seller SDK (`fiat-extension-for-x402`).
+The USDC (Base) and MPP (Tempo) routes are unchanged.
+
+AWS takes the payment when it issues the buyer's payment token, before the page is delivered. So
+that a page which can't be read is still never charged, an unpaid request is read first: an
+unreadable page gets its usual free refusal and no quote at all; a readable one gets a signed
+quote and is held for 10 minutes for the paid retry. Each payment is used once (its `payment_id`
+is stored), and a retry with the same payment returns the stored result. A paid request that
+can't be delivered is answered `502` with `"refund_due": true` and recorded for a refund.
+
+To turn it on, list an Agentic Commerce product in AWS Marketplace with the endpoint URL and the
+JWKS URL below, then set:
+
+| Variable | Value |
+|---|---|
+| `READ_AWS_PRODUCT_ID` | the product ID, `prod-...` |
+| `READ_AWS_APPROVED` | `1` (required; selling here is a deliberate step) |
+| `READ_AWS_QUOTE_KEY_PEM` or `READ_AWS_QUOTE_KEY_FILE` | the private quote-signing key, PEM |
+| `READ_AWS_KEY_ID` | its key ID (default `inferrail-quote-1`) |
+
+Create the key with
+`openssl ecparam -name secp384r1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt -out quote-key.pem`
+and keep it in the host's secret store, never in the repository. The public key is served at
+`<mount prefix>/aws/.well-known/jwks.json` (register the base, `https://<host>/read/aws`, as the
+JWKS URL). A configuration error leaves only this rail off and is logged.
