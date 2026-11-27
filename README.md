@@ -141,6 +141,18 @@ tools: inferrailTools({ fetch: wrapFetchWithPayment(fetch, client) })  // see th
 
 Working agents with a per-run spending cap: [`examples/ai_sdk/`](examples/ai_sdk/README.md).
 
+**No wallet? Use the Apify Store.** The same reader, and tools built on it, run as pay-per-event
+Actors you can buy with an Apify account and a card, from the Apify API, schedules, Zapier, Make,
+n8n or the Apify MCP server. Inputs that can't be served are free there too.
+
+| Actor | What it does | Price |
+|---|---|---|
+| [Web Page & PDF to Markdown, Site Crawler](https://apify.com/domondi1/web-page-to-markdown) | Pages, PDFs or whole sites as Markdown with metadata | $0.002 per readable page |
+| [PDF to Markdown & Text](https://apify.com/domondi1/pdf-to-markdown) | PDFs at public URLs as Markdown with title, author and dates | $0.002 per readable document |
+| [Website Contact Finder](https://apify.com/domondi1/website-contact-finder) | Emails, phones and social profiles a site publishes | $0.005 per site with contacts |
+| [Company Jobs API](https://apify.com/domondi1/ats-jobs) | Open jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee; give it company domains | $0.001 per job |
+| [Company Enrichment](https://apify.com/domondi1/company-enrichment) | Domain to profile: identity, contacts, socials, tech stack, open-job count | $0.004 per company |
+
 Skills: [`skills/`](skills/). **In CI:** check lockfiles for known vulnerabilities on every push
 with [`actions/package-check`](actions/package-check/README.md) (a capped wallet you set).
 
