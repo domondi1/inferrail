@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { call, creditsFetch, guardInferrailPrices, ORIGIN, PRICE_ATOMIC, type Fetch, type Result } from "./core.js";
 
-export const SERVER_VERSION = "0.3.1";
+export const SERVER_VERSION = "0.3.2";
 /** How the services count requests from this server (no personal data). */
 export const SOURCE = "mcp-local";
 
@@ -141,17 +141,28 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
-/** The tools when paying from prepaid credits with INFERRAIL_API_KEY: Web Read only (the other
- * services have no credits route yet), with descriptions that state how credits are charged. */
-export const CREDIT_TOOLS: ToolDef[] = TOOLS.filter((t) => t.name.startsWith("read_")).map((t) => ({
+/** The tools when paying from prepaid credits with INFERRAIL_API_KEY: every service with a credits
+ * route (Web Read, Package Check, Domain Check), described with how credits are charged. */
+const CREDIT_DESCRIPTIONS: Record<string, string> = {
+  read_page:
+    "Read one public web page as clean Markdown with its title, metadata (description, canonical " +
+    "URL, authors, published date, language), word count and a content hash. $0.002 from " +
+    "prepaid Inferrail credits, only when the page is delivered." + UNTRUSTED,
+  read_pages:
+    "Read 1-10 public web pages, $0.002 from prepaid Inferrail credits per delivered page. Pages " +
+    "that can't be read cost nothing and are listed under `failed`." + UNTRUSTED,
+  check_packages:
+    "Check up to 20 package versions for known vulnerabilities (OSV.dev: advisory ids, CVEs, " +
+    "severity, fixed versions) before adding, upgrading or shipping a dependency. $0.002 from " +
+    "prepaid Inferrail credits per check. A clean result is not a guarantee.",
+  lookup_domain:
+    "Look up a domain's DNS records (A, AAAA, CNAME, MX, NS, TXT, SOA, CAA), SPF and DMARC, and " +
+    "registration (registrar, status, created and expiry dates, nameservers, DNSSEC). $0.002 from " +
+    "prepaid Inferrail credits per lookup. Use before trusting a link, sender or counterparty.",
+};
+export const CREDIT_TOOLS: ToolDef[] = TOOLS.filter((t) => t.name in CREDIT_DESCRIPTIONS).map((t) => ({
   ...t,
-  description:
-    t.name === "read_page"
-      ? "Read one public web page as clean Markdown with its title, metadata (description, canonical " +
-        "URL, authors, published date, language), word count and a content hash. $0.002 from " +
-        "prepaid Inferrail credits, only when the page is delivered." + UNTRUSTED
-      : "Read 1-10 public web pages, $0.002 from prepaid Inferrail credits per delivered page. Pages " +
-        "that can't be read cost nothing and are listed under `failed`." + UNTRUSTED,
+  description: CREDIT_DESCRIPTIONS[t.name],
 }));
 
 /** USDC base units (6 decimals) for a dollar amount like "0.10". */
