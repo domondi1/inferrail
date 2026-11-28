@@ -96,6 +96,26 @@ describe("credits fetch", () => {
     expect(svc.balance()).toBe(10);
   });
 
+  test("package checks and domain lookups go to their credits routes with the key", async () => {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const base = async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return Response.json({ ok: true, results: [] });
+    };
+    const keyed = creditsFetch(KEY, base, ORIGIN);
+    await call(keyed, "/pkg/v1/check", { packages: [{ ecosystem: "npm", name: "a", version: "1.0.0" }] }, ORIGIN);
+    await call(keyed, "/domain/v1/lookup", { domain: "example.com" }, ORIGIN);
+    await call(keyed, "/find/v1/find", { need: "x" }, ORIGIN);
+    expect(seen.map((s) => s.url)).toEqual([
+      `${ORIGIN}/pkg/credits/v1/check`,
+      `${ORIGIN}/domain/credits/v1/lookup`,
+      `${ORIGIN}/find/v1/find`, // no credits route: passes through unpaid
+    ]);
+    expect(seen[0].auth).toBe(`Bearer ${KEY}`);
+    expect(seen[1].auth).toBe(`Bearer ${KEY}`);
+    expect(seen[2].auth).toBeNull(); // the key is only sent to credits routes
+  });
+
   test("a key that isn't an Inferrail workspace key is refused up front", () => {
     expect(() => creditsFetch("sk_live_nope")).toThrow();
   });
@@ -103,7 +123,7 @@ describe("credits fetch", () => {
   test("the AI SDK credit tools read pages from credits", async () => {
     const svc = service();
     const tools = inferrailCreditTools({ apiKey: KEY, fetch: svc.fetch, origin: ORIGIN });
-    expect(Object.keys(tools).sort()).toEqual(["readPage", "readPages"]);
+    expect(Object.keys(tools).sort()).toEqual(["checkPackages", "lookupDomain", "readPage", "readPages"]);
     const r: any = await tools.readPage.execute!({ url: "https://a.test/" }, { toolCallId: "t", messages: [] });
     expect(r.ok).toBe(true);
     expect(svc.balance()).toBe(8);
@@ -153,12 +173,18 @@ describe("mcp server with INFERRAIL_API_KEY (stdio, local stand-in)", () => {
     await proc.exited;
     server.stop(true);
     const byId = Object.fromEntries(lines.map((l) => [l.id, l]));
-    expect(byId[1].result.tools.map((t: any) => t.name)).toEqual(["read_page", "read_pages"]);
+    expect(byId[1].result.tools.map((t: any) => t.name)).toEqual([
+      "read_page",
+      "read_pages",
+      "check_packages",
+      "lookup_domain",
+    ]);
     expect(byId[1].result.tools[0].description).toContain("prepaid Inferrail credits");
     expect(byId[2].result.isError).toBe(false);
     // The $0.002 daily budget covers one page: the second is refused before any request.
     expect(JSON.parse(byId[3].result.content[0].text).error).toBe("daily_budget");
     expect(balance).toBe(8);
-    expect(byId[4].error.code).toBe(-32602); // no credits route for other services in this mode
+    // check_packages exists in credits mode; an empty package list never reaches the service
+    expect(JSON.parse(byId[4].result.content[0].text).error).toBe("invalid_arguments");
   }, 20000);
 });

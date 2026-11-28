@@ -162,11 +162,18 @@ export function guardInferrailPrices<T extends HookableClient>(client: T, origin
 /** Web Read's API-key route: pages paid from prepaid workspace credits (2 credits = $0.002). */
 export const CREDITS_PAGE_PATH = "/read/credits/v1/page";
 
+/** The other services' API-key routes, by their x402 route (2 credits = $0.002 per result). */
+export const CREDIT_ROUTES: Record<string, string> = {
+  "/pkg/v1/check": "/pkg/credits/v1/check",
+  "/domain/v1/lookup": "/domain/credits/v1/lookup",
+};
+
 /**
  * A fetch that pays Web Read from prepaid Inferrail credits with a workspace key (`irw_...`)
  * instead of signing a payment per request. Page reads go to the credits route; a batch
  * (`/read/v1/pages`) is read page by page, so each delivered page is charged and failures are
- * listed. Other services have no credits route: their requests pass through unpaid (402).
+ * listed. Package Check and Domain Check go to their own credits routes. Anything else (the x402
+ * Finder) has no credits route and passes through unpaid (402).
  */
 export function creditsFetch(apiKey: string, base: Fetch = fetch, origin: string = ORIGIN): Fetch {
   if (!apiKey.startsWith("irw_")) throw new Error("an Inferrail workspace key starts with irw_");
@@ -181,6 +188,13 @@ export function creditsFetch(apiKey: string, base: Fetch = fetch, origin: string
     const url = String(input instanceof Request ? input.url : input);
     if (url === `${origin}/read/v1/page`) {
       return page(init, JSON.parse(String(init.body ?? "{}")));
+    }
+    const credited = CREDIT_ROUTES[url.slice(origin.length)];
+    if (url.startsWith(origin) && credited) {
+      return base(`${origin}${credited}`, {
+        ...init,
+        headers: { ...(init.headers as Record<string, string>), ...auth },
+      });
     }
     if (url === `${origin}/read/v1/pages`) {
       const body = JSON.parse(String(init.body ?? "{}")) as { urls?: string[]; request_id?: string };

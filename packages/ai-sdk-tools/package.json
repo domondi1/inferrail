@@ -1,6 +1,6 @@
 {
   "name": "@inferrail/ai-sdk-tools",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Pay-per-call tools for the Vercel AI SDK and a local MCP server: read web pages ($0.002 per delivered page), check package vulnerabilities, look up DNS and domain registration. Pay from prepaid credits with an API key, or from your own wallet over x402.",
   "mcpName": "io.github.domondi1/inferrail-web-read",
   "type": "module",
