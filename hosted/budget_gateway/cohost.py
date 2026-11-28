@@ -132,9 +132,9 @@ def create_combined_app(
     if finder == "env":
         finder = finder_from_env(hosted_settings)
     if packages == "env":
-        packages = package_check_from_env(hosted_settings)
+        packages = package_check_from_env(hosted_settings, credits=read_credits)
     if domains == "env":
-        domains = domain_check_from_env(hosted_settings)
+        domains = domain_check_from_env(hosted_settings, credits=read_credits)
     if godmode == "env":
         godmode = godmode_from_env(web_read)
     trial_app = trial_mod.create_app(trial_data_dir)
@@ -492,7 +492,9 @@ def finder_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> 
         return None
 
 
-def package_check_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+def package_check_from_env(
+    hosted_settings: Any, env: dict[str, str] | None = None, credits: Any = None
+) -> Any:
     """(app, settings) for Inferrail Package Check when PKG_PAY_TO is set, else None.
 
     Data is OSV.dev's free public API (no key); no supplier cost. MPP only unless PKG_X402=1,
@@ -526,7 +528,7 @@ def package_check_from_env(hosted_settings: Any, env: dict[str, str] | None = No
             if settings.x402_recipient.lower() in taken:
                 raise RuntimeError("PKG_X402=1 needs its own PKG_X402_PAY_TO")
         task = packages.package_task(mod, _package_retry_secret(e))
-        return mod.create_app(settings, task=task), settings
+        return mod.create_app(settings, task=task, credits=credits), settings
     except Exception:
         log.exception("Package Check not mounted: configuration error")
         return None
@@ -542,7 +544,9 @@ def _package_retry_secret(e: dict[str, str]) -> bytes:
     return hashlib.sha256(f"inferrail-package-check-retry|{seed}".encode()).digest()
 
 
-def domain_check_from_env(hosted_settings: Any, env: dict[str, str] | None = None) -> Any:
+def domain_check_from_env(
+    hosted_settings: Any, env: dict[str, str] | None = None, credits: Any = None
+) -> Any:
     """(app, settings) for Inferrail Domain Check when DOMAIN_PAY_TO is set, else None.
 
     Data is Cloudflare's public DNS-over-HTTPS resolver and registry RDAP services (no key, no
@@ -576,7 +580,7 @@ def domain_check_from_env(hosted_settings: Any, env: dict[str, str] | None = Non
             if settings.x402_recipient.lower() in taken:
                 raise RuntimeError("DOMAIN_X402=1 needs its own DOMAIN_X402_PAY_TO")
         task = domains.domain_task(mod, _domain_retry_secret(e))
-        return mod.create_app(settings, task=task), settings
+        return mod.create_app(settings, task=task, credits=credits), settings
     except Exception:
         log.exception("Domain Check not mounted: configuration error")
         return None
@@ -1108,7 +1112,9 @@ def origin_llms(app: Starlette) -> str:
                 f"`POST {origin}{READ_PREFIX}/credits/v1/page` with "
                 "`Authorization: Bearer irw_...` reads a page for 2 credits ($0.002), charged "
                 "only when delivered. The MCP server takes the key as `INFERRAIL_API_KEY`; the "
-                "AI SDK as `inferrailCreditTools({ apiKey })`.",
+                "AI SDK as `inferrailCreditTools({ apiKey })`. The same key pays Package Check "
+                f"(`POST {origin}{PKG_PREFIX}/credits/v1/check`) and Domain Check "
+                f"(`POST {origin}{DOMAIN_PREFIX}/credits/v1/lookup`), 2 credits each.",
             ]
         lines += [""]
     lines += [
@@ -1256,6 +1262,29 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
             security=[{"WorkspaceKey": []}],
         )
         doc["paths"][f"{READ_PREFIX}/credits/v1/page"] = {"post": op}
+    if getattr(app.state, "read_credits", False):
+        credit_ops = (
+            (PKG_PREFIX, "/v1/check", "packageCheckWithCredits", "package check"),
+            (DOMAIN_PREFIX, "/v1/lookup", "domainCheckWithCredits", "domain lookup"),
+        )
+        for prefix, path, op_id, what in credit_ops:
+            paid_op = (doc["paths"].get(f"{prefix}{path}") or {}).get("post")
+            if not paid_op:
+                continue
+            op = {k: v for k, v in paid_op.items() if not k.startswith("x-payment")}
+            op.update(
+                operationId=op_id,
+                summary=f"{paid_op.get('summary', what)} (prepaid credits, API key)",
+                description=(
+                    f"The same {what} as POST {prefix}{path}, paid from a workspace's prepaid "
+                    f"credits: 2 credits ($0.002) per delivered {what}, nothing when it can't be "
+                    f"served. Fund the workspace once (POST {base}/v1/credits/checkout, card), "
+                    "then call with 'Authorization: Bearer irw_...'. 402 insufficient_credits "
+                    "when the balance is too low."
+                ),
+                security=[{"WorkspaceKey": []}],
+            )
+            doc["paths"][f"{prefix}/credits{path}"] = {"post": op}
     return doc
 
 

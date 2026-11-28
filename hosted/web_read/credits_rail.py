@@ -92,6 +92,8 @@ def build(
 ) -> FastAPI:
     """The credits sub-app (mount it at "/credits"). `event` is Web Read's funnel counter."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    noun = getattr(task, "result_noun", "page")
+    again = "read the page again" if noun == "page" else f"get a new {noun}"
     results = ResultStore(data_dir / "credit_results.sqlite3")
     recovery = max(recovery_s, 600.0)
 
@@ -114,7 +116,8 @@ def build(
             return need_key("This workspace key is not valid.")
         units = (task.units(body) if task.units else 1) * credits.units_per_result
         idem = task.idem(body)
-        ref = "web-read:" + hashlib.sha256(f"{workspace}\n{idem}".encode()).hexdigest()[:40]
+        prefix = getattr(task, "credits_ref", "web-read")
+        ref = f"{prefix}:" + hashlib.sha256(f"{workspace}\n{idem}".encode()).hexdigest()[:40]
         state, balance = credits.hold(workspace, ref, units)
         if state == "billed":
             stored = results.get(ref, recovery)
@@ -125,13 +128,13 @@ def build(
             return JSONResponse(
                 {"error": "already_paid", "charged": False,
                  "detail": "this request_id was already delivered and paid; use a new "
-                           "request_id to read the page again"},
+                           f"request_id to {again}"},
                 status_code=409,
             )  # fmt: skip
         if state == "busy":
             return JSONResponse(
                 {"error": "in_progress", "charged": False,
-                 "detail": "this request is still being read; retry shortly"},
+                 "detail": f"this {noun} is still in progress; retry shortly"},
                 status_code=409,
             )  # fmt: skip
         if state == "insufficient":
@@ -152,7 +155,7 @@ def build(
         if not delivered:
             event("credits", "refused_free")
             return JSONResponse({**row, "charged": False}, status_code=status)
-        row = {**row, "receipt": {"rail": "credits", "credits_charged": units,
+        row = {**row, "receipt": {"rail": "credits", "product": noun, "credits_charged": units,
                                   "credits_remaining": balance, "price_usd": price_usd,
                                   "request_id": getattr(body, "request_id", None)}}  # fmt: skip
         row.pop("bytes", None)
