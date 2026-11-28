@@ -144,7 +144,7 @@ def build(
         if not delivered:
             event("credits", "refused_free")
             return JSONResponse({**row, "charged": False}, status_code=status)
-        row = {**row, "receipt": {"rail": "credits", "credits_charged": units,
+        row = {**row, "receipt": {"rail": "credits", "product": noun, "credits_charged": units,
                                   "credits_remaining": balance, "price_usd": price_usd,
                                   "request_id": getattr(body, "request_id", None)}}  # fmt: skip
         row.pop("bytes", None)

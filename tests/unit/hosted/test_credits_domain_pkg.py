@@ -104,6 +104,7 @@ def test_domain_lookup_paid_from_credits_once_and_retry_free(setup):
     assert r.status_code == 200, r.text
     assert r.json()["email"]["dmarc_policy"] == "reject"
     assert r.json()["receipt"]["credits_charged"] == 2 and r.json()["receipt"]["rail"] == "credits"
+    assert r.json()["receipt"]["product"] == "domain lookup"
     again = _lookup(c, key)
     assert again.status_code == 200 and again.headers.get("x-inferrail-recovered") == "1"
     assert ledger.balance(workspace) == 8  # charged once

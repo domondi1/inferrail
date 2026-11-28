@@ -136,6 +136,7 @@ jobs:
           tests/unit/hosted/test_web_read_meta.py
           tests/unit/hosted/test_web_read_batch.py
           tests/unit/hosted/test_web_read_credits.py
+          tests/unit/hosted/test_credits_domain_pkg.py
           tests/unit/hosted/test_agent_skills_distribution.py
           tests/unit/hosted/test_package_check_ci_action.py actions/package-check
           tests/unit/hosted/test_x402_verify_request.py
@@ -172,6 +173,7 @@ jobs:
             tests/unit/hosted/test_web_read_meta.py \
             tests/unit/hosted/test_web_read_batch.py \
             tests/unit/hosted/test_web_read_credits.py \
+            tests/unit/hosted/test_credits_domain_pkg.py \
             tests/unit/hosted/test_agent_skills_distribution.py \
             tests/unit/hosted/test_package_check_ci_action.py \
             tests/unit/hosted/test_x402_verify_request.py \
