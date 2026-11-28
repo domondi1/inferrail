@@ -2,39 +2,82 @@
   "manifest_version": "0.3",
   "name": "inferrail-web-read",
   "display_name": "Inferrail Web Read",
-  "version": "0.2.1",
-  "description": "Read web pages as clean Markdown with their dates, authors and a content hash. $0.002 per delivered page, paid from your own wallet under a daily budget.",
+  "version": "0.3.0",
+  "description": "Read web pages as clean Markdown with their dates, authors and a content hash. $0.002 per delivered page, from prepaid credits or your own wallet, under a daily budget.",
   "long_description": "Gives Claude paid tools that return the full text of a public page (not a summary) as Markdown, with its title, published date, authors, canonical URL, language, word count and a content hash, so answers can quote and date their sources and a re-check can tell whether a page changed. Also checks package versions for known vulnerabilities (OSV.dev) and looks up a domain's DNS, SPF/DMARC and registration.\n\nEach delivered result costs $0.002 in USDC on Base, paid over x402 from a wallet you control. A page that can't be read, a failed check or a refused call costs nothing. The extension pays at most your daily budget and refuses to sign any offer above a call's price. Without a wallet key the tools answer \"not paid\" and nothing is bought. Nothing here creates or funds a wallet.",
-  "author": { "name": "Inferrail", "url": "https://github.com/domondi1/inferrail" },
-  "repository": { "type": "git", "url": "https://github.com/domondi1/inferrail" },
+  "author": {
+    "name": "Inferrail",
+    "url": "https://github.com/domondi1/inferrail"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/domondi1/inferrail"
+  },
   "homepage": "https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools#use-it-from-an-mcp-client-claude-code-claude-desktop-cursor",
   "documentation": "https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools#readme",
   "support": "https://github.com/domondi1/inferrail/issues",
   "license": "Apache-2.0",
-  "keywords": ["web", "markdown", "scrape", "citations", "x402", "payments", "vulnerabilities", "dns"],
+  "keywords": [
+    "web",
+    "markdown",
+    "scrape",
+    "citations",
+    "x402",
+    "payments",
+    "vulnerabilities",
+    "dns"
+  ],
   "server": {
     "type": "node",
     "entry_point": "node_modules/@inferrail/ai-sdk-tools/dist/mcp.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/node_modules/@inferrail/ai-sdk-tools/dist/mcp.js"],
+      "args": [
+        "${__dirname}/node_modules/@inferrail/ai-sdk-tools/dist/mcp.js"
+      ],
       "env": {
+        "INFERRAIL_API_KEY": "${user_config.api_key}",
         "INFERRAIL_WALLET_KEY": "${user_config.wallet_key}",
         "INFERRAIL_MAX_USD_PER_DAY": "${user_config.max_usd_per_day}"
       }
     }
   },
   "tools": [
-    { "name": "read_page", "description": "One public web page as clean Markdown with its metadata and content hash ($0.002, only when delivered)." },
-    { "name": "read_pages", "description": "1-10 pages in one call, $0.002 per page; nothing is charged if any page fails." },
-    { "name": "check_packages", "description": "Up to 20 package versions checked for known vulnerabilities on OSV.dev ($0.002 per check)." },
-    { "name": "lookup_domain", "description": "A domain's DNS records, SPF/DMARC and registration ($0.002 per lookup)." }
+    {
+      "name": "read_page",
+      "description": "One public web page as clean Markdown with its metadata and content hash ($0.002, only when delivered)."
+    },
+    {
+      "name": "read_pages",
+      "description": "1-10 pages in one call, $0.002 per page; nothing is charged if any page fails."
+    },
+    {
+      "name": "check_packages",
+      "description": "Up to 20 package versions checked for known vulnerabilities on OSV.dev ($0.002 per check)."
+    },
+    {
+      "name": "lookup_domain",
+      "description": "A domain's DNS records, SPF/DMARC and registration ($0.002 per lookup)."
+    }
   ],
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
-    "runtimes": { "node": ">=18.0.0" }
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
   },
   "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "Inferrail API key (prepaid credits)",
+      "description": "irw_... workspace key funded once by card. Pays $0.002 per page without a wallet. Use this or a wallet key.",
+      "sensitive": true,
+      "required": false
+    },
     "wallet_key": {
       "type": "string",
       "title": "Wallet private key",

@@ -182,3 +182,46 @@ def test_cohost_mounts_the_credits_rail_only_when_enabled(tmp_path):
     with pytest.raises(RuntimeError):
         cohost.read_credits_from_env(App, Hosted, env={"READ_CREDITS": "1",
                                                        "READ_CREDITS_PER_PAGE": "0"})  # fmt: skip
+
+
+def _origin_app(tmp_path, monkeypatch, credits_on: bool):
+    cohost = _load("budget_gateway_cohost_docs", ROOT / "hosted" / "budget_gateway" / "cohost.py")
+    monkeypatch.setenv("READ_PAY_TO", PAY_TO)
+    monkeypatch.setenv("READ_DATA_DIR", str(tmp_path / "read"))
+    if credits_on:
+        monkeypatch.setenv("READ_CREDITS", "1")
+    else:
+        monkeypatch.delenv("READ_CREDITS", raising=False)
+    trial_mod, hosted_mod = cohost.load_modules()
+    hosted_settings = hosted_mod.Settings.from_env(
+        {"BG_DATA_DIR": str(tmp_path / "hosted"), "BG_MOUNT_PREFIX": "/hosted",
+         "BG_PUBLIC_BASE_URL": "http://testserver/hosted"}
+    )  # fmt: skip
+    return cohost.create_combined_app(
+        tmp_path / "trial", hosted_settings, modules=(trial_mod, hosted_mod),
+        web_search=None, finder=None, packages=None, domains=None, godmode=None,
+    )  # fmt: skip
+
+
+def test_the_api_key_path_is_documented_where_agents_look_when_it_is_on(tmp_path, monkeypatch):
+    with TestClient(_origin_app(tmp_path, monkeypatch, credits_on=True)) as c:
+        llms = c.get("/llms.txt").text
+        assert "/read/credits/v1/page" in llms and "INFERRAIL_API_KEY" in llms
+        assert (
+            "a person funds it once" in llms
+        )  # card funding is a human step; never implied unattended
+        op = c.get("/openapi.json").json()["paths"]["/read/credits/v1/page"]["post"]
+        assert op["security"] == [{"WorkspaceKey": []}] and "x-payment-info" not in op
+        assert "$0.002" in op["description"]
+        guide = c.post("/read/v1/page", json={"url": "https://news.test/a"}).json()
+        assert "/read/credits/v1/page" in guide["start_paying"]["api_key"]
+        r = c.post("/read/credits/v1/page", json={"url": "https://news.test/a"})
+        assert r.status_code == 401 and r.json()["error"] == "workspace_key_required"
+
+
+def test_nothing_advertises_the_api_key_path_when_it_is_off(tmp_path, monkeypatch):
+    with TestClient(_origin_app(tmp_path, monkeypatch, credits_on=False)) as c:
+        assert "/read/credits/" not in c.get("/llms.txt").text
+        assert "/read/credits/v1/page" not in c.get("/openapi.json").json()["paths"]
+        guide = c.post("/read/v1/page", json={"url": "https://news.test/a"}).json()
+        assert "api_key" not in guide["start_paying"]

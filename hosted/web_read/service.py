@@ -198,7 +198,7 @@ def bazaar_safe(value: Any) -> Any:
     return value
 
 
-def unpaid_guide(settings: Any, task: Any, units: int = 1) -> dict[str, Any]:
+def unpaid_guide(settings: Any, task: Any, units: int = 1, credits: bool = False) -> dict[str, Any]:
     """The body of an unpaid 402, for callers that aren't x402 clients yet (an LLM with a plain
     HTTP tool, a developer with curl). x402 v2 puts the offer in the PAYMENT-REQUIRED header, so
     the default body is `{}`: a dead end for anyone who can't read it. This says what it costs,
@@ -231,6 +231,10 @@ def unpaid_guide(settings: Any, task: Any, units: int = 1) -> dict[str, Any]:
             "mcp_client": "npx -y @inferrail/ai-sdk-tools (a local MCP server for Claude Code, "
             "Claude Desktop or Cursor; set INFERRAIL_WALLET_KEY and INFERRAIL_MAX_USD_PER_DAY)",
             "wallet": "Each pays from a wallet you control and fund; none creates or funds one.",
+            **({"api_key": f"No wallet: POST {origin}/hosted/v1/workspaces for a key, fund it once "
+                f"by card at POST {origin}/hosted/v1/credits/checkout, then POST "
+                f"{origin}{settings.mount_prefix}/credits{task.path} with 'Authorization: Bearer "
+                "irw_...' (2 credits = $0.002 per delivered page)."} if credits else {}),
         },
         "docs": {"guide": f"{origin}{settings.mount_prefix}/llms.txt",
                  "openapi": f"{origin}/openapi.json"},
@@ -1306,7 +1310,8 @@ def create_app(
             ),
             unpaid_response_body=lambda _ctx: HTTPResponseBody(
                 content_type="application/json",
-                body=unpaid_guide(settings, task, units_var.get() if task.units else 1),
+                body=unpaid_guide(settings, task, units_var.get() if task.units else 1,
+                                  credits=credits is not None),
             ),
         )
 

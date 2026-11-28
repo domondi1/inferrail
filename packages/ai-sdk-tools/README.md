@@ -76,6 +76,45 @@ Working agents for dependency review, research with dated citations, and link ve
 from Inferrail's origin, it refuses an amount above the listed price and any receiving
 address other than that service's own. Offers from other sellers pass through untouched.
 
+## Pay with an API key (prepaid credits, no wallet)
+
+Web Read can also be paid from prepaid Inferrail credits with a workspace key, with no wallet
+and no per-request signing. A delivered page costs 2 credits ($0.002); a page that can't be read
+costs nothing.
+
+1. **Get a key** (free): `curl -X POST https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces`
+   returns `{"api_key": "irw_..."}`, shown once.
+2. **Fund it once.** `curl -X POST "https://inferrail-cost-gateway.onrender.com/hosted/v1/credits/checkout?packs=1" -H "Authorization: Bearer irw_..."`
+   returns a Stripe Checkout link. **A person opens it and pays by card:** $10 for 10,000
+   credits (5,000 pages). You can also buy credits with USDC over x402 at
+   `POST /hosted/v1/credits/x402`. Card top-ups are a human step; nothing here buys credits
+   unattended.
+3. **Your agent then spends the balance on its own:**
+
+```ts
+import { generateText } from "ai";
+import { inferrailCreditTools } from "@inferrail/ai-sdk-tools";
+
+const { text } = await generateText({
+  model: "openai/gpt-5-mini",
+  tools: inferrailCreditTools({ apiKey: process.env.INFERRAIL_API_KEY! }),
+  prompt: "Summarise https://example.com/ and cite it.",
+});
+```
+
+Or call the HTTP route from any server, cron job or workflow tool (n8n, Zapier, Make):
+
+```bash
+curl -X POST https://inferrail-cost-gateway.onrender.com/read/credits/v1/page \
+  -H "Authorization: Bearer irw_..." -H "content-type: application/json" \
+  -d '{"url": "https://example.com/", "request_id": "job-42"}'
+```
+
+A retry with the same `request_id` returns the paid page again without a second charge. With
+too few credits the answer is `402 {"error": "insufficient_credits", ...}`, and nothing is read
+or charged. Check the balance with `GET /hosted/v1/workspace`. In key mode `readPages` reads each
+page separately: delivered pages are charged, and failed ones are listed under `failed`.
+
 ## Use it from an MCP client (Claude Code, Claude Desktop, Cursor)
 
 The package also ships `inferrail-mcp`, a local MCP server (stdio) for clients that can't pay
@@ -109,6 +148,10 @@ For Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`)
   pays per UTC day, across restarts (kept in `~/.inferrail/spend.json`, or
   `INFERRAIL_STATE_DIR`). A call that would pass it is refused before anything is signed. The
   server also refuses to sign any offer above the call's own price, or to another address.
+- **With prepaid credits instead of a wallet:** set `INFERRAIL_API_KEY=irw_...` (see
+  "Pay with an API key" above) and leave out `INFERRAIL_WALLET_KEY`. The server then offers
+  `read_page` and `read_pages`, paid from the workspace balance, still under
+  `INFERRAIL_MAX_USD_PER_DAY`.
 - **Without a key** the tools still run, and every call answers "not paid" with no charge.
 - **Charged only on delivery:** a page that can't be read, a failed check or a refused call
   costs nothing, and the tool result says so.

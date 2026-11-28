@@ -9,7 +9,7 @@
     "subfolder": "hosted/web_read"
   },
   "websiteUrl": "https://tryinferrail.com",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -21,15 +21,22 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@inferrail/ai-sdk-tools",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
+          "name": "INFERRAIL_API_KEY",
+          "description": "Inferrail workspace key (irw_...) with prepaid credits, funded once by card or USDC. Pays $0.002 per delivered page without a wallet.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
           "name": "INFERRAIL_WALLET_KEY",
-          "description": "Private key (0x...) of a wallet you control holding a little USDC on Base. It pays $0.002 per delivered result. Without it, calls answer 'not paid'.",
+          "description": "Alternative to INFERRAIL_API_KEY: private key (0x...) of a wallet you control holding a little USDC on Base. Without either key, calls answer 'not paid'.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"

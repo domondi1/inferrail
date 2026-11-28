@@ -18,7 +18,7 @@
 
 import { tool } from "ai";
 import { z } from "zod";
-import { call, ORIGIN, type Fetch } from "./core.js";
+import { call, creditsFetch, ORIGIN, type Fetch } from "./core.js";
 
 export * from "./core.js";
 
@@ -99,6 +99,44 @@ export function inferrailTools({ fetch: paidFetch, origin = ORIGIN }: InferrailT
         limit: z.number().int().min(1).max(5).optional(),
       }),
       execute: run("/find/v1/find"),
+    }),
+  };
+}
+
+export interface InferrailCreditToolsOptions {
+  /** An Inferrail workspace key (`irw_...`) with prepaid credits. */
+  apiKey: string;
+  /** The underlying fetch (tests, proxies). Default: the global fetch. */
+  fetch?: Fetch;
+  origin?: string;
+}
+
+/**
+ * Web Read tools paid from prepaid Inferrail credits with an API key: no wallet and no
+ * per-request signing. A delivered page costs 2 credits ($0.002); a page that can't be read
+ * costs nothing. A person funds the workspace once (card checkout or USDC); the agent then
+ * spends the balance on its own.
+ */
+export function inferrailCreditTools({ apiKey, fetch: base = fetch, origin = ORIGIN }: InferrailCreditToolsOptions) {
+  const keyed = creditsFetch(apiKey, base, origin);
+  const run = (path: string) => (body: Record<string, unknown>) => call(keyed, path, body, origin);
+  return {
+    readPage: tool({
+      description:
+        "Read one public web page as clean markdown with its title, metadata (description, " +
+        "canonical URL, authors, published date, language), word count and a content hash. " +
+        "Costs $0.002 from prepaid credits, only when the page is delivered.",
+      inputSchema: z.object({ url: z.string().url().max(2048).describe("Public http(s) URL") }),
+      execute: run("/read/v1/page"),
+    }),
+    readPages: tool({
+      description:
+        "Read 1-10 public web pages, $0.002 from prepaid credits per delivered page. Pages that " +
+        "can't be read cost nothing and are listed under `failed`.",
+      inputSchema: z.object({
+        urls: z.array(z.string().url().max(2048)).min(1).max(10).describe("Distinct public URLs"),
+      }),
+      execute: run("/read/v1/pages"),
     }),
   };
 }
