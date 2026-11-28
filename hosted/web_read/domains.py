@@ -552,6 +552,8 @@ def domain_task(service: Any, secret: bytes, client: Any = None) -> Any:
         )
 
     return service.Task(
+        result_noun="domain lookup",
+        credits_ref="domain-check",
         path="/v1/lookup",
         request_model=LookupRequest,
         service_name="Inferrail Domain Check",

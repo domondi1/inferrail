@@ -388,6 +388,8 @@ def package_task(service: Any, secret: bytes, client: Any = None) -> Any:
         )
 
     return service.Task(
+        result_noun="package check",
+        credits_ref="package-check",
         path="/v1/check",
         request_model=CheckRequest,
         service_name="Inferrail Package Check",
