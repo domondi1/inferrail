@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { call, creditsFetch, guardInferrailPrices, ORIGIN, PRICE_ATOMIC, type Fetch, type Result } from "./core.js";
 
-export const SERVER_VERSION = "0.3.0";
+export const SERVER_VERSION = "0.3.1";
 /** How the services count requests from this server (no personal data). */
 export const SOURCE = "mcp-local";
 

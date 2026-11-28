@@ -77,6 +77,25 @@ describe("credits fetch", () => {
     expect(r.detail).toContain("/hosted/v1/credits/checkout");
   });
 
+  test("a batch refused as a whole (bad key) says so, instead of a list of failures", async () => {
+    const svc = service();
+    const r: any = await call(creditsFetch("irw_wrong", svc.fetch, ORIGIN), "/read/v1/pages",
+      { urls: ["https://a.test/", "https://b.test/"] }, ORIGIN);
+    expect(r).toMatchObject({ ok: false, charged: false, status: 401, error: "workspace_key_required" });
+  });
+
+  test("a batch where every page fails reports pages_failed with each page's reason", async () => {
+    const svc = service(10, ["https://down.test/", "https://gone.test/"]);
+    const r: any = await call(creditsFetch(KEY, svc.fetch, ORIGIN), "/read/v1/pages",
+      { urls: ["https://down.test/", "https://gone.test/"] }, ORIGIN);
+    expect(r).toMatchObject({ ok: false, charged: false, status: 422, error: "pages_failed" });
+    expect(r.results).toEqual([
+      { url: "https://down.test/", delivered: false, error: "upstream_status" },
+      { url: "https://gone.test/", delivered: false, error: "upstream_status" },
+    ]);
+    expect(svc.balance()).toBe(10);
+  });
+
   test("a key that isn't an Inferrail workspace key is refused up front", () => {
     expect(() => creditsFetch("sk_live_nope")).toThrow();
   });
