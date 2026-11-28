@@ -17,6 +17,10 @@ read (blocked, missing, bot check, robots.txt, JavaScript-only) costs nothing.
 
 ## Get an API key
 
+**Quickest:** open https://inferrail-cost-gateway.onrender.com/hosted/v1/start in a browser,
+click **Create my key**, copy the key and pay by card ($10 = 10,000 credits = 5,000 pages).
+Then paste the key into the plugin's authorization in Dify. Or with `curl`:
+
 1. **Create a free key:**
    `curl -X POST https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces`
    returns `{"api_key": "irw_..."}`. It is shown once, so keep it.
