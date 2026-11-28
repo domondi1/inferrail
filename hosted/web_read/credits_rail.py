@@ -63,6 +63,16 @@ class ResultStore:
         return json.loads(hit[0]) if hit else None
 
 
+# Integrations that label their requests (`x-inferrail-source`), counted per channel in the
+# funnel. A fixed set, so no caller-chosen text ever reaches the stats.
+SOURCES = frozenset({"dify", "mcp-local", "ai-sdk"})
+
+
+def _source(request: Request) -> str | None:
+    value = request.headers.get("x-inferrail-source", "").strip().lower()
+    return value if value in SOURCES else None
+
+
 def _api_key(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
@@ -131,6 +141,7 @@ def build(
                  "credits_remaining": balance, "top_up": credits.top_up},
                 status_code=402,
             )  # fmt: skip
+        source = _source(request)
         event("credits", "attempt")
         delivered = False
         try:
@@ -147,6 +158,8 @@ def build(
         row.pop("bytes", None)
         results.put(ref, row)
         event("credits", "delivered")
+        if source:
+            event("channel", f"{source}:credits_delivered")
         return JSONResponse(row)
 
     async def page_post(body: Any, request: Request) -> JSONResponse:
