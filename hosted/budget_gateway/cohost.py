@@ -254,6 +254,7 @@ class HostedCredits:
         self._ledger = ledger
         self.units_per_result = units_per_result
         self.top_up = {
+            "start": f"{origin}{PREFIX}/v1/start (browser: create a key and pay by card)",
             "create_key": f"POST {origin}{PREFIX}/v1/workspaces",
             "x402": f"POST {origin}{PREFIX}/v1/credits/x402 (USDC on Base, 1,000 credits = $1)",
         }
@@ -1105,7 +1106,8 @@ def origin_llms(app: Starlette) -> str:
         ]
         if getattr(app.state, "read_credits", False):
             lines += [
-                "- API key, no wallet (prepaid credits): get a free key with `POST "
+                f"- API key, no wallet (prepaid credits): a person opens {origin}{PREFIX}/v1/start "
+                "in a browser to create a key and pay by card once; or get a free key with `POST "
                 f"{origin}{PREFIX}/v1/workspaces`; a person funds it once at `POST "
                 f"{origin}{PREFIX}/v1/credits/checkout` (card, $10 = 10,000 credits) or "
                 f"`POST {origin}{PREFIX}/v1/credits/x402` (USDC). Then "

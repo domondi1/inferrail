@@ -82,6 +82,9 @@ Web Read can also be paid from prepaid Inferrail credits with a workspace key, w
 and no per-request signing. A delivered page costs 2 credits ($0.002); a page that can't be read
 costs nothing.
 
+**Quickest:** open https://inferrail-cost-gateway.onrender.com/hosted/v1/start in a browser,
+click **Create my key**, copy the key and pay by card. Or with `curl`:
+
 1. **Get a key** (free): `curl -X POST https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces`
    returns `{"api_key": "irw_..."}`, shown once.
 2. **Fund it once.** `curl -X POST "https://inferrail-cost-gateway.onrender.com/hosted/v1/credits/checkout?packs=1" -H "Authorization: Bearer irw_..."`

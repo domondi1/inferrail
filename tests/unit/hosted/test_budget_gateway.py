@@ -447,6 +447,66 @@ def test_checkout_creates_a_session_with_our_metadata(mods, tmp_path, monkeypatc
     assert c.post("/v1/credits/checkout?packs=0", headers=_auth(key)).status_code == 400
 
 
+def _stripe_mock(mods, monkeypatch, seen):
+    def handler(request):
+        seen.append(dict(httpx.QueryParams(request.content.decode())))
+        return httpx.Response(200, json={"url": "https://checkout.stripe.test/s/1"})
+
+    monkeypatch.setattr(
+        mods,
+        "stripe_client_factory",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_the_browser_start_page_creates_a_key_once_and_links_a_real_checkout(
+    mods, tmp_path, monkeypatch
+):
+    seen: list = []
+    _stripe_mock(mods, monkeypatch, seen)
+    c = _client(mods, tmp_path, STRIPE_ENV)
+    landing = c.get("/v1/start")
+    assert landing.status_code == 200 and "text/html" in landing.headers["content-type"]
+    assert "$0.002 per delivered page" in landing.text and "Create my key" in landing.text
+    assert "only step a person does" in landing.text  # card funding is a human step, said plainly
+    r = c.post("/v1/start")
+    assert r.status_code == 201 and r.headers["cache-control"] == "no-store"
+    key = r.text.split('class="key">')[1].split("<")[0]
+    assert key.startswith("irw_")
+    assert c.get("/v1/workspace", headers=_auth(key)).status_code == 200  # a working key
+    assert "https://checkout.stripe.test/s/1" in r.text  # one-click card checkout
+    assert seen[0]["metadata[workspace_id]"] == _ws_id(c, key)
+    assert seen[0]["metadata[packs]"] == "1"
+    assert "<script" not in r.text and "<script" not in landing.text
+
+
+def test_the_browser_top_up_needs_a_valid_key(mods, tmp_path, monkeypatch):
+    seen: list = []
+    _stripe_mock(mods, monkeypatch, seen)
+    c = _client(mods, tmp_path, STRIPE_ENV)
+    key = _workspace(c)
+    form = {"content-type": "application/x-www-form-urlencoded"}
+    bad = c.post("/v1/start/top-up", content="api_key=irw_nope", headers=form)
+    assert bad.status_code == 401 and seen == []
+    ok = c.post("/v1/start/top-up", content=f"api_key={key}", headers=form)
+    assert ok.status_code == 200 and "https://checkout.stripe.test/s/1" in ok.text
+    assert seen[0]["metadata[workspace_id]"] == _ws_id(c, key)
+
+
+def test_the_browser_page_without_card_payments_points_to_usdc(mods, tmp_path):
+    c = _client(mods, tmp_path)
+    assert "/v1/credits/x402" in c.get("/v1/start").text
+    r = c.post("/v1/start")
+    assert r.status_code == 201 and "checkout.stripe" not in r.text and "irw_" in r.text
+
+
+def test_the_browser_page_obeys_the_same_creation_limits(mods, tmp_path):
+    c = _client(mods, tmp_path, None, BG_CREATIONS_PER_IP_PER_HOUR="1")
+    assert c.post("/v1/start").status_code == 201
+    r = c.post("/v1/start")
+    assert r.status_code == 429 and "too many workspaces" in r.text
+
+
 # == proxy ========================================================================================
 
 
