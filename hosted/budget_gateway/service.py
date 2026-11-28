@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import chain_check  # noqa: E402
 import report  # noqa: E402
+import start_page  # noqa: E402
 import stripe_checkout  # noqa: E402
 from workspaces import WorkspaceLedger  # noqa: E402
 
@@ -899,6 +900,62 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
                 settings.stripe, workspace_id, int(packs_raw), client
             )
         return {"checkout_url": url, "note": "Credits are added when Stripe confirms payment."}
+
+    # -- browser start page: create a key, fund it once by card ------------------------------
+    def _origin() -> str:
+        base = settings.public_base_url
+        prefix = getattr(settings, "mount_prefix", "") or ""
+        return base[: -len(prefix)] if prefix and base.endswith(prefix) else base
+
+    def _pack_line() -> str:
+        cfg = settings.stripe
+        return start_page.pack_line(cfg.pack_price_cents, cfg.pack_runs) if cfg else ""
+
+    async def _checkout_url(workspace_id: str) -> str | None:
+        if settings.stripe is None:
+            return None
+        _within_daily_sales_cap(settings.stripe.pack_price_cents)
+        async with stripe_client_factory() as client:
+            return await stripe_checkout.create_session(settings.stripe, workspace_id, 1, client)
+
+    def _html(body: str, status: int = 200) -> HTMLResponse:
+        # Never cached: the created-key page holds a secret shown once.
+        return HTMLResponse(body, status_code=status, headers={"cache-control": "no-store"})
+
+    @app.get("/v1/start", response_class=HTMLResponse)
+    async def start() -> HTMLResponse:
+        cfg = settings.stripe
+        return _html(start_page.start(settings.public_base_url,
+                                      cfg.pack_price_cents if cfg else 1000,
+                                      cfg.pack_runs if cfg else 10_000, cfg is not None))  # fmt: skip
+
+    @app.post("/v1/start", response_class=HTMLResponse)
+    async def start_create(request: Request) -> HTMLResponse:
+        try:
+            workspace_id, api_key = _new_workspace(request)
+            url = await _checkout_url(workspace_id)
+        except HTTPException as ex:
+            page = start_page.problem(str(ex.detail), settings.public_base_url)
+            return _html(page, ex.status_code)
+        return _html(start_page.created(settings.public_base_url, _origin(), api_key, url,
+                                        _pack_line()), 201)  # fmt: skip
+
+    @app.post("/v1/start/top-up", response_class=HTMLResponse)
+    async def start_top_up(request: Request) -> HTMLResponse:
+        from urllib.parse import parse_qs
+
+        raw = (await request.body())[:4096].decode("utf-8", "replace")
+        key = (parse_qs(raw).get("api_key") or [""])[0].strip()
+        workspace_id = ledger.authenticate(key) if key else None
+        if workspace_id is None:
+            page = start_page.problem("That API key is not valid.", settings.public_base_url)
+            return _html(page, 401)
+        try:
+            url = await _checkout_url(workspace_id)
+        except HTTPException as ex:
+            page = start_page.problem(str(ex.detail), settings.public_base_url)
+            return _html(page, ex.status_code)
+        return _html(start_page.top_up(url, _pack_line(), settings.public_base_url))
 
     @app.post("/v1/stripe/webhook")
     async def stripe_webhook(request: Request) -> dict[str, Any]:
