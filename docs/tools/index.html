@@ -1,155 +1,425 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Web data tools: pages to Markdown, company jobs, enrichment, contacts, tech stack, SEO | Inferrail</title>
-  <meta name="description" content="Pay-per-use web data tools by Inferrail: web page and PDF to Markdown, a company jobs API across Greenhouse, Lever and Ashby, company enrichment, contact finder, tech stack detector, SEO audit, domain check, RSS reader and screenshots. Pay by card on Apify, or by x402 or MPP. Inputs that can't be served are free.">
-  <link rel="canonical" href="https://tryinferrail.com/tools/">
-  <link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
-  <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root { --paper:#EFEFE9; --bar:#DCE7D8; --ink:#14201B; --ink-2:#5E6D64; --ink-3:#8B978E; --rule:#C3C7BE; --stamp:#A8352A; --white:#FFF; }
-    * { box-sizing:border-box; }
-    html { background:var(--paper); scroll-behavior:smooth; }
-    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.55 "IBM Plex Mono",monospace; }
-    a { color:inherit; }
-    a:focus-visible, button:focus-visible { outline:3px solid var(--stamp); outline-offset:4px; }
-    .wrap { width:min(100%, 900px); margin:auto; padding:0 20px; }
-    .masthead { display:flex; min-height:62px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--ink); }
-    .wordmark, .eyebrow, .button, .fact-label { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
-    .wordmark { font-size:19px; text-decoration:none; display:inline-flex; align-items:center; gap:.55em; }
-    .wordmark-mark { display:block; flex:none; width:28px; height:28px; }
-    @media (max-width:600px) { .wordmark-mark { width:24px; height:24px; } }
-    .nav { display:flex; gap:18px; font-size:12px; }
-    .nav a { text-underline-offset:4px; }
-    main { padding:clamp(36px,5vw,58px) 0 clamp(48px,6vw,80px); }
-    .eyebrow { margin:0 0 12px; color:var(--stamp); font-size:12px; }
-    h1, h2 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0; line-height:.98; }
-    h1 { font-size:clamp(36px,8vw,60px); max-width:14ch; }
-    h1 span { display:block; color:var(--ink-2); }
-    .lede { max-width:56ch; margin:20px 0 0; color:var(--ink-2); font-size:clamp(15px,1.3vw,19px); line-height:1.5; }
-    .pill { display:inline-flex; margin-top:20px; padding:7px 10px; border:1px solid var(--rule); color:var(--ink-2); font-size:11px; }
-    section.block { margin-top:clamp(40px,5vw,64px); padding-top:clamp(28px,3.5vw,42px); border-top:1px solid var(--ink); }
-    h2 { font-size:clamp(22px,3.4vw,32px); }
-    .block p { max-width:64ch; margin:16px 0 0; color:var(--ink-2); font-size:15px; line-height:1.6; }
-    .block p code, .block li code { font-size:.94em; background:var(--bar); padding:1px 5px; }
-    .block ul { max-width:64ch; margin:16px 0 0; padding-left:20px; color:var(--ink-2); font-size:15px; line-height:1.6; }
-    .facts { display:grid; gap:0; margin-top:22px; border-top:1px solid var(--rule); }
-    .fact-row { display:grid; grid-template-columns:minmax(150px,1fr) 2fr; gap:12px; padding:13px 0; border-bottom:1px solid var(--rule); }
-    .fact-label { color:var(--ink-3); font-size:11px; align-self:start; padding-top:2px; }
-    .fact-row p { margin:0; font-size:15px; }
-    .endpoint-card { margin-top:22px; padding:18px 20px; background:var(--white); border:1px solid var(--rule); box-shadow:6px 6px 0 rgba(20,32,27,.06); }
-    .endpoint-row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:10px; padding:10px 0; border-bottom:1px dashed var(--rule); font-size:14px; }
-    .endpoint-row:last-child { border-bottom:0; }
-    .endpoint-row strong { font-family:"IBM Plex Sans Condensed",sans-serif; text-transform:uppercase; font-size:12px; letter-spacing:.08em; color:var(--ink-3); }
-    .endpoint-row code { font-size:14px; overflow-wrap:anywhere; text-align:right; }
-    .links { display:flex; flex-wrap:wrap; gap:12px; margin-top:22px; }
-    .button { min-height:48px; padding:0 20px; display:inline-flex; align-items:center; border:1px solid var(--ink); cursor:pointer; font-size:14px; text-decoration:none; }
-    .button-dark { color:var(--paper); background:var(--ink); }
-    .button-ghost { color:var(--ink); background:transparent; }
-    .testnet-note { margin-top:24px; padding-left:13px; border-left:3px solid var(--stamp); font-size:13px; color:var(--ink-2); max-width:60ch; }
-    .testnet-note strong { display:block; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:15px; text-transform:uppercase; color:var(--ink); }
-    footer { padding:24px 0; border-top:1px solid var(--ink); color:var(--ink-3); font-size:12px; }
-    @media (min-width:700px) { body { font-size:17px; } }
-    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
-      .tool { margin-top:22px; padding:18px 20px; background:var(--white); border:1px solid var(--rule); box-shadow:6px 6px 0 rgba(20,32,27,.06); }
-    .tool h3 { margin:0; font-family:"IBM Plex Sans Condensed",sans-serif; font-size:19px; text-transform:uppercase; }
-    .tool p { max-width:64ch; margin:8px 0 0; color:var(--ink-2); font-size:15px; line-height:1.55; }
-    .tool .price { color:var(--stamp); font-weight:600; }
-    .tool .links { margin-top:12px; }
-  </style>
-  <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "SoftwareApplication", "name": "Web Page & PDF to Markdown, Site Crawler", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/web-page-to-markdown", "description": "Any public page, PDF or whole site as clean Markdown with title, author, dates, language, canonical URL and a content hash. For LLM context, RAG pipelines and archives.", "offers": {"@type": "Offer", "description": "$0.002 per readable page", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "PDF to Markdown & Text", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/pdf-to-markdown", "description": "PDFs at public URLs (papers, reports, filings, manuals) as Markdown text with the document's title, author and dates.", "offers": {"@type": "Offer", "description": "$0.002 per readable document", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Company Jobs API", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/ats-jobs", "description": "Open jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee. Search thousands of company boards by keyword, location, remote and date, or give company domains. Only-new mode for daily feeds.", "offers": {"@type": "Offer", "description": "$0.001 per job", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Company Enrichment", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/company-enrichment", "description": "A company domain in, a profile out: name, description, logo, address, founding date, published emails and phones, social profiles, tech stack and open-job count.", "offers": {"@type": "Offer", "description": "$0.004 per company", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Website Contact Finder", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/website-contact-finder", "description": "The emails, phone numbers and social profiles a company website publishes, with the page each was found on and mail-server checks.", "offers": {"@type": "Offer", "description": "$0.005 per site with contacts", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Website Tech Stack Detector", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/website-tech-stack", "description": "The technologies a site runs (CMS, frameworks, hosting and CDN, analytics, ad pixels, marketing, payments, consent), 130+ in all, each with the evidence that matched.", "offers": {"@type": "Offer", "description": "$0.003 per site", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "SEO Audit & Site Crawler", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/seo-audit", "description": "A score and a list of on-page issues for every page: noindex, canonical, titles and descriptions, headings, alt text, links, structured data, social tags, speed.", "offers": {"@type": "Offer", "description": "$0.004 per page", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Domain Check", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/domain-check", "description": "DNS records, SPF and DMARC policy, DNSSEC and RDAP registration (registrar, created and expiry dates, domain age) for any number of domains.", "offers": {"@type": "Offer", "description": "$0.002 per domain", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "RSS & Atom Feed Reader", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/rss-feed-reader", "description": "Feeds, or just websites (the feed is found for you), as structured items, with optional full article text as Markdown.", "offers": {"@type": "Offer", "description": "$0.0005 per item, $0.002 with full text", "priceCurrency": "USD"}}, {"@type": "SoftwareApplication", "name": "Website Screenshot", "applicationCategory": "DeveloperApplication", "url": "https://apify.com/domondi1/website-screenshot", "description": "Full-page or viewport screenshots with a real Chromium, desktop or mobile, PNG or JPEG, each with a shareable link.", "offers": {"@type": "Offer", "description": "$0.002 per screenshot", "priceCurrency": "USD"}}]}</script>
-</head>
-<body>
-  <header class="masthead wrap">
-    <a class="wordmark" href="/"><img class="wordmark-mark" src="../inferrail-mark.png" alt="" width="28" height="28">Inferrail</a>
-    <nav class="nav" aria-label="Primary navigation"><a href="/">Home</a><a href="https://github.com/domondi1/inferrail">GitHub</a></nav>
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <title>
+   Web data tools on Apify | Pages, PDFs, company data &amp; more | Inferrail
+  </title>
+  <meta content="Ten Inferrail Apify Actors: page and PDF extraction, contacts, jobs, company profiles, technology, SEO, DNS, feeds and screenshots. Transparent event pricing." name="description"/>
+  <link href="https://tryinferrail.com/tools/" rel="canonical"/>
+  <meta content="website" property="og:type"/>
+  <meta content="Web data tools on Apify | Pages, PDFs, company data &amp; more | Inferrail" property="og:title"/>
+  <meta content="Ten Inferrail Apify Actors: page and PDF extraction, contacts, jobs, company profiles, technology, SEO, DNS, feeds and screenshots. Transparent event pricing." property="og:description"/>
+  <meta content="https://tryinferrail.com/tools/" property="og:url"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" property="og:image"/>
+  <meta content="summary_large_image" name="twitter:card"/>
+  <meta content="Web data tools on Apify | Pages, PDFs, company data &amp; more | Inferrail" name="twitter:title"/>
+  <meta content="Ten Inferrail Apify Actors: page and PDF extraction, contacts, jobs, company profiles, technology, SEO, DNS, feeds and screenshots. Transparent event pricing." name="twitter:description"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" name="twitter:image"/>
+  <link href="/favicon.ico" rel="icon"/>
+  <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
+  <link href="/llms.txt" rel="alternate" title="Agent integration guide" type="text/plain"/>
+  <link href="https://fonts.googleapis.com" rel="preconnect"/>
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+Condensed:wght@600;700&amp;display=swap" rel="stylesheet"/>
+  <link href="/site.css" rel="stylesheet"/>
+  <link href="/commercial.css" rel="stylesheet"/>
+  <script type="application/ld+json">
+   {"@context": "https://schema.org", "@type": "WebPage", "name": "Web data tools on Apify | Pages, PDFs, company data & more | Inferrail", "url": "https://tryinferrail.com/tools/", "description": "Ten Inferrail Apify Actors: page and PDF extraction, contacts, jobs, company profiles, technology, SEO, DNS, feeds and screenshots. Transparent event pricing."}
+  </script>
+ </head>
+ <body class="commercial">
+  <a class="skip-link" href="#main">
+   Skip to content
+  </a>
+  <header class="site-header">
+   <div class="wrap">
+    <a class="wordmark" href="/">
+     <img alt="" height="28" src="/inferrail-mark.png" width="28"/>
+     Inferrail
+    </a>
+    <div class="header-actions">
+     <a class="button button-primary" href="/developers/#api-key">
+      Start reading
+     </a>
+     <button aria-controls="primary-nav" aria-expanded="false" class="nav-toggle" type="button">
+      Menu
+     </button>
+    </div>
+    <nav aria-label="Primary" class="nav" id="primary-nav">
+     <a href="/#product">
+      Products
+     </a>
+     <a href="/pricing/">
+      Pricing
+     </a>
+     <a href="/developers/">
+      Developers
+     </a>
+     <a href="/llms.txt">
+      For agents
+     </a>
+     <a href="/#company">
+      Company
+     </a>
+     <a class="button button-primary nav-try" href="/developers/#api-key">
+      Start reading
+     </a>
+    </nav>
+   </div>
   </header>
-  <main class="wrap">
-    <p class="eyebrow">Pay per use, no subscription</p>
-    <h1>Web data tools<span>Charged only for what you get.</span></h1>
-    <p class="lede">Ten tools for reading the web: pages and PDFs as Markdown, company jobs, company profiles, contacts, tech stacks, SEO audits, domains, feeds and screenshots. Run them from the Apify Store with a card, through the Apify API, a schedule, Zapier, Make or n8n. Pages, sites or companies that can't be served are never charged.</p>
-    <p class="pill">Built on the open-source Inferrail Web Read reader · respects robots.txt</p>
-
-    <section class="block" aria-labelledby="tools-title">
-      <h2 id="tools-title">The tools</h2>
-      <div class="tool">
-        <h3>Web Page &amp; PDF to Markdown, Site Crawler</h3>
-        <p>Any public page, PDF or whole site as clean Markdown with title, author, dates, language, canonical URL and a content hash. For LLM context, RAG pipelines and archives.</p>
-        <p class="price">$0.002 per readable page. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/web-page-to-markdown">Run on Apify</a> <a class="button button-ghost" href="https://inferrail-cost-gateway.onrender.com/openapi.json">x402 / MPP API</a></div>
+  <main id="main">
+   <section class="product-hero wrap">
+    <p class="eyebrow">
+     Apify distribution
+    </p>
+    <h1 class="display">
+     Useful web data.
+     <br/>
+     Your existing workflow.
+    </h1>
+    <p class="lede">
+     Ten Inferrail Actors, publicly listed on Apify. Run them in your Apify account, through its API, schedules or compatible integrations. This is a separate purchasing path from Inferrail’s native APIs.
+    </p>
+    <div class="button-row">
+    </div>
+   </section>
+   <section class="section wrap" id="actors">
+    <h2 class="section-title">
+     Choose a task.
+    </h2>
+    <div class="catalog-rows">
+     <article>
+      <div>
+       <h3>
+        Web Page &amp; PDF to Markdown, Site Crawler
+       </h3>
+       <p>
+        Read public web pages, or crawl a whole site, into clean Markdown with each page's title, author, published and modified dates, language, canonical URL and a content hash. Pay only for pages delivered with readable text; blocked, missing, bot-check and JavaScript-only pages are free.
+       </p>
+       <p class="small">
+        $0.002 / page read
+       </p>
       </div>
-      <div class="tool">
-        <h3>PDF to Markdown &amp; Text</h3>
-        <p>PDFs at public URLs (papers, reports, filings, manuals) as Markdown text with the document&#x27;s title, author and dates.</p>
-        <p class="price">$0.002 per readable document. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/pdf-to-markdown">Run on Apify</a> <a class="button button-ghost" href="https://inferrail-cost-gateway.onrender.com/openapi.json">x402 / MPP API</a></div>
+      <a href="https://apify.com/domondi1/web-page-to-markdown">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        PDF to Markdown &amp; Text (with metadata)
+       </h3>
+       <p>
+        Convert PDFs at public URLs to clean Markdown text with title, author and dates, ready for LLMs and RAG. Web pages work too. $0.002 per document with readable text; scanned, broken or missing PDFs are free.
+       </p>
+       <p class="small">
+        $0.002 / document read
+       </p>
       </div>
-      <div class="tool">
-        <h3>Company Jobs API</h3>
-        <p>Open jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee. Search thousands of company boards by keyword, location, remote and date, or give company domains. Only-new mode for daily feeds.</p>
-        <p class="price">$0.001 per job. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/ats-jobs">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/pdf-to-markdown">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Website Contact Finder: Emails, Phones, Socials
+       </h3>
+       <p>
+        Find the emails, phone numbers and social profiles a website publishes, from its contact, about, team and imprint pages first. Each email is checked (syntax, mail server, disposable, role). Pay only for sites where contacts are found; sites with none, or that can't be read, are free.
+       </p>
+       <p class="small">
+        $0.005 / site with contacts
+       </p>
       </div>
-      <div class="tool">
-        <h3>Company Enrichment</h3>
-        <p>A company domain in, a profile out: name, description, logo, address, founding date, published emails and phones, social profiles, tech stack and open-job count.</p>
-        <p class="price">$0.004 per company. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/company-enrichment">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/website-contact-finder">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Jobs Search API: Greenhouse, Lever, Ashby, Workable Boards
+       </h3>
+       <p>
+        Search open jobs across 2,000+ company job boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee) by keyword, location, remote and date, or pull every job for the companies you list. Only-new mode for daily feeds. $0.001 per job.
+       </p>
+       <p class="small">
+        $0.001 / job
+       </p>
       </div>
-      <div class="tool">
-        <h3>Website Contact Finder</h3>
-        <p>The emails, phone numbers and social profiles a company website publishes, with the page each was found on and mail-server checks.</p>
-        <p class="price">$0.005 per site with contacts. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/website-contact-finder">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/ats-jobs">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Company Enrichment from Domain: Profile, Contacts, Hiring
+       </h3>
+       <p>
+        Turn a company domain into a profile from its own website: name, legal name, description, logo, language, address, founding date, emails, phones, social profiles, and its job board with open-job count. Sites that can't be read are free.
+       </p>
+       <p class="small">
+        $0.004 / company profiled
+       </p>
       </div>
-      <div class="tool">
-        <h3>Website Tech Stack Detector</h3>
-        <p>The technologies a site runs (CMS, frameworks, hosting and CDN, analytics, ad pixels, marketing, payments, consent), 130+ in all, each with the evidence that matched.</p>
-        <p class="price">$0.003 per site. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/website-tech-stack">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/company-enrichment">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Website Tech Stack Detector: CMS, Frameworks, Analytics
+       </h3>
+       <p>
+        Find the technologies any website runs: CMS, JavaScript frameworks, hosting and CDN, analytics, ad pixels, marketing, chat, payments, consent, auth. 130+ technologies, each with the evidence that matched. Sites that can't be read or show nothing are free.
+       </p>
+       <p class="small">
+        $0.003 / site analyzed
+       </p>
       </div>
-      <div class="tool">
-        <h3>SEO Audit &amp; Site Crawler</h3>
-        <p>A score and a list of on-page issues for every page: noindex, canonical, titles and descriptions, headings, alt text, links, structured data, social tags, speed.</p>
-        <p class="price">$0.004 per page. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/seo-audit">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/website-tech-stack">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        SEO Audit &amp; Site Crawler: On-Page Issues and Score
+       </h3>
+       <p>
+        Audit pages or crawl a whole site for on-page SEO: title, meta description, canonical, robots/noindex, headings, alt text, links, structured data, Open Graph, HTTPS, speed. Each page gets a score and a list of issues. Unreadable pages are free.
+       </p>
+       <p class="small">
+        $0.004 / page audited
+       </p>
       </div>
-      <div class="tool">
-        <h3>Domain Check</h3>
-        <p>DNS records, SPF and DMARC policy, DNSSEC and RDAP registration (registrar, created and expiry dates, domain age) for any number of domains.</p>
-        <p class="price">$0.002 per domain. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/domain-check">Run on Apify</a> <a class="button button-ghost" href="https://inferrail-cost-gateway.onrender.com/openapi.json">x402 / MPP API</a></div>
+      <a href="https://apify.com/domondi1/seo-audit">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Domain Check: DNS, WHOIS/RDAP, SPF, DMARC, Domain Age
+       </h3>
+       <p>
+        Bulk domain lookup: DNS records (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA), SPF and DMARC policy, DNSSEC, and RDAP registration (registrar, status, created and expiry dates, domain age). $0.002 per domain; invalid names and resolver outages are free.
+       </p>
+       <p class="small">
+        $0.002 / domain looked up
+       </p>
       </div>
-      <div class="tool">
-        <h3>RSS &amp; Atom Feed Reader</h3>
-        <p>Feeds, or just websites (the feed is found for you), as structured items, with optional full article text as Markdown.</p>
-        <p class="price">$0.0005 per item, $0.002 with full text. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/rss-feed-reader">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/domain-check">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        RSS &amp; Atom Feed Reader with Full-Text Articles
+       </h3>
+       <p>
+        Read RSS and Atom feeds, or just give it a website (the feed is found for you). Every item with title, link, dates, author, categories and summary, plus optional full article text as Markdown. Inputs without a feed are free.
+       </p>
+       <p class="small">
+        $0.0005 / feed item; $0.002 / item with full text
+       </p>
       </div>
-      <div class="tool">
-        <h3>Website Screenshot</h3>
-        <p>Full-page or viewport screenshots with a real Chromium, desktop or mobile, PNG or JPEG, each with a shareable link.</p>
-        <p class="price">$0.002 per screenshot. Inputs that can't be served are free.</p>
-        <div class="links"><a class="button button-dark" href="https://apify.com/domondi1/website-screenshot">Run on Apify</a></div>
+      <a href="https://apify.com/domondi1/rss-feed-reader">
+       Run on Apify
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Website Screenshot: Full-Page PNG/JPEG, Desktop &amp; Mobile
+       </h3>
+       <p>
+        Capture full-page or viewport screenshots of any public URL with a real Chromium (JavaScript rendered). Desktop, laptop, tablet or mobile, PNG or JPEG, retina. Each image gets a shareable link. Pages that fail to load are free.
+       </p>
+       <p class="small">
+        $0.002 / screenshot
+       </p>
       </div>
-    </section>
-
-    <section class="block" aria-labelledby="agents-title">
-      <h2 id="key-title">Or one API key, paid by card</h2>
-      <p>Web Read is also sold directly from a prepaid balance: get a free workspace key, fund it once by card ($10 = 10,000 credits), and each delivered page costs 2 credits ($0.002). No Apify account needed, nothing charged for a page that can't be read. Start at <a href="/llms.txt">llms.txt</a>.</p>
-    </section>
-
-    <section class="block" aria-labelledby="agents-title">
-      <h2 id="agents-title">For agents with a wallet</h2>
-      <p>Web Read, Package Check and Domain Check are also sold per call over <a href="https://x402.org">x402</a> (USDC on Base) and <a href="https://mpp.dev">MPP</a> (Tempo), with no account or API key. Start at <a href="/llms.txt">llms.txt</a> or the <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">OpenAPI contract</a>.</p>
-    </section>
+      <a href="https://apify.com/domondi1/website-screenshot">
+       Run on Apify
+      </a>
+     </article>
+    </div>
+    <p>
+     Prices are listing event rates verified November 28, 2026. Apify account and platform terms, fees and limits apply; consult the listing before running. Billing events differ by Actor. Native Inferrail endpoints do not expose every capability listed here.
+    </p>
+   </section>
+   <section class="section wrap" id="native">
+    <h2 class="section-title">
+     Prefer a direct API?
+    </h2>
+    <p>
+     Read public webpages and PDFs with
+     <a href="/web-read/">
+      Web Read
+     </a>
+     , or use
+     <a href="/checks/">
+      Package Check, Domain Check and Finder
+     </a>
+     . Web Read supports prepaid API-key access; wallet routes also support x402 and MPP.
+    </p>
+    <div class="button-row">
+     <a class="button button-primary" href="/developers/">
+      Native API quickstart
+     </a>
+    </div>
+   </section>
   </main>
-  <footer class="wrap">Inferrail · <a href="https://github.com/domondi1/inferrail">github.com/domondi1/inferrail</a></footer>
-</body>
+  <footer class="site-footer">
+   <div class="wrap footer-grid">
+    <div class="footer-brand">
+     <a class="footer-name" href="/">
+      Inferrail
+     </a>
+     <p>
+      External evidence for AI agents.
+      <br/>
+      Public sources. Usable results. Clear economics.
+     </p>
+     <p>
+      <a href="mailto:daniel_omondi@alumni.brown.edu">
+       Contact the team
+      </a>
+     </p>
+    </div>
+    <nav aria-label="Products">
+     <p class="footer-heading">
+      Products
+     </p>
+     <ul>
+      <li>
+       <a href="/web-read/">
+        Web Read
+       </a>
+      </li>
+      <li>
+       <a href="/checks/">
+        Package, domain &amp; API discovery
+       </a>
+      </li>
+      <li>
+       <a href="/tools/">
+        Apify tools
+       </a>
+      </li>
+      <li>
+       <a href="/hosted/">
+        Hosted budgets
+       </a>
+      </li>
+      <li>
+       <a href="/spending-controls/">
+        Self-hosted gateway
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Developer resources">
+     <p class="footer-heading">
+      Developers
+     </p>
+     <ul>
+      <li>
+       <a href="/developers/">
+        Quickstart
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail">
+        GitHub
+       </a>
+      </li>
+      <li>
+       <a href="/llms.txt">
+        llms.txt
+       </a>
+      </li>
+      <li>
+       <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+        Production OpenAPI
+       </a>
+      </li>
+      <li>
+       <a href="/product-catalog.json">
+        Product inventory
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Company and research">
+     <p class="footer-heading">
+      Company
+     </p>
+     <ul>
+      <li>
+       <a href="/#team">
+        Team
+       </a>
+      </li>
+      <li>
+       <a href="/#careers">
+        Careers
+       </a>
+      </li>
+      <li>
+       <a href="/#investors">
+        Investors
+       </a>
+      </li>
+      <li>
+       <a href="/labs/">
+        Labs
+       </a>
+      </li>
+      <li>
+       <a href="/ap/">
+        AP recovery experiment
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">
+        Security
+       </a>
+      </li>
+     </ul>
+    </nav>
+   </div>
+   <div class="wrap">
+    <div class="footer-legal">
+     <span>
+      © 2026 Inferrail
+     </span>
+     <span>
+      Open-source software:
+      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">
+       Apache 2.0
+      </a>
+     </span>
+     <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">
+      Gateway privacy
+     </a>
+     <a href="https://x.com/tryinferrail">
+      X
+     </a>
+     <a href="https://www.linkedin.com/company/inferrail/">
+      LinkedIn
+     </a>
+    </div>
+   </div>
+  </footer>
+  <script src="/site.js">
+  </script>
+ </body>
 </html>

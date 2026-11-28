@@ -1,56 +1,263 @@
 <!-- mcp-name: io.github.domondi1/inferrail -->
 
-<p align="center">
-  <img src="docs/assets/inferrail-logo.svg" width="80" height="80" alt="Inferrail logo">
-</p>
-
+<p align="center"><img src="https://raw.githubusercontent.com/domondi1/inferrail/main/docs/assets/inferrail-logo.svg" width="80" height="80" alt="Inferrail logo"></p>
 <h1 align="center">Inferrail</h1>
-
-<p align="center">
-Spending limits, receipts and paid execution for AI agents.<br>
-Give each AI job a dollar budget that's enforced before the provider is called,
-and a cost receipt that never stores what the model said.
-</p>
-
+<p align="center"><b>External evidence for AI agents.</b><br>
+Public webpages, document text and investigation data your agent can use,<br>
+with structured results and transparent per-result pricing.</p>
 <p align="center">
   <a href="https://github.com/domondi1/inferrail/actions/workflows/ci.yml"><img src="https://github.com/domondi1/inferrail/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pypi.org/project/inferrail/"><img src="https://img.shields.io/pypi/v/inferrail.svg" alt="PyPI version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-<p align="center">
-  <a href="#quickstart"><b>Quickstart</b></a> ·
-  <a href="#for-agents">For agents</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#documentation">Docs</a> ·
-  <a href="https://tryinferrail.com/">tryinferrail.com</a>
-</p>
 
 <p align="center">
-  <img src="docs/assets/inferrail-dashboard-demo.gif" width="860" alt="Recording of a real Inferrail run. The gateway starts with its local dashboard. An agent script gives one AI job, contract-review-42, a $0.04 spending limit and makes six model calls: four are answered and two are blocked with HTTP 402 before reaching the model. The dashboard lists each call with its cost, then shows the job spent $0.0325 of its $0.0400 budget, with 2 requests blocked before reaching the provider.">
+  <a href="https://tryinferrail.com/web-read/"><b>Web Read</b></a> ·
+  <a href="https://tryinferrail.com/developers/">Developer quickstart</a> ·
+  <a href="https://tryinferrail.com/pricing/">Pricing</a> ·
+  <a href="#self-hosted-gateway-quickstart">Inference budgets</a> ·
+  <a href="https://tryinferrail.com/llms.txt">For agents</a>
 </p>
 
-<p align="center"><em>A real run of the gateway and dashboard with a local stand-in model: one job with a $0.04 limit, four calls answered, two refused with HTTP 402 before reaching the model. <a href="docs/assets/dashboard-capture/">How it was recorded</a></em></p>
+Start with **Web Read**: retrieve an original public source as clean Markdown with its title,
+source URL, retrieval timestamp, content hash and payment receipt. Use it for research,
+document ingestion, citations and recurring documentation reads without maintaining an
+extraction and payment-recovery stack. Inferrail also ships independent inference spending
+controls: the Python package installs the self-hosted gateway, not the hosted evidence APIs.
 
-## What works today
+**Readable sources. Predictable purchases.** Put readable source material in your agent's context, keep the URL,
+retrieval time and receipt attached, and know the price before each purchase. Failed native
+deliveries are uncharged. Start with a prepaid API key or a wallet you already use.
 
-Developer preview: interfaces may change before 1.0.
+## What you can use today
 
-| Capability | What it does | Where | Status |
+Verified **2026-11-28** against unpaid production challenges, live pricing and public registries.
+Commercial availability and maturity are separate: the purchasable APIs remain developer preview.
+Production contracts override this dated inventory.
+
+| Product | Result / price | Live payment path | Maturity |
 |---|---|---|---|
-| **Gateway** | OpenAI- and Anthropic-compatible proxy you run yourself. A dollar budget per job, shared by parallel calls; a call that would exceed it gets HTTP 402 before the provider. | `pip install inferrail` | Available |
-| **Cost receipts** | One record per call: tokens, price, cost, status, your tags. Never prompts or responses. Totals by job, customer or any tag. | local SQLite or JSONL | Available |
-| **MCP server** | Read-only `get_spend` and `get_health` tools over your local receipts. | `inferrail mcp` | Preview |
-| **Inferrail Hosted** | The same per-run budgets run for you, shared across agents and machines. 250 runs a month free, then USDC credits over x402. Bring your own provider key. | [hosted guide](hosted/budget_gateway/README.md) | Preview |
-| **Web Read** | One public web page as clean markdown with a receipt, paid per call by the agent over x402 or MPP. | [below](#for-agents) | Preview |
-| **Agent purchases under a job budget** | One budget covering model calls and x402 purchases; a purchase that doesn't fit is refused before it's signed. Local proof, no mainnet. | [example](examples/agent_economy/) | Experimental |
+| [Web Read](https://tryinferrail.com/web-read/) | Public page or text-layer PDF as Markdown, metadata and receipt. **$0.002 per delivered page or document**. | API key + prepaid credits; x402 USDC on Base; MPP on Tempo | Commercial developer preview |
+| [Package Check](https://tryinferrail.com/checks/#package-check) | OSV.dev advisories, CVEs, severity and available fixes for **1–20 versions, $0.002 per delivered check**. | API key + credits; x402 Base; MPP Tempo | Commercial developer preview |
+| [Domain Check](https://tryinferrail.com/checks/#domain-check) | DNS, SPF/DMARC and available RDAP registration. **$0.002 per delivered lookup**. | API key + credits; x402 Base; MPP Tempo | Commercial developer preview |
+| [x402 Finder](https://tryinferrail.com/checks/#finder) | Up to five matching paid APIs with invocation details. **$0.002 per delivered answer**; no match is free. | x402 Base; MPP Tempo | Commercial developer preview |
+| [Inferrail Hosted](https://tryinferrail.com/hosted/) | Shared per-run inference budgets. **250 qualifying runs/workspace/month free, then $0.001/run**. Provider spend separate. | Workspace key; prepaid card or x402 credits | Developer preview; experimental pricing |
+| [Self-hosted gateway](#self-hosted-gateway-quickstart) | Inference budgets, payload-free receipts, dashboard. **Free Apache-2.0 software**. | Your infrastructure and provider key | Published open source; developer preview |
 
-Also experimental: [AP invoice-exception recovery](docs/capabilities/ap-invoice-exception-recovery.md),
-a [hosted trial gateway](https://tryinferrail.com/try/), and
-[Work Economics](docs/capabilities/work-economics.md) / [Economic Authority](docs/capabilities/economic-authority.md)
-([example](examples/economic_authority_session.py); Base Sepolia testnet only).
+Package/Domain credit routes are live: `POST /pkg/credits/v1/check` and
+`POST /domain/credits/v1/lookup`, the same workspace key and 2 credits per delivery.
+Published SDK 0.3.0 credit mode remains Web Read-only; use HTTP for these two.
 
-## Quickstart
+## Web Read quickstart
+
+### API key and prepaid credits (no wallet)
+
+**Fastest:** [Create and fund a key in your browser](https://inferrail-cost-gateway.onrender.com/hosted/v1/start). The hosted page presents the key once, then offers card checkout. No terminal is needed for those steps. Or use the commands below.
+
+1. Create a workspace key for free; the API shows it once. Save it securely.
+2. Obtain a Stripe Checkout link and **complete it yourself**: one $10 pack is 10,000 credits,
+   enough for 5,000 delivered reads. No subscription or automatic replenishment.
+3. Call Web Read with the key. A delivered page or PDF costs 2 credits ($0.002).
+
+```bash
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces
+# Save api_key from the response. Load it without entering its value in shell history:
+read -rsp 'Workspace key: ' INFERRAIL_API_KEY; echo
+export INFERRAIL_API_KEY
+
+curl --fail-with-body -X POST \
+  'https://inferrail-cost-gateway.onrender.com/hosted/v1/credits/checkout?packs=1' \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY"
+# A person opens the returned checkout_url and completes payment.
+
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/read/credits/v1/page \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/","request_id":"first-read-1"}'
+
+curl --fail-with-body \
+  https://inferrail-cost-gateway.onrender.com/hosted/v1/workspace \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY"
+```
+
+Use Bash for `read -rsp`; alternatively load the key through your secret manager. Never put
+keys in URLs, source control or browser application code. An insufficient balance returns
+402 `insufficient_credits` before the read. The Hosted free-run allowance is not free page
+credit. USDC funding is also available: $1 for 1,000 credits via the
+[live funding contract](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt).
+
+### Check packages or domains with the same key
+
+Each delivered check or lookup costs 2 credits ($0.002). A package check covers 1–20 versions;
+one domain lookup covers one domain. These commands use the balance you funded above:
+
+```bash
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/pkg/credits/v1/check \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20"}],"request_id":"package-review-1"}'
+
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/domain/credits/v1/lookup \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"example.com","request_id":"domain-review-1"}'
+```
+
+Package Check returns known OSV advisories and available fixes, not a security certification.
+Domain Check returns DNS, email-policy and available registration data, not a trust verdict.
+Use a new request ID for a fresh investigation; preserve the original body and ID for recovery.
+
+### Existing wallet: inspect the unpaid offer
+
+```bash
+curl -i -X POST https://inferrail-cost-gateway.onrender.com/read/v1/page \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/","request_id":"first-read-1"}'
+# HTTP 402: price, schema and payment instructions. Nothing is purchased.
+```
+
+An x402 client pays the Base offer with `PAYMENT-SIGNATURE`; an MPP client answers the Tempo
+challenge with `Authorization: Payment <credential>`. A human initially authorizes and funds
+the wallet. [Runnable buyers](examples/web_read/) ·
+[production OpenAPI](https://inferrail-cost-gateway.onrender.com/openapi.json) ·
+[Web Read contract](https://inferrail-cost-gateway.onrender.com/read/llms.txt).
+
+Finder uses the same wallet challenge flow at `POST /find/v1/find` with
+`{"need":"read a public webpage as markdown","request_id":"find-reader-1"}`. It costs $0.002
+per delivered answer and returns invocation details for up to five selected catalog resources.
+If no API matches, there is no charge. Finder does not execute or guarantee the APIs it lists.
+
+### Delivery, batches and boundaries
+
+- **Output:** `url`, `final_url`, `title`, `content_markdown`, `word_count`, `content_sha256`,
+  `fetched_at`, source-declared `metadata`, and `receipt`. A hash identifies the returned
+  content; it does not prove the source is true. Metadata can be absent or wrong.
+- **Charging:** wallet authorization is verified before extraction, then settled after
+  successful extraction before the paid HTTP response. Credits are held, billed on success
+  or released on failure. Structured refusals and upstream failures are uncharged.
+- **Recovery:** use the same URL, `request_id` and wallet/workspace within **10 minutes** to
+  recover the paid result without a second charge. A new read needs a new request ID.
+- **Wallet batch:** `POST /read/v1/pages`, 1–10 distinct URLs, $0.002 each, all-or-nothing
+  delivery and charge. Preserve the same ordered URLs and request ID for recovery.
+- **API-key SDK batch:** individual page requests; successful deliveries are charged even
+  when another page fails. Not interchangeable with the direct wallet batch.
+- **Limits:** public HTTP(S), robots.txt respected, 2 MB HTML/text, 5 MB PDFs, first 50 PDF
+  pages. Text-layer extraction only; no OCR, JavaScript, login or paywall bypass. Up to three
+  redirects and a 15-second fetch timeout per request. A thin JavaScript shell can still be
+  returned; inspect content rather than assuming completeness.
+- **Retention:** Web Read temporarily stores delivered results for recovery, separately from
+  the gateway's payload-free receipts. Expiration cleanup can be lazy, so the 10-minute
+  recovery window is not a precise deletion-time promise. Accounting records remain.
+
+[Full technical contract](hosted/web_read/README.md) ·
+[watcher examples](examples/web_read/) ·
+[20-URL extraction benchmark](benchmarks/web_read/): 17 delivered responses, roughly 9× lower
+median estimated tokens versus raw HTML (characters ÷ 4). One delivered JavaScript shell is
+labelled a miss. This small sample is not a completeness or workflow-savings guarantee.
+
+## SDK and paid execution MCP
+
+Published npm **0.3.0** supports prepaid Web Read and wallet-based tools. Source **0.3.2** adds Package/Domain credit tools and better credit-batch failure reporting,
+but was not published at verification. Pin the verified
+release when reproducing these examples.
+
+Use Node.js 22+ with the current AI SDK releases. The tools package itself supports Node.js 18+.
+
+```bash
+npm install @inferrail/ai-sdk-tools@0.3.0 ai zod @x402/fetch @x402/evm viem
+```
+
+```ts
+import { inferrailCreditTools } from "@inferrail/ai-sdk-tools";
+
+const tools = inferrailCreditTools({ apiKey: process.env.INFERRAIL_API_KEY! });
+// Pass to AI SDK generateText: readPage and readPages, paid from prepaid credits.
+```
+
+Wallet mode uses `inferrailTools({ fetch: wrapFetchWithPayment(fetch, client) })`: `readPage`,
+`readPages`, `checkPackages`, `lookupDomain`, `findPaidApi`. You supply the funded, authorized
+x402 client. `guardInferrailPrices(client)` checks Inferrail offer prices/recipients;
+`creditsFetch(apiKey)` is the API-key HTTP helper.
+[Complete setup](packages/ai-sdk-tools/README.md) · [working agents](examples/ai_sdk/).
+
+**Paid local MCP:** run `npx -y @inferrail/ai-sdk-tools@0.3.0` in your MCP client with
+`INFERRAIL_API_KEY` (Web Read tools only), or `INFERRAIL_WALLET_KEY` (USDC on Base;
+`read_page`, `read_pages`, `check_packages`, `lookup_domain`). Set `INFERRAIL_MAX_USD_PER_DAY`
+(default $0.10). It enforces that server's daily spending record, persisted locally across
+restarts; it is not an account-wide cap across independent clients. Treat client config as
+secret. Published **[Desktop extension 0.3.0](https://github.com/domondi1/inferrail/releases/tag/web-read-desktop-v0.3.0)**
+offers secure client configuration. MCP Registry Web Read entry **1.2.0** is published.
+
+**Read-only gateway MCP is separate:** `inferrail mcp` provides `get_spend` and `get_health`;
+it cannot purchase pages, execute paid tools or run inference.
+
+```bash
+claude mcp add inferrail-reports \
+  -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl \
+  -- uvx --with "mcp>=2.0" inferrail mcp
+```
+
+[MCP client configuration](https://tryinferrail.com/developers/#mcp) ·
+[read-only MCP](inferrail-mcp/).
+
+## For agents
+
+One discovery document: **[llms.txt](https://tryinferrail.com/llms.txt)**, with executable first
+requests, prices, payment paths, output contracts and refusal/recovery terms. Generated
+production contracts describe the deployment; this repository's root `openapi.json` describes
+the self-hosted inference gateway, not the commercial service catalog.
+
+```bash
+npx skills add domondi1/inferrail
+```
+
+Claude Code plugin: `/plugin install inferrail --marketplace domondi1/inferrail`.
+Update with `npx skills update`, or `/plugin marketplace update inferrail` then
+`/plugin update inferrail@inferrail`. These are public integration paths, not platform
+endorsements or evidence of customer adoption. Skills use authorized wallets;
+[paid MCP](#sdk-and-paid-execution-mcp) is the prepaid Web Read path.
+[Package checks in CI](actions/package-check/README.md) require a wallet and spending cap.
+
+## Apify marketplace tools
+
+Separate distribution and billing through your Apify account. These listings are public and
+pay-per-event; platform/account fees and limits can apply. Native Inferrail API coverage is
+narrower than the marketplace catalog. Consult each listing's current terms before execution.
+
+| Actor | What it does | Price |
+|---|---|---|
+| [Web Page & PDF to Markdown, Site Crawler](https://apify.com/domondi1/web-page-to-markdown) | Pages, PDFs or whole sites as Markdown with metadata | $0.002 per readable page |
+| [PDF to Markdown & Text](https://apify.com/domondi1/pdf-to-markdown) | PDFs at public URLs as Markdown with title, author and dates | $0.002 per readable document |
+| [Website Contact Finder](https://apify.com/domondi1/website-contact-finder) | Emails, phones and social profiles a site publishes | $0.005 per site with contacts |
+| [Company Jobs API](https://apify.com/domondi1/ats-jobs) | Open jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee; give it company domains | $0.001 per job |
+| [Company Enrichment](https://apify.com/domondi1/company-enrichment) | Domain to profile: identity, contacts, socials, tech stack, open-job count | $0.004 per company |
+
+
+Also verified public: [Tech Stack](https://apify.com/domondi1/website-tech-stack),
+[SEO Audit](https://apify.com/domondi1/seo-audit), [Domain Check](https://apify.com/domondi1/domain-check),
+[RSS/Atom Reader](https://apify.com/domondi1/rss-feed-reader), and
+[Website Screenshot](https://apify.com/domondi1/website-screenshot).
+[All ten tools and billing units](https://tryinferrail.com/tools/).
+
+## Inferrail Hosted
+
+One workspace ledger shares inference budgets across agents and machines. Create a key, send
+your provider key on each request, and use the same work ID and ceiling for the run. Hosted
+controls only routed model calls. 250 qualifying runs per workspace per UTC month are free;
+after that, $0.001 per run from prepaid credits. A run is billed only if a provider answers a
+call. Card and USDC top-ups are live; model-provider charges are separate. No subscription or
+automatic top-up; experimental pricing.
+[Setup and privacy boundaries](hosted/budget_gateway/README.md) ·
+[live prices](https://inferrail-cost-gateway.onrender.com/hosted/pricing).
+
+## Self-hosted gateway quickstart
+
+<a id="quickstart"></a>
 
 Requires Python 3.11+.
 
@@ -84,8 +291,9 @@ client.chat.completions.create(
 )
 ```
 
-Every call with the same work id shares that budget, including parallel calls; one that would
-push the run past it gets HTTP 402 before it reaches OpenAI. `inferrail work contract-review-42`
+Calls with the same work id share that budget, including parallel calls. Admission reserves a
+conservative estimate before the provider call. Actual usage can exceed an estimate; that
+overrun is recorded and later calls are refused. Only routed inference is governed. `inferrail work contract-review-42`
 shows what the run cost.
 
 More: [run it as a shared gateway with the local dashboard](docs/self-hosting.md),
@@ -93,90 +301,31 @@ More: [run it as a shared gateway with the local dashboard](docs/self-hosting.md
 OpenAI Agents SDK, CrewAI, Haystack, LlamaIndex, Microsoft Agent Framework), and
 [other clients](docs/integrations.md), including the Anthropic SDK.
 
-## For agents
+<p align="center">
+  <img src="https://raw.githubusercontent.com/domondi1/inferrail/main/docs/assets/inferrail-dashboard-demo.gif" width="860" alt="Recording of a real Inferrail run. The gateway starts with its local dashboard. An agent script gives one AI job, contract-review-42, a $0.04 spending limit and makes six model calls: four are answered and two are blocked with HTTP 402 before reaching the model. The dashboard lists each call with its cost, then shows the job spent $0.0325 of its $0.0400 budget, with 2 requests blocked before reaching the provider.">
+</p>
 
-Start at **[tryinferrail.com/llms.txt](https://tryinferrail.com/llms.txt)**: what's live, with
-links to each service's guide and the
-[OpenAPI contract](https://inferrail-cost-gateway.onrender.com/openapi.json).
+<p align="center"><em>A real run of the gateway and dashboard with a local stand-in model: one job with a $0.04 limit, four calls answered, two refused with HTTP 402 before reaching the model. <a href="docs/assets/dashboard-capture/">How it was recorded</a></em></p>
 
-**Web Read** sells one public web page as clean markdown, with its word count, a SHA-256 of the
-content and a receipt. **$0.002 per delivered page**, paid over [x402](https://x402.org) (USDC
-on Base) or [MPP](https://mpp.dev) (Tempo); no account or API key. The payment is checked first
-and settled only after the page is delivered, so refusals (robots.txt, non-public addresses,
-non-text, over 2 MB, target-site errors) are never charged. Retrying the same `url` and
-`request_id` from the same wallet within 10 minutes returns the page already paid for.
 
-```bash
-curl -i -X POST https://inferrail-cost-gateway.onrender.com/read/v1/page \
-  -H 'content-type: application/json' -d '{"url": "https://example.com/"}'
-# HTTP 402 with the price; an x402 or MPP client pays and repeats the request
-```
+## Labs and other previews
 
-**Install as agent skills.** Three skills teach your coding or research agent when and how to
-use these tools: reading web pages (one, or up to 10 per call), checking dependencies for known
-vulnerabilities, and looking up a domain's DNS, SPF/DMARC and registration. Each is $0.002 per
-delivered result from the agent's own wallet, and the agent asks you before creating or funding
-one.
-
-```bash
-npx skills add domondi1/inferrail                         # Claude Code, Cursor, Codex, Copilot and more
-/plugin install inferrail --marketplace domondi1/inferrail  # Claude Code plugin (2.1.275+)
-```
-
-To get later versions: `npx skills update`, or in Claude Code
-`/plugin marketplace update inferrail` then `/plugin update inferrail@inferrail`.
-
-**In a Vercel AI SDK agent.** [`@inferrail/ai-sdk-tools`](packages/ai-sdk-tools/README.md) gives
-your agent `readPage`, `readPages`, `checkPackages`, `lookupDomain` and `findPaidApi`, at $0.002
-per delivered result. They're paid by the x402 fetch you pass in, from a wallet you fund and
-control. Installing the package doesn't give your agent a wallet or funds.
-
-```bash
-npm i @inferrail/ai-sdk-tools ai zod
-```
-
-```ts
-tools: inferrailTools({ fetch: wrapFetchWithPayment(fetch, client) })  // see the package README
-```
-
-Working agents with a per-run spending cap: [`examples/ai_sdk/`](examples/ai_sdk/README.md).
-
-**No wallet? Use the Apify Store.** The same reader, and tools built on it, run as pay-per-event
-Actors you can buy with an Apify account and a card, from the Apify API, schedules, Zapier, Make,
-n8n or the Apify MCP server. Inputs that can't be served are free there too.
-
-| Actor | What it does | Price |
-|---|---|---|
-| [Web Page & PDF to Markdown, Site Crawler](https://apify.com/domondi1/web-page-to-markdown) | Pages, PDFs or whole sites as Markdown with metadata | $0.002 per readable page |
-| [PDF to Markdown & Text](https://apify.com/domondi1/pdf-to-markdown) | PDFs at public URLs as Markdown with title, author and dates | $0.002 per readable document |
-| [Website Contact Finder](https://apify.com/domondi1/website-contact-finder) | Emails, phones and social profiles a site publishes | $0.005 per site with contacts |
-| [Company Jobs API](https://apify.com/domondi1/ats-jobs) | Open jobs from Greenhouse, Lever, Ashby, Workable, SmartRecruiters and Recruitee; give it company domains | $0.001 per job |
-| [Company Enrichment](https://apify.com/domondi1/company-enrichment) | Domain to profile: identity, contacts, socials, tech stack, open-job count | $0.004 per company |
-
-Skills: [`skills/`](skills/). **In CI:** check lockfiles for known vulnerabilities on every push
-with [`actions/package-check`](actions/package-check/README.md) (a capped wallet you set).
-
-Guides: [Web Read](https://inferrail-cost-gateway.onrender.com/read/llms.txt) ·
-[Hosted](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt) ·
-[service source](hosted/web_read/README.md).
-
-**MCP.** Ask your agent what a job cost, from your local receipts:
-
-```bash
-claude mcp add inferrail \
-  -e INFERRAIL_RECEIPTS_PATH=/absolute/path/to/inferrail-receipts.jsonl \
-  -- uvx --with "mcp>=2.0" inferrail mcp
-```
-
-Two read-only tools, `get_spend` (known cost and tokens by provider, model, route or any tag
-such as `work_id`) and `get_health`. They don't run inference, write files or pay for anything.
-Other clients: [docs/integrations.md](docs/integrations.md#mcp).
+AP invoice-exception recovery is an isolated, experimental open-source workflow
+([contract](docs/capabilities/ap-invoice-exception-recovery.md)). The [hosted trial](https://tryinferrail.com/try/)
+is a temporary inference demo, not free Web Read.
+[Work Economics](docs/capabilities/work-economics.md) and
+[Economic Authority](docs/capabilities/economic-authority.md) are Base Sepolia testnet
+experiments ([session example](examples/economic_authority_session.py)).
+Job-Safe Search, joint model/purchase budgets, sub-agent
+allocations and `@inferrail/x402-budgets` are experimental; no universal external-spend control
+or production commerce is claimed. [Labs](https://tryinferrail.com/labs/).
+The optional AWS payment rail is implemented but commercially inactive at verification.
 
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/inferrail-flow-dark.svg">
-  <img src="docs/assets/inferrail-flow-light.svg" width="100%" alt="Data flow. On your machine, your application sends requests to the Inferrail gateway, which reads the provider API key from its environment, forwards request content and the key to OpenAI or Anthropic, and returns the response. Separately, the gateway writes a metadata receipt (tokens, cost, status, timing, attributes, no message bodies) to a local JSONL or SQLite store that reports, the local dashboard, and MCP tools read. A usage beacon collector receives lifecycle events only if an endpoint is configured.">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/domondi1/inferrail/main/docs/assets/inferrail-flow-dark.svg">
+  <img src="https://raw.githubusercontent.com/domondi1/inferrail/main/docs/assets/inferrail-flow-light.svg" width="100%" alt="Data flow. On your machine, your application sends requests to the Inferrail gateway, which reads the provider API key from its environment, forwards request content and the key to OpenAI or Anthropic, and returns the response. Separately, the gateway writes a metadata receipt (tokens, cost, status, timing, attributes, no message bodies) to a local JSONL or SQLite store that reports, the local dashboard, and MCP tools read. A usage beacon collector receives lifecycle events only if an endpoint is configured.">
 </picture>
 
 The gateway routes each request by `model` to a configured provider, checks any budget in

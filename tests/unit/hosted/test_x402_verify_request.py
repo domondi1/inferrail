@@ -10,8 +10,10 @@ description: the facilitator's schema allows 500 characters (test_x402_facilitat
 `data_x402_known_good_echo.json` is the reviewed echo. It was the pre-#223 echo that settled
 those sales; on 2026-11-25 its resource description, serviceName and tags were reworded so the
 CDP Bazaar's task search ranks Web Read (extensions unchanged, description still within the
-373 characters that settled sales, every field within the facilitator's schema). Changing the
-echo means changing this file in the same reviewed PR."""
+373 characters that settled sales, every field within the facilitator's schema). The historical
+fixture is retained unchanged. Description wording can change within that reviewed length
+bound; all other echoed resource fields and discovery schemas must remain identical. A copy
+change is not evidence of a new paid transaction."""
 
 from __future__ import annotations
 
@@ -92,7 +94,13 @@ def test_web_reads_echoed_fields_are_the_ones_the_facilitator_accepted(tmp_path)
     _verify_request(_web_read(tmp_path, fac), "/read/v1/page", {"url": "https://news.test/a"},
                     captured)  # fmt: skip
     payload = captured["body"]["paymentPayload"]
-    assert payload["resource"] == KNOWN_GOOD["resource"]
+    resource = payload["resource"]
+    historical = KNOWN_GOOD["resource"]
+    assert {k: v for k, v in resource.items() if k != "description"} == {
+        k: v for k, v in historical.items() if k != "description"
+    }
+    assert resource["description"] == svc.DESCRIPTION
+    assert len(resource["description"]) <= len(historical["description"])
     assert payload["extensions"] == KNOWN_GOOD["extensions"]
     # What the Bazaar ranks must reach it: the SDK silently drops a serviceName over 32
     # characters and tags over its caps.

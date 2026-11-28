@@ -64,11 +64,10 @@ SOURCE = (
 )
 
 DESCRIPTION = (
-    "Check package versions for known vulnerabilities before installing or shipping them: up to 20 "
-    "npm, PyPI, Go, crates.io, Maven, NuGet, RubyGems or Packagist packages per call, each with "
-    "the advisory ids, CVE aliases, severity, fixed versions and links, from OSV.dev. Pay only "
-    "when the "
-    "check is delivered; a retry never pays twice."
+    "Check package versions for known vulnerabilities before installing or shipping them: up to"
+    " 20 npm, PyPI, Go, crates.io, Maven, NuGet, RubyGems or Packagist versions. OSV.dev "
+    "advisory IDs, CVEs, severity and fixes where available. $0.002 per delivered check. "
+    "Matching requests and payer can recover a paid result within the recovery window."
 )
 MPP_DESCRIPTION = (
     "Known vulnerabilities for up to 20 package versions (advisory ids, severity, fixed versions), "

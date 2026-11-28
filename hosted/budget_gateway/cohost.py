@@ -945,7 +945,7 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     hosted = (
         "Inferrail Hosted: one dollar budget shared by every agent and process using a "
         f"workspace key ({settings.free_runs_per_month} governed runs a month free, then "
-        "$0.001/run in x402 credits)."
+        "$0.001/run from prepaid credits; see /hosted/pricing for active funding methods)."
     )
     read = getattr(app.state, "web_read_settings", None)
     found = getattr(app.state, "web_search_settings", None)
@@ -961,9 +961,10 @@ def _origin_summary(app: Starlette) -> tuple[str, str]:
     parts = ["Pay-per-call tools for agents, charged only on delivery."]
     if read is not None:
         parts.append(
-            "Inferrail Web Read: any public web page as clean markdown (URL to markdown), "
+            "Inferrail Web Read: public web pages as clean markdown (URL to markdown), "
             f"${read.price_usd} per delivered page, paid over {_rails(read)}; failed pages are "
-            "free and a retry never pays twice."
+            f"free; matching requests from the same payer can recover a paid result within "
+            f"{read.recovery_s // 60} minutes."
         )
     if found is not None:
         parts.append(
@@ -1105,12 +1106,15 @@ def origin_llms(app: Starlette) -> str:
             "(default 0.10). It refuses to sign past the daily budget or above a call's price.",
         ]
         if getattr(app.state, "read_credits", False):
+            funding = f"Fund using the active methods listed in GET {base}/pricing. "
+            if settings.stripe:
+                funding += (
+                    f"A person may use {origin}{PREFIX}/v1/start to create a key and complete "
+                    "card checkout. No automatic replenishment. "
+                )
             lines += [
-                f"- API key, no wallet (prepaid credits): a person opens {origin}{PREFIX}/v1/start "
-                "in a browser to create a key and pay by card once; or get a free key with `POST "
-                f"{origin}{PREFIX}/v1/workspaces`; a person funds it once at `POST "
-                f"{origin}{PREFIX}/v1/credits/checkout` (card, $10 = 10,000 credits) or "
-                f"`POST {origin}{PREFIX}/v1/credits/x402` (USDC). Then "
+                "- API key, no wallet (prepaid credits): get a free key with `POST "
+                f"{origin}{PREFIX}/v1/workspaces`. {funding}Then "
                 f"`POST {origin}{READ_PREFIX}/credits/v1/page` with "
                 "`Authorization: Bearer irw_...` reads a page for 2 credits ($0.002), charged "
                 "only when delivered. The MCP server takes the key as `INFERRAIL_API_KEY`; the "

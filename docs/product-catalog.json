@@ -1,0 +1,519 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-11-28",
+  "production_origin": "https://inferrail-cost-gateway.onrender.com",
+  "authority": "Production behavior and generated contracts override this dated inventory. Commercial activation and maturity are separate.",
+  "products": [
+    {
+      "id": "web-read",
+      "name": "Web Read",
+      "customer_problem": "Agents need original public sources without operating a reader.",
+      "customer_outcome": "Readable Markdown, source metadata, retrieval time, content hash and a payment receipt.",
+      "implementation": "merged",
+      "deployment": "live",
+      "availability": "live_commercial",
+      "maturity": "developer_preview",
+      "endpoint": "/read/v1/page",
+      "price_usd": "0.002",
+      "billing_unit": "delivered page or PDF",
+      "payment_methods": [
+        "api_key_credits",
+        "x402_base_usdc",
+        "mpp_tempo"
+      ],
+      "guarantees": "Charged on successful delivery; structured refusals are uncharged.",
+      "limitations": "Public URLs only; robots.txt respected; no JavaScript, login, paywall bypass or OCR. HTML 2 MB; PDF 5 MB, first 50 pages. Recovery requires matching URL, request_id and payer/workspace within 10 minutes.",
+      "evidence": [
+        "https://inferrail-cost-gateway.onrender.com/read/v1/page",
+        "https://inferrail-cost-gateway.onrender.com/read/llms.txt"
+      ],
+      "verification": "Unpaid HTTP 402 challenge; API-key Web Read additionally returns HTTP 401 with price and funding instructions.",
+      "verified_at": "2026-11-28",
+      "prominence": "flagship",
+      "channels": [
+        "direct_http",
+        "npm",
+        "mcp_local"
+      ],
+      "credits_endpoint": "/read/credits/v1/page",
+      "credits_per_result": 2
+    },
+    {
+      "id": "package-check",
+      "name": "Package Check",
+      "customer_problem": "Dependency review needs known vulnerability evidence.",
+      "customer_outcome": "OSV.dev advisories, CVE aliases, severity and fixes where available for 1–20 versions.",
+      "implementation": "merged",
+      "deployment": "live",
+      "availability": "live_commercial",
+      "maturity": "developer_preview",
+      "endpoint": "/pkg/v1/check",
+      "price_usd": "0.002",
+      "billing_unit": "delivered check (1–20 package versions)",
+      "payment_methods": [
+        "api_key_credits",
+        "x402_base_usdc",
+        "mpp_tempo"
+      ],
+      "guarantees": "Charged on successful delivery; structured refusals are uncharged.",
+      "limitations": "Known advisories only. No matching advisory is not proof of security; inspect completeness and source time.",
+      "evidence": [
+        "https://inferrail-cost-gateway.onrender.com/pkg/v1/check",
+        "https://inferrail-cost-gateway.onrender.com/pkg/llms.txt",
+        "https://inferrail-cost-gateway.onrender.com/pkg/credits/v1/check"
+      ],
+      "verification": "Fresh unauthenticated HTTP 401 workspace_key_required with 2 credits/$0.002, in addition to wallet 402 challenge.",
+      "verified_at": "2026-11-28",
+      "prominence": "supporting",
+      "channels": [
+        "direct_http",
+        "npm",
+        "mcp_local"
+      ],
+      "credits_endpoint": "/pkg/credits/v1/check",
+      "credits_per_result": 2
+    },
+    {
+      "id": "domain-check",
+      "name": "Domain Check",
+      "customer_problem": "Investigations need DNS and registration evidence.",
+      "customer_outcome": "DNS, SPF/DMARC and available RDAP registration fields for one domain.",
+      "implementation": "merged",
+      "deployment": "live",
+      "availability": "live_commercial",
+      "maturity": "developer_preview",
+      "endpoint": "/domain/v1/lookup",
+      "price_usd": "0.002",
+      "billing_unit": "delivered lookup",
+      "payment_methods": [
+        "api_key_credits",
+        "x402_base_usdc",
+        "mpp_tempo"
+      ],
+      "guarantees": "Charged on successful delivery; structured refusals are uncharged.",
+      "limitations": "RDAP coverage and fields vary. Partial registration data is possible; this is not a trust verdict.",
+      "evidence": [
+        "https://inferrail-cost-gateway.onrender.com/domain/v1/lookup",
+        "https://inferrail-cost-gateway.onrender.com/domain/llms.txt",
+        "https://inferrail-cost-gateway.onrender.com/domain/credits/v1/lookup"
+      ],
+      "verification": "Fresh unauthenticated HTTP 401 workspace_key_required with 2 credits/$0.002, in addition to wallet 402 challenge.",
+      "verified_at": "2026-11-28",
+      "prominence": "supporting",
+      "channels": [
+        "direct_http",
+        "npm",
+        "mcp_local"
+      ],
+      "credits_endpoint": "/domain/credits/v1/lookup",
+      "credits_per_result": 2
+    },
+    {
+      "id": "finder",
+      "name": "x402 Finder",
+      "customer_problem": "An agent needs to find a paid API for a task.",
+      "customer_outcome": "Up to five matching Bazaar resources with prices, networks and invocation details.",
+      "implementation": "merged",
+      "deployment": "live",
+      "availability": "live_commercial",
+      "maturity": "developer_preview",
+      "endpoint": "/find/v1/find",
+      "price_usd": "0.002",
+      "billing_unit": "delivered answer",
+      "payment_methods": [
+        "x402_base_usdc",
+        "mpp_tempo"
+      ],
+      "guarantees": "Charged on successful delivery; structured refusals are uncharged.",
+      "limitations": "Selected Bazaar resources with at least two reported payers; text relevance weighted by unique 30-day payers. Six-hour refresh target; catalog_as_of is authoritative. No exhaustive coverage or quality guarantee. No match is free.",
+      "evidence": [
+        "https://inferrail-cost-gateway.onrender.com/find/v1/find",
+        "https://inferrail-cost-gateway.onrender.com/find/llms.txt"
+      ],
+      "verification": "Unpaid HTTP 402 challenge; API-key Web Read additionally returns HTTP 401 with price and funding instructions.",
+      "verified_at": "2026-11-28",
+      "prominence": "secondary",
+      "channels": [
+        "direct_http",
+        "npm",
+        "mcp_local"
+      ]
+    },
+    {
+      "id": "hosted",
+      "name": "Inferrail Hosted",
+      "availability": "live_commercial",
+      "maturity": "developer_preview",
+      "implementation": "merged",
+      "deployment": "live",
+      "endpoint": "/hosted/v1/chat/completions",
+      "customer_problem": "Agents on multiple machines need one run budget.",
+      "customer_outcome": "Workspace-shared inference budgets and receipts.",
+      "price_usd": "0.001",
+      "billing_unit": "qualifying governed run after 250 free runs per workspace per UTC month",
+      "payment_methods": [
+        "api_key_credits"
+      ],
+      "guarantees": "Budget reservation before provider calls; successful provider response required for run billing.",
+      "limitations": "Bring an OpenAI or Anthropic provider key. Provider spend billed separately. Only routed calls are governed. Experimental pricing; no subscription or auto top-up.",
+      "evidence": [
+        "https://inferrail-cost-gateway.onrender.com/hosted/pricing",
+        "https://inferrail-cost-gateway.onrender.com/hosted/llms.txt"
+      ],
+      "verification": "Live pricing JSON and unauthenticated contracts.",
+      "verified_at": "2026-11-28",
+      "prominence": "supporting",
+      "channels": [
+        "direct_http"
+      ]
+    },
+    {
+      "id": "gateway",
+      "name": "Self-hosted gateway",
+      "availability": "published_open_source",
+      "maturity": "developer_preview",
+      "implementation": "published",
+      "deployment": "customer_hosted",
+      "release": "inferrail==0.4.18",
+      "price_usd": "0",
+      "billing_unit": "Apache-2.0 software; provider and infrastructure costs separate",
+      "payment_methods": [],
+      "customer_problem": "Developers need local inference spending controls.",
+      "customer_outcome": "Per-run and scoped budgets, payload-free receipts, dashboard.",
+      "guarantees": "Receipts exclude prompt and response bodies; unknown prices remain unknown.",
+      "limitations": "OpenAI chat completions and Anthropic messages only; no Responses, embeddings, image generation or native Gemini/Bedrock. Caller tags are stored as sent.",
+      "evidence": [
+        "https://pypi.org/pypi/inferrail/0.4.18/json",
+        "PRODUCT.md"
+      ],
+      "verification": "PyPI wheel/sdist metadata and public implementation/tests.",
+      "verified_at": "2026-11-28",
+      "prominence": "supporting",
+      "channels": [
+        "pypi",
+        "mcp_read_only"
+      ]
+    }
+  ],
+  "marketplaces": [
+    {
+      "id": "rss-feed-reader",
+      "name": "RSS & Atom Feed Reader with Full-Text Articles",
+      "url": "https://apify.com/domondi1/rss-feed-reader",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "feed-item": {
+              "eventTitle": "Feed item",
+              "eventDescription": "One feed item (title, link, dates, author, categories, summary).",
+              "eventPriceUsd": 0.0005
+            },
+            "full-text": {
+              "eventTitle": "Item with full text",
+              "eventDescription": "One feed item with the full article text read from its page as Markdown.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "company-enrichment",
+      "name": "Company Enrichment from Domain: Profile, Contacts, Hiring",
+      "url": "https://apify.com/domondi1/company-enrichment",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "company": {
+              "eventTitle": "Company profiled",
+              "eventDescription": "One company profile built from its website. Sites that cannot be read or have no identifiable company are free.",
+              "eventPriceUsd": 0.004
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "seo-audit",
+      "name": "SEO Audit & Site Crawler: On-Page Issues and Score",
+      "url": "https://apify.com/domondi1/seo-audit",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "page-audited": {
+              "eventTitle": "Page audited",
+              "eventDescription": "One page audited for on-page SEO. Pages that cannot be read are free.",
+              "eventPriceUsd": 0.004
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "website-contact-finder",
+      "name": "Website Contact Finder: Emails, Phones, Socials",
+      "url": "https://apify.com/domondi1/website-contact-finder",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "site-contacts": {
+              "eventTitle": "Site with contacts",
+              "eventDescription": "One website where at least one email or phone number was found. Sites with none, or that cannot be read, are free.",
+              "eventPriceUsd": 0.005
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "website-screenshot",
+      "name": "Website Screenshot: Full-Page PNG/JPEG, Desktop & Mobile",
+      "url": "https://apify.com/domondi1/website-screenshot",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "screenshot": {
+              "eventTitle": "Screenshot",
+              "eventDescription": "One screenshot saved. Pages that fail to load, return an error or are private are free.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "pdf-to-markdown",
+      "name": "PDF to Markdown & Text (with metadata)",
+      "url": "https://apify.com/domondi1/pdf-to-markdown",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "page-read": {
+              "eventTitle": "Document read",
+              "eventDescription": "One PDF or page delivered as Markdown with readable text. Scanned, broken, missing or oversized files are free.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "website-tech-stack",
+      "name": "Website Tech Stack Detector: CMS, Frameworks, Analytics",
+      "url": "https://apify.com/domondi1/website-tech-stack",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "site-analyzed": {
+              "eventTitle": "Site analyzed",
+              "eventDescription": "One website where technologies were detected. Unreadable sites or sites with nothing detected are free.",
+              "eventPriceUsd": 0.003
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "domain-check",
+      "name": "Domain Check: DNS, WHOIS/RDAP, SPF, DMARC, Domain Age",
+      "url": "https://apify.com/domondi1/domain-check",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "domain-lookup": {
+              "eventTitle": "Domain looked up",
+              "eventDescription": "One domain lookup (DNS, SPF/DMARC, RDAP registration). Invalid names and resolver outages are free.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "web-page-to-markdown",
+      "name": "Web Page & PDF to Markdown, Site Crawler",
+      "url": "https://apify.com/domondi1/web-page-to-markdown",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "page-read": {
+              "eventTitle": "Page read",
+              "eventDescription": "One page (or PDF) delivered as Markdown with readable text. Pages that cannot be read (blocked, missing, bot check, JavaScript-only) are free.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    },
+    {
+      "id": "ats-jobs",
+      "name": "Jobs Search API: Greenhouse, Lever, Ashby, Workable Boards",
+      "url": "https://apify.com/domondi1/ats-jobs",
+      "availability": "live_commercial",
+      "maturity": "preview",
+      "channel": "apify",
+      "pricing": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "job": {
+              "eventTitle": "Job",
+              "eventDescription": "One job returned after your filters. Companies whose job board cannot be found are free.",
+              "eventPriceUsd": 0.001
+            }
+          }
+        }
+      },
+      "verification": "Public Apify Store API lists PAY_PER_EVENT pricing and input/output descriptions. No paid run performed.",
+      "verified_at": "2026-11-28",
+      "limitations": "Apify account and platform billing apply; consult current listing for account fees, inputs and limits. Separate from native API coverage."
+    }
+  ],
+  "releases": [
+    {
+      "name": "inferrail",
+      "published": "0.4.18",
+      "source": "0.4.18",
+      "evidence": "https://pypi.org/pypi/inferrail/json"
+    },
+    {
+      "name": "@inferrail/ai-sdk-tools",
+      "published": "0.3.0",
+      "source": "0.3.2",
+      "evidence": "https://registry.npmjs.org/@inferrail%2fai-sdk-tools"
+    },
+    {
+      "name": "MCP Web Read entry",
+      "published": "1.2.0",
+      "source": "1.2.2",
+      "evidence": "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.domondi1"
+    },
+    {
+      "name": "Claude Desktop extension",
+      "published": "0.3.0",
+      "source": "0.3.2",
+      "evidence": "https://github.com/domondi1/inferrail/releases/tag/web-read-desktop-v0.3.0"
+    }
+  ],
+  "other_capabilities": [
+    {
+      "name": "Package/Domain API-key credit routes",
+      "availability": "live_commercial",
+      "evidence": "https://github.com/domondi1/inferrail/pull/260",
+      "observation": "Both routes return 401 workspace_key_required with 2 credits/$0.002 after concurrent production deployment. Published SDK 0.3.0 credit mode remains Web Read-only."
+    },
+    {
+      "name": "SDK/Desktop 0.3.2, MCP metadata 1.2.2",
+      "availability": "merged_unpublished",
+      "evidence": "https://github.com/domondi1/inferrail/pull/263",
+      "observation": "Merged source adds credit-mode Package/Domain tools. Published npm remains 0.3.0, Desktop 0.3.0 and Registry entry 1.2.0 at verification."
+    },
+    {
+      "name": "Browser onboarding",
+      "availability": "live_commercial",
+      "evidence": "https://github.com/domondi1/inferrail/pull/262",
+      "observation": "Merged #262. GET /hosted/v1/start returns the key creation/card funding page; no workspace or checkout was created by verification."
+    },
+    {
+      "name": "AWS payment rail",
+      "availability": "commercially_inactive",
+      "evidence": "https://github.com/domondi1/inferrail/pull/252",
+      "observation": "Production AWS route returns 404 and is absent from generated OpenAPI."
+    },
+    {
+      "name": "Dify integration",
+      "availability": "unable_to_verify",
+      "evidence": "https://github.com/domondi1/inferrail/pull/258",
+      "observation": "Merged source; marketplace publication not verified."
+    },
+    {
+      "name": "Extra payment networks",
+      "availability": "unable_to_verify",
+      "observation": "Production challenges offer Base x402 and Tempo MPP only."
+    },
+    {
+      "name": "AP invoice recovery",
+      "availability": "published_open_source",
+      "maturity": "experimental",
+      "observation": "Separate fixture/adapter workflow; no commercial homepage offer."
+    },
+    {
+      "name": "Hosted trial",
+      "availability": "developer_preview",
+      "observation": "Separate temporary inference demo, not free Web Read."
+    },
+    {
+      "name": "Work Economics / Economic Authority / Job-Safe Search / joint purchase budgets / sub-agent budgets / x402-budgets",
+      "availability": "experimental_testnet",
+      "observation": "Public code/examples only; no mainnet availability claim."
+    },
+    {
+      "name": "Directory indexing",
+      "availability": "unable_to_verify",
+      "observation": "Discovery metadata and integration commands do not establish current Bazaar, AgentCash or x402scan indexing or adoption."
+    }
+  ]
+}

@@ -468,12 +468,16 @@ def test_the_browser_start_page_creates_a_key_once_and_links_a_real_checkout(
     landing = c.get("/v1/start")
     assert landing.status_code == 200 and "text/html" in landing.headers["content-type"]
     assert "$0.002 per delivered page" in landing.text and "Create my key" in landing.text
-    assert "only step a person does" in landing.text  # card funding is a human step, said plainly
+    assert "complete checkout yourself" in landing.text
+    assert 'type="password"' in landing.text and 'for="top-up-key"' in landing.text
+    assert "any public web page" not in landing.text
     r = c.post("/v1/start")
     assert r.status_code == 201 and r.headers["cache-control"] == "no-store"
     key = r.text.split('class="key">')[1].split("<")[0]
     assert key.startswith("irw_")
     assert c.get("/v1/workspace", headers=_auth(key)).status_code == 200  # a working key
+    # Creating the key and checkout URL cannot fund the workspace before verified payment.
+    assert c.get("/v1/workspace", headers=_auth(key)).json()["credits_remaining"] == 0
     assert "https://checkout.stripe.test/s/1" in r.text  # one-click card checkout
     assert seen[0]["metadata[workspace_id]"] == _ws_id(c, key)
     assert seen[0]["metadata[packs]"] == "1"

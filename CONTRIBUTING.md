@@ -24,6 +24,11 @@ git config core.hooksPath .githooks
 
 ## Before opening a PR
 
+For product availability, pricing, payment or distribution changes, also follow
+[the public surface checklist](docs/PUBLIC_SURFACES.md) and run
+`python scripts/check_public_surfaces.py`. Published artifacts and live behavior must
+support commercial claims; a merged implementation alone is insufficient.
+
 Run the same checks CI runs:
 
 ```bash

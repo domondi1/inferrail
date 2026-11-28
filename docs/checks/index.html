@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <title>
+   Package Check, Domain Check &amp; x402 Finder APIs | Inferrail
+  </title>
+  <meta content="Known package vulnerability advisories, DNS and registration data, and paid API discovery. Structured evidence at $0.002 per delivered check, lookup or answer." name="description"/>
+  <link href="https://tryinferrail.com/checks/" rel="canonical"/>
+  <meta content="website" property="og:type"/>
+  <meta content="Package Check, Domain Check &amp; x402 Finder APIs | Inferrail" property="og:title"/>
+  <meta content="Known package vulnerability advisories, DNS and registration data, and paid API discovery. Structured evidence at $0.002 per delivered check, lookup or answer." property="og:description"/>
+  <meta content="https://tryinferrail.com/checks/" property="og:url"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" property="og:image"/>
+  <meta content="summary_large_image" name="twitter:card"/>
+  <meta content="Package Check, Domain Check &amp; x402 Finder APIs | Inferrail" name="twitter:title"/>
+  <meta content="Known package vulnerability advisories, DNS and registration data, and paid API discovery. Structured evidence at $0.002 per delivered check, lookup or answer." name="twitter:description"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" name="twitter:image"/>
+  <link href="/favicon.ico" rel="icon"/>
+  <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
+  <link href="/llms.txt" rel="alternate" title="Agent integration guide" type="text/plain"/>
+  <link href="https://fonts.googleapis.com" rel="preconnect"/>
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+Condensed:wght@600;700&amp;display=swap" rel="stylesheet"/>
+  <link href="/site.css" rel="stylesheet"/>
+  <link href="/commercial.css" rel="stylesheet"/>
+  <script type="application/ld+json">
+   {"@context": "https://schema.org", "@type": "WebPage", "name": "Package Check, Domain Check & x402 Finder APIs | Inferrail", "url": "https://tryinferrail.com/checks/", "description": "Known package vulnerability advisories, DNS and registration data, and paid API discovery. Structured evidence at $0.002 per delivered check, lookup or answer."}
+  </script>
+ </head>
+ <body class="commercial">
+  <a class="skip-link" href="#main">
+   Skip to content
+  </a>
+  <header class="site-header">
+   <div class="wrap">
+    <a class="wordmark" href="/">
+     <img alt="" height="28" src="/inferrail-mark.png" width="28"/>
+     Inferrail
+    </a>
+    <div class="header-actions">
+     <a class="button button-primary" href="/developers/#api-key">
+      Start reading
+     </a>
+     <button aria-controls="primary-nav" aria-expanded="false" class="nav-toggle" type="button">
+      Menu
+     </button>
+    </div>
+    <nav aria-label="Primary" class="nav" id="primary-nav">
+     <a href="/#product">
+      Products
+     </a>
+     <a href="/pricing/">
+      Pricing
+     </a>
+     <a href="/developers/">
+      Developers
+     </a>
+     <a href="/llms.txt">
+      For agents
+     </a>
+     <a href="/#company">
+      Company
+     </a>
+     <a class="button button-primary nav-try" href="/developers/#api-key">
+      Start reading
+     </a>
+    </nav>
+   </div>
+  </header>
+  <main id="main">
+   <section class="product-hero wrap">
+    <p class="eyebrow">
+     Evidence checks / commercial developer preview
+    </p>
+    <h1 class="display">
+     Investigate before
+     <br/>
+     your agent acts.
+    </h1>
+    <p class="lede">
+     Check known dependency advisories, inspect a domain’s infrastructure, or discover a paid API for the next task. Each product returns structured evidence for your application to evaluate.
+    </p>
+    <div class="button-row">
+     <a class="button button-primary" href="/developers/#api-key">
+      Use a prepaid API key
+     </a>
+     <a class="button button-secondary" href="/developers/#wallet">
+      Wallet quickstart
+     </a>
+    </div>
+   </section>
+   <nav aria-label="Evidence products" class="jump-links wrap">
+    <a href="#package-check">
+     Package Check
+    </a>
+    <a href="#domain-check">
+     Domain Check
+    </a>
+    <a href="#finder">
+     x402 Finder
+    </a>
+   </nav>
+   <section class="section wrap" id="package-check">
+    <h2 class="section-title">
+     Package Check
+    </h2>
+    <p class="section-lede">
+     Review up to 20 package versions against OSV.dev for $0.002 per delivered check.
+    </p>
+    <p>
+     For dependency review, CI checks and remediation research. Receive advisory IDs, CVE aliases, summaries, severity and fixed versions where the source provides them. Supported ecosystems include npm, PyPI, Go, crates.io, Maven, NuGet, RubyGems and Packagist.
+    </p>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>curl -i -X POST https://inferrail-cost-gateway.onrender.com/pkg/v1/check \
+  -H 'Content-Type: application/json' \
+  -d '{"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20"}],"request_id":"dependency-review-1"}'
+# Unpaid: HTTP 402 with x402 Base and MPP Tempo offers.</code></pre>
+    </div>
+    <p>
+     <strong>
+      Read the result:
+     </strong>
+     <code>
+      results[].vulns
+     </code>
+     contains the advisories; check
+     <code>
+      complete
+     </code>
+     ,
+     <code>
+      details_truncated
+     </code>
+     and
+     <code>
+      checked_at
+     </code>
+     . A result with no matching advisory is a delivered check, not proof that a package is secure. An OSV outage is uncharged. This is not a full code audit.
+    </p>
+    <p>
+     <a href="https://inferrail-cost-gateway.onrender.com/pkg/llms.txt">
+      Input, output and payment contract
+     </a>
+     ·
+     <a href="https://github.com/domondi1/inferrail/tree/main/actions/package-check">
+      Use in CI
+     </a>
+    </p>
+   </section>
+   <section class="section wrap" id="domain-check">
+    <h2 class="section-title">
+     Domain Check
+    </h2>
+    <p class="section-lede">
+     One domain’s infrastructure, $0.002 per delivered lookup.
+    </p>
+    <p>
+     For domain investigations, email configuration reviews and vendor research. Receive DNS records, SPF and DMARC policy, plus available RDAP registrar, status, creation and expiry information.
+    </p>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>curl -i -X POST https://inferrail-cost-gateway.onrender.com/domain/v1/lookup \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"example.com","request_id":"domain-review-1"}'
+# Unpaid: HTTP 402. No lookup is purchased.</code></pre>
+    </div>
+    <p>
+     <strong>
+      Read the result:
+     </strong>
+     inspect
+     <code>
+      dns
+     </code>
+     ,
+     <code>
+      email
+     </code>
+     ,
+     <code>
+      registration_status
+     </code>
+     and
+     <code>
+      registration
+     </code>
+     . Fields and registration coverage vary. A resolver outage is uncharged; missing or unsupported RDAP data may accompany a delivered DNS result. A domain lookup is evidence, not a trustworthiness verdict.
+    </p>
+    <p>
+     <a href="https://inferrail-cost-gateway.onrender.com/domain/llms.txt">
+      Input, output and payment contract
+     </a>
+     ·
+     <a href="https://apify.com/domondi1/domain-check">
+      Separate Apify listing
+     </a>
+    </p>
+   </section>
+   <section class="section wrap" id="finder">
+    <h2 class="section-title">
+     x402 Finder
+    </h2>
+    <p class="section-lede">
+     Find paid APIs for a task. $0.002 per delivered answer; no match is free.
+    </p>
+    <p>
+     Receive up to five resources with URL, method, description, available price, payment network, recipient and example input. Use these details to evaluate the next tool before purchasing from that provider.
+    </p>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>curl -i -X POST https://inferrail-cost-gateway.onrender.com/find/v1/find \
+  -H 'Content-Type: application/json' \
+  -d '{"need":"read a public web page as markdown","request_id":"find-reader-1"}'
+# Unpaid: HTTP 402. Third-party calls are not executed by Finder.</code></pre>
+    </div>
+    <p>
+     <strong>
+      How ranking works:
+     </strong>
+     a text-relevance score is weighted by the number of unique paying wallets reported over 30 days. The selected CDP Bazaar catalog requires at least two reported payers. Refresh targets six hours; inspect
+     <code>
+      catalog_as_of
+     </code>
+     and
+     <code>
+      catalog_size
+     </code>
+     in each response. Coverage is selective and the data may lag.
+    </p>
+    <p>
+     Finder does not call, certify or guarantee third-party services. Their prices and terms remain their own. A missing catalog or no match is uncharged.
+     <a href="https://inferrail-cost-gateway.onrender.com/find/llms.txt">
+      Complete contract
+     </a>
+     .
+    </p>
+   </section>
+   <section class="section wrap" id="payment">
+    <h2 class="section-title">
+     Purchase and retry terms.
+    </h2>
+    <p>
+     These three live wallet endpoints accept x402 on Base and MPP on Tempo. Payment settles after a result is produced; errors are uncharged. Recover a paid answer within 10 minutes using the same complete request, request ID and payer. Use a new request ID for fresh evidence.
+    </p>
+    <p>
+     Package Check and Domain Check also accept your prepaid workspace key at POST /pkg/credits/v1/check and POST /domain/credits/v1/lookup. Use the same JSON input and Authorization: Bearer &lt;key&gt;. Each delivery costs 2 credits ($0.002); an insufficient balance returns 402 without a check. Published SDK 0.3.0 credit mode remains Web Read-only; use direct HTTP for these two. Finder is wallet-only.
+    </p>
+    <div class="button-row">
+     <a class="button button-primary" href="/developers/#wallet">
+      Set up a wallet client
+     </a>
+     <a class="button button-secondary" href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+      View production schemas
+     </a>
+    </div>
+   </section>
+  </main>
+  <footer class="site-footer">
+   <div class="wrap footer-grid">
+    <div class="footer-brand">
+     <a class="footer-name" href="/">
+      Inferrail
+     </a>
+     <p>
+      External evidence for AI agents.
+      <br/>
+      Public sources. Usable results. Clear economics.
+     </p>
+     <p>
+      <a href="mailto:daniel_omondi@alumni.brown.edu">
+       Contact the team
+      </a>
+     </p>
+    </div>
+    <nav aria-label="Products">
+     <p class="footer-heading">
+      Products
+     </p>
+     <ul>
+      <li>
+       <a href="/web-read/">
+        Web Read
+       </a>
+      </li>
+      <li>
+       <a href="/checks/">
+        Package, domain &amp; API discovery
+       </a>
+      </li>
+      <li>
+       <a href="/tools/">
+        Apify tools
+       </a>
+      </li>
+      <li>
+       <a href="/hosted/">
+        Hosted budgets
+       </a>
+      </li>
+      <li>
+       <a href="/spending-controls/">
+        Self-hosted gateway
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Developer resources">
+     <p class="footer-heading">
+      Developers
+     </p>
+     <ul>
+      <li>
+       <a href="/developers/">
+        Quickstart
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail">
+        GitHub
+       </a>
+      </li>
+      <li>
+       <a href="/llms.txt">
+        llms.txt
+       </a>
+      </li>
+      <li>
+       <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+        Production OpenAPI
+       </a>
+      </li>
+      <li>
+       <a href="/product-catalog.json">
+        Product inventory
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Company and research">
+     <p class="footer-heading">
+      Company
+     </p>
+     <ul>
+      <li>
+       <a href="/#team">
+        Team
+       </a>
+      </li>
+      <li>
+       <a href="/#careers">
+        Careers
+       </a>
+      </li>
+      <li>
+       <a href="/#investors">
+        Investors
+       </a>
+      </li>
+      <li>
+       <a href="/labs/">
+        Labs
+       </a>
+      </li>
+      <li>
+       <a href="/ap/">
+        AP recovery experiment
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">
+        Security
+       </a>
+      </li>
+     </ul>
+    </nav>
+   </div>
+   <div class="wrap">
+    <div class="footer-legal">
+     <span>
+      © 2026 Inferrail
+     </span>
+     <span>
+      Open-source software:
+      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">
+       Apache 2.0
+      </a>
+     </span>
+     <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">
+      Gateway privacy
+     </a>
+     <a href="https://x.com/tryinferrail">
+      X
+     </a>
+     <a href="https://www.linkedin.com/company/inferrail/">
+      LinkedIn
+     </a>
+    </div>
+   </div>
+  </footer>
+  <script src="/site.js">
+  </script>
+ </body>
+</html>

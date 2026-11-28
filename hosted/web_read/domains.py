@@ -74,10 +74,10 @@ SOURCE = ("DNS: Cloudflare 1.1.1.1 DNS-over-HTTPS. Registration: the registry's 
           "registration.terms_url), located through the IANA RDAP bootstrap.")  # fmt: skip
 
 DESCRIPTION = (
-    "Look up a domain: DNS records (A, AAAA, CNAME, MX, NS, TXT, SOA, CAA), SPF and DMARC email "
-    "policies, and registration (registrar, status, created and expiry dates, nameservers, "
-    "DNSSEC) from the registry's RDAP service for .com, .net, .org, .ai, .info and about 450 "
-    "more TLDs. Pay only when the lookup is delivered; a retry never pays twice."
+    "Look up domain DNS records, SPF/DMARC and available RDAP registration: registrar, status, "
+    "creation/expiry dates, nameservers and DNSSEC. $0.002 per delivered lookup. Registration "
+    "coverage varies; this is infrastructure evidence, not a trust verdict. Matching requests "
+    "and payer can recover paid results within the recovery window."
 )
 MPP_DESCRIPTION = (
     "DNS records, SPF/DMARC and RDAP registration (registrar, dates, status) for one domain. "

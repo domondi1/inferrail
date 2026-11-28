@@ -48,10 +48,10 @@ USDC = {  # USDC contracts by network, for pricing an offer in dollars
 }
 
 DESCRIPTION = (
-    "Find which paid x402 API to call for a task: up to five matching resources from the public "
-    "x402 catalog, ranked by text match and by how many wallets actually paid them in the last "
-    "30 days, each with URL, method, price, network, payTo and an example input. Pay only when "
-    "picks are delivered; no match costs nothing, and a retry never pays twice."
+    "Find paid x402 APIs for a task: up to five matching selected Bazaar resources with URL, "
+    "method, price, network, recipient and example input. Text relevance weighted by reported "
+    "unique 30-day payers. $0.002 per delivered answer; no match is free. Matching requests and"
+    " payer can recover paid results within the recovery window."
 )
 MPP_DESCRIPTION = (
     "Up to five paid x402 APIs for a task, ranked by real 30-day paid usage, with price and "

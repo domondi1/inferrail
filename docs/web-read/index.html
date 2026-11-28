@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <title>
+   Web Read | Web page to Markdown &amp; PDF text API | Inferrail
+  </title>
+  <meta content="Public webpages and text-layer PDFs as Markdown with source metadata, a content hash and receipt. $0.002 per delivered page or document. API key or wallet." name="description"/>
+  <link href="https://tryinferrail.com/web-read/" rel="canonical"/>
+  <meta content="website" property="og:type"/>
+  <meta content="Web Read | Web page to Markdown &amp; PDF text API | Inferrail" property="og:title"/>
+  <meta content="Public webpages and text-layer PDFs as Markdown with source metadata, a content hash and receipt. $0.002 per delivered page or document. API key or wallet." property="og:description"/>
+  <meta content="https://tryinferrail.com/web-read/" property="og:url"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" property="og:image"/>
+  <meta content="summary_large_image" name="twitter:card"/>
+  <meta content="Web Read | Web page to Markdown &amp; PDF text API | Inferrail" name="twitter:title"/>
+  <meta content="Public webpages and text-layer PDFs as Markdown with source metadata, a content hash and receipt. $0.002 per delivered page or document. API key or wallet." name="twitter:description"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" name="twitter:image"/>
+  <link href="/favicon.ico" rel="icon"/>
+  <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
+  <link href="/llms.txt" rel="alternate" title="Agent integration guide" type="text/plain"/>
+  <link href="https://fonts.googleapis.com" rel="preconnect"/>
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+Condensed:wght@600;700&amp;display=swap" rel="stylesheet"/>
+  <link href="/site.css" rel="stylesheet"/>
+  <link href="/commercial.css" rel="stylesheet"/>
+  <script type="application/ld+json">
+   {"@context": "https://schema.org", "@graph": [{"@context": "https://schema.org", "@type": "WebPage", "name": "Web Read | Web page to Markdown & PDF text API | Inferrail", "url": "https://tryinferrail.com/web-read/", "description": "Public webpages and text-layer PDFs as Markdown with source metadata, a content hash and receipt. $0.002 per delivered page or document. API key or wallet."}, {"@type": "Service", "name": "Inferrail Web Read", "url": "https://tryinferrail.com/web-read/", "description": "Public webpages and text-layer PDFs as clean Markdown with source metadata, a content hash and receipt. Public URLs only; no JavaScript or OCR.", "provider": {"@type": "Organization", "name": "Inferrail", "url": "https://tryinferrail.com/"}, "offers": {"@type": "Offer", "price": "0.002", "priceCurrency": "USD", "description": "Per delivered page or PDF within the published size and extraction limits. API-key credits, x402 Base or MPP Tempo. Developer preview."}}]}
+  </script>
+ </head>
+ <body class="commercial">
+  <a class="skip-link" href="#main">
+   Skip to content
+  </a>
+  <header class="site-header">
+   <div class="wrap">
+    <a class="wordmark" href="/">
+     <img alt="" height="28" src="/inferrail-mark.png" width="28"/>
+     Inferrail
+    </a>
+    <div class="header-actions">
+     <a class="button button-primary" href="/developers/#api-key">
+      Start reading
+     </a>
+     <button aria-controls="primary-nav" aria-expanded="false" class="nav-toggle" type="button">
+      Menu
+     </button>
+    </div>
+    <nav aria-label="Primary" class="nav" id="primary-nav">
+     <a href="/#product">
+      Products
+     </a>
+     <a href="/pricing/">
+      Pricing
+     </a>
+     <a href="/developers/">
+      Developers
+     </a>
+     <a href="/llms.txt">
+      For agents
+     </a>
+     <a href="/#company">
+      Company
+     </a>
+     <a class="button button-primary nav-try" href="/developers/#api-key">
+      Start reading
+     </a>
+    </nav>
+   </div>
+  </header>
+  <main id="main">
+   <section class="product-hero wrap">
+    <p class="eyebrow">
+     Web Read / commercial developer preview
+    </p>
+    <h1 class="display">
+     The original source.
+     <br/>
+     Ready to use.
+    </h1>
+    <p class="lede">
+     Read a public web page or text-based PDF as clean Markdown, with the source details your agent needs to cite it, compare it or use it as context.
+    </p>
+    <div class="button-row">
+     <a class="button button-primary" href="/developers/#api-key">
+      Start reading
+     </a>
+     <a class="button button-secondary" href="/developers/#wallet">
+      Wallet API guide
+     </a>
+    </div>
+   </section>
+   <div class="proof-strip">
+    <div class="wrap">
+     <span>
+      $0.002 / delivered page or PDF
+     </span>
+     <span>
+      2 prepaid credits / read
+     </span>
+     <span>
+      Failed reads are uncharged
+     </span>
+    </div>
+   </div>
+   <section class="section wrap" id="result">
+    <h2 class="section-title">
+     One URL. Content and context.
+    </h2>
+    <div aria-label="Illustrative Web Read result" class="evidence-window">
+     <div class="evidence-window-bar">
+      <span>
+       WEB READ / RESULT
+      </span>
+      <span class="sample-label">
+       Illustrative example
+      </span>
+     </div>
+     <div class="source-line">
+      <span class="mono">
+       example.com
+      </span>
+      <span class="result-price">
+       $0.002 / delivered page
+      </span>
+     </div>
+     <div class="source-content">
+      <p class="eyebrow">
+       Source content
+      </p>
+      <h2>
+       Example Domain
+      </h2>
+      <p>
+       This domain is for use in documentation examples without needing permission.
+      </p>
+      <p class="source-format">
+       Clean Markdown inside structured JSON
+      </p>
+     </div>
+     <dl class="evidence-fields">
+      <div>
+       <dt>
+        Source
+       </dt>
+       <dd>
+        Original + final URL
+       </dd>
+      </div>
+      <div>
+       <dt>
+        Retrieved
+       </dt>
+       <dd>
+        UTC timestamp
+       </dd>
+      </div>
+      <div>
+       <dt>
+        Integrity
+       </dt>
+       <dd>
+        SHA-256 of content
+       </dd>
+      </div>
+      <div>
+       <dt>
+        Accounting
+       </dt>
+       <dd>
+        Payment receipt
+       </dd>
+      </div>
+     </dl>
+     <div class="evidence-outcome">
+      <strong>
+       Usable content. Traceable to its source.
+      </strong>
+      <span>
+       No request or payment is made by this example.
+      </span>
+     </div>
+    </div>
+    <div class="editorial-grid">
+     <article>
+      <h3>
+       Content
+      </h3>
+      <p>
+       Main text, headings, lists, links and tables as Markdown. PDF text comes from the document’s own text layer.
+      </p>
+     </article>
+     <article>
+      <h3>
+       Source details
+      </h3>
+      <p>
+       Title, original and final URL, word count, retrieval timestamp, content hash, and source-declared metadata when available.
+      </p>
+     </article>
+     <article>
+      <h3>
+       Accounting
+      </h3>
+      <p>
+       A receipt with the price and payment reference or credits charged. Structured errors when a source cannot be read.
+      </p>
+     </article>
+    </div>
+   </section>
+   <section class="section wrap" id="use">
+    <h2 class="section-title">
+     Build on the information, not the extractor.
+    </h2>
+    <div class="workflow-list">
+     <article>
+      <h3>
+       Research with citations
+      </h3>
+      <p>
+       Read original material and keep its URL beside the passage your agent uses.
+      </p>
+     </article>
+     <article>
+      <h3>
+       Ingest documentation
+      </h3>
+      <p>
+       Turn public docs and reports into readable context for your application.
+      </p>
+     </article>
+     <article>
+      <h3>
+       Watch for changes
+      </h3>
+      <p>
+       Use content hashes in a recurring workflow. A fresh read is a new purchase; recovery returns the prior result.
+      </p>
+      <a href="https://github.com/domondi1/inferrail/tree/main/examples/web_read">
+       GitHub Action
+      </a>
+     </article>
+    </div>
+   </section>
+   <section class="section wrap" id="delivery">
+    <h2 class="section-title">
+     A specific delivery contract.
+    </h2>
+    <div class="facts-list">
+     <div>
+      <h3>
+       API key &amp; credits
+      </h3>
+      <p>
+       Credits are held while the source is read, billed on successful extraction and released on failure. The response reports the credits charged. Insufficient funds return HTTP 402 before a read.
+      </p>
+     </div>
+     <div>
+      <h3>
+       Direct wallet payments
+      </h3>
+      <p>
+       x402 on Base and MPP on Tempo verify authorization first and settle only after successful extraction. HTTP 200 is the paid result. A refused source does not settle the payment.
+      </p>
+     </div>
+     <div>
+      <h3>
+       Recovery
+      </h3>
+      <p>
+       Retry with the same URL and
+       <code>
+        request_id
+       </code>
+       , and the same wallet or workspace identity, within 10 minutes. The stored result is returned without a second charge. Use a new request ID for a fresh read. Preserve the same ordered URL list for a direct batch.
+      </p>
+     </div>
+     <div>
+      <h3>
+       Retention &amp; integrity
+      </h3>
+      <p>
+       Delivered content is temporarily stored for recovery. Wallet recovery uses a 10-minute window; stored credit results are expired lazily on later recovery lookups, so this is not a precise deletion-time promise. Accounting records remain. A SHA-256 identifies returned content; it does not certify the source’s truth. Source metadata may be absent or wrong.
+      </p>
+     </div>
+    </div>
+   </section>
+   <section class="section wrap" id="batch">
+    <h2 class="section-title">
+     Two ways to read several sources.
+    </h2>
+    <div class="table-scroll">
+     <table class="comparison">
+      <caption>
+       Batch behavior depends on the payment path
+      </caption>
+      <thead>
+       <tr>
+        <th scope="col">
+         Path
+        </th>
+        <th scope="col">
+         Delivery &amp; billing
+        </th>
+        <th scope="col">
+         Limit
+        </th>
+       </tr>
+      </thead>
+      <tbody>
+       <tr>
+        <th scope="row">
+         Direct wallet batch
+         <br/>
+         <code>
+          POST /read/v1/pages
+         </code>
+        </th>
+        <td>
+         All or nothing. Every page must succeed. One failed URL means no batch charge; the error lists failures.
+        </td>
+        <td>
+         1–10 distinct URLs, $0.002 each
+        </td>
+       </tr>
+       <tr>
+        <th scope="row">
+         API-key SDK
+         <code>
+          readPages
+         </code>
+        </th>
+        <td>
+         Individual reads. Successfully delivered pages are charged; unsuccessful pages are reported separately. This is not an atomic batch.
+        </td>
+        <td>
+         1–10 distinct URLs, $0.002 per delivery
+        </td>
+       </tr>
+      </tbody>
+     </table>
+    </div>
+    <p class="small">
+     Published SDK 0.3.0 supports both paths. Source 0.3.2 improves credit-batch refusal reporting; do not depend on unreleased error fields.
+    </p>
+   </section>
+   <section class="section wrap" id="limits">
+    <h2 class="section-title">
+     Know which sources to choose.
+    </h2>
+    <div class="split">
+     <div>
+      <h3>
+       Supported
+      </h3>
+      <ul>
+       <li>
+        Public HTTP(S) addresses on ports 80/443, including redirects.
+       </li>
+       <li>
+        HTML, plain text, Markdown and text-layer PDFs.
+       </li>
+       <li>
+        Source metadata exactly as declared; missing fields stay null or empty.
+       </li>
+      </ul>
+     </div>
+     <div>
+      <h3>
+       Boundaries
+      </h3>
+      <ul>
+       <li>
+        robots.txt is respected. No JavaScript execution, bot-check bypass, login or paywall bypass.
+       </li>
+       <li>
+        HTML/text: 2 MB. PDF: 5 MB, first 50 pages. No OCR for scanned documents.
+       </li>
+       <li>
+        Up to 3 redirects; fetch timeout 15 seconds per request. PDF parsing has separate bounded processing.
+       </li>
+       <li>
+        No universal coverage or completeness guarantee. Some JavaScript pages yield thin text; inspect the returned content.
+       </li>
+      </ul>
+     </div>
+    </div>
+    <p>
+     HTTP 422 describes invalid or unreadable sources. Target 5xx, fetch failures and timeouts may be retried later (502/504); do not blindly retry a permanent refusal.
+     <a href="https://inferrail-cost-gateway.onrender.com/read/llms.txt">
+      Production error contract
+     </a>
+     .
+    </p>
+   </section>
+   <section class="section wrap" id="benchmark">
+    <h2 class="section-title">
+     Less markup in your model’s context.
+    </h2>
+    <p>
+     The published 20-URL benchmark delivered 17 responses and observed roughly 9× lower estimated token counts at the median versus raw HTML. Estimates use characters ÷ 4, not a model tokenizer. One delivered response was a thin JavaScript shell and is explicitly a miss. This is a small extraction sample, not a guarantee of complete content or workflow savings.
+    </p>
+    <p>
+     <a href="https://github.com/domondi1/inferrail/tree/main/benchmarks/web_read">
+      Inspect the page-by-page results and reproduce the benchmark
+     </a>
+     .
+    </p>
+   </section>
+   <section aria-labelledby="lifecycle-title" class="section wrap" id="lifecycle">
+    <p class="eyebrow">
+     For agents that pay
+    </p>
+    <h2 class="section-title" id="lifecycle-title">
+     One agent job, from price to receipt
+    </h2>
+    <p class="section-lede">
+     An agent buys three web pages for one job. It pays only for what it gets, a refused page costs nothing, and matching retries can recover a paid result within 10 minutes.
+    </p>
+    <div aria-describedby="lc-note" class="lc" data-lifecycle="">
+     <p class="lc-note" id="lc-note">
+      <span class="example-tag">
+       Simulation
+      </span>
+      Example data. No payment is made.
+     </p>
+     <div class="lc-controls" hidden="">
+      <button class="button button-secondary" data-lc="prev" type="button">
+       Back
+      </button>
+      <span aria-hidden="true" class="lc-count">
+       <span data-lc="pos">
+        1
+       </span>
+       / 6
+      </span>
+      <button class="button button-primary" data-lc="next" type="button">
+       Next
+      </button>
+      <button class="button button-secondary" data-lc="replay" type="button">
+       Replay
+      </button>
+     </div>
+     <div class="lc-body">
+      <ol class="lc-steps">
+       <li class="lc-step" data-held="0" data-spent="0" data-state="quoted">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ○
+         </span>
+         Priced
+        </span>
+        <h3>
+         The agent checks the price
+        </h3>
+        <p>
+         It asks Web Read for
+         <code>
+          news.example/a
+         </code>
+         and gets HTTP 402: the price, the network and where to pay. Nothing is held yet.
+        </p>
+        <pre class="lc-wire"><code>402  $0.002 · USDC on Base (x402) or Tempo (MPP)</code></pre>
+       </li>
+       <li class="lc-step" data-held="0.002" data-spent="0" data-state="authorized">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ◐
+         </span>
+         Authorized
+        </span>
+        <h3>
+         It authorizes the payment
+        </h3>
+        <p>
+         The purchase fits the job's budget, so the agent signs a payment for exactly $0.002 and repeats the request. The money hasn't moved.
+        </p>
+        <pre class="lc-wire"><code>POST /read/v1/page  PAYMENT-SIGNATURE: …</code></pre>
+       </li>
+       <li class="lc-step" data-held="0" data-receipt="a" data-spent="0.002" data-state="settled">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ●
+         </span>
+         Settled
+        </span>
+        <h3>
+         Extracted, then settled
+        </h3>
+        <p>
+         Web Read extracts readable content first, settles the authorized payment, then sends the paid result and receipt. A lost HTTP response can be recovered.
+        </p>
+        <pre class="lc-wire"><code>200  412 words · sha256 3f1c…e09a · settled</code></pre>
+       </li>
+       <li class="lc-step" data-held="0" data-receipt="b" data-spent="0.002" data-state="refused">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ⊘
+         </span>
+         Refused, not charged
+        </span>
+        <h3>
+         A refused page costs nothing
+        </h3>
+        <p>
+         The next page is blocked by the site's robots.txt. Web Read refuses it, and the signed payment is never settled.
+        </p>
+        <pre class="lc-wire"><code>422  disallowed_by_robots_txt · charged: false</code></pre>
+       </li>
+       <li class="lc-step" data-held="0" data-receipt="c" data-spent="0.004" data-state="recovered">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ↺
+         </span>
+         Recovered
+        </span>
+        <h3>
+         Recover a lost response
+        </h3>
+        <p>
+         The agent buys
+         <code>
+          news.example/c
+         </code>
+         , but the response is lost. Within 10 minutes, the same wallet retries the same URL with the same
+         <code>
+          request_id
+         </code>
+         and a new signature, gets the page it paid for, and the new signature is never settled.
+        </p>
+        <pre class="lc-wire"><code>200  recovered: true · no second charge</code></pre>
+       </li>
+       <li class="lc-step" data-held="0" data-receipt="total" data-spent="0.004" data-state="receipt">
+        <span class="lc-chip">
+         <span aria-hidden="true">
+          ≡
+         </span>
+         Receipt
+        </span>
+        <h3>
+         A receipt for the whole job
+        </h3>
+        <p>
+         Every purchase has a payment reference and a content hash the agent can check, so the job's cost reconciles to what it received.
+        </p>
+       </li>
+      </ol>
+      <aside aria-label="Job budget and receipt" class="lc-side">
+       <div class="lc-budget">
+        <p class="lc-label">
+         Job
+         <code>
+          research-7
+         </code>
+         · budget $0.010
+        </p>
+        <div aria-label="Spent $0.004 of $0.010" class="lc-meter" data-lc="meter" role="img">
+         <span class="lc-spent" style="width:40%">
+         </span>
+         <span class="lc-held" style="width:0%">
+         </span>
+        </div>
+        <p class="lc-figures">
+         <span>
+          Spent
+          <strong data-lc="spent">
+           $0.004
+          </strong>
+         </span>
+         <span>
+          Held
+          <strong data-lc="held">
+           $0.000
+          </strong>
+         </span>
+         <span>
+          Left
+          <strong data-lc="left">
+           $0.006
+          </strong>
+         </span>
+        </p>
+       </div>
+       <table class="lc-receipt">
+        <caption>
+         Receipt
+        </caption>
+        <thead>
+         <tr>
+          <th scope="col">
+           Page
+          </th>
+          <th scope="col">
+           Result
+          </th>
+          <th scope="col">
+           Cost
+          </th>
+         </tr>
+        </thead>
+        <tbody>
+         <tr data-row="a">
+          <td>
+           <code>
+            /a
+           </code>
+           <span class="lc-ref">
+            0x51…:0x07 · 3f1c…
+           </span>
+          </td>
+          <td>
+           Delivered
+          </td>
+          <td>
+           $0.002
+          </td>
+         </tr>
+         <tr data-row="b">
+          <td>
+           <code>
+            /private
+           </code>
+           <span class="lc-ref">
+            refused
+           </span>
+          </td>
+          <td>
+           Not charged
+          </td>
+          <td>
+           $0.000
+          </td>
+         </tr>
+         <tr data-row="c">
+          <td>
+           <code>
+            /c
+           </code>
+           <span class="lc-ref">
+            0x51…:0x09 · 8b20…
+           </span>
+          </td>
+          <td>
+           Delivered; retry recovered
+          </td>
+          <td>
+           $0.002
+          </td>
+         </tr>
+        </tbody>
+        <tfoot>
+         <tr data-row="total">
+          <th colspan="2" scope="row">
+           Job total
+          </th>
+          <td>
+           $0.004
+          </td>
+         </tr>
+        </tfoot>
+       </table>
+      </aside>
+     </div>
+     <p aria-live="polite" class="sr-only" data-lc="live">
+     </p>
+     <p class="lc-footnote">
+      The Web Read steps (price, payment, settlement after successful extraction, refusal, retry recovery, receipt) work this way in the live service, over x402 and MPP. The job budget shows how an Inferrail budget tracks them; budgets that cover purchases are
+      <a href="https://github.com/domondi1/inferrail/tree/main/examples/agent_economy">
+       experimental
+      </a>
+      .
+     </p>
+     <div class="button-row">
+      <a class="button button-primary" href="https://github.com/domondi1/inferrail/blob/main/hosted/web_read/README.md">
+       For agents: Web Read
+      </a>
+      <a class="button button-secondary" href="/spending-controls/">
+       For developers: run the gateway
+      </a>
+     </div>
+    </div>
+   </section>
+   <section class="section wrap" id="start">
+    <h2 class="section-title">
+     Choose your first read.
+    </h2>
+    <div class="button-row">
+     <a class="button button-primary" href="/developers/#api-key">
+      API key quickstart
+     </a>
+     <a class="button button-secondary" href="/developers/#wallet">
+      Wallet quickstart
+     </a>
+     <a class="button button-secondary" href="https://apify.com/domondi1/web-page-to-markdown">
+      Use on Apify
+     </a>
+    </div>
+   </section>
+  </main>
+  <footer class="site-footer">
+   <div class="wrap footer-grid">
+    <div class="footer-brand">
+     <a class="footer-name" href="/">
+      Inferrail
+     </a>
+     <p>
+      External evidence for AI agents.
+      <br/>
+      Public sources. Usable results. Clear economics.
+     </p>
+     <p>
+      <a href="mailto:daniel_omondi@alumni.brown.edu">
+       Contact the team
+      </a>
+     </p>
+    </div>
+    <nav aria-label="Products">
+     <p class="footer-heading">
+      Products
+     </p>
+     <ul>
+      <li>
+       <a href="/web-read/">
+        Web Read
+       </a>
+      </li>
+      <li>
+       <a href="/checks/">
+        Package, domain &amp; API discovery
+       </a>
+      </li>
+      <li>
+       <a href="/tools/">
+        Apify tools
+       </a>
+      </li>
+      <li>
+       <a href="/hosted/">
+        Hosted budgets
+       </a>
+      </li>
+      <li>
+       <a href="/spending-controls/">
+        Self-hosted gateway
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Developer resources">
+     <p class="footer-heading">
+      Developers
+     </p>
+     <ul>
+      <li>
+       <a href="/developers/">
+        Quickstart
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail">
+        GitHub
+       </a>
+      </li>
+      <li>
+       <a href="/llms.txt">
+        llms.txt
+       </a>
+      </li>
+      <li>
+       <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+        Production OpenAPI
+       </a>
+      </li>
+      <li>
+       <a href="/product-catalog.json">
+        Product inventory
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Company and research">
+     <p class="footer-heading">
+      Company
+     </p>
+     <ul>
+      <li>
+       <a href="/#team">
+        Team
+       </a>
+      </li>
+      <li>
+       <a href="/#careers">
+        Careers
+       </a>
+      </li>
+      <li>
+       <a href="/#investors">
+        Investors
+       </a>
+      </li>
+      <li>
+       <a href="/labs/">
+        Labs
+       </a>
+      </li>
+      <li>
+       <a href="/ap/">
+        AP recovery experiment
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">
+        Security
+       </a>
+      </li>
+     </ul>
+    </nav>
+   </div>
+   <div class="wrap">
+    <div class="footer-legal">
+     <span>
+      © 2026 Inferrail
+     </span>
+     <span>
+      Open-source software:
+      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">
+       Apache 2.0
+      </a>
+     </span>
+     <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">
+      Gateway privacy
+     </a>
+     <a href="https://x.com/tryinferrail">
+      X
+     </a>
+     <a href="https://www.linkedin.com/company/inferrail/">
+      LinkedIn
+     </a>
+    </div>
+   </div>
+  </footer>
+  <script src="/site.js">
+  </script>
+  <script defer="" src="/lifecycle-demo.js">
+  </script>
+ </body>
+</html>

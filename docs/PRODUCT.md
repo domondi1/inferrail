@@ -1,92 +1,64 @@
-# Inferrail — Product
+# Inferrail — Product scope
 
-> This file is the authoritative source for exact current scope.
+This document defines implementation scope. Deployment and commercial activation must also be
+verified: see [product-catalog.json](product-catalog.json) for the dated public inventory and
+evidence. Generated production contracts take precedence for deployment-dependent features.
+All products remain developer preview unless a specific contract states otherwise.
 
-**Developer Preview.** The scope below is fully implemented and tested,
-but nothing is stable yet — CLI flags, `inferrail.yaml`'s shape, and
-receipt/telemetry JSON fields may change without notice before v1.0. The
-package version lives in `pyproject.toml` (and on PyPI); it is not
-restated here so it cannot drift.
+## Current portfolio
 
-## What it is
+Inferrail provides external evidence for AI agents, led by Web Read. Inference spending
+controls remain an independently useful supporting product. Payment protocols, MCP and
+marketplaces are integration or distribution mechanisms, not separate customer outcomes.
 
-Inferrail is an open inference control plane: infrastructure that sits
-between an application and the model providers it calls, so operational
-decisions (which provider, which model, retry/fallback behavior, what
-happened and why) live in configuration and telemetry rather than scattered
-across application code.
+| Product | Current scope | Commercial state verified 2026-11-28 |
+|---|---|---|
+| Web Read | Public webpage/text-layer PDF to Markdown, metadata, hash, retrieval time, receipt. HTML 2 MB; PDF 5 MB, first 50 pages; no OCR/JS. | Live: $0.002/delivery, prepaid API key or x402 Base/MPP Tempo |
+| Wallet batch | 1–10 URLs; all delivered or no charge. | Live: N × $0.002 |
+| API-key SDK batch | Individual page reads, successful ones billed separately. | Published 0.3.0; source 0.3.2 improves failure reporting |
+| Package Check | OSV known advisories for up to 20 package versions; no security certification. | Live: $0.002/check, prepaid API key or wallet |
+| Domain Check | DNS/SPF/DMARC and available RDAP registration; no trust verdict. | Live: $0.002/lookup, prepaid API key or wallet |
+| x402 Finder | Selected Bazaar resources ranked by text match weighted by 30-day unique payers; no exhaustive coverage/quality guarantee. | Live wallet: $0.002/delivered answer; no match free |
+| Hosted | Workspace-shared inference budgets, own provider key, separate provider spend. | Live preview: 250 qualifying runs/month free, then $0.001/run; card/USDC credits |
+| Self-hosted gateway | Detailed contract below; Apache-2.0, no hosted dependency. | Published PyPI 0.4.18, developer preview |
 
-v0.1 is the first, narrow slice of that: an OpenAI-compatible HTTP gateway
-that takes a chat completion request, routes it to one explicitly
-configured provider/model via a static policy, executes it, and returns a
-compatible response plus a structured local telemetry record of what
-happened — plus, as of this slice, a privacy-preserving economic receipt:
-what that execution cost, computed from measured usage and verified
-pricing, tied to business context the caller attaches. The long-term
-thesis this is the first step of: measure → attribute → connect to
-outcome → govern → optimize.
+Web Read delivery and recovery are service-specific: matching URL(s), request ID and
+wallet/workspace within 10 minutes can recover a paid result. Wallet payments settle after
+successful extraction before the paid response; credit holds bill on success and release on
+failure. Recovery content is temporarily retained; lazy cleanup is not an exact deletion-time
+guarantee. Source hashes and metadata are not independent fact certification.
 
-**v0.2.0 adds a second, separate product on top of that same substrate:
-AP invoice-exception recovery** — see the next section. It is a bounded
-decision-and-execution engine for one specific operational question
-(retry vs. human review), not a general invoice-processing product, and
-it is fully isolated from the gateway and from Work Economics/Economic
-Authority below (own module, own storage, no shared code path).
+Prepaid credits are $0.001 each; Web Read costs two credits. The live card pack is $10/10,000
+credits, human checkout; USDC pack $1/1,000 credits. No subscription, automatic replenishment
+or free page allowance. Hosted free runs cover inference governance only. Production purchase
+caps may temporarily refuse top-ups without charging. These are experimental prices; existing
+purchased credits retain their terms.
 
-## AP invoice-exception recovery (v0.2.0)
+## Distribution and maturity
 
-For teams operating an invoice-extraction workflow: decide whether one
-eligible extraction exception gets one permitted machine retry or your
-established human-review path, execute the retry through a supported
-integration, and record the resulting cost and outcome.
+- Published: npm tools 0.3.0, MCP Web Read metadata 1.2.0 (source 1.2.2), Desktop extension 0.3.0, PyPI 0.4.18.
+  Source npm/Desktop 0.3.2 does not establish publication. API-key SDK/MCP offers Web Read;
+  wallet SDK includes Finder; local paid MCP offers reading, package checks and domain checks.
+- The Python `inferrail mcp` is read-only cost/health reporting, separate from paid MCP.
+- Ten public Apify pay-per-event Actors have separate inputs, limits, account fees and billing.
+  Native API coverage does not include all marketplace tools. See [tools](https://tryinferrail.com/tools/).
+- AWS rail: implemented, commercially inactive at verification. Extra x402 networks and Dify
+  marketplace release are unverified. Browser onboarding merged in #262 and its GET /hosted/v1/start page is live.
+- AP recovery is a separate experimental implementation; Work Economics/Economic Authority,
+  Job-Safe Search, joint inference/purchase budgets, sub-agent allocations and TypeScript
+  payment-budget adapters remain experimental/testnet. No universal external spend control.
+- The temporary hosted trial and local dashboard remain inference previews. Neither is a
+  free production Web Read purchase path.
 
-- **Package:** `inferrail.ap` (part of the `inferrail` PyPI package, no
-  new install for the fixture path; `pip install "inferrail[ap]"` for the
-  bundled OpenAI retry adapter).
-- **CLI:** `inferrail ap demo|report|outcome|batch`.
-- **Hosted API (optional):** `hosted/ap_exceptions/` — decision,
-  persistence, and reporting only; retry execution always happens in
-  your own process. Self-serve, no-account sandbox credentials
-  (isolated, capped, auto-expiring) are available via
-  `POST /v1/sandbox` on top of operator-provisioned keys — see
-  `hosted/ap_exceptions/README.md` and `docs/adr/0012`.
-- **Full contract:** `docs/capabilities/ap-invoice-exception-recovery.md`
-  — supported failure types, retry method, validation contract,
-  human-review handoff, versioned policy config, identifiers,
-  idempotency/ambiguous-execution handling, and the data boundary.
-- **Get started:** `docs/PRODUCT.md` doesn't restate this scope a second
-  time — see the capability doc and
-  `examples/ap_invoice_exception_recovery/`.
+## Contracts by product
 
-Zero customer adoption or savings claims are made about this capability
-— see the capability doc's "Pricing and performance assumptions"
-section, which labels every dollar figure as an assumption, not a
-validated result.
+- [Web Read implementation](../hosted/web_read/README.md) and [live contract](https://inferrail-cost-gateway.onrender.com/read/llms.txt)
+- [Evidence checks](https://tryinferrail.com/checks/) and [production OpenAPI](https://inferrail-cost-gateway.onrender.com/openapi.json)
+- [Hosted implementation](../hosted/budget_gateway/README.md) and [live pricing](https://inferrail-cost-gateway.onrender.com/hosted/pricing)
+- [Paid tools](../packages/ai-sdk-tools/README.md), [read-only MCP](../inferrail-mcp/README.md)
+- [Public product change checklist](PUBLIC_SURFACES.md)
 
-## Who it's for
-
-Developers and small teams running LLM-backed applications who want:
-
-- a single place to point an OpenAI-compatible client, instead of
-  provider-specific SDK code sprinkled through the app
-- to actually know, per request, what provider/model served it, how long it
-  took, and whether it failed — without adding a hosted observability
-  vendor
-- to know what each customer, workflow, or feature is actually costing
-  them in model spend, without storing their users' prompts to figure
-  that out
-- a foundation they can run entirely on their own machine or
-  infrastructure, with no dependency on an Inferrail-operated service
-
-## The problem being solved right now
-
-Applications that call LLM providers directly hard-code operational
-decisions (which provider, which model, how to handle a 429) into
-business logic. Inferrail v0.1 moves that decision to a deterministic,
-inspectable config file and gives you a telemetry record for every request
-— the prerequisite for anything smarter later (see "Long-term direction").
-
-## Current scope: what works today
+## Self-hosted inference gateway: detailed contract
 
 - `POST /v1/chat/completions` — OpenAI-compatible request/response shape
   for single-turn or multi-turn text chat (see limits below). Every
@@ -653,7 +625,7 @@ Not a hidden limitation — these are the honest edges of v0.1:
 - Intelligent/adaptive routing of any kind
 - Historical price versioning (a receipt embeds the price snapshot used at
   the time, but there is no queryable price-history store)
-- Any hosted/cloud component — see "OSS vs. hosted" below
+- Hosted/cloud operation inside the self-hosted package; commercial hosted services are separate deployments
 - Non-LLM economic events (browser, search, compute/sandbox, MCP tool
   cost) in `TaskTransaction` — its only event type today is `inference`;
   see `docs/adr/0008-task-transactions.md`
@@ -721,72 +693,35 @@ application or proxy logs, or the provider: your provider still receives
 the real prompt. Inferrail is a pass-through gateway to it, not a privacy
 boundary against it. None of these checks is a security audit.
 
-## Hosted capabilities (beyond the self-hosted data plane)
 
-Everything above is the self-hosted gateway: zero dependency on any
-Inferrail-operated service (see "Who it's for" and `docs/adr/0004`).
+## Other published experiments
 
-**Hosted cost gateway trial** (`hosted/cost_gateway/`): a no-account
-trial at [tryinferrail.com/try/](https://tryinferrail.com/try/) that
-issues a short-lived, isolated tenant with zero-key demo traffic, and
-optionally proxies real traffic through a visitor's own OpenAI or
-Anthropic key. With a real key, the hosted process holds that key in
-memory and handles the traffic; the trial expires within 4 hours of the
-key being added (24 hours at most in demo mode). Preview status. Full
-contract and key-handling threat model:
-`hosted/cost_gateway/README.md`.
-Inferrail helps companies measure, attribute, and eventually govern the
-economics of work performed by AI agents. The gateway and receipts above
-are today's working measurement layer. Separately, Inferrail also
-operates two hosted, paid capabilities that extend that foundation
-toward machine buyers. Both are experimental and Base Sepolia testnet
-only; neither controls external wallets, providers, or network
-spending:
+## AP invoice-exception recovery (v0.2.0)
 
-- **Inferrail Work Economics** (`hosted/work_economics/`) — given
-  caller-declared economic events for a unit of AI work, returns a
-  normalized cost summary and a commercial receipt, paid for over x402.
-  Base Sepolia testnet only right now. Full contract:
-  `docs/capabilities/work-economics.md`. Why this lives outside the
-  package installed by `pip install inferrail`: `docs/adr/0010`.
-- **Inferrail Economic Authority** (`hosted/a2a_economic_authority/`):
-  explores voluntary coordination of a caller-declared spending
-  boundary between agents. The boundary is caller-declared and the
-  ledger is cooperative; Inferrail records and coordinates it within
-  its own service and does not control external wallets, providers, or
-  network spending. This is not real-world spend enforcement. Base
-  Sepolia testnet only. Full contract:
-  `docs/capabilities/economic-authority.md`.
+For teams operating an invoice-extraction workflow: decide whether one
+eligible extraction exception gets one permitted machine retry or your
+established human-review path, execute the retry through a supported
+integration, and record the resulting cost and outcome.
 
-## Long-term direction
+- **Package:** `inferrail.ap` (part of the `inferrail` PyPI package, no
+  new install for the fixture path; `pip install "inferrail[ap]"` for the
+  bundled OpenAI retry adapter).
+- **CLI:** `inferrail ap demo|report|outcome|batch`.
+- **Hosted API (optional):** `hosted/ap_exceptions/` — decision,
+  persistence, and reporting only; retry execution always happens in
+  your own process. Self-serve, no-account sandbox credentials
+  (isolated, capped, auto-expiring) are available via
+  `POST /v1/sandbox` on top of operator-provisioned keys — see
+  `hosted/ap_exceptions/README.md` and `docs/adr/0012`.
+- **Full contract:** `docs/capabilities/ap-invoice-exception-recovery.md`
+  — supported failure types, retry method, validation contract,
+  human-review handoff, versioned policy config, identifiers,
+  idempotency/ambiguous-execution handling, and the data boundary.
+- **Get started:** `docs/PRODUCT.md` doesn't restate this scope a second
+  time — see the capability doc and
+  `examples/ap_invoice_exception_recovery/`.
 
-The progression Inferrail is built to support, in order, is:
-
-observable → controllable → measurable → comparable → optimizable →
-increasingly intelligent
-
-Each step needs the one before it to be trustworthy first. v0.1 delivered
-the first step (observable: a real telemetry record for every request)
-and the scaffolding for the second (controllable: explicit routing
-config, provider abstraction). This slice takes the first real step into
-measurable: a per-request economic receipt (verified pricing, `Decimal`
-cost, business attribution) and a local report to read it back — still a
-single-process, single-machine capability, not fleet-wide history. Later
-phases — comparing providers/models on cost and quality across many
-requests, recommending routing policies, fleet-wide analytics — depend on
-operational history accumulating across many requests/deployments, which
-is naturally a *hosted* capability once a user wants it to span more than
-one machine or process. See `ARCHITECTURE.md` for how the OSS data plane
-and a future hosted control plane are meant to stay decoupled.
-
-## Non-goals (for the project generally, not just this session)
-
-Inferrail is not attempting to become:
-
-- A LangChain/LiteLLM-style all-in-one framework
-- A prompt-management, RAG, or agent framework
-- A vector database
-- An evaluation platform (though evaluation could plausibly build on top of
-  its telemetry later)
-- A hosted-only product — the data plane must remain genuinely useful with
-  no Inferrail-hosted service required
+Zero customer adoption or savings claims are made about this capability
+— see the capability doc's "Pricing and performance assumptions"
+section, which labels every dollar figure as an assumption, not a
+validated result.

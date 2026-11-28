@@ -43,8 +43,8 @@ def start(base: str, pack_cents: int, pack_credits: int, card: bool) -> str:
     """The landing page: what credits buy and a button that creates a key."""
     pay = (
         f"<p>{escape(pack_line(pack_cents, pack_credits))}. You pay by card on Stripe's checkout "
-        "page; this is the only step a person does. Your agents, workflows and scripts then "
-        "spend the balance on their own.</p>"
+        "page. You create and configure the key and complete checkout yourself; your agents, "
+        "workflows and scripts can then spend the available balance programmatically.</p>"
         if card
         else "<p>Card payments are not enabled on this deployment. Credits can be bought with "
         f"USDC over x402 at <code>POST {escape(base)}/v1/credits/x402</code>.</p>"
@@ -53,15 +53,19 @@ def start(base: str, pack_cents: int, pack_credits: int, card: bool) -> str:
         "Inferrail: get an API key",
         "<h1>Get an Inferrail API key</h1>"
         "<p>One key pays for Inferrail services from prepaid credits, with no wallet and no "
-        "signup. <strong>Web Read</strong> returns any public web page as clean Markdown with its "
-        "title, dates, authors and a content hash for <strong>$0.002 per delivered page</strong>; "
-        "a page that can't be read costs nothing.</p>"
+        "signup form. <strong>Web Read</strong> returns public webpages and text-layer PDFs as "
+        "clean Markdown with source metadata and a content hash for "
+        "<strong>$0.002 per delivered page</strong>. Failed deliveries are uncharged. "
+        "Web Read respects robots.txt; no JavaScript rendering, login bypass or OCR. "
+        '<a href="https://tryinferrail.com/web-read/#limits">Reading limits</a>.</p>'
         f"{pay}"
         f'<form method="post" action="{escape(base)}/v1/start">'
         "<button type=submit>Create my key</button></form>"
         "<h2>Already have a key?</h2>"
         f'<form method="post" action="{escape(base)}/v1/start/top-up">'
-        '<p><input name="api_key" placeholder="irw_..." autocomplete="off" required></p>'
+        '<p><label for="top-up-key">Workspace API key</label><br>'
+        '<input id="top-up-key" name="api_key" type="password" placeholder="irw_..." '
+        'autocomplete="off" autocapitalize="none" spellcheck="false" required></p>'
         "<button type=submit>Add credits</button></form>"
         '<p><a href="https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools'
         '#pay-with-an-api-key-prepaid-credits-no-wallet">Docs</a></p>',

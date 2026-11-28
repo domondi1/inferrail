@@ -695,7 +695,7 @@ def test_catalogs_can_match_the_task_not_just_the_brand(tmp_path):
         # Agent clients (AgentCash's MCP instructions, its installed SKILL.md) use this verbatim
         # as the tool description: tasks and prices first, short, Hosted last.
         assert info.startswith("Pay-per-call tools for agents, charged only on delivery. "
-                               "Inferrail Web Read: any public web page")  # fmt: skip
+                               "Inferrail Web Read: public web pages")  # fmt: skip
         assert len(info) <= 600 and info.index("Hosted") > info.index("Web Read")
         assert "/hosted/v1/chat/completions" not in info  # the how-to lives in x-guidance
 

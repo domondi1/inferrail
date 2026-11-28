@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.domondi1/inferrail-web-read",
   "title": "Inferrail Web Read",
-  "description": "Web pages as clean markdown for $0.002 each over x402: hosted, or local with your wallet.",
+  "description": "Public webpages and PDF text as Markdown: $0.002 per delivery, API-key credits or a funded wallet.",
   "repository": {
     "url": "https://github.com/domondi1/inferrail",
     "source": "github",

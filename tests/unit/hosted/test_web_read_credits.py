@@ -95,6 +95,28 @@ def _read(c, key, url="https://news.test/a", request_id=None, header="authorizat
     return c.post("/credits/v1/page", json=body, headers=headers)
 
 
+def test_discovery_explains_active_credits_without_advertising_an_inactive_card_rail(setup):
+    client, *_ = setup
+    guide = client.get("/llms.txt").text
+    assert "http://testserver/credits/v1/page" in guide
+    assert "401 workspace_key_required" in guide
+    assert "402 insufficient_credits" in guide
+    assert "Same workspace, complete request" in guide
+    assert "credit result cleanup is lazy" in guide.lower()
+    # The fixture offers x402 funding only; the guide must not invent a card endpoint.
+    assert "https://h.test/hosted/v1/credits/x402" in guide
+    assert "/credits/checkout" not in guide
+
+
+def test_discovery_omits_inactive_credits_and_pdf_claims(tmp_path):
+    settings = svc.Settings(pay_to=PAY_TO, data_dir=tmp_path, pdf=False)
+    with TestClient(svc.create_app(settings)) as client:
+        guide = client.get("/llms.txt").text
+    assert "## Prepaid API-key access" not in guide
+    assert "PDF extraction is disabled" in guide
+    assert "PDF: text layer only" not in guide
+
+
 def test_no_key_or_a_bad_key_is_refused_free_and_says_how_to_start(setup):
     c, ledger, workspace, key = setup
     r = _read(c, None)
@@ -207,9 +229,9 @@ def test_the_api_key_path_is_documented_where_agents_look_when_it_is_on(tmp_path
     with TestClient(_origin_app(tmp_path, monkeypatch, credits_on=True)) as c:
         llms = c.get("/llms.txt").text
         assert "/read/credits/v1/page" in llms and "INFERRAIL_API_KEY" in llms
-        assert (
-            "a person funds it once" in llms
-        )  # card funding is a human step; never implied unattended
+        assert "active methods listed in GET http://testserver/hosted/pricing" in llms
+        # This deployment has no card rail; enabled credits must not invent one.
+        assert "/credits/checkout" not in llms
         op = c.get("/openapi.json").json()["paths"]["/read/credits/v1/page"]["post"]
         assert op["security"] == [{"WorkspaceKey": []}] and "x-payment-info" not in op
         assert "$0.002" in op["description"]
