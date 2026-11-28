@@ -48,6 +48,8 @@ def test_product_surfaces_state_live_prices_allowances_and_structured_offers():
     hosted_page = (ROOT / "docs" / "hosted" / "index.html").read_text()
     assert f"{free_runs} runs a month free" in " ".join(hosted_page.split())
     product = (ROOT / "docs" / "web-read" / "index.html").read_text()
-    ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', product, re.S)[1])
+    ld = json.loads(
+        re.search(r'<script type="application/ld\+json">(.*?)</script>', product, re.S)[1]
+    )
     (web_read,) = [g for g in ld["@graph"] if g["name"] == "Inferrail Web Read"]
     assert web_read["offers"]["price"] == price

@@ -279,8 +279,11 @@ OpenAI Agents SDK, CrewAI, Haystack, LlamaIndex, Microsoft Agent Framework), and
 
 AP invoice-exception recovery is an isolated, experimental open-source workflow
 ([contract](docs/capabilities/ap-invoice-exception-recovery.md)). The [hosted trial](https://tryinferrail.com/try/)
-is a temporary inference demo, not free Web Read. Work Economics and Economic Authority are
-Base Sepolia testnet experiments. Job-Safe Search, joint model/purchase budgets, sub-agent
+is a temporary inference demo, not free Web Read.
+[Work Economics](docs/capabilities/work-economics.md) and
+[Economic Authority](docs/capabilities/economic-authority.md) are Base Sepolia testnet
+experiments ([session example](examples/economic_authority_session.py)).
+Job-Safe Search, joint model/purchase budgets, sub-agent
 allocations and `@inferrail/x402-budgets` are experimental; no universal external-spend control
 or production commerce is claimed. [Labs](https://tryinferrail.com/labs/).
 

@@ -14,8 +14,9 @@ content hash and the payment reference.
 **Recover matching paid requests within the recovery window.** Standard x402 clients sign a
 fresh payment when they retry after a
 lost response. A delivered result supports recovery for `READ_RECOVERY_S` (default 10 minutes,
-with lazy expiration cleanup), keyed by payer, URL and `request_id`. The same wallet sending the same request in that
-window, with any valid signature, gets the stored page back and that payment is never settled.
+with lazy expiration cleanup), keyed by payer, URL and `request_id`. The same wallet sending
+the same request in that window, with any valid signature, gets the stored page back and that
+payment is never settled.
 """
 
 from __future__ import annotations
@@ -118,7 +119,8 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 DESCRIPTION = (
     "Web page to Markdown: read public URLs and text-layer PDFs as clean Markdown with source "
     "metadata and a content hash. Use it to quote, cite or check for changes. $0.002 per "
-    "delivered page. Robots refusals, bot checks and upstream failures are free. Recover a "
+    "delivered page. Robots refusals, bot checks and upstream failures (403, 404, 5xx) are "
+    "free. Recover a "
     "matching paid request from the same payer within the recovery window."
 )
 # The longest offer description the CDP facilitator has accepted for a settled sale. Its schema
@@ -1751,7 +1753,7 @@ def create_app(
         text = task.guide(settings)
         text += (
             "\n## Availability and recovery boundaries\n"
-            "Commercial developer preview. Payment rails described above are generated from "
+            "Developer preview. Payment rails described above are generated from "
             "this deployment's settings. Recover a paid result only with the same complete "
             "request, request_id and payer identity within the stated recovery window. "
             "Use a new request_id for fresh evidence. Stored results support recovery; "
