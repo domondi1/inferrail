@@ -1,3 +1,13 @@
+<!-- Commercial availability is verified independently from source. -->
+
+Customer paths: [Web Read](https://tryinferrail.com/web-read/) ·
+[API-key / wallet quickstart](https://tryinferrail.com/developers/) ·
+[Dated availability inventory](https://tryinferrail.com/product-catalog.json).
+The implementation below includes optional rails; only production-generated contracts and
+live endpoint behavior establish their activation. AWS and extra networks are not advertised
+as live. Package/Domain credit routes are verified live after the concurrent deployment.
+Published SDK 0.3.0 remains Web Read-only in credit mode; source 0.3.2 adds the other tools.
+
 # Inferrail Web Read
 
 Read one public web page as clean markdown, paid per page with x402. Built for agents that

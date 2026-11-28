@@ -51,4 +51,10 @@
   <url>
     <loc>https://tryinferrail.com/tools/</loc>
   </url>
+  <url><loc>https://tryinferrail.com/web-read/</loc></url>
+  <url><loc>https://tryinferrail.com/checks/</loc></url>
+  <url><loc>https://tryinferrail.com/pricing/</loc></url>
+  <url><loc>https://tryinferrail.com/developers/</loc></url>
+  <url><loc>https://tryinferrail.com/spending-controls/</loc></url>
+  <url><loc>https://tryinferrail.com/product-catalog.json</loc></url>
 </urlset>

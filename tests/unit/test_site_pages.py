@@ -31,18 +31,19 @@ def _js_const(name: str) -> int:
     return int(match.group(1))
 
 
-def test_home_leads_with_the_job_cost_story():
+def test_home_routes_evidence_buyers_to_the_product_and_onboarding():
     hero = re.search(r'<h1[^>]*id="hero-title"[^>]*>(.*?)</h1>', HOME, re.S)
     assert hero
     text = re.sub(r"<[^>]+>", " ", hero.group(1))
-    assert " ".join(text.split()) == "20 model calls. One job. One cost."
-    assert "Know what your AI work costs." in HOME
-    assert "Without keeping what it said." in HOME
+    assert "evidence" in text.lower() and "agents" in text.lower()
+    assert 'href="/developers/#api-key"' in HOME
+    assert 'href="/web-read/"' in HOME
+    assert 'href="/spending-controls/"' in HOME
 
 
-def test_home_example_card_is_labelled_as_an_example():
-    assert "Example</span>" in HOME
-    assert "An example job, for illustration." in HOME
+def test_home_example_cannot_be_mistaken_for_a_live_purchase():
+    assert "Illustrative example" in HOME
+    assert "No request or payment is made by this example." in HOME
 
 
 def test_try_page_keeps_every_scripted_element():

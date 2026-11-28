@@ -412,7 +412,10 @@ def _agent_guide(p: dict[str, Any], settings: Settings) -> str:
     else:
         buy = "- Credit purchases are not open on this deployment yet.\n"
     if card:
-        buy += f"- Card: POST {card['endpoint']} returns a Stripe Checkout URL.\n"
+        buy += (
+            f"- Card: {card['endpoint']} returns a Stripe Checkout URL. "
+            "A person completes checkout; no automatic replenishment.\n"
+        )
     return (
         "# Inferrail Hosted\n\n"
         "> Per-run dollar budgets for AI agents. A call that would push a run past its ceiling "

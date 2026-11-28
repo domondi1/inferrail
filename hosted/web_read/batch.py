@@ -30,15 +30,15 @@ CONCURRENCY = 4  # pages fetched at once per batch
 DEADLINE_S = 45.0  # the whole batch; each page also has the fetcher's own timeout
 MAX_TOTAL_CHARS = 4_000_000  # markdown across the batch; beyond it the batch is refused (free)
 
-DESCRIPTION = (  # echoed to the facilitator: kept under service.OFFER_DESCRIPTION_MAX
-    "Web pages to Markdown in bulk: read up to 10 public URLs in one call as clean, LLM-ready "
-    "Markdown with each page's metadata, in the order given. $0.002 per page in one payment. All "
-    "or nothing: if any page fails, nothing is charged and the answer lists which URLs failed. A "
-    "retry never pays twice."
+DESCRIPTION = (
+    "Web pages to Markdown in bulk: read up to 10 public URLs as clean Markdown with metadata "
+    "in the order given. $0.002 per page in one payment. All or nothing: any failed page means "
+    "no batch charge and structured failure details. Recover matching paid requests from the "
+    "same payer within the recovery window."
 )
 MPP_DESCRIPTION = (
     "Up to 10 public web pages as clean markdown in one call, $0.002 per page. Charged only "
-    "when every page is delivered; a retry never pays twice."
+    "when every page is delivered; matching retries recover paid results within the stated window."
 )
 SUMMARY = "Scrape up to 10 web pages to markdown in one paid call ($0.002 per page)"
 TAGS = ["markdown", "web-scraping", "web", "web pages to markdown", "bulk"]

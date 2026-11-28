@@ -22,14 +22,11 @@ answers with the paid result instead of charging again.
 
 ## Why pay for a page
 
-A plain `fetch` hands your model the page's raw HTML. Web Read hands it the readable content as
-Markdown, plus the page's own metadata as JSON fields. On 20 real docs, changelog, advisory and
-news pages, that's a **median of about 9× fewer tokens** (2× on long docs, 30–56× on
-markup-heavy pages). At $3 per million input tokens, a 100k-token raw page costs $0.30 of
-context; through Web Read it's $0.002 plus the smaller Markdown. Pages it can't read (no text
-without JavaScript, bot walls, over 2 MB) are refused and never charged. Reproduce it, or run
-it on your own pages:
-[benchmarks/web_read](https://github.com/domondi1/inferrail/tree/main/benchmarks/web_read).
+Web Read returns readable Markdown and source metadata instead of raw HTML. The recorded
+20-URL benchmark delivered 17 responses, with roughly 9× lower median estimated token counts
+versus HTML (characters ÷ 4). One delivered JavaScript shell was explicitly a miss. Results
+vary; this small sample is not a completeness, tokenizer accuracy or workflow-savings guarantee.
+[Methodology and page-by-page results](https://github.com/domondi1/inferrail/tree/main/benchmarks/web_read).
 
 ## Install
 
@@ -78,6 +75,11 @@ address other than that service's own. Offers from other sellers pass through un
 
 ## Pay with an API key (prepaid credits, no wallet)
 
+[Copy-paste onboarding](https://tryinferrail.com/developers/#api-key) ·
+[Verified product availability](https://tryinferrail.com/product-catalog.json).
+The published package is 0.3.0 at verification; this source is 0.3.2.
+
+
 Web Read can also be paid from prepaid Inferrail credits with a workspace key, with no wallet
 and no per-request signing. A delivered page costs 2 credits ($0.002); a page that can't be read
 costs nothing.
@@ -113,11 +115,12 @@ curl -X POST https://inferrail-cost-gateway.onrender.com/read/credits/v1/page \
   -d '{"url": "https://example.com/", "request_id": "job-42"}'
 ```
 
-A retry with the same `request_id` returns the paid page again without a second charge. With
+A retry with the same URL and `request_id`, from the same workspace within 10 minutes, returns the paid page without a second charge. With
 too few credits the answer is `402 {"error": "insufficient_credits", ...}`, and nothing is read
 or charged. Check the balance with `GET /hosted/v1/workspace`. In key mode `readPages` reads each
 page separately: delivered pages are charged, and failed ones are listed under `failed`.
-`inferrailCreditTools` also includes `checkPackages` and `lookupDomain`, at 2 credits ($0.002)
+In source 0.3.2 (not the verified published 0.3.0), `inferrailCreditTools` also includes
+`checkPackages` and `lookupDomain`, at 2 credits ($0.002)
 per check or lookup from the same key.
 
 ## Use it from an MCP client (Claude Code, Claude Desktop, Cursor)

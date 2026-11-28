@@ -11,9 +11,10 @@ No third-party data supplier: pages are fetched directly from the public web, ho
 robots.txt with an identifying user agent (see fetch.py). The ledger keeps the URL, sizes, a
 content hash and the payment reference.
 
-**A retry never pays twice.** Standard x402 clients sign a fresh payment when they retry after a
-lost response. So a delivered result is kept for `READ_RECOVERY_S` (default 10 minutes, then
-deleted), keyed by payer, URL and `request_id`. The same wallet sending the same request in that
+**Recover matching paid requests within the recovery window.** Standard x402 clients sign a
+fresh payment when they retry after a
+lost response. A delivered result supports recovery for `READ_RECOVERY_S` (default 10 minutes,
+with lazy expiration cleanup), keyed by payer, URL and `request_id`. The same wallet sending the same request in that
 window, with any valid signature, gets the stored page back and that payment is never settled.
 """
 
@@ -115,11 +116,10 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 # It is also what the CDP Bazaar's task search ranks, so it opens with the task phrase agents
 # search for ("web page to Markdown", "URL"). Richer wording lives in OpenAPI and the guides.
 DESCRIPTION = (
-    "Web page to Markdown: read any public URL or PDF as clean Markdown (main text, headings, "
-    "lists, links, tables) with its author, date, language and content hash. Use it when you "
-    "need a page's full text to quote, cite or check for changes. $0.002, only on delivery: a "
-    "failing page (403, 404, 5xx, timeout), bot check or robots.txt refusal is free; a retry "
-    "never pays twice."
+    "Web page to Markdown: read public URLs and text-layer PDFs as clean Markdown with source "
+    "metadata and a content hash. Use it to quote, cite or check for changes. $0.002 per "
+    "delivered page. Robots refusals, bot checks and upstream failures are free. Recover a "
+    "matching paid request from the same payer within the recovery window."
 )
 # The longest offer description the CDP facilitator has accepted for a settled sale. Its schema
 # allows 500 (x402_contract.description_limit()); a test keeps every task under both.
@@ -128,8 +128,8 @@ OFFER_DESCRIPTION_MAX = 373
 # Short form for the MPP challenge (an HTTP header): what the page is and how it's charged.
 MPP_DESCRIPTION = (
     "Read one public web page as clean markdown with a content hash and receipt. Charged "
-    "only when the page is delivered: a 403, 404 or 5xx from the site costs nothing, and a "
-    "retry never pays twice."
+    "only when the page is delivered: a 403, 404 or 5xx from the site costs nothing, and "
+    "matching paid requests can be recovered within the recovery window."
 )
 
 
@@ -235,14 +235,17 @@ def unpaid_guide(settings: Any, task: Any, units: int = 1, credits: bool = False
             "mcp_client": "npx -y @inferrail/ai-sdk-tools (a local MCP server for Claude Code, "
             "Claude Desktop or Cursor; set INFERRAIL_WALLET_KEY and INFERRAIL_MAX_USD_PER_DAY)",
             "wallet": "Each pays from a wallet you control and fund; none creates or funds one.",
-            **({"api_key": f"No wallet: POST {origin}/hosted/v1/workspaces for a key, fund it once "
-                f"by card at POST {origin}/hosted/v1/credits/checkout, then POST "
+            **({"api_key": f"No wallet: POST {origin}/hosted/v1/workspaces for a key; fund it via "
+                f"the methods listed in GET {origin}/hosted/pricing, then POST "
                 f"{origin}{settings.mount_prefix}/credits{task.path} with 'Authorization: Bearer "
                 f"irw_...' (2 credits = $0.002 per delivered {task.result_noun})."}
                if credits else {}),
         },
         "docs": {"guide": f"{origin}{settings.mount_prefix}/llms.txt",
                  "openapi": f"{origin}/openapi.json"},
+        "recovery": {"window_seconds": settings.recovery_s,
+                     "requires": "Same request content, request_id and payer identity; "
+                                 "use a new request_id for fresh evidence."},
     }  # fmt: skip
 
 
@@ -1745,7 +1748,39 @@ def create_app(
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
     async def guide() -> str:
-        return task.guide(settings)
+        text = task.guide(settings)
+        text += (
+            "\n## Availability and recovery boundaries\n"
+            "Commercial developer preview. Payment rails described above are generated from "
+            "this deployment's settings. Recover a paid result only with the same complete "
+            "request, request_id and payer identity within the stated recovery window. "
+            "Use a new request_id for fresh evidence. Stored results support recovery; "
+            "accounting records remain. A hash identifies returned content, not its truth.\n"
+        )
+        if task.path == "/v1/page":
+            text += (
+                "Web Read limits: public HTTP(S), ports 80/443, robots.txt respected; no "
+                "JavaScript execution, login, paywall or bot-check bypass. HTML/text: 2 MB; "
+                "fetch timeout 15 seconds per request; at most 3 redirects. "
+                + ("PDF: text layer only, 5 MB, first 50 pages, no OCR. " if settings.pdf else
+                   "PDF extraction is disabled on this deployment. ")
+                + "Metadata is source-declared and may be missing or wrong. Inspect content "
+                "for completeness; a JavaScript shell can yield thin text.\n"
+            )
+        if credits is not None:
+            text += (
+                "\n## Prepaid API-key access\n"
+                f"POST {settings.resource_url.replace('/v1/', '/credits/v1/')} with "
+                "Authorization: Bearer <workspace-key> (or x-api-key) and the same JSON input. "
+                f"Costs {credits.units_per_result} credits per delivered {task.result_noun}; "
+                "one credit is $0.001. 401 workspace_key_required for a missing/invalid key; "
+                "402 insufficient_credits before delivery. Same workspace, complete request "
+                "and request_id are required for recovery. Credit result cleanup is lazy; "
+                "the recovery window is not a precise content-deletion deadline.\n"
+                f"Funding and workspace creation: {json.dumps(credits.top_up)}. "
+                "A person completes card checkout when offered; no automatic replenishment.\n"
+            )
+        return text
 
     async def page_post(body: Any, request: Request) -> JSONResponse:
         return await sell(body, request)

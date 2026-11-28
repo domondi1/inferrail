@@ -1,7 +1,10 @@
 # Inferrail Hosted
 
-**Status: experimental. Credit purchases are not open yet. Pricing is an experiment, not
-validated demand.**
+**Status: commercial developer preview; experimental pricing.** At verification on
+2026-11-28, production pricing lists card ($10/10,000 credits) and x402 Base USDC
+($1/1,000 credits) purchases. [Live pricing](https://inferrail-cost-gateway.onrender.com/hosted/pricing)
+is authoritative; deployment configuration and sales caps determine current availability.
+A person completes card checkout. There is no automatic replenishment.
 
 The Inferrail gateway, run for you. Give each AI run a dollar ceiling in a request header. Every
 call in that run, from any agent or machine using the same workspace, draws on one ledger. A

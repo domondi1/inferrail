@@ -4,7 +4,7 @@
   "display_name": "Inferrail Web Read",
   "version": "0.3.2",
   "description": "Read web pages as clean Markdown with their dates, authors and a content hash. $0.002 per delivered page, from prepaid credits or your own wallet, under a daily budget.",
-  "long_description": "Gives Claude paid tools that return the full text of a public page (not a summary) as Markdown, with its title, published date, authors, canonical URL, language, word count and a content hash, so answers can quote and date their sources and a re-check can tell whether a page changed. Also checks package versions for known vulnerabilities (OSV.dev) and looks up a domain's DNS, SPF/DMARC and registration.\n\nEach delivered result costs $0.002 in USDC on Base, paid over x402 from a wallet you control. A page that can't be read, a failed check or a refused call costs nothing. The extension pays at most your daily budget and refuses to sign any offer above a call's price. Without a wallet key the tools answer \"not paid\" and nothing is bought. Nothing here creates or funds a wallet.",
+  "long_description": "Read public webpages and text-layer PDFs as Markdown with source metadata and a content hash. A delivered result costs $0.002. Source 0.3.2 exposes Web Read, known package vulnerability checks and domain infrastructure with a prepaid API key where those credit routes are active, or a funded x402 wallet on Base. Published 0.3.0 offers Web Read only in API-key mode. A person authorizes and funds the workspace or wallet first. Failed delivery is uncharged. Matching requests, request_id and payer/workspace can recover a paid result within 10 minutes. The local daily budget persists across restarts; it is not an account-wide cap across separate clients. Nothing here creates or funds a wallet.",
   "author": {
     "name": "Inferrail",
     "url": "https://github.com/domondi1/inferrail"
@@ -49,7 +49,7 @@
     },
     {
       "name": "read_pages",
-      "description": "1-10 pages in one call, $0.002 per page; nothing is charged if any page fails."
+      "description": "1\u201310 public sources. Wallet mode is all-or-nothing; API-key mode reads individually and charges each successful delivery ($0.002 each)."
     },
     {
       "name": "check_packages",

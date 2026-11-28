@@ -47,6 +47,13 @@
     nav.addEventListener('click', (ev) => {
       if (ev.target.closest('a')) { toggle.setAttribute('aria-expanded', 'false'); nav.classList.remove('open'); }
     });
+    nav.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+        toggle.setAttribute('aria-expanded', 'false');
+        nav.classList.remove('open');
+        toggle.focus();
+      }
+    });
   }
 
   // A link with data-open="<details id>" opens that section before the

@@ -1,21 +1,12 @@
 # Inferrail — Agent Context
 
-Inferrail is an open inference control plane: an OpenAI- and
-Anthropic-compatible gateway that sits between an application and the
-model providers it calls, plus a self-hosted local
-receipt/cost-attribution substrate. **As
-of v0.2.0, Inferrail also ships a second, separate product on that same
-substrate: AP invoice-exception recovery** — for one eligible
-invoice-extraction exception, decide whether it gets one permitted
-machine retry (with its own prospective cost authorization) or the
-customer's established human-review path, execute it, and record the
-resulting cost and outcome. AP is fully isolated from the gateway and
-from the hosted, testnet-only Work Economics/Economic Authority
-capabilities (own module, own storage, no shared code path) — see
-`docs/capabilities/ap-invoice-exception-recovery.md` for its full
-contract. See `docs/PRODUCT.md` for exact current scope (the single
-authoritative source — do not restate scope claims here that could
-drift from it) and `docs/ARCHITECTURE.md` for how the gateway is built.
+Inferrail provides external evidence APIs and independent inference spending controls.
+Read `docs/PRODUCT.md` for exact implementation scope and `docs/product-catalog.json`
+for dated deployment/release evidence. Merged source does not establish commercial
+activation. The Python package remains a self-hosted OpenAI/Anthropic gateway, with
+no dependency on Inferrail-operated services. Public commercial contracts are generated
+by the production deployment. Keep experimental/testnet capabilities separate from
+commercial offers. Architecture: `docs/ARCHITECTURE.md`.
 
 ## Before major feature work, read
 

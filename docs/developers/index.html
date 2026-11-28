@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <title>
+   Developers | API key, wallet, MCP &amp; AI SDK quickstarts | Inferrail
+  </title>
+  <meta content="Start reading public web pages with an API key and prepaid credits, or use an existing wallet. Published AI SDK tools and Claude Desktop extension setup." name="description"/>
+  <link href="https://tryinferrail.com/developers/" rel="canonical"/>
+  <meta content="website" property="og:type"/>
+  <meta content="Developers | API key, wallet, MCP &amp; AI SDK quickstarts | Inferrail" property="og:title"/>
+  <meta content="Start reading public web pages with an API key and prepaid credits, or use an existing wallet. Published AI SDK tools and Claude Desktop extension setup." property="og:description"/>
+  <meta content="https://tryinferrail.com/developers/" property="og:url"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" property="og:image"/>
+  <meta content="summary_large_image" name="twitter:card"/>
+  <meta content="Developers | API key, wallet, MCP &amp; AI SDK quickstarts | Inferrail" name="twitter:title"/>
+  <meta content="Start reading public web pages with an API key and prepaid credits, or use an existing wallet. Published AI SDK tools and Claude Desktop extension setup." name="twitter:description"/>
+  <meta content="https://tryinferrail.com/assets/evidence-preview.png" name="twitter:image"/>
+  <link href="/favicon.ico" rel="icon"/>
+  <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
+  <link href="/llms.txt" rel="alternate" title="Agent integration guide" type="text/plain"/>
+  <link href="https://fonts.googleapis.com" rel="preconnect"/>
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+Condensed:wght@600;700&amp;display=swap" rel="stylesheet"/>
+  <link href="/site.css" rel="stylesheet"/>
+  <link href="/commercial.css" rel="stylesheet"/>
+  <script type="application/ld+json">
+   {"@context": "https://schema.org", "@type": "WebPage", "name": "Developers | API key, wallet, MCP & AI SDK quickstarts | Inferrail", "url": "https://tryinferrail.com/developers/", "description": "Start reading public web pages with an API key and prepaid credits, or use an existing wallet. Published AI SDK tools and Claude Desktop extension setup."}
+  </script>
+ </head>
+ <body class="commercial">
+  <a class="skip-link" href="#main">
+   Skip to content
+  </a>
+  <header class="site-header">
+   <div class="wrap">
+    <a class="wordmark" href="/">
+     <img alt="" height="28" src="/inferrail-mark.png" width="28"/>
+     Inferrail
+    </a>
+    <div class="header-actions">
+     <a class="button button-primary" href="/developers/#api-key">
+      Start reading
+     </a>
+     <button aria-controls="primary-nav" aria-expanded="false" class="nav-toggle" type="button">
+      Menu
+     </button>
+    </div>
+    <nav aria-label="Primary" class="nav" id="primary-nav">
+     <a href="/#product">
+      Products
+     </a>
+     <a href="/pricing/">
+      Pricing
+     </a>
+     <a href="/developers/">
+      Developers
+     </a>
+     <a href="/llms.txt">
+      For agents
+     </a>
+     <a href="/#company">
+      Company
+     </a>
+     <a class="button button-primary nav-try" href="/developers/#api-key">
+      Start reading
+     </a>
+    </nav>
+   </div>
+  </header>
+  <main id="main">
+   <section class="product-hero wrap">
+    <p class="eyebrow">
+     Developers
+    </p>
+    <h1 class="display">
+     Your first source.
+     <br/>
+     A clear path to it.
+    </h1>
+    <p class="lede">
+     Choose prepaid Web Read with an API key, or pay per request from a wallet you already use. No sales call required.
+    </p>
+    <div class="button-row">
+    </div>
+   </section>
+   <nav aria-label="Quickstart paths" class="jump-links wrap">
+    <a href="#api-key">
+     API key
+    </a>
+    <a href="#wallet">
+     Wallet
+    </a>
+    <a href="#sdk">
+     AI SDK
+    </a>
+    <a href="#mcp">
+     Paid MCP
+    </a>
+    <a href="#other-paths">
+     Other integrations
+    </a>
+   </nav>
+   <section class="section wrap" id="api-key">
+    <h2 class="section-title">
+     Web Read without a wallet.
+    </h2>
+    <div class="browser-start">
+     <h3>
+      Create and fund your key in the browser.
+     </h3>
+     <p>
+      Open the hosted start page, choose
+      <strong>
+       Create my key
+      </strong>
+      , save the key shown once, then complete card checkout yourself. No terminal is needed to create or fund a key. The key is presented by the service, outside this site.
+     </p>
+     <a class="button button-primary" href="https://inferrail-cost-gateway.onrender.com/hosted/v1/start">
+      Create a Web Read key
+     </a>
+     <p class="small">
+      Already have a key? The same page supports a card top-up. No payment happens until you choose checkout and complete it. You can still use the terminal steps below.
+     </p>
+    </div>
+    <p class="section-lede">
+     Create a key, fund credits, then read. These commands run in Bash on your own machine. This page does not collect or store your credentials.
+    </p>
+    <div class="onboarding-steps">
+     <article>
+      <h3>
+       Create a workspace key
+      </h3>
+      <p>
+       Free. No email required. The API presents the key once; save it securely. Workspace creation does not include free Web Read credits.
+      </p>
+      <div class="code-block">
+       <div class="code-toolbar">
+        <span>
+         Copy-paste example
+        </span>
+        <button aria-label="Copy code example" class="copy" type="button">
+         Copy
+        </button>
+       </div>
+       <pre><code>curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/hosted/v1/workspaces
+# Save the api_key returned once in a password manager or secret store.
+# Load it without putting its value in shell history:
+read -rsp 'Workspace key: ' INFERRAIL_API_KEY; echo
+export INFERRAIL_API_KEY</code></pre>
+      </div>
+     </article>
+     <article>
+      <h3>
+       Fund it once
+      </h3>
+      <p>
+       One card pack is $10 for 10,000 credits: 5,000 delivered Web Read pages. A person opens the checkout link and pays. No subscription, automatic replenishment or unattended card charge.
+       <a href="https://inferrail-cost-gateway.onrender.com/hosted/pricing">
+        Check the current live offer
+       </a>
+       before funding.
+      </p>
+      <div class="code-block">
+       <div class="code-toolbar">
+        <span>
+         Copy-paste example
+        </span>
+        <button aria-label="Copy code example" class="copy" type="button">
+         Copy
+        </button>
+       </div>
+       <pre><code>curl --fail-with-body -X POST \
+  'https://inferrail-cost-gateway.onrender.com/hosted/v1/credits/checkout?packs=1' \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY"
+# Open the returned checkout_url yourself and complete Stripe Checkout.
+# This command creates a checkout link; it does not make a payment.</code></pre>
+      </div>
+      <p class="small">
+       USDC funding is also available at
+       <code>
+        POST /hosted/v1/credits/x402
+       </code>
+       : $1 for 1,000 credits. Use the
+       <a href="https://inferrail-cost-gateway.onrender.com/hosted/llms.txt">
+        funding contract
+       </a>
+       ; a plain curl does not sign payments.
+      </p>
+     </article>
+     <article>
+      <h3>
+       Request a page or PDF
+      </h3>
+      <p>
+       Each delivered result costs 2 credits ($0.002). Refusals cost nothing. Reuse this request ID only to recover this result; choose a new one for a fresh read.
+      </p>
+      <div class="code-block">
+       <div class="code-toolbar">
+        <span>
+         Copy-paste example
+        </span>
+        <button aria-label="Copy code example" class="copy" type="button">
+         Copy
+        </button>
+       </div>
+       <pre><code>curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/read/credits/v1/page \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/","request_id":"first-read-1"}'</code></pre>
+      </div>
+     </article>
+     <article>
+      <h3>
+       Check the balance
+      </h3>
+      <p>
+       Read
+       <code>
+        credits_remaining
+       </code>
+       from your workspace. An insufficient-credit response is HTTP 402; it explains how to fund, without initiating checkout for you.
+      </p>
+      <div class="code-block">
+       <div class="code-toolbar">
+        <span>
+         Copy-paste example
+        </span>
+        <button aria-label="Copy code example" class="copy" type="button">
+         Copy
+        </button>
+       </div>
+       <pre><code>curl --fail-with-body \
+  https://inferrail-cost-gateway.onrender.com/hosted/v1/workspace \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY"</code></pre>
+      </div>
+     </article>
+    </div>
+    <p class="contract-note">
+     The same API key and balance now pay Package Check at POST /pkg/credits/v1/check and Domain Check at POST /domain/credits/v1/lookup, 2 credits ($0.002) per delivered result. Send the same JSON inputs shown on the evidence-check page. Published SDK 0.3.0 credit tools remain Web Read-only; use direct HTTP for the other two. Credits are a balance, not a per-run spending limit. Never put a key in URLs, source control or client-side application code.
+    </p>
+   </section>
+   <section class="section wrap" id="wallet">
+    <h2 class="section-title">
+     Use your agent’s existing wallet.
+    </h2>
+    <p>
+     Web Read, Package Check, Domain Check and Finder accept direct x402 USDC payments on Base, or MPP on Tempo. You authorize and fund the wallet; the client then signs permitted requests.
+    </p>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>curl -i -X POST \
+  https://inferrail-cost-gateway.onrender.com/read/v1/page \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/","request_id":"first-read-1"}'
+# HTTP 402: inspect PAYMENT-REQUIRED (x402) and WWW-Authenticate (MPP).
+# This unpaid request neither reads the page nor spends funds.</code></pre>
+    </div>
+    <ol>
+     <li>
+      Send the JSON request without a payment to inspect the current offer and input/output schemas.
+     </li>
+     <li>
+      An x402 client signs the exact Base offer and repeats the same body with
+      <code>
+       PAYMENT-SIGNATURE
+      </code>
+      . An MPP client answers the Tempo challenge with
+      <code>
+       Authorization: Payment &lt;credential&gt;
+      </code>
+      .
+     </li>
+     <li>
+      HTTP 200 is the paid result. Preserve request identity and payer identity for recovery within the documented window.
+     </li>
+    </ol>
+    <p>
+     Only Base x402 and Tempo MPP were verified live. Do not infer other networks from SDK support. Check price, recipient and network against the current challenge before signing.
+     <a href="/checks/">
+      Other service request examples
+     </a>
+     .
+    </p>
+    <p>
+     <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+      Production OpenAPI
+     </a>
+     ·
+     <a href="https://inferrail-cost-gateway.onrender.com/read/llms.txt">
+      Web Read contract
+     </a>
+     ·
+     <a href="https://github.com/domondi1/inferrail/tree/main/examples/web_read">
+      Runnable x402 and MPP clients
+     </a>
+    </p>
+   </section>
+   <section class="section wrap" id="sdk">
+    <h2 class="section-title">
+     Add Web Read to an AI SDK agent.
+    </h2>
+    <p>
+     Published
+     <code>
+      @inferrail/ai-sdk-tools@0.3.0
+     </code>
+     supports both payment paths. Use Node.js 22+ with current AI SDK releases (the tools package itself supports Node.js 18+). AI SDK 5+ and Zod 3.25+ are supported peers.
+    </p>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>npm install @inferrail/ai-sdk-tools@0.3.0 ai zod @x402/fetch @x402/evm viem</code></pre>
+    </div>
+    <h3>
+     Prepaid Web Read
+    </h3>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>import { inferrailCreditTools } from "@inferrail/ai-sdk-tools";
+
+const tools = inferrailCreditTools({
+  apiKey: process.env.INFERRAIL_API_KEY!,
+});
+// Pass tools to your AI SDK generateText call.
+// readPage and readPages use prepaid Web Read credits.</code></pre>
+    </div>
+    <h3>
+     Wallet-based tools
+    </h3>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>import { inferrailTools, guardInferrailPrices } from "@inferrail/ai-sdk-tools";
+import { wrapFetchWithPayment } from "@x402/fetch";
+
+// client is your configured x402Client; see the complete setup below.
+guardInferrailPrices(client);
+const tools = inferrailTools({ fetch: wrapFetchWithPayment(fetch, client) });
+// readPage, readPages, checkPackages, lookupDomain and findPaidApi.</code></pre>
+    </div>
+    <p>
+     <code>
+      creditsFetch(apiKey)
+     </code>
+     is also exported for server-side HTTP requests. Credit-mode
+     <code>
+      readPages
+     </code>
+     uses individual reads: successful pages are charged even if others fail. Direct wallet batches are all-or-nothing. Published 0.3.0 can obscure whole-batch authentication errors; inspect each failure and do not rely on the improved 0.3.2 source until published.
+    </p>
+    <p>
+     <a href="https://github.com/domondi1/inferrail/tree/main/packages/ai-sdk-tools#use">
+      Complete wallet setup and API reference
+     </a>
+     ·
+     <a href="https://github.com/domondi1/inferrail/tree/main/examples/ai_sdk">
+      Working agent examples
+     </a>
+     . Model-provider charges are separate.
+    </p>
+   </section>
+   <section class="section wrap" id="mcp">
+    <h2 class="section-title">
+     Paid tools in your MCP client.
+    </h2>
+    <div class="split">
+     <div>
+      <h3>
+       Claude Desktop
+      </h3>
+      <p>
+       <a href="https://github.com/domondi1/inferrail/releases/download/web-read-desktop-v0.3.0/inferrail-web-read-0.3.0.mcpb">
+        Download Web Read extension 0.3.0
+       </a>
+       . Configure your API key or funded wallet and daily spending limit. The extension uses secure client configuration for secrets.
+      </p>
+     </div>
+     <div>
+      <h3>
+       Claude Code, Cursor &amp; stdio clients
+      </h3>
+      <p>
+       Run the published package locally. API-key mode exposes
+       <code>
+        read_page
+       </code>
+       and
+       <code>
+        read_pages
+       </code>
+       . Wallet mode also offers
+       <code>
+        check_packages
+       </code>
+       and
+       <code>
+        lookup_domain
+       </code>
+       ; the AI SDK’s Finder tool is not a local MCP tool.
+      </p>
+     </div>
+    </div>
+    <div class="code-block">
+     <div class="code-toolbar">
+      <span>
+       Copy-paste example
+      </span>
+      <button aria-label="Copy code example" class="copy" type="button">
+       Copy
+      </button>
+     </div>
+     <pre><code>{
+  "mcpServers": {
+    "inferrail-paid-tools": {
+      "command": "npx",
+      "args": ["-y", "@inferrail/ai-sdk-tools@0.3.0"],
+      "env": {
+        "INFERRAIL_API_KEY": "YOUR_WORKSPACE_KEY",
+        "INFERRAIL_MAX_USD_PER_DAY": "0.10"
+      }
+    }
+  }
+}</code></pre>
+    </div>
+    <p>
+     Treat your client config as a secret; use its secure secret mechanism where available. In wallet mode, replace
+     <code>
+      INFERRAIL_API_KEY
+     </code>
+     with
+     <code>
+      INFERRAIL_WALLET_KEY
+     </code>
+     for a wallet you control holding USDC on Base. Never configure a wallet you have not authorized the client to spend from.
+    </p>
+    <p>
+     The local server defaults to $0.10 per UTC day and refuses purchases past its local limit. This limit applies to that server’s accounting, not all clients sharing a wallet or workspace; the daily record persists locally across restarts in INFERRAIL_STATE_DIR (default ~/.inferrail). Keep the balance small enough for your use case.
+    </p>
+    <p class="contract-note">
+     <strong>
+      Different product:
+     </strong>
+     Python’s
+     <code>
+      inferrail mcp
+     </code>
+     is read-only gateway reporting with
+     <code>
+      get_spend
+     </code>
+     and
+     <code>
+      get_health
+     </code>
+     . It does not purchase pages or execute paid tools.
+     <a href="https://github.com/domondi1/inferrail/tree/main/inferrail-mcp">
+      Read-only MCP setup
+     </a>
+     .
+    </p>
+   </section>
+   <section class="section wrap" id="other-paths">
+    <h2 class="section-title">
+     Other ways to build.
+    </h2>
+    <div class="catalog-rows">
+     <article>
+      <div>
+       <h3>
+        Apify
+       </h3>
+       <p>
+        Run a listed Actor in an Apify account or through its API, schedules or MCP server. Billing and account fees follow the platform.
+       </p>
+      </div>
+      <a href="/tools/">
+       Browse the ten listings
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Agent skills &amp; Claude Code plugin
+       </h3>
+       <p>
+        Task guides for Web Read, package checks and domain checks; these use an authorized wallet. Installing guidance does not fund an agent.
+       </p>
+      </div>
+      <a href="https://github.com/domondi1/inferrail/tree/main/skills">
+       Installation and skills
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Scheduled reads &amp; dependency checks
+       </h3>
+       <p>
+        Published Actions and watcher examples for recurring work, with a wallet and spending limit you configure.
+       </p>
+      </div>
+      <a href="https://github.com/domondi1/inferrail/tree/main/actions">
+       GitHub Actions
+      </a>
+     </article>
+     <article>
+      <div>
+       <h3>
+        Inference budgets
+       </h3>
+       <p>
+        Use Hosted for shared workspace budgets or run the open-source gateway yourself.
+       </p>
+      </div>
+      <a href="/spending-controls/">
+       Spending controls
+      </a>
+     </article>
+    </div>
+   </section>
+  </main>
+  <footer class="site-footer">
+   <div class="wrap footer-grid">
+    <div class="footer-brand">
+     <a class="footer-name" href="/">
+      Inferrail
+     </a>
+     <p>
+      External evidence for AI agents.
+      <br/>
+      Public sources. Usable results. Clear economics.
+     </p>
+     <p>
+      <a href="mailto:daniel_omondi@alumni.brown.edu">
+       Contact the team
+      </a>
+     </p>
+    </div>
+    <nav aria-label="Products">
+     <p class="footer-heading">
+      Products
+     </p>
+     <ul>
+      <li>
+       <a href="/web-read/">
+        Web Read
+       </a>
+      </li>
+      <li>
+       <a href="/checks/">
+        Package, domain &amp; API discovery
+       </a>
+      </li>
+      <li>
+       <a href="/tools/">
+        Apify tools
+       </a>
+      </li>
+      <li>
+       <a href="/hosted/">
+        Hosted budgets
+       </a>
+      </li>
+      <li>
+       <a href="/spending-controls/">
+        Self-hosted gateway
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Developer resources">
+     <p class="footer-heading">
+      Developers
+     </p>
+     <ul>
+      <li>
+       <a href="/developers/">
+        Quickstart
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail">
+        GitHub
+       </a>
+      </li>
+      <li>
+       <a href="/llms.txt">
+        llms.txt
+       </a>
+      </li>
+      <li>
+       <a href="https://inferrail-cost-gateway.onrender.com/openapi.json">
+        Production OpenAPI
+       </a>
+      </li>
+      <li>
+       <a href="/product-catalog.json">
+        Product inventory
+       </a>
+      </li>
+     </ul>
+    </nav>
+    <nav aria-label="Company and research">
+     <p class="footer-heading">
+      Company
+     </p>
+     <ul>
+      <li>
+       <a href="/#team">
+        Team
+       </a>
+      </li>
+      <li>
+       <a href="/#careers">
+        Careers
+       </a>
+      </li>
+      <li>
+       <a href="/#investors">
+        Investors
+       </a>
+      </li>
+      <li>
+       <a href="/labs/">
+        Labs
+       </a>
+      </li>
+      <li>
+       <a href="/ap/">
+        AP recovery experiment
+       </a>
+      </li>
+      <li>
+       <a href="https://github.com/domondi1/inferrail/blob/main/SECURITY.md">
+        Security
+       </a>
+      </li>
+     </ul>
+    </nav>
+   </div>
+   <div class="wrap">
+    <div class="footer-legal">
+     <span>
+      © 2026 Inferrail
+     </span>
+     <span>
+      Open-source software:
+      <a href="https://github.com/domondi1/inferrail/blob/main/LICENSE">
+       Apache 2.0
+      </a>
+     </span>
+     <a href="https://github.com/domondi1/inferrail/blob/main/docs/privacy/usage-ping.md">
+      Gateway privacy
+     </a>
+     <a href="https://x.com/tryinferrail">
+      X
+     </a>
+     <a href="https://www.linkedin.com/company/inferrail/">
+      LinkedIn
+     </a>
+    </div>
+   </div>
+  </footer>
+  <script src="/site.js">
+  </script>
+ </body>
+</html>
