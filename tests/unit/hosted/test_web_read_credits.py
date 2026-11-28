@@ -225,3 +225,23 @@ def test_nothing_advertises_the_api_key_path_when_it_is_off(tmp_path, monkeypatc
         assert "/read/credits/v1/page" not in c.get("/openapi.json").json()["paths"]
         guide = c.post("/read/v1/page", json={"url": "https://news.test/a"}).json()
         assert "api_key" not in guide["start_paying"]
+
+
+def test_a_labelled_integration_is_counted_as_its_own_channel(setup):
+    c, ledger, workspace, key = setup
+    ledger.grant("x402", "pay-1", workspace, 10, 1)
+    r = c.post(
+        "/credits/v1/page",
+        json={"url": "https://news.test/a"},
+        headers={"authorization": f"Bearer {key}", "x-inferrail-source": "dify"},
+    )
+    assert r.status_code == 200
+    stats = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op"}).json()
+    assert stats["funnel"]["by_channel"] == {"dify:credits_delivered": 1}
+    c.post(
+        "/credits/v1/page",
+        json={"url": "https://news.test/b"},
+        headers={"authorization": f"Bearer {key}", "x-inferrail-source": "<script>"},
+    )
+    stats = c.get("/v1/operator/stats", headers={"Authorization": "Bearer op"}).json()
+    assert stats["funnel"]["by_channel"] == {"dify:credits_delivered": 1}  # unknown labels ignored
