@@ -1,7 +1,8 @@
 """Check the Inferrail Dify plugin inside Dify's own plugin SDK, without a Dify instance.
 
-    python -m venv /tmp/difyvenv && /tmp/difyvenv/bin/pip install "dify_plugin==0.10.0" httpx pyyaml
-    /tmp/difyvenv/bin/python integrations/dify/check_with_sdk.py integrations/dify/inferrail_web_read
+    python -m venv /tmp/difyvenv
+    /tmp/difyvenv/bin/pip install "dify_plugin==0.10.0" httpx pyyaml
+    cd integrations/dify && /tmp/difyvenv/bin/python check_with_sdk.py inferrail_web_read
 
 Validates manifest.yaml, the provider and tool YAML with the SDK's models, then runs the real
 provider and tool classes against a local stand-in for Inferrail (no network, nothing paid).
@@ -86,14 +87,19 @@ print("ok: provider accepts a valid key and refuses a bad one")
 
 def tool_class(rel: str):
     mod = load("plugin_" + Path(rel).stem, rel)
-    return next(v for v in vars(mod).values()
-                if isinstance(v, type) and v.__name__.endswith("Tool") and v.__module__ == mod.__name__)  # fmt: skip
+    return next(
+        v
+        for v in vars(mod).values()
+        if isinstance(v, type) and v.__name__.endswith("Tool") and v.__module__ == mod.__name__
+    )
 
 
 def run(cls, params):
     tool = cls.from_credentials({"api_key": "irw_ok"})
-    return [(m.type.value, getattr(m.message, "text", None) or getattr(m.message, "json_object", None))
-            for m in tool._invoke(params)]  # fmt: skip
+    return [
+        (m.type.value, getattr(m.message, "text", None) or getattr(m.message, "json_object", None))
+        for m in tool._invoke(params)
+    ]
 
 
 ReadPage = tool_class("tools/read_page.py")
