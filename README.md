@@ -26,6 +26,10 @@ document ingestion, citations and recurring documentation reads without maintain
 extraction and payment-recovery stack. Inferrail also ships independent inference spending
 controls: the Python package installs the self-hosted gateway, not the hosted evidence APIs.
 
+**Readable sources. Predictable purchases.** Put readable source material in your agent's context, keep the URL,
+retrieval time and receipt attached, and know the price before each purchase. Failed native
+deliveries are uncharged. Start with a prepaid API key or a wallet you already use.
+
 ## What you can use today
 
 Verified **2026-11-28** against unpaid production challenges, live pricing and public registries.
@@ -43,8 +47,7 @@ Production contracts override this dated inventory.
 
 Package/Domain credit routes are live: `POST /pkg/credits/v1/check` and
 `POST /domain/credits/v1/lookup`, the same workspace key and 2 credits per delivery.
-Published SDK 0.3.0 credit mode remains Web Read-only; use HTTP for these two. AWS payment integration is implemented
-but inactive (production route 404). No AWS partnership or marketplace availability is claimed.
+Published SDK 0.3.0 credit mode remains Web Read-only; use HTTP for these two.
 
 ## Web Read quickstart
 
@@ -86,6 +89,29 @@ keys in URLs, source control or browser application code. An insufficient balanc
 credit. USDC funding is also available: $1 for 1,000 credits via the
 [live funding contract](https://inferrail-cost-gateway.onrender.com/hosted/llms.txt).
 
+### Check packages or domains with the same key
+
+Each delivered check or lookup costs 2 credits ($0.002). A package check covers 1–20 versions;
+one domain lookup covers one domain. These commands use the balance you funded above:
+
+```bash
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/pkg/credits/v1/check \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"packages":[{"ecosystem":"npm","name":"lodash","version":"4.17.20"}],"request_id":"package-review-1"}'
+
+curl --fail-with-body -X POST \
+  https://inferrail-cost-gateway.onrender.com/domain/credits/v1/lookup \
+  -H "Authorization: Bearer $INFERRAIL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"example.com","request_id":"domain-review-1"}'
+```
+
+Package Check returns known OSV advisories and available fixes, not a security certification.
+Domain Check returns DNS, email-policy and available registration data, not a trust verdict.
+Use a new request ID for a fresh investigation; preserve the original body and ID for recovery.
+
 ### Existing wallet: inspect the unpaid offer
 
 ```bash
@@ -100,6 +126,11 @@ challenge with `Authorization: Payment <credential>`. A human initially authoriz
 the wallet. [Runnable buyers](examples/web_read/) ·
 [production OpenAPI](https://inferrail-cost-gateway.onrender.com/openapi.json) ·
 [Web Read contract](https://inferrail-cost-gateway.onrender.com/read/llms.txt).
+
+Finder uses the same wallet challenge flow at `POST /find/v1/find` with
+`{"need":"read a public webpage as markdown","request_id":"find-reader-1"}`. It costs $0.002
+per delivered answer and returns invocation details for up to five selected catalog resources.
+If no API matches, there is no charge. Finder does not execute or guarantee the APIs it lists.
 
 ### Delivery, batches and boundaries
 
@@ -134,6 +165,8 @@ labelled a miss. This small sample is not a completeness or workflow-savings gua
 Published npm **0.3.0** supports prepaid Web Read and wallet-based tools. Source **0.3.2** adds Package/Domain credit tools and better credit-batch failure reporting,
 but was not published at verification. Pin the verified
 release when reproducing these examples.
+
+Use Node.js 22+ with the current AI SDK releases. The tools package itself supports Node.js 18+.
 
 ```bash
 npm install @inferrail/ai-sdk-tools@0.3.0 ai zod @x402/fetch @x402/evm viem
@@ -286,6 +319,7 @@ experiments ([session example](examples/economic_authority_session.py)).
 Job-Safe Search, joint model/purchase budgets, sub-agent
 allocations and `@inferrail/x402-budgets` are experimental; no universal external-spend control
 or production commerce is claimed. [Labs](https://tryinferrail.com/labs/).
+The optional AWS payment rail is implemented but commercially inactive at verification.
 
 ## How it works
 
