@@ -23,15 +23,16 @@ def test_the_readme_states_web_reads_price_route_and_recovery_window():
     svc = _load("web_read_service_docs", ROOT / "hosted" / "web_read" / "service.py")
     cohost = _load("budget_gateway_cohost_docs", ROOT / "hosted" / "budget_gateway" / "cohost.py")
     readme = (ROOT / "README.md").read_text()
-    section = readme.split("## For agents", 1)[1].split("\n## ", 1)[0]
-    text = " ".join(section.split())  # ignore line wrapping
+    # Onboarding now precedes agent distribution. Facts must remain present regardless of
+    # section order, line wrapping or emphasis.
+    text = " ".join(readme.replace("**", "").split())
     defaults = svc.Settings(pay_to="0x" + "0" * 40)
     assert f"${defaults.price_usd} per delivered page" in text
     assert f"{cohost.READ_PREFIX}/v1/page" in text
     assert f"within {defaults.recovery_s // 60} minutes" in text
 
 
-def test_the_homepage_states_the_live_prices_and_allowance():
+def test_product_surfaces_state_live_prices_allowances_and_structured_offers():
     import json
     import re
 
@@ -43,7 +44,10 @@ def test_the_homepage_states_the_live_prices_and_allowance():
     free_runs = hosted.Settings.__dataclass_fields__["free_runs_per_month"].default
 
     assert f"${price} per delivered page" in text
-    assert f"{free_runs} runs a month free" in text
-    ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)[1])
+    # Hosted's allowance belongs on its own product page; it is not free Web Read credit.
+    hosted_page = (ROOT / "docs" / "hosted" / "index.html").read_text()
+    assert f"{free_runs} runs a month free" in " ".join(hosted_page.split())
+    product = (ROOT / "docs" / "web-read" / "index.html").read_text()
+    ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', product, re.S)[1])
     (web_read,) = [g for g in ld["@graph"] if g["name"] == "Inferrail Web Read"]
     assert web_read["offers"]["price"] == price
