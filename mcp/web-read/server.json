@@ -9,7 +9,7 @@
     "subfolder": "hosted/web_read"
   },
   "websiteUrl": "https://tryinferrail.com",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "remotes": [
     {
       "type": "streamable-http",
@@ -21,7 +21,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@inferrail/ai-sdk-tools",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
