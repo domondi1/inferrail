@@ -122,10 +122,10 @@ def create_combined_app(
 ) -> Starlette:
     trial_mod, hosted_mod = modules or load_modules()
     hosted_app = hosted_mod.create_app(hosted_settings, facilitator=facilitator)
+    read_credits = None
     if web_read == "env":
-        web_read = web_read_from_env(
-            hosted_settings, credits=read_credits_from_env(hosted_app, hosted_settings)
-        )
+        read_credits = read_credits_from_env(hosted_app, hosted_settings)
+        web_read = web_read_from_env(hosted_settings, credits=read_credits)
     read_batch = web_read_batch_from_env(hosted_settings) if web_read is not None else None
     if web_search == "env":
         web_search = web_search_from_env(hosted_settings)
@@ -222,6 +222,7 @@ def create_combined_app(
     app.state.trial_app, app.state.hosted_app = trial_app, hosted_app
     app.state.hosted_settings = hosted_settings
     app.state.web_read_settings = web_read[1] if web_read is not None else None
+    app.state.read_credits = web_read is not None and read_credits is not None
     app.state.web_read_batch_settings = read_batch[1] if read_batch is not None else None
     app.state.web_search_settings = web_search[1] if web_search is not None else None
     app.state.finder_settings = finder[1] if finder is not None else None
@@ -1097,8 +1098,19 @@ def origin_llms(app: Starlette) -> str:
             "`npx -y @inferrail/ai-sdk-tools` as a local MCP server with `INFERRAIL_WALLET_KEY` "
             "(a wallet you fund with a little USDC on Base) and `INFERRAIL_MAX_USD_PER_DAY` "
             "(default 0.10). It refuses to sign past the daily budget or above a call's price.",
-            "",
         ]
+        if getattr(app.state, "read_credits", False):
+            lines += [
+                "- API key, no wallet (prepaid credits): get a free key with `POST "
+                f"{origin}{PREFIX}/v1/workspaces`; a person funds it once at `POST "
+                f"{origin}{PREFIX}/v1/credits/checkout` (card, $10 = 10,000 credits) or "
+                f"`POST {origin}{PREFIX}/v1/credits/x402` (USDC). Then "
+                f"`POST {origin}{READ_PREFIX}/credits/v1/page` with "
+                "`Authorization: Bearer irw_...` reads a page for 2 credits ($0.002), charged "
+                "only when delivered. The MCP server takes the key as `INFERRAIL_API_KEY`; the "
+                "AI SDK as `inferrailCreditTools({ apiKey })`.",
+            ]
+        lines += [""]
     lines += [
         "## Contract",
         "",
@@ -1227,6 +1239,23 @@ def origin_openapi(app: Starlette) -> dict[str, Any]:
     }
     for provider in app.state.discovery_paths:
         doc["paths"].update(provider())
+    read_op = (doc["paths"].get(f"{READ_PREFIX}/v1/page") or {}).get("post")
+    if getattr(app.state, "read_credits", False) and read_op:
+        # The same read, paid from prepaid workspace credits with an API key instead of x402.
+        op = {k: v for k, v in read_op.items() if not k.startswith("x-payment")}
+        op.update(
+            operationId="webReadWithCredits",
+            summary="Scrape a web page to clean markdown, paid from prepaid credits (API key)",
+            description=(
+                "The same read as POST /read/v1/page, paid from a workspace's prepaid credits: 2 "
+                "credits ($0.002) per delivered page, nothing for a page that can't be read. A "
+                f"person funds the workspace once (POST {base}/v1/credits/checkout, card), then "
+                "calls with 'Authorization: Bearer irw_...' are paid from the balance. 402 "
+                "insufficient_credits when the balance is too low."
+            ),
+            security=[{"WorkspaceKey": []}],
+        )
+        doc["paths"][f"{READ_PREFIX}/credits/v1/page"] = {"post": op}
     return doc
 
 
