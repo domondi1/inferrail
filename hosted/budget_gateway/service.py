@@ -925,9 +925,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
     @app.get("/v1/start", response_class=HTMLResponse)
     async def start() -> HTMLResponse:
         cfg = settings.stripe
-        return _html(start_page.start(settings.public_base_url,
-                                      cfg.pack_price_cents if cfg else 1000,
-                                      cfg.pack_runs if cfg else 10_000, cfg is not None))  # fmt: skip
+        cents, credits = (cfg.pack_price_cents, cfg.pack_runs) if cfg else (1000, 10_000)
+        return _html(start_page.start(settings.public_base_url, cents, credits, cfg is not None))
 
     @app.post("/v1/start", response_class=HTMLResponse)
     async def start_create(request: Request) -> HTMLResponse:
@@ -937,8 +936,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         except HTTPException as ex:
             page = start_page.problem(str(ex.detail), settings.public_base_url)
             return _html(page, ex.status_code)
-        return _html(start_page.created(settings.public_base_url, _origin(), api_key, url,
-                                        _pack_line()), 201)  # fmt: skip
+        page = start_page.created(settings.public_base_url, _origin(), api_key, url, _pack_line())
+        return _html(page, 201)
 
     @app.post("/v1/start/top-up", response_class=HTMLResponse)
     async def start_top_up(request: Request) -> HTMLResponse:
