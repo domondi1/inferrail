@@ -178,6 +178,10 @@ class Task:
     # The name discovery indexes (CDP Bazaar `serviceName`, at most 32 characters) show and rank,
     # phrased as the task agents search for. None means service_name.
     listing_name: str | None = None
+    # What one paid result is called in buyer-facing text ("page", "package check", ...), and the
+    # namespace of its credit holds in the workspace ledger (Web Read's existing refs stay valid).
+    result_noun: str = "page"
+    credits_ref: str = "web-read"
 
 
 def bazaar_safe(value: Any) -> Any:
@@ -234,7 +238,8 @@ def unpaid_guide(settings: Any, task: Any, units: int = 1, credits: bool = False
             **({"api_key": f"No wallet: POST {origin}/hosted/v1/workspaces for a key, fund it once "
                 f"by card at POST {origin}/hosted/v1/credits/checkout, then POST "
                 f"{origin}{settings.mount_prefix}/credits{task.path} with 'Authorization: Bearer "
-                "irw_...' (2 credits = $0.002 per delivered page)."} if credits else {}),
+                f"irw_...' (2 credits = $0.002 per delivered {task.result_noun})."}
+               if credits else {}),
         },
         "docs": {"guide": f"{origin}{settings.mount_prefix}/llms.txt",
                  "openapi": f"{origin}/openapi.json"},
