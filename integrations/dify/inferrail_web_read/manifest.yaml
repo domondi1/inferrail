@@ -1,0 +1,37 @@
+version: 0.0.1
+type: plugin
+author: inferrail
+name: inferrail_web_read
+label:
+  en_US: Inferrail Web Read
+description:
+  en_US: Read web pages as clean Markdown with dates, authors and a content hash. $0.002 per delivered page from prepaid credits; failed pages are free.
+icon: icon.png
+tags:
+  - search
+  - rag
+resource:
+  memory: 268435456
+  permission:
+    tool:
+      enabled: true
+plugins:
+  tools:
+    - provider/inferrail.yaml
+meta:
+  version: 0.0.1
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+  minimum_dify_version: 1.7.0
+created_at: 2026-11-28T00:00:00Z
+privacy: PRIVACY.md
+repo: https://github.com/domondi1/inferrail
+network:
+  domains:
+    - inferrail-cost-gateway.onrender.com
+verified: false
