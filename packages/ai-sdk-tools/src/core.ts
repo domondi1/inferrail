@@ -81,6 +81,18 @@ export async function call(
     // a non-JSON answer: reported by status below
   }
   if (res.ok) return { ok: true, ...json };
+  if (res.status === 402 && json.error === "insufficient_credits") {
+    const topUp = (json.top_up ?? {}) as Record<string, string>;
+    return {
+      ok: false,
+      charged: false,
+      status: 402,
+      error: "insufficient_credits",
+      detail:
+        `Not enough Inferrail credits (this needs ${json.credits_needed}, ${json.credits_remaining} left). ` +
+        `A person tops up the workspace once: ${topUp.card ?? topUp.x402 ?? "see the docs"}.`,
+    };
+  }
   if (res.status === 402) {
     return {
       ok: false,
@@ -145,4 +157,51 @@ export function guardInferrailPrices<T extends HookableClient>(client: T, origin
     checkOffer(ctx.paymentRequired.resource?.url, ctx.selectedRequirements, origin),
   );
   return client;
+}
+
+/** Web Read's API-key route: pages paid from prepaid workspace credits (2 credits = $0.002). */
+export const CREDITS_PAGE_PATH = "/read/credits/v1/page";
+
+/**
+ * A fetch that pays Web Read from prepaid Inferrail credits with a workspace key (`irw_...`)
+ * instead of signing a payment per request. Page reads go to the credits route; a batch
+ * (`/read/v1/pages`) is read page by page, so each delivered page is charged and failures are
+ * listed. Other services have no credits route: their requests pass through unpaid (402).
+ */
+export function creditsFetch(apiKey: string, base: Fetch = fetch, origin: string = ORIGIN): Fetch {
+  if (!apiKey.startsWith("irw_")) throw new Error("an Inferrail workspace key starts with irw_");
+  const auth = { authorization: `Bearer ${apiKey}` };
+  const page = (init: RequestInit, body: Record<string, unknown>) =>
+    base(`${origin}${CREDITS_PAGE_PATH}`, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), ...auth },
+      body: JSON.stringify(body),
+    });
+  return async (input, init = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url === `${origin}/read/v1/page`) {
+      return page(init, JSON.parse(String(init.body ?? "{}")));
+    }
+    if (url === `${origin}/read/v1/pages`) {
+      const body = JSON.parse(String(init.body ?? "{}")) as { urls?: string[]; request_id?: string };
+      const urls = body.urls ?? [];
+      const answers = await Promise.all(
+        urls.map(async (u, i) => {
+          const r = await page(init, { url: u, request_id: `${body.request_id ?? "batch"}:${i}` });
+          return { url: u, status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+        }),
+      );
+      const short = answers.find((a) => a.status === 402);
+      if (short && !answers.some((a) => a.status === 200)) {
+        return new Response(JSON.stringify(short.json), { status: 402 });
+      }
+      const pages = answers.filter((a) => a.status === 200).map((a) => a.json);
+      const failed = answers
+        .filter((a) => a.status !== 200)
+        .map((a) => ({ url: a.url, error: String(a.json.error ?? `http_${a.status}`) }));
+      const out = { pages, count: pages.length, failed, charged_pages: pages.length };
+      return new Response(JSON.stringify(out), { status: pages.length ? 200 : 422 });
+    }
+    return base(input, init);
+  };
 }

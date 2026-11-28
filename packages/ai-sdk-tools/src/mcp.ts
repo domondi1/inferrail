@@ -7,6 +7,8 @@
  *   npx -y @inferrail/ai-sdk-tools
  *
  * Environment:
+ *   INFERRAIL_API_KEY          irw_... Inferrail workspace key with prepaid credits (funded once by
+ *                              card or USDC). Pays Web Read without a wallet: $0.002 per page.
  *   INFERRAIL_WALLET_KEY       0x... key of a wallet holding a little USDC on Base. Without it the
  *                              tools answer "not paid" and nothing is bought.
  *   INFERRAIL_MAX_USD_PER_DAY  the most this server pays per UTC day (default 0.10). A call that
@@ -22,9 +24,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { call, guardInferrailPrices, ORIGIN, PRICE_ATOMIC, type Fetch, type Result } from "./core.js";
+import { call, creditsFetch, guardInferrailPrices, ORIGIN, PRICE_ATOMIC, type Fetch, type Result } from "./core.js";
 
-export const SERVER_VERSION = "0.2.1";
+export const SERVER_VERSION = "0.3.0";
 /** How the services count requests from this server (no personal data). */
 export const SOURCE = "mcp-local";
 
@@ -139,6 +141,19 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+/** The tools when paying from prepaid credits with INFERRAIL_API_KEY: Web Read only (the other
+ * services have no credits route yet), with descriptions that state how credits are charged. */
+export const CREDIT_TOOLS: ToolDef[] = TOOLS.filter((t) => t.name.startsWith("read_")).map((t) => ({
+  ...t,
+  description:
+    t.name === "read_page"
+      ? "Read one public web page as clean Markdown with its title, metadata (description, canonical " +
+        "URL, authors, published date, language), word count and a content hash. $0.002 from " +
+        "prepaid Inferrail credits, only when the page is delivered." + UNTRUSTED
+      : "Read 1-10 public web pages, $0.002 from prepaid Inferrail credits per delivered page. Pages " +
+        "that can't be read cost nothing and are listed under `failed`." + UNTRUSTED,
+}));
+
 /** USDC base units (6 decimals) for a dollar amount like "0.10". */
 export function toAtomic(usd: string): bigint {
   const [whole, frac = ""] = usd.trim().split(".");
@@ -189,8 +204,9 @@ export function fileBudget(cap: bigint, file: string, now: () => Date = () => ne
 }
 
 const NOT_PAID =
-  "Not paid: this MCP server has no wallet. Set INFERRAIL_WALLET_KEY to the key of a wallet " +
-  "holding a little USDC on Base (and optionally INFERRAIL_MAX_USD_PER_DAY), then restart it.";
+  "Not paid: this MCP server has no way to pay. Set INFERRAIL_API_KEY to an Inferrail workspace " +
+  "key with prepaid credits (funded once by card), or INFERRAIL_WALLET_KEY to a wallet holding a " +
+  "little USDC on Base, then restart it.";
 
 export interface ServerOptions {
   fetch: Fetch;
@@ -199,6 +215,8 @@ export interface ServerOptions {
   origin?: string;
   /** Set by the paying fetch's before-payment hook: the most this call may be charged. */
   expected?: AsyncLocalStorage<bigint>;
+  /** The tools offered (default: all; CREDIT_TOOLS with an API key). */
+  tools?: ToolDef[];
 }
 
 type Message = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
@@ -206,9 +224,15 @@ type Message = { jsonrpc?: string; id?: string | number | null; method?: string;
 const text = (r: unknown, isError: boolean) => ({ content: [{ type: "text", text: JSON.stringify(r) }], isError });
 
 /** The protocol handler: one JSON-RPC message in, one answer out (null for notifications). */
-export function createServer({ fetch, budget, origin = ORIGIN, expected = new AsyncLocalStorage() }: ServerOptions) {
+export function createServer({
+  fetch,
+  budget,
+  origin = ORIGIN,
+  expected = new AsyncLocalStorage(),
+  tools = TOOLS,
+}: ServerOptions) {
   async function callTool(name: unknown, args: Args) {
-    const tool = TOOLS.find((t) => t.name === name);
+    const tool = tools.find((t) => t.name === name);
     if (!tool) return null;
     const units = tool.units(args);
     if (units === null) {
@@ -253,7 +277,7 @@ export function createServer({ fetch, budget, origin = ORIGIN, expected = new As
       case "ping":
         return reply({});
       case "tools/list":
-        return reply({ tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+        return reply({ tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
       case "tools/call": {
         const out = await callTool(msg.params?.name, (msg.params?.arguments ?? {}) as Args);
         return out ? reply(out) : fail(-32602, `unknown tool: ${String(msg.params?.name)}`);
@@ -289,9 +313,20 @@ async function payingFetch(key: string, origin: string, expected: AsyncLocalStor
 export async function main(env: NodeJS.ProcessEnv = process.env) {
   const origin = env.INFERRAIL_ORIGIN?.trim() || ORIGIN;
   const key = env.INFERRAIL_WALLET_KEY?.trim();
+  const apiKey = env.INFERRAIL_API_KEY?.trim();
   const expected = new AsyncLocalStorage<bigint>();
   let fetchFn: Fetch = fetch;
   let budget: Budget | null = null;
+  const stateFile = () => join(env.INFERRAIL_STATE_DIR?.trim() || join(homedir(), ".inferrail"), "spend.json");
+  if (apiKey) {
+    // Prepaid credits: no wallet, no signing. The daily budget still caps what one day spends.
+    const cap = toAtomic(env.INFERRAIL_MAX_USD_PER_DAY?.trim() || "0.10");
+    budget = fileBudget(cap, stateFile());
+    console.error(`inferrail-mcp: paying from prepaid Inferrail credits, up to $${Number(cap) / 1e6} per UTC day`);
+    return serve(
+      createServer({ fetch: creditsFetch(apiKey, fetch, origin), budget, origin, expected, tools: CREDIT_TOOLS }),
+    );
+  }
   if (key) {
     fetchFn = await payingFetch(key, origin, expected);
     const cap = toAtomic(env.INFERRAIL_MAX_USD_PER_DAY?.trim() || "0.10");
@@ -300,7 +335,10 @@ export async function main(env: NodeJS.ProcessEnv = process.env) {
   } else {
     console.error("inferrail-mcp: no INFERRAIL_WALLET_KEY, so calls are not paid (they return 'not paid')");
   }
-  const handle = createServer({ fetch: fetchFn, budget, origin, expected });
+  return serve(createServer({ fetch: fetchFn, budget, origin, expected }));
+}
+
+async function serve(handle: ReturnType<typeof createServer>) {
   const lines = createInterface({ input: process.stdin });
   for await (const line of lines) {
     if (!line.trim()) continue;
