@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "inferrail-web-read",
   "display_name": "Inferrail Web Read",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Read web pages as clean Markdown with their dates, authors and a content hash. $0.002 per delivered page, from prepaid credits or your own wallet, under a daily budget.",
   "long_description": "Gives Claude paid tools that return the full text of a public page (not a summary) as Markdown, with its title, published date, authors, canonical URL, language, word count and a content hash, so answers can quote and date their sources and a re-check can tell whether a page changed. Also checks package versions for known vulnerabilities (OSV.dev) and looks up a domain's DNS, SPF/DMARC and registration.\n\nEach delivered result costs $0.002 in USDC on Base, paid over x402 from a wallet you control. A page that can't be read, a failed check or a refused call costs nothing. The extension pays at most your daily budget and refuses to sign any offer above a call's price. Without a wallet key the tools answer \"not paid\" and nothing is bought. Nothing here creates or funds a wallet.",
   "author": {

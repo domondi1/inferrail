@@ -22,7 +22,7 @@ from typing import Any
 
 TOOL_NAME = "read_page"
 # Matches mcp/web-read/server.json (the MCP Registry entry for this remote server).
-SERVER_VERSION = "1.2.1"
+SERVER_VERSION = "1.2.2"
 TOOL_DESCRIPTION = (
     "Read one public web page as clean, LLM-ready markdown (title, main text, headings, lists, "
     "links, tables) with the page's metadata (description, canonical URL, authors, published "
