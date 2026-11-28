@@ -3,7 +3,6 @@ from typing import Any
 
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
-
 from inferrail_client import InferrailError, read_page, to_markdown
 
 
@@ -20,7 +19,9 @@ class ReadPageTool(Tool):
             yield self.create_text_message(f"Error: {ex}")
             return
         if not page.get("ok"):
-            yield self.create_text_message(f"Not read (not charged): {page['error']} {page['detail']}".strip())
+            yield self.create_text_message(
+                f"Not read (not charged): {page['error']} {page['detail']}".strip()
+            )
             yield self.create_json_message(page)
             return
         yield self.create_text_message(to_markdown(page))

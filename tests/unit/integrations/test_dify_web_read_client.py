@@ -37,13 +37,28 @@ def _client(balance: int = 10, broken: tuple[str, ...] = ()):
         if body["url"] in broken:
             return httpx.Response(422, json={"error": "upstream_status", "charged": False})
         if state["balance"] < 2:
-            return httpx.Response(402, json={"error": "insufficient_credits", "charged": False,
-                                             "credits_needed": 2, "credits_remaining": state["balance"],
-                                             "top_up": {"card": "POST https://x/hosted/v1/credits/checkout"}})  # fmt: skip
+            return httpx.Response(
+                402,
+                json={
+                    "error": "insufficient_credits",
+                    "charged": False,
+                    "credits_needed": 2,
+                    "credits_remaining": state["balance"],
+                    "top_up": {"card": "POST https://x/hosted/v1/credits/checkout"},
+                },
+            )
         state["balance"] -= 2
-        return httpx.Response(200, json={"url": body["url"], "final_url": body["url"], "title": "Title",
-                                         "content_markdown": "Body text", "content_sha256": "abc",
-                                         "metadata": {"published_at": "2026-11-01", "authors": ["A", "B"]}})  # fmt: skip
+        return httpx.Response(
+            200,
+            json={
+                "url": body["url"],
+                "final_url": body["url"],
+                "title": "Title",
+                "content_markdown": "Body text",
+                "content_sha256": "abc",
+                "metadata": {"published_at": "2026-11-01", "authors": ["A", "B"]},
+            },
+        )
 
     return httpx.Client(transport=httpx.MockTransport(handler)), seen, state
 
@@ -60,8 +75,14 @@ def test_a_page_goes_to_the_credits_route_with_the_key_and_the_dify_label():
 def test_an_unreadable_page_is_reported_and_costs_nothing():
     c, _, state = _client(broken=("https://down.test/",))
     page = client_mod.read_page(KEY, "https://down.test/", client=c)
-    assert page == {"ok": False, "charged": False, "url": "https://down.test/", "status": 422,
-                    "error": "upstream_status", "detail": ""}  # fmt: skip
+    assert page == {
+        "ok": False,
+        "charged": False,
+        "url": "https://down.test/",
+        "status": 422,
+        "error": "upstream_status",
+        "detail": "",
+    }
     assert state["balance"] == 10
 
 
@@ -84,16 +105,29 @@ def test_key_validation_is_free_and_rejects_non_inferrail_keys():
 
 def test_urls_are_parsed_deduplicated_and_capped():
     assert client_mod.parse_urls("https://a.test/, https://b.test/\nhttps://a.test/") == [
-        "https://a.test/", "https://b.test/"]
+        "https://a.test/",
+        "https://b.test/",
+    ]
     with pytest.raises(client_mod.InferrailError):
         client_mod.parse_urls("\n".join(f"https://x.test/{i}" for i in range(11)))
 
 
 def test_markdown_carries_provenance():
-    md = client_mod.to_markdown({"url": "https://a.test/", "final_url": "https://a.test/p", "title": "T",
-                                 "content_markdown": "Body", "metadata": {"published_at": "2026-11-01",
-                                                                          "authors": ["A", "B"]}})  # fmt: skip
-    assert md.splitlines()[:4] == ["# T", "Source: https://a.test/p", "Published: 2026-11-01", "Authors: A, B"]
+    md = client_mod.to_markdown(
+        {
+            "url": "https://a.test/",
+            "final_url": "https://a.test/p",
+            "title": "T",
+            "content_markdown": "Body",
+            "metadata": {"published_at": "2026-11-01", "authors": ["A", "B"]},
+        }
+    )
+    assert md.splitlines()[:4] == [
+        "# T",
+        "Source: https://a.test/p",
+        "Published: 2026-11-01",
+        "Authors: A, B",
+    ]
     assert md.endswith("Body")
 
 
@@ -104,7 +138,9 @@ def test_the_manifest_declares_network_tags_privacy_and_only_our_domain():
     assert manifest["author"] == "inferrail" and manifest["name"] == "inferrail_web_read"
     assert set(manifest["tags"]) <= {"search", "rag", "document", "utilities"}
     assert manifest["network"]["domains"] == ["inferrail-cost-gateway.onrender.com"]
-    assert (PLUGIN / manifest["privacy"]).exists() and (PLUGIN / "_assets" / manifest["icon"]).exists()
+    assert (PLUGIN / manifest["privacy"]).exists() and (
+        PLUGIN / "_assets" / manifest["icon"]
+    ).exists()
     provider = yaml.safe_load((PLUGIN / "provider" / "inferrail.yaml").read_text())
     assert provider["credentials_for_provider"]["api_key"]["type"] == "secret-input"
     for tool in provider["tools"]:

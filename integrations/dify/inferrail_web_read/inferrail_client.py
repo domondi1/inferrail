@@ -27,8 +27,10 @@ def _headers(api_key: str) -> dict[str, str]:
 def check_key(api_key: str, client: httpx.Client | None = None, origin: str = ORIGIN) -> int:
     """Validate a workspace key for free; return its prepaid credit balance."""
     if not api_key or not api_key.startswith("irw_"):
-        raise InferrailError("An Inferrail API key starts with irw_ (create one at POST "
-                             f"{origin}/hosted/v1/workspaces).")  # fmt: skip
+        raise InferrailError(
+            "An Inferrail API key starts with irw_ (create one at POST "
+            f"{origin}/hosted/v1/workspaces)."
+        )
     with client or httpx.Client(timeout=TIMEOUT_S) as c:
         r = c.get(f"{origin}{WORKSPACE_PATH}", headers=_headers(api_key))
     if r.status_code == 401:
@@ -38,9 +40,12 @@ def check_key(api_key: str, client: httpx.Client | None = None, origin: str = OR
 
 
 def read_page(
-    api_key: str, url: str, request_id: str | None = None,
-    client: httpx.Client | None = None, origin: str = ORIGIN,
-) -> dict[str, Any]:  # fmt: skip
+    api_key: str,
+    url: str,
+    request_id: str | None = None,
+    client: httpx.Client | None = None,
+    origin: str = ORIGIN,
+) -> dict[str, Any]:
     """One page as markdown plus metadata. Returns the service's JSON; `ok` is False with
     `charged: False` when the page couldn't be read. Raises InferrailError for a bad key or too
     few credits (the user has to act)."""
@@ -64,9 +69,14 @@ def read_page(
             f"Not enough Inferrail credits ({data.get('credits_remaining', 0)} left, "
             f"{data.get('credits_needed', 2)} needed per page). Top up once: {top_up}"
         )
-    return {"ok": False, "charged": False, "url": url, "status": r.status_code,
-            "error": str(data.get("error") or f"http_{r.status_code}"),
-            "detail": str(data.get("detail") or "")[:300]}  # fmt: skip
+    return {
+        "ok": False,
+        "charged": False,
+        "url": url,
+        "status": r.status_code,
+        "error": str(data.get("error") or f"http_{r.status_code}"),
+        "detail": str(data.get("detail") or "")[:300],
+    }
 
 
 def parse_urls(text: str) -> list[str]:
@@ -84,8 +94,15 @@ def parse_urls(text: str) -> list[str]:
 def to_markdown(page: dict[str, Any]) -> str:
     """The page as one markdown document with a short provenance header."""
     meta = page.get("metadata") or {}
-    lines = [f"# {page.get('title') or page.get('url')}", f"Source: {page.get('final_url') or page.get('url')}"]
-    for label, key in (("Published", "published_at"), ("Authors", "authors"), ("Language", "language")):
+    lines = [
+        f"# {page.get('title') or page.get('url')}",
+        f"Source: {page.get('final_url') or page.get('url')}",
+    ]
+    for label, key in (
+        ("Published", "published_at"),
+        ("Authors", "authors"),
+        ("Language", "language"),
+    ):
         value = meta.get(key)
         if value:
             lines.append(f"{label}: {', '.join(value) if isinstance(value, list) else value}")
