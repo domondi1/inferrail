@@ -141,7 +141,7 @@ def test_the_manifest_declares_network_tags_privacy_and_only_our_domain():
     assert (PLUGIN / manifest["privacy"]).exists() and (
         PLUGIN / "_assets" / manifest["icon"]
     ).exists()
-    provider = yaml.safe_load((PLUGIN / "provider" / "inferrail.yaml").read_text())
+    provider = yaml.safe_load((PLUGIN / "provider" / "inferrail_web_read.yaml").read_text())
     assert provider["credentials_for_provider"]["api_key"]["type"] == "secret-input"
     for tool in provider["tools"]:
         assert (PLUGIN / tool).exists() and (PLUGIN / tool.replace(".yaml", ".py")).exists()

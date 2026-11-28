@@ -17,7 +17,7 @@ resource:
       enabled: true
 plugins:
   tools:
-    - provider/inferrail.yaml
+    - provider/inferrail_web_read.yaml
 meta:
   version: 0.0.1
   arch:

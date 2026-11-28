@@ -1,0 +1,25 @@
+identity:
+  author: "inferrail"
+  name: "inferrail_web_read"
+  label:
+    en_US: "Inferrail Web Read"
+  description:
+    en_US: "Read web pages as clean Markdown with their title, dates, authors and a content hash. $0.002 per delivered page from prepaid credits; pages that can't be read cost nothing."
+  icon: "icon.png"
+credentials_for_provider:
+  api_key:
+    type: secret-input
+    required: true
+    label:
+      en_US: "Inferrail API key"
+    placeholder:
+      en_US: "irw_..."
+    help:
+      en_US: "Create a free key, then fund it once by card ($10 = 10,000 credits = 5,000 pages). Steps:"
+    url: "https://github.com/domondi1/inferrail/tree/main/integrations/dify/inferrail_web_read#get-an-api-key"
+tools:
+  - tools/read_page.yaml
+  - tools/read_pages.yaml
+extra:
+  python:
+    source: provider/inferrail.py
