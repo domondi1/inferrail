@@ -191,16 +191,23 @@ export function creditsFetch(apiKey: string, base: Fetch = fetch, origin: string
           return { url: u, status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
         }),
       );
-      const short = answers.find((a) => a.status === 402);
-      if (short && !answers.some((a) => a.status === 200)) {
-        return new Response(JSON.stringify(short.json), { status: 402 });
+      const delivered = answers.some((a) => a.status === 200);
+      // A refusal that applies to the whole call (bad key, no credits) is returned as itself,
+      // so the caller learns what to fix instead of a per-page list of the same error.
+      for (const status of [401, 402]) {
+        const whole = answers.find((a) => a.status === status);
+        if (whole && !delivered) return new Response(JSON.stringify(whole.json), { status });
       }
       const pages = answers.filter((a) => a.status === 200).map((a) => a.json);
       const failed = answers
         .filter((a) => a.status !== 200)
         .map((a) => ({ url: a.url, error: String(a.json.error ?? `http_${a.status}`) }));
+      if (!pages.length) {
+        const results = failed.map((f) => ({ url: f.url, delivered: false, error: f.error }));
+        return new Response(JSON.stringify({ error: "pages_failed", charged: false, results }), { status: 422 });
+      }
       const out = { pages, count: pages.length, failed, charged_pages: pages.length };
-      return new Response(JSON.stringify(out), { status: pages.length ? 200 : 422 });
+      return new Response(JSON.stringify(out), { status: 200 });
     }
     return base(input, init);
   };
