@@ -60,7 +60,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -603,8 +603,8 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         return _agent_guide(price_sheet(), settings)
 
     # -- workspaces -------------------------------------------------------------------------------
-    @app.post("/v1/workspaces", status_code=201)
-    async def create_workspace(request: Request) -> dict[str, Any]:
+    def _new_workspace(request: Request) -> tuple[str, str]:
+        """Create a workspace under the same limits for every entry point (API or browser)."""
         if not settings.creation_enabled:
             raise HTTPException(503, "workspace creation is paused")
         if ledger.count_workspaces() >= settings.max_workspaces:
@@ -623,6 +623,11 @@ def create_app(settings: Settings, *, facilitator: Any | None = None) -> FastAPI
         ledger.count_event(
             workspace_id, f"created_by:{client_class(request.headers.get('user-agent'))}"
         )
+        return workspace_id, api_key
+
+    @app.post("/v1/workspaces", status_code=201)
+    async def create_workspace(request: Request) -> dict[str, Any]:
+        workspace_id, api_key = _new_workspace(request)
         return {
             "workspace_id": workspace_id,
             "api_key": api_key,
