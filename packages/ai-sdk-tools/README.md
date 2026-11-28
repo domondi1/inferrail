@@ -117,6 +117,8 @@ A retry with the same `request_id` returns the paid page again without a second 
 too few credits the answer is `402 {"error": "insufficient_credits", ...}`, and nothing is read
 or charged. Check the balance with `GET /hosted/v1/workspace`. In key mode `readPages` reads each
 page separately: delivered pages are charged, and failed ones are listed under `failed`.
+`inferrailCreditTools` also includes `checkPackages` and `lookupDomain`, at 2 credits ($0.002)
+per check or lookup from the same key.
 
 ## Use it from an MCP client (Claude Code, Claude Desktop, Cursor)
 
@@ -153,7 +155,7 @@ For Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`)
   server also refuses to sign any offer above the call's own price, or to another address.
 - **With prepaid credits instead of a wallet:** set `INFERRAIL_API_KEY=irw_...` (see
   "Pay with an API key" above) and leave out `INFERRAIL_WALLET_KEY`. The server then offers
-  `read_page` and `read_pages`, paid from the workspace balance, still under
+  `read_page`, `read_pages`, `check_packages` and `lookup_domain`, paid from the workspace balance, still under
   `INFERRAIL_MAX_USD_PER_DAY`.
 - **Without a key** the tools still run, and every call answers "not paid" with no charge.
 - **Charged only on delivery:** a page that can't be read, a failed check or a refused call

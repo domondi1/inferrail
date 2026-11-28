@@ -112,7 +112,8 @@ export interface InferrailCreditToolsOptions {
 }
 
 /**
- * Web Read tools paid from prepaid Inferrail credits with an API key: no wallet and no
+ * Web Read, Package Check and Domain Check tools paid from prepaid Inferrail credits with an
+ * API key: no wallet and no
  * per-request signing. A delivered page costs 2 credits ($0.002); a page that can't be read
  * costs nothing. A person funds the workspace once (card checkout or USDC); the agent then
  * spends the balance on its own.
@@ -137,6 +138,37 @@ export function inferrailCreditTools({ apiKey, fetch: base = fetch, origin = ORI
         urls: z.array(z.string().url().max(2048)).min(1).max(10).describe("Distinct public URLs"),
       }),
       execute: run("/read/v1/pages"),
+    }),
+    checkPackages: tool({
+      description:
+        "Check up to 20 package versions for known vulnerabilities (OSV.dev: advisory ids, " +
+        "CVEs, severity, fixed versions) before adding, upgrading or shipping a dependency. " +
+        "$0.002 from prepaid credits per check. A clean result is not a guarantee.",
+      inputSchema: z.object({
+        packages: z
+          .array(
+            z.object({
+              ecosystem: z.enum(ECOSYSTEMS),
+              name: z.string().min(1).max(214),
+              version: z.string().min(1).max(128).describe("Exact version"),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+      execute: run("/pkg/v1/check"),
+    }),
+    lookupDomain: tool({
+      description:
+        "Look up a domain's DNS records (A, AAAA, CNAME, MX, NS, TXT, SOA, CAA), SPF and DMARC, " +
+        "and registration (registrar, status, created and expiry dates, nameservers, DNSSEC). " +
+        "$0.002 from prepaid credits per lookup. Use before trusting a link, sender or counterparty.",
+      inputSchema: z.object({
+        domain: z.string().min(3).max(253),
+        records: z.array(z.enum(RECORDS)).min(1).max(8).optional(),
+        registration: z.boolean().optional(),
+      }),
+      execute: run("/domain/v1/lookup"),
     }),
   };
 }
